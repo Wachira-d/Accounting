@@ -188,13 +188,31 @@
       }
     }
 
+    // Read the saved deep-link return target — set by layout.js when an
+    // unauthenticated user hit a guarded URL (e.g. /{cid}/journals/{id}).
+    // Wins over the default home so the user lands on the record they
+    // came for after logging in.
+    function _consumeReturnTo() {
+      try {
+        const r = sessionStorage.getItem('returnTo');
+        if (r) { sessionStorage.removeItem('returnTo'); return r; }
+      } catch {}
+      return null;
+    }
+
     // Redirect if already logged in — honour the user's saved UI mode.
     if (localStorage.getItem('token')) {
-      const uiMode = localStorage.getItem('uiMode') || 'simple';
-      window.location.href = uiMode === 'advanced' ? '/app.html' : '/simple.html';
+      const r = _consumeReturnTo();
+      if (r) { window.location.href = r; }
+      else {
+        const uiMode = localStorage.getItem('uiMode') || 'simple';
+        window.location.href = uiMode === 'advanced' ? '/app.html' : '/simple.html';
+      }
     }
 
     function _loginRedirect() {
+      const r = _consumeReturnTo();
+      if (r) { window.location.href = r; return; }
       const uiMode = localStorage.getItem('uiMode') || 'simple';
       window.location.href = uiMode === 'advanced' ? '/app.html' : '/simple.html';
     }

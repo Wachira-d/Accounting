@@ -36,7 +36,9 @@
       <div id="pageActions" style="display:flex;gap:8px"></div>
     </div>
 
-    <div class="filter-bar">
+    <div class="filter-bar"
+         data-tour-step="1"
+         data-tour-text="กรองสมุดบัญชีแยกประเภทตามช่วงวันที่ + บัญชี + สาขา/โครงการ — แสดงเดบิต/เครดิตและยอดคงเหลือทีละบัญชี">
       <label>ช่วงวันที่:</label>
       <input type="date" class="form-input" id="fromDate" style="flex:1;min-width:120px">
       <span class="text-gray-400">ถึง</span>
@@ -450,6 +452,7 @@
       }
     };
     Page.init();
+    Layout.enableTour('general-ledger');
   </script>
 </body>
 </html>

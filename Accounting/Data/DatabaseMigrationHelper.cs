@@ -2064,6 +2064,223 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "ImageUrlsJson" text NULL;
             """,
+
+            // Asset type discriminator — broadens the module from PPE-only to
+            // cover Intangible / RightOfUse / InvestmentProperty too.
+            // Default 1 = Tangible so existing rows behave unchanged.
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "AssetType" integer NOT NULL DEFAULT 1;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LeaseTermMonths" integer NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LessorName" varchar(200) NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "MonthlyLeasePayment" numeric(18,2) NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LeaseLiabilityAccountId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_FixedAssets_AssetType" ON "FixedAssets" ("CompanyId", "AssetType") WHERE "IsDeleted" = false;""",
+
+            // POS: tip + coupon columns
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "TipAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "CouponCode" varchar(50) NULL;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "CouponDiscountAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+
+            // Loyalty points on Contact (per-tenant; reset never).
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "LoyaltyPoints" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "LastVisitAt" timestamp NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "TotalVisitCount" integer NOT NULL DEFAULT 0;""",
+
+            // Multi-printer routing — Product.PrintStation routes kitchen
+            // tickets per item ("Kitchen-Hot" / "Kitchen-Cold" / "Bar" / "Drinks").
+            // Null = goes to default cashier printer only.
+            """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "PrintStation" varchar(50) NULL;""",
+
+            // Sensitivity classification: 0=None / 1=Payroll / 2=ExecutivePay / 3=HrPersonal / 9=Confidential.
+            // Documents (payroll vouchers) and JEs (auto-generated payroll JEs) stamp
+            // this so SensitivityService can redact for users lacking the matching role.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "Sensitivity" integer NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "Sensitivity" integer NOT NULL DEFAULT 0;
+            """,
+            // Per-company allow-list — one row per (Company, Kind, Role).
+            """
+            CREATE TABLE IF NOT EXISTS "SensitivityAccessRules" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "Kind" integer NOT NULL,
+                "Role" integer NOT NULL,
+                "CanView" boolean NOT NULL DEFAULT true,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SensitivityAccessRules" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_SensitivityAccessRules_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SensitivityAccessRules_Company_Kind_Role" ON "SensitivityAccessRules" ("CompanyId", "Kind", "Role") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Sensitivity" ON "Documents" ("CompanyId", "Sensitivity") WHERE "Sensitivity" > 0 AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_JournalEntries_Sensitivity" ON "JournalEntries" ("CompanyId", "Sensitivity") WHERE "Sensitivity" > 0 AND "IsDeleted" = false;""",
+
+            // VAT filing history (ภ.พ.30 ย้อนหลังที่ยื่นในระบบเดิม).
+            // One row per (Company, Year, Month) keeps it simple — upsert semantics.
+            """
+            CREATE TABLE IF NOT EXISTS "VatFilingHistories" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "Year" integer NOT NULL,
+                "Month" integer NOT NULL,
+                "SalesTotal" numeric(18,2) NOT NULL DEFAULT 0,
+                "OutputVat" numeric(18,2) NOT NULL DEFAULT 0,
+                "PurchaseTotal" numeric(18,2) NOT NULL DEFAULT 0,
+                "InputVat" numeric(18,2) NOT NULL DEFAULT 0,
+                "NetPayable" numeric(18,2) NOT NULL DEFAULT 0,
+                "IsFiled" boolean NOT NULL DEFAULT true,
+                "FiledAt" timestamp NULL,
+                "FilingReference" varchar(100) NULL,
+                "Notes" text NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_VatFilingHistories" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_VatFilingHistories_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_VatFilingHistories_Company_Year_Month" ON "VatFilingHistories" ("CompanyId", "Year", "Month") WHERE "IsDeleted" = false;""",
+
+            // Visual floor plan + tables for POS.
+            """
+            CREATE TABLE IF NOT EXISTS "PosFloorPlans" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "Name" varchar(100) NOT NULL,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CanvasWidth" integer NOT NULL DEFAULT 1200,
+                "CanvasHeight" integer NOT NULL DEFAULT 800,
+                "BackgroundImageUrl" text NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PosFloorPlans" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PosFloorPlans_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "PosTables" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "FloorPlanId" uuid NOT NULL,
+                "TableNumber" varchar(50) NOT NULL,
+                "Seats" integer NOT NULL DEFAULT 4,
+                "Shape" varchar(20) NOT NULL DEFAULT 'rectangle',
+                "X" integer NOT NULL DEFAULT 0,
+                "Y" integer NOT NULL DEFAULT 0,
+                "Width" integer NOT NULL DEFAULT 100,
+                "Height" integer NOT NULL DEFAULT 80,
+                "Rotation" integer NOT NULL DEFAULT 0,
+                "Color" varchar(20) NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PosTables" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PosTables_FloorPlan" FOREIGN KEY ("FloorPlanId") REFERENCES "PosFloorPlans"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_PosTables_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PosTables_FloorPlan" ON "PosTables" ("FloorPlanId") WHERE "IsDeleted" = false;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosTables_Floor_Number" ON "PosTables" ("FloorPlanId", "TableNumber") WHERE "IsDeleted" = false;""",
+
+            // Reservations.
+            """
+            CREATE TABLE IF NOT EXISTS "PosReservations" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "TableId" uuid NULL,
+                "TableNumber" varchar(50) NULL,
+                "ContactId" uuid NULL,
+                "CustomerName" varchar(200) NOT NULL,
+                "Phone" varchar(30) NULL,
+                "Email" varchar(200) NULL,
+                "PartySize" integer NOT NULL DEFAULT 2,
+                "ReservedAt" timestamp NOT NULL,
+                "DurationMinutes" integer NOT NULL DEFAULT 90,
+                "Status" integer NOT NULL DEFAULT 0,
+                "PosOrderId" uuid NULL,
+                "Notes" text NULL,
+                "Source" varchar(50) NULL,
+                "ReminderCount" integer NOT NULL DEFAULT 0,
+                "LastReminderAt" timestamp NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PosReservations" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PosReservations_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_PosReservations_Table" FOREIGN KEY ("TableId") REFERENCES "PosTables"("Id") ON DELETE SET NULL,
+                CONSTRAINT "FK_PosReservations_Contact" FOREIGN KEY ("ContactId") REFERENCES "Contacts"("Id") ON DELETE SET NULL
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PosReservations_Company_Date" ON "PosReservations" ("CompanyId", "ReservedAt") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_PosReservations_Table_Date" ON "PosReservations" ("TableId", "ReservedAt") WHERE "IsDeleted" = false AND "TableId" IS NOT NULL;""",
+            // Cancellation + deposit columns.
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "FreeCancelHoursBefore" integer NOT NULL DEFAULT 24;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositPaid" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "LateCancelRefundPercent" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositPaidAt" timestamp NULL;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "DepositReference" varchar(200) NULL;""",
+            """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "PublicToken" varchar(64) NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosReservations_PublicToken" ON "PosReservations" ("PublicToken") WHERE "PublicToken" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Account-level subscription — one paying User covers N Companies.
+            // Resolves the "freelancer accountant pays once for 10 client books"
+            // and "holding owner runs 5 sub-companies on one plan" cases.
+            """
+            CREATE TABLE IF NOT EXISTS "AccountSubscriptions" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "OwnerUserId" uuid NOT NULL,
+                "PlanTemplateId" uuid NOT NULL,
+                "Status" integer NOT NULL DEFAULT 0,
+                "StartDate" timestamp NOT NULL DEFAULT now(),
+                "EndDate" timestamp NOT NULL,
+                "MaxCompanies" integer NOT NULL DEFAULT 1,
+                "MaxUsersPerCompany" integer NOT NULL DEFAULT 1,
+                "MaxDocumentsPerMonth" integer NOT NULL DEFAULT 30,
+                "MaxJournalEntriesPerMonth" integer NOT NULL DEFAULT 50,
+                "MaxStorageBytes" bigint NOT NULL DEFAULT 104857600,
+                "MaxOcrPagesPerMonth" integer NOT NULL DEFAULT 0,
+                "AzureOcrPagesPerMonth" integer NULL,
+                "LocalOcrPagesPerMonth" integer NULL,
+                "EnabledFeatures" bigint NOT NULL DEFAULT 0,
+                "MonthlyPrice" numeric(18,2) NOT NULL DEFAULT 0,
+                "AnnualPrice" numeric(18,2) NOT NULL DEFAULT 0,
+                "BillingCycle" integer NOT NULL DEFAULT 0,
+                "LastPaidAt" timestamp NULL,
+                "GracePeriodDays" integer NOT NULL DEFAULT 7,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AccountSubscriptions" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_AccountSubscriptions_Users" FOREIGN KEY ("OwnerUserId") REFERENCES "Users"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_AccountSubscriptions_Plan" FOREIGN KEY ("PlanTemplateId") REFERENCES "PlanTemplates"("Id")
+            );
+            """,
+            // Only one ACTIVE account-plan per user. Trial(0) / Active(1) /
+            // PastDue(2) / Suspended(5) are non-terminal — Expired(4) and
+            // Cancelled(3) free the slot so the user can subscribe again.
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AccountSubscriptions_Owner_Active" ON "AccountSubscriptions" ("OwnerUserId") WHERE "Status" IN (0,1,2,5) AND "IsDeleted" = false;""",
+            // Subscription gets the AccountSubscriptionId opt-in column.
+            """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "AccountSubscriptionId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Subscriptions_AccountSub" ON "Subscriptions" ("AccountSubscriptionId") WHERE "AccountSubscriptionId" IS NOT NULL AND "IsDeleted" = false;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).

@@ -12,11 +12,15 @@
     <div class="page-header">
       <div><h2 class="page-title">รายงานอายุลูกหนี้/เจ้าหนี้</h2><p class="page-subtitle">วิเคราะห์หนี้ตามอายุ</p></div>
     </div>
-    <div class="tabs">
+    <div class="tabs"
+         data-tour-step="1"
+         data-tour-text="เลือกฝั่ง: ลูกหนี้ (AR — เงินที่ลูกค้าค้างเรา) / เจ้าหนี้ (AP — เงินที่เราต้องจ่ายผู้ขาย)">
       <div class="tab active" onclick="Page.setType('AccountsReceivable',this)">ลูกหนี้ (AR)</div>
       <div class="tab" onclick="Page.setType('AccountsPayable',this)">เจ้าหนี้ (AP)</div>
     </div>
-    <div class="toolbar">
+    <div class="toolbar"
+         data-tour-step="2"
+         data-tour-text="เลือกวันที่อ้างอิง — ระบบจัด bucket: 0-30 / 31-60 / 61-90 / 91-180 / 180+ วัน + ยอดรวมเงินที่ค้าง">
       <label class="text-sm font-medium">ณ วันที่:</label>
       <input type="date" class="form-input" id="asOfDate" style="width:180px">
       <button class="btn btn-primary" onclick="Page.load()">แสดงรายงาน</button>
@@ -105,6 +109,7 @@
       }
     };
     Page.init();
+    Layout.enableTour('aging');
   </script>
 </body>
 </html>

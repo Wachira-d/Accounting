@@ -48,6 +48,19 @@ const Layout = {
     document.addEventListener('DOMContentLoaded', () => setTimeout(() => this._mountHelpIcons(), 200));
     this.user = JSON.parse(localStorage.getItem('user') || 'null');
     this.currentCompany = JSON.parse(localStorage.getItem('currentCompany') || 'null');
+    // Deep-link override — when an external system sends the user to a URL
+    // with ?company=X (typically from the DeepLinkRewriter on the server),
+    // honor that immediately so the page that follows queries the right
+    // tenant. Without this the cached currentCompany would mask the redirect.
+    try {
+      const qCompany = new URLSearchParams(location.search).get('company');
+      if (qCompany && /^[0-9a-f-]{36}$/i.test(qCompany) && qCompany !== this.currentCompany?.id) {
+        // Stash a minimal company object until loadCompanies() repopulates the
+        // full record from the API. id-only is enough for getCompanyId().
+        this.currentCompany = { id: qCompany };
+        localStorage.setItem('currentCompany', JSON.stringify({ id: qCompany }));
+      }
+    } catch { /* malformed URL — fall through to cached company */ }
     // Restore cached subscription so menu renders correctly on first paint
     try {
       const cached = JSON.parse(localStorage.getItem('subscription') || 'null');
@@ -61,7 +74,19 @@ const Layout = {
       const cachedPerms = JSON.parse(localStorage.getItem('myPermissions') || 'null');
       if (cachedPerms) this.myPermissions = cachedPerms;
     } catch {}
-    if (!localStorage.getItem('token')) { window.location.href = '/login.html'; return false; }
+    if (!localStorage.getItem('token')) {
+      // Preserve the deep-link target so the user lands on the right page
+      // after login — without this we'd send them to / and forget the
+      // /{cid}/journals/{id} they came from.
+      try {
+        const here = location.pathname + location.search + location.hash;
+        if (here && here !== '/' && !here.startsWith('/login') && !here.startsWith('/register')) {
+          sessionStorage.setItem('returnTo', here);
+        }
+      } catch {}
+      window.location.href = '/login.html';
+      return false;
+    }
     if (typeof I18n !== 'undefined') I18n.init();
     this.render();
     this.bindEvents();
@@ -642,7 +667,7 @@ const Layout = {
       description: 'งวดบัญชี · Soft Close · Year-End Close (auto JE โอน P&L ไป RE)' },
     { id: 'migration-wizard', label: 'นำเข้าข้อมูลเดิม', icon: '🔄', href: '/pages/migration-wizard.html', feature: 'BasicAccounting',
       description: 'Wizard 3 ขั้น: Upload legacy COA → Map → Validate → Commit opening balances' },
-    { id: 'fixed-assets', label: 'สินทรัพย์ถาวร', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets', _i18nKey: 'nav.fixedAssets',
+    { id: 'fixed-assets', label: 'ทะเบียนสินทรัพย์', icon: '🏢', href: '/pages/fixed-assets.html', feature: 'FixedAssets', _i18nKey: 'nav.fixedAssets',
       description: 'ทะเบียนสินทรัพย์ · คำนวณค่าเสื่อมราคาอัตโนมัติ · จำหน่าย' },
     { id: 'financial-mgmt', label: 'บริหารการเงิน', icon: '💰', href: '/pages/financial-mgmt.html', feature: 'AdvancedReporting', _i18nKey: 'nav.financialMgmt',
       description: 'Cash flow forecast · กระแสเงินสดล่วงหน้า · liquidity analysis' },
@@ -735,9 +760,11 @@ const Layout = {
     { id: 'webhooks', label: 'Webhooks', icon: '🔌', href: '/pages/webhooks.html', feature: 'Webhook', _i18nKey: 'nav.webhooks',
       description: 'ส่ง event ออกไประบบอื่นเมื่อมีการเปลี่ยนแปลง · subscribe/unsubscribe' },
 
-    { section: 'บัญชีผู้ใช้', icon: '💎', description: 'แพ็กเกจ · การใช้งาน · audit log' },
-    { id: 'subscription', label: 'แพ็กเกจของฉัน', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
-      description: 'จัดการแพ็กเกจ · เปรียบเทียบฟีเจอร์ · เปลี่ยน plan · ใบเสร็จ' },
+    { section: 'บัญชีผู้ใช้', icon: '💎', description: 'License · แพ็กเกจ · การใช้งาน · audit log' },
+    { id: 'account-subscription', label: 'License ของฉัน', icon: '🎫', href: '/pages/account-subscription.html',
+      description: 'แพ็กเกจหลัก (User-level) ครอบหลายบริษัทใต้ License เดียว — แนะนำสำหรับเจ้าของหลายบริษัท / นักบัญชีดูแลหลายลูกค้า' },
+    { id: 'subscription', label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
+      description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
     { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
       description: 'การใช้งานเทียบกับ limit · จำนวนเอกสาร · ผู้ใช้ · storage' },
     { id: 'audit', label: 'บันทึกกิจกรรม (Audit)', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit',
@@ -799,6 +826,7 @@ const Layout = {
             <span class="text-sm font-medium">${this.esc(this.user?.fullName || tUser)}</span>
           </div>
           <div class="dropdown-menu" id="userDropdown">
+            <a class="dropdown-item" href="/pages/account-subscription.html">🎫 License ของฉัน</a>
             <a class="dropdown-item" href="/pages/settings.html">⚙️ ${this.esc(tSettings)}</a>
             <div class="dropdown-divider"></div>
             <a class="dropdown-item" href="#" onclick="Layout.logout();return false">🚪 ${this.esc(tLogout)}</a>
@@ -948,6 +976,15 @@ const Layout = {
         if (this.currentCompany?.id === c.id) opt.selected = true;
         select.appendChild(opt);
       });
+      // "+ สร้างบริษัทใหม่" sentinel — triggers the setup overlay so users
+      // who already have one company can spin up another from the same login.
+      const sep = document.createElement('option');
+      sep.disabled = true; sep.textContent = '──────────';
+      select.appendChild(sep);
+      const newOpt = document.createElement('option');
+      newOpt.value = '__create_new__';
+      newOpt.textContent = '+ สร้างบริษัทใหม่';
+      select.appendChild(newOpt);
 
       // Auto-select if only 1 company or no company selected
       if (!this.currentCompany || !companies.find(c => c.id === this.currentCompany.id)) {
@@ -1009,8 +1046,10 @@ const Layout = {
 
   setupStep: 1,
 
-  showCompanySetupPrompt() {
+  showCompanySetupPrompt(opts) {
     this.setupStep = 1;
+    this._setupData = {};
+    this._setupForNewCompany = !!(opts && opts.forNewCompany);
     this.renderSetupStep();
   },
 
@@ -1036,7 +1075,17 @@ const Layout = {
 
     let formContent = '';
     if (this.setupStep === 1) {
+      // For users creating their 2nd+ company, hint that the new company will
+      // automatically use their existing License (Account Plan) so they don't
+      // worry about paying twice. First-time users see the normal hint only.
+      const licenseHint = this._setupForNewCompany
+        ? `<div style="padding:10px 14px;background:#ecfeff;border-radius:8px;border:1px solid #67e8f9;margin-bottom:12px;font-size:13px;color:#0c4a6e">
+            🎫 <strong>License ของคุณจะคุ้มครองบริษัทใหม่อัตโนมัติ</strong> — ถ้ายังเหลือ slot จะถูกผูกเข้า Plan ส่วนตัวให้ทันที (ไม่ต้องจ่ายเพิ่ม) ·
+            <a href="/pages/account-subscription.html" target="_blank" style="color:#0ea5e9;text-decoration:underline">ดูสิทธิ์ของฉัน</a>
+          </div>`
+        : '';
       formContent = `
+        ${licenseHint}
         <div style="padding:10px 14px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe;margin-bottom:16px;font-size:13px;color:#1e40af">
           พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD หรือใส่เลขผู้เสียภาษี 13 หลักเพื่อดึงข้อมูลอัตโนมัติ
         </div>
@@ -1312,6 +1361,15 @@ const Layout = {
     document.addEventListener('change', e => {
       if (e.target.id === 'companySelect') {
         const id = e.target.value;
+        if (id === '__create_new__') {
+          // Reset to the current selection visually, then launch the setup
+          // overlay. Reusing the existing first-time wizard means the create
+          // flow stays consistent — same field validation, same chart-of-
+          // accounts seeding, same trial subscription auto-attach.
+          if (this.currentCompany?.id) e.target.value = this.currentCompany.id;
+          this.showCompanySetupPrompt({ forNewCompany: true });
+          return;
+        }
         if (id) {
           // Keep full company object if available, fallback to { id }
           const full = this.companies?.find(c => c.id === id) || { id };

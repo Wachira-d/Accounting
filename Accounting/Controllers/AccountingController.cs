@@ -94,14 +94,16 @@ public class AccountingController : ControllerBase
         [FromQuery] Guid? projectId = null, [FromQuery] string? tag = null,
         [FromQuery] Guid? sourceDocumentId = null, [FromQuery] string? sourceDocumentNumber = null)
     {
-        var result = await _accountingService.GetJournalEntriesAsync(companyId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId, projectId, tag, sourceDocumentId, sourceDocumentNumber);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _accountingService.GetJournalEntriesForUserAsync(companyId, userId, new PagedRequest(page, pageSize, search), status, fromDate, toDate, journalType, dimensionId, branchId, projectId, tag, sourceDocumentId, sourceDocumentNumber);
         return Ok(new ApiResponse<PagedResponse<JournalEntryResponse>>(true, result));
     }
 
     [HttpGet("journals/{entryId:guid}")]
     public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> GetJournalEntry(Guid companyId, Guid entryId)
     {
-        var result = await _accountingService.GetJournalEntryAsync(companyId, entryId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _accountingService.GetJournalEntryForUserAsync(companyId, entryId, userId);
         return Ok(new ApiResponse<JournalEntryResponse>(true, result));
     }
 

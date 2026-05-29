@@ -86,6 +86,16 @@
             <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ</label><input type="number" class="form-input" id="fMinStock" value="0"></div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <div class="form-group">
+            <label class="form-label">🍳 สถานีพิมพ์ (POS multi-printer) <span style="font-size:11px;color:#64748b;font-weight:400">— ใช้ตอนพิมพ์ใบออเดอร์ส่งครัว/บาร์</span></label>
+            <select class="form-select" id="fPrintStation">
+              <option value="">— ไม่ระบุ (พิมพ์ที่แคชเชียร์ปกติ) —</option>
+              <option value="Kitchen-Hot">🔥 ครัวร้อน (Kitchen-Hot)</option>
+              <option value="Kitchen-Cold">❄️ ครัวเย็น (Kitchen-Cold)</option>
+              <option value="Bar">🍹 บาร์ (Bar)</option>
+              <option value="Drinks">🥤 เครื่องดื่ม (Drinks)</option>
+            </select>
+          </div>
 
           <!-- Image gallery: only enabled after save (need productId).
                First image becomes the storefront thumbnail. -->
@@ -290,6 +300,7 @@
         document.getElementById('formTitle').textContent='เพิ่มสินค้า';
         document.getElementById('editId').value='';
         ['fCode','fName','fNameEn','fCategory','fSku','fDesc'].forEach(id=>document.getElementById(id).value='');
+        document.getElementById('fPrintStation').value='';
         document.getElementById('fUnit').value='ชิ้น';document.getElementById('fSellPrice').value='';document.getElementById('fCostPrice').value='0';
         document.getElementById('fType').value='Product';document.getElementById('fVat').value='7';document.getElementById('fVatIncl').checked=false;
         document.getElementById('fTrackStock').checked=true;document.getElementById('fMinStock').value='0';document.getElementById('fCode').disabled=false;
@@ -308,6 +319,7 @@
         document.getElementById('fVat').value=p.vatRate==0?'0':'7';document.getElementById('fVatIncl').checked=p.isVatIncluded;
         document.getElementById('fTrackStock').checked=p.trackStock;document.getElementById('fMinStock').value=p.minimumStock;
         document.getElementById('fDesc').value=p.description||'';
+        document.getElementById('fPrintStation').value=p.printStation||'';
         this._toggleImageSection(p);
         Layout.openModal('formModal');
       },
@@ -372,8 +384,8 @@
         const id=document.getElementById('editId').value;
         try {
           let saved;
-          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null}); }
-          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value)||0,vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:parseInt(document.getElementById('fMinStock').value)||0,description:document.getElementById('fDesc').value||null}); }
+          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
+          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value)||0,vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:parseInt(document.getElementById('fMinStock').value)||0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
           Layout.toast(id?'แก้ไขสำเร็จ':'เพิ่มสินค้าสำเร็จ — ตอนนี้อัพโหลดรูปได้แล้ว');
           await this.load();
           // Keep modal open so the user can upload images right after creating —

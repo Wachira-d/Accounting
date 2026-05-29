@@ -604,6 +604,271 @@ public partial class PosService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>Set a new quantity on an existing line. Used by the POS UI's
+    /// +/- buttons after the order has been created on the server — keeps the
+    /// local cart and the server in sync so subtotal/VAT don't drift.</summary>
+    public async Task<OrderResponse> UpdateOrderItemQuantityAsync(Guid companyId, Guid orderId, Guid itemId, decimal newQuantity)
+    {
+        if (newQuantity < 0) throw new ArgumentException("จำนวนต้องไม่ติดลบ");
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — แก้ไขจำนวนไม่ได้");
+        var item = order.Items.FirstOrDefault(i => i.Id == itemId && !i.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการ");
+
+        if (newQuantity == 0)
+        {
+            item.IsDeleted = true;
+        }
+        else
+        {
+            item.Quantity = newQuantity;
+            // Recompute per-line totals; VAT is computed at order level by RecalculateOrder.
+            item.SubTotal = Math.Round(item.UnitPrice * newQuantity - item.DiscountAmount, 2, MidpointRounding.AwayFromZero);
+            item.TotalAmount = item.SubTotal;
+        }
+
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    /// <summary>Apply a per-line discount. Either DiscountAmount (฿) or DiscountPercent
+    /// (%) can be set; passing percent re-computes amount from quantity × unit price.
+    /// Triggers RecalculateOrder so VAT / Service Charge / Net adjust correctly.</summary>
+    public async Task<OrderResponse> SetItemDiscountAsync(Guid companyId, Guid orderId, Guid itemId, decimal? discountAmount, decimal? discountPercent)
+    {
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — แก้ไขส่วนลดไม่ได้");
+        var item = order.Items.FirstOrDefault(i => i.Id == itemId && !i.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการ");
+
+        var gross = Math.Round(item.UnitPrice * item.Quantity, 2, MidpointRounding.AwayFromZero);
+        if (discountPercent.HasValue)
+        {
+            if (discountPercent.Value < 0 || discountPercent.Value > 100)
+                throw new ArgumentException("ส่วนลดเปอร์เซ็นต์ต้องอยู่ระหว่าง 0-100");
+            item.DiscountPercent = discountPercent.Value;
+            item.DiscountAmount = Math.Round(gross * discountPercent.Value / 100m, 2, MidpointRounding.AwayFromZero);
+        }
+        else if (discountAmount.HasValue)
+        {
+            if (discountAmount.Value < 0) throw new ArgumentException("ส่วนลดต้องไม่ติดลบ");
+            if (discountAmount.Value > gross) throw new ArgumentException("ส่วนลดเกินยอดรายการ");
+            item.DiscountAmount = discountAmount.Value;
+            item.DiscountPercent = gross > 0 ? Math.Round(discountAmount.Value * 100 / gross, 2) : 0;
+        }
+        else
+        {
+            // No args = clear discount.
+            item.DiscountAmount = 0;
+            item.DiscountPercent = 0;
+        }
+
+        item.SubTotal = Math.Round(gross - item.DiscountAmount, 2, MidpointRounding.AwayFromZero);
+        item.TotalAmount = item.SubTotal;
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    /// <summary>Set the tip amount on an open order. Re-runs RecalculateOrder so
+    /// NetAmount (what the customer hands over) reflects tip on top of bill.</summary>
+    public async Task<OrderResponse> SetTipAsync(Guid companyId, Guid orderId, decimal tipAmount)
+    {
+        if (tipAmount < 0) throw new ArgumentException("ทิปต้องไม่ติดลบ");
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — เพิ่ม/แก้ทิปไม่ได้");
+        order.TipAmount = Math.Round(tipAmount, 2, MidpointRounding.AwayFromZero);
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    /// <summary>Apply a coupon code. Resolves against active CmsCoupons first
+    /// (cross-channel — same codes the storefront accepts work in POS too), and
+    /// records the absolute discount amount as CouponDiscountAmount. Empty code
+    /// clears the coupon.</summary>
+    public async Task<OrderResponse> ApplyCouponAsync(Guid companyId, Guid orderId, string? code)
+    {
+        var order = await _db.PosOrders.Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — เปลี่ยนคูปองไม่ได้");
+
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        var subtotal = order.Items.Where(i => !i.IsDeleted).Sum(i => i.SubTotal);
+
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            order.CouponCode = null;
+            order.CouponDiscountAmount = 0;
+            RecalculateOrder(order, vatRate);
+            await _db.SaveChangesAsync();
+            return await GetOrderAsync(companyId, orderId);
+        }
+
+        var trimmedCode = code.Trim().ToUpperInvariant();
+        var now = DateTime.UtcNow;
+        // SiteCoupon is the canonical coupon table — cross-channel by design,
+        // shared between storefront and POS. Filter by company so cashier can't
+        // use another company's code accidentally.
+        var coupon = await _db.Set<SiteCoupon>().AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId
+                && c.Code.ToUpper() == trimmedCode
+                && c.IsActive
+                && !c.IsDeleted
+                && (c.StartsAt == null || c.StartsAt <= now)
+                && (c.ExpiresAt == null || c.ExpiresAt >= now)
+                && (c.MaxUses == null || c.CurrentUses < c.MaxUses));
+        if (coupon == null)
+            throw new InvalidOperationException($"คูปอง \"{trimmedCode}\" ไม่ถูกต้อง / หมดอายุ / หมดสิทธิ์ใช้");
+
+        if (coupon.MinOrderAmount.HasValue && subtotal < coupon.MinOrderAmount.Value)
+            throw new InvalidOperationException($"ยอดขั้นต่ำสำหรับคูปองนี้ {coupon.MinOrderAmount:N2} บาท");
+
+        decimal discount = coupon.DiscountType switch
+        {
+            CouponDiscountType.Percentage  => Math.Round(subtotal * coupon.DiscountValue / 100m, 2, MidpointRounding.AwayFromZero),
+            CouponDiscountType.FixedAmount => coupon.DiscountValue,
+            CouponDiscountType.FreeShipping => 0, // POS = walk-in; free shipping doesn't apply
+            _ => 0
+        };
+        if (coupon.MaxDiscountAmount.HasValue && discount > coupon.MaxDiscountAmount.Value)
+            discount = coupon.MaxDiscountAmount.Value;
+        if (discount > subtotal) discount = subtotal;
+
+        order.CouponCode = trimmedCode;
+        order.CouponDiscountAmount = discount;
+        RecalculateOrder(order, vatRate);
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    /// <summary>Split an open order into N child orders. Each entry in
+    /// <paramref name="itemGroups"/> is the list of item-ids that belongs to
+    /// that check. Items not included are kept on the parent. We create child
+    /// orders with copies of the original items (qty / price / discount intact)
+    /// then void the items left behind on the parent.
+    /// Returns parent + children in one list so the cashier can decide which to
+    /// keep open. Payments cannot have been recorded on the source order.</summary>
+    public async Task<List<OrderResponse>> SplitOrderAsync(Guid companyId, Guid orderId, List<List<Guid>> itemGroups, string userId)
+    {
+        if (itemGroups == null || itemGroups.Count == 0)
+            throw new ArgumentException("ต้องระบุการแบ่งอย่างน้อย 1 บิล");
+        var parent = await _db.PosOrders
+            .Include(o => o.Items).ThenInclude(i => i.Modifiers)
+            .Include(o => o.Payments)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (parent.Status == PosOrderStatus.Completed || parent.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิดบิลหรือยกเลิกแล้ว — แยกบิลไม่ได้");
+        if (parent.Payments.Any(p => !p.IsDeleted))
+            throw new InvalidOperationException("มีการชำระเงินแล้ว — ยกเลิกการชำระก่อนแยกบิล");
+
+        // Validate: every requested item id belongs to the parent + no item assigned twice.
+        var validIds = parent.Items.Where(i => !i.IsDeleted).Select(i => i.Id).ToHashSet();
+        var seen = new HashSet<Guid>();
+        foreach (var group in itemGroups)
+        {
+            foreach (var id in group)
+            {
+                if (!validIds.Contains(id)) throw new ArgumentException($"รายการ {id} ไม่อยู่ในออเดอร์ต้นทาง");
+                if (!seen.Add(id)) throw new ArgumentException($"รายการ {id} ถูกระบุซ้ำในการแยกบิล");
+            }
+        }
+
+        var vatRate = await GetCompanyVatRateAsync(companyId);
+        var posYm = DateTime.UtcNow.ToString("yyyyMM");
+        var posPrefix = $"POS-{posYm}-";
+
+        // Compute next number once, then increment per child to avoid round trips.
+        var maxPos = await _db.PosOrders
+            .IgnoreQueryFilters()
+            .Where(o => o.CompanyId == companyId && o.OrderNumber.StartsWith(posPrefix))
+            .Select(o => o.OrderNumber)
+            .MaxAsync() as string;
+        var seq = 1;
+        if (maxPos != null && int.TryParse(maxPos.Substring(posPrefix.Length), out var parsed)) seq = parsed + 1;
+
+        var children = new List<PosOrder>();
+        var splitIdx = 1;
+        foreach (var group in itemGroups)
+        {
+            if (group.Count == 0) { splitIdx++; continue; }
+            var child = new PosOrder
+            {
+                CompanyId = companyId,
+                SessionId = parent.SessionId,
+                OrderNumber = $"{posPrefix}{seq:D4}",
+                OrderType = parent.OrderType,
+                CustomerName = parent.CustomerName,
+                TableNumber = parent.TableNumber == null ? null : $"{parent.TableNumber}/{splitIdx}",
+                Notes = $"แยกจาก {parent.OrderNumber} (ส่วนที่ {splitIdx})",
+                Reference = parent.OrderNumber,
+                Status = PosOrderStatus.Open,
+                CreatedBy = userId
+            };
+            seq++; splitIdx++;
+            foreach (var srcItemId in group)
+            {
+                var srcItem = parent.Items.First(i => i.Id == srcItemId);
+                var copy = new PosOrderItem
+                {
+                    CompanyId = companyId,
+                    ProductId = srcItem.ProductId,
+                    ServicePackageId = srcItem.ServicePackageId,
+                    ItemName = srcItem.ItemName,
+                    ItemCode = srcItem.ItemCode,
+                    Unit = srcItem.Unit,
+                    Quantity = srcItem.Quantity,
+                    UnitPrice = srcItem.UnitPrice,
+                    DiscountAmount = srcItem.DiscountAmount,
+                    DiscountPercent = srcItem.DiscountPercent,
+                    SubTotal = srcItem.SubTotal,
+                    TotalAmount = srcItem.TotalAmount,
+                    VatAmount = 0,
+                    LineOrder = srcItem.LineOrder,
+                    Status = srcItem.Status,
+                    Notes = srcItem.Notes,
+                };
+                child.Items.Add(copy);
+                // Mark the source item as moved (delete-on-parent).
+                srcItem.IsDeleted = true;
+            }
+            RecalculateOrder(child, vatRate);
+            _db.PosOrders.Add(child);
+            children.Add(child);
+        }
+
+        // Recompute parent — items left after split (if any) stay there.
+        RecalculateOrder(parent, vatRate);
+        // If everything was moved out, void the parent so reports don't see a ghost row.
+        if (!parent.Items.Any(i => !i.IsDeleted))
+            parent.Status = PosOrderStatus.Voided;
+
+        await _db.SaveChangesAsync();
+
+        var result = new List<OrderResponse>();
+        if (parent.Status != PosOrderStatus.Voided)
+            result.Add(await GetOrderAsync(companyId, parent.Id));
+        foreach (var c in children)
+            result.Add(await GetOrderAsync(companyId, c.Id));
+        return result;
+    }
+
     public async Task<OrderResponse> UpdateItemStatusAsync(Guid companyId, Guid orderId, Guid itemId, UpdateItemStatusRequest request)
     {
         var item = await _db.PosOrderItems.FirstOrDefaultAsync(i => i.Id == itemId && i.OrderId == orderId)
@@ -659,6 +924,22 @@ public partial class PosService
         order.Status = PosOrderStatus.Completed;
         order.CompletedAt = DateTime.UtcNow;
 
+        // Loyalty: award 1 point per ฿100 spent (NetAmount excluding tip) and
+        // bump visit counter / lastVisit on the linked Contact. Floor — fractions
+        // don't round up so a ฿149 sale earns 1 not 2.
+        if (order.CustomerId.HasValue)
+        {
+            var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == order.CustomerId.Value && c.CompanyId == companyId);
+            if (contact != null)
+            {
+                var spend = order.NetAmount - order.TipAmount;
+                var earn = (int)Math.Floor(spend / 100m);
+                if (earn > 0) contact.LoyaltyPoints += earn;
+                contact.LastVisitAt = DateTime.UtcNow;
+                contact.TotalVisitCount += 1;
+            }
+        }
+
         // Create journal entry for accounting integration
         await CreateSalesJournalEntryAsync(companyId, order, userId);
 
@@ -699,20 +980,44 @@ public partial class PosService
 
     private async Task CreateSalesJournalEntryAsync(Guid companyId, PosOrder order, string userId)
     {
-        // Find accounts: Cash/Bank (Dr), Sales Revenue (Cr), VAT Payable (Cr)
-        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11111")
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
+        // Sales / VAT / COGS / Inventory accounts — single source per company.
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
 
-        if (cashAccount == null || salesAccount == null) return; // Skip if no accounts configured
+        if (salesAccount == null) return; // Skip if no sales account configured
 
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
-        // Debit: Cash / Bank
-        lines.Add(new(cashAccount.Id, order.NetAmount, 0, $"รับเงิน POS #{order.OrderNumber}"));
+        // Debit: one line per payment method (Cash → 1011, BankTransfer/PromptPay → 1012,
+        // CreditCard → 1131 บัตรเครดิตค้างรับ). When the order has multiple payments
+        // — e.g. half cash half transfer — we record each leg into its own account so
+        // the GL reconciles to the bank/cash position correctly.
+        var paymentsToBook = order.Payments?.Where(p => !p.IsDeleted).ToList() ?? new List<PosPayment>();
+        if (paymentsToBook.Count == 0)
+        {
+            // No payment records — fall back to a single debit using the default cash
+            // account so the JE still balances. Older orders without explicit payment
+            // method end up here.
+            var cashAccount = await ResolvePaymentAccountAsync(companyId, PaymentMethod.Cash);
+            if (cashAccount == null) return;
+            lines.Add(new(cashAccount.Id, order.NetAmount, 0, $"รับเงิน POS #{order.OrderNumber}"));
+        }
+        else
+        {
+            foreach (var pay in paymentsToBook)
+            {
+                var acct = await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod);
+                if (acct == null) continue;
+                // Use Amount (allocated to invoice), not ReceivedAmount, so cash-tendered-with-change
+                // posts the invoice value, not the full bill the customer handed over.
+                var debit = pay.Amount;
+                if (debit <= 0) continue;
+                var methodLabel = PaymentMethodThaiLabel(pay.PaymentMethod);
+                lines.Add(new(acct.Id, debit, 0, $"รับเงิน {methodLabel} POS #{order.OrderNumber}"));
+            }
+        }
 
         // Credit: Sales Revenue (net of VAT)
         var revenueAmount = order.NetAmount - order.VatAmount;
@@ -721,6 +1026,26 @@ public partial class PosService
         // Credit: VAT Payable (if any)
         if (order.VatAmount > 0 && vatAccount != null)
             lines.Add(new(vatAccount.Id, 0, order.VatAmount, $"ภาษีขาย POS #{order.OrderNumber}"));
+
+        // Credit: เงินรับฝาก-ทิปพนักงาน (Liability) — tip is NOT revenue, it's
+        // held in trust for the staff and paid out via payroll. Cr 2160 by
+        // default; fall back to any 21xx liability with "ทิป" in name.
+        if (order.TipAmount > 0)
+        {
+            var tipAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "2160")
+                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("216") && a.Level >= 4)
+                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("21") && a.AccountName.Contains("ทิป") && a.Level >= 4);
+            if (tipAccount != null)
+                lines.Add(new(tipAccount.Id, 0, order.TipAmount, $"ทิปลูกค้า POS #{order.OrderNumber}"));
+            // If no tip-account exists, fold into Sales so JE balances — better
+            // than dropping the entry. The log warning lets owner correct later.
+            else
+            {
+                _logger.LogWarning("No tip-liability account (2160) for company {Cid}; tip {Tip:N2} posted to sales for order {Order}.",
+                    companyId, order.TipAmount, order.OrderNumber);
+                lines.Add(new(salesAccount.Id, 0, order.TipAmount, $"ทิป (ไม่มีบัญชี 2160) POS #{order.OrderNumber}"));
+            }
+        }
 
         // COGS: Dr ต้นทุนขาย / Cr สินค้าคงเหลือ — record cost of goods sold so
         // the P&L gross profit is correct (was previously omitted).
@@ -927,15 +1252,21 @@ public partial class PosService
     {
         var activeItems = order.Items.Where(i => !i.IsDeleted).ToList();
         order.SubTotal = activeItems.Sum(i => i.SubTotal);
-        order.DiscountAmount = order.SubTotal * order.DiscountPercent / 100;
+        // DiscountAmount = % discount + coupon discount. CouponDiscountAmount is
+        // tracked separately for reporting but it stacks on the same line.
+        var pctDiscount = order.SubTotal * order.DiscountPercent / 100;
+        order.DiscountAmount = pctDiscount + order.CouponDiscountAmount;
         var afterDiscount = order.SubTotal - order.DiscountAmount;
+        if (afterDiscount < 0) afterDiscount = 0; // coupon can't drive total negative
         order.ServiceChargeAmount = Math.Round(afterDiscount * order.ServiceChargePercent / 100, 2, MidpointRounding.AwayFromZero);
         order.TotalAmount = afterDiscount + order.ServiceChargeAmount;
         order.VatAmount = vatRate > 0
             ? Math.Round(order.TotalAmount * vatRate / (100 + vatRate), 2, MidpointRounding.AwayFromZero)
             : 0;
         order.RoundingAmount = Math.Round(order.TotalAmount) - order.TotalAmount;
-        order.NetAmount = order.TotalAmount + order.RoundingAmount;
+        // Tip is added AFTER rounding so the lookup amount stays clean — what the
+        // customer hands over is NetAmount + TipAmount.
+        order.NetAmount = order.TotalAmount + order.RoundingAmount + order.TipAmount;
     }
 
     private static OrderResponse MapOrder(PosOrder o) => new(
@@ -949,7 +1280,10 @@ public partial class PosService
         o.Items.Where(i => !i.IsDeleted).Select(MapOrderItem).ToList(),
         o.Payments.Select(MapPayment).ToList(),
         DocumentId: o.DocumentId,
-        DocumentNumber: null);
+        DocumentNumber: null,
+        TipAmount: o.TipAmount,
+        CouponCode: o.CouponCode,
+        CouponDiscountAmount: o.CouponDiscountAmount);
 
     private static OrderItemResponse MapOrderItem(PosOrderItem i) => new(
         i.Id, i.ProductId, i.ServicePackageId, i.ItemName, i.ItemCode,
@@ -961,4 +1295,218 @@ public partial class PosService
 
     private static PaymentResponse MapPayment(PosPayment p) => new(
         p.Id, p.PaymentMethod, p.Amount, p.ReceivedAmount, p.ChangeAmount, p.ReferenceNo, p.CardLastFour, p.PaidAt);
+
+    // Cash/bank/card account picker keyed by PaymentMethod. Defaults match
+    // the Thai SME chart-of-accounts seeded by SeedCoaService:
+    //   1011 เงินสด / 1012 ธนาคาร / 1131 บัตรเครดิตค้างรับ
+    // Fallback by prefix lets companies with a customized COA still resolve.
+    private async Task<Accounting.Models.Entities.ChartOfAccount?> ResolvePaymentAccountAsync(Guid companyId, PaymentMethod method)
+    {
+        string preferred; string prefix;
+        switch (method)
+        {
+            case PaymentMethod.Cash:
+                preferred = "1011"; prefix = "111"; break;
+            case PaymentMethod.BankTransfer:
+            case PaymentMethod.PromptPay:
+            case PaymentMethod.DirectDebit:
+            case PaymentMethod.EWallet:
+                preferred = "1012"; prefix = "112"; break;
+            case PaymentMethod.CreditCard:
+                preferred = "1131"; prefix = "113"; break;
+            case PaymentMethod.Cheque:
+                preferred = "1012"; prefix = "112"; break;
+            default:
+                preferred = "1011"; prefix = "111"; break;
+        }
+
+        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == preferred)
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.Level >= 4);
+    }
+
+    /// <summary>Merge one or more open orders into a destination order — items
+    /// move to the destination, source orders get voided. Used when two parties
+    /// at separate tables decide to share one bill. Both sides must be Open,
+    /// unpaid, and belong to the same session/company. Returns the destination.</summary>
+    public async Task<OrderResponse> MergeOrdersAsync(Guid companyId, Guid destinationOrderId, List<Guid> sourceOrderIds, string userId)
+    {
+        if (sourceOrderIds == null || sourceOrderIds.Count == 0)
+            throw new ArgumentException("ระบุ source order อย่างน้อย 1 บิล");
+        if (sourceOrderIds.Contains(destinationOrderId))
+            throw new ArgumentException("source ห้ามมีปลายทางอยู่ในนั้น");
+
+        var dest = await _db.PosOrders.Include(o => o.Items).Include(o => o.Payments)
+            .FirstOrDefaultAsync(o => o.Id == destinationOrderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบบิลปลายทาง");
+        if (dest.Status == PosOrderStatus.Completed || dest.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("บิลปลายทางปิดแล้ว — รวมไม่ได้");
+        if (dest.Payments.Any(p => !p.IsDeleted))
+            throw new InvalidOperationException("บิลปลายทางมีการชำระเงินแล้ว — ยกเลิกการชำระก่อน");
+
+        var sources = await _db.PosOrders.Include(o => o.Items).Include(o => o.Payments)
+            .Where(o => sourceOrderIds.Contains(o.Id) && o.CompanyId == companyId && !o.IsDeleted)
+            .ToListAsync();
+        if (sources.Count != sourceOrderIds.Count)
+            throw new InvalidOperationException("มีบิล source บางใบหาไม่เจอ / ถูกลบไปแล้ว");
+        foreach (var src in sources)
+        {
+            if (src.Status == PosOrderStatus.Completed || src.Status == PosOrderStatus.Voided)
+                throw new InvalidOperationException($"บิล {src.OrderNumber} ปิดแล้ว — รวมไม่ได้");
+            if (src.Payments.Any(p => !p.IsDeleted))
+                throw new InvalidOperationException($"บิล {src.OrderNumber} มีการชำระเงินแล้ว — ยกเลิกก่อน");
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var nextLine = dest.Items.Where(i => !i.IsDeleted).Select(i => i.LineOrder).DefaultIfEmpty(0).Max() + 1;
+            foreach (var src in sources)
+            {
+                foreach (var srcItem in src.Items.Where(i => !i.IsDeleted))
+                {
+                    dest.Items.Add(new PosOrderItem
+                    {
+                        CompanyId = companyId,
+                        ProductId = srcItem.ProductId,
+                        ServicePackageId = srcItem.ServicePackageId,
+                        ItemName = srcItem.ItemName,
+                        ItemCode = srcItem.ItemCode,
+                        Unit = srcItem.Unit,
+                        Quantity = srcItem.Quantity,
+                        UnitPrice = srcItem.UnitPrice,
+                        DiscountAmount = srcItem.DiscountAmount,
+                        DiscountPercent = srcItem.DiscountPercent,
+                        SubTotal = srcItem.SubTotal,
+                        TotalAmount = srcItem.TotalAmount,
+                        VatAmount = 0,
+                        LineOrder = nextLine++,
+                        Status = srcItem.Status,
+                        Notes = srcItem.Notes != null ? $"{srcItem.Notes} [จาก {src.OrderNumber}]" : $"[จาก {src.OrderNumber}]",
+                    });
+                    srcItem.IsDeleted = true;
+                }
+                src.Status = PosOrderStatus.Voided;
+                src.Notes = string.IsNullOrEmpty(src.Notes)
+                    ? $"รวมเข้าบิล {dest.OrderNumber}"
+                    : $"{src.Notes} / รวมเข้าบิล {dest.OrderNumber}";
+                src.UpdatedBy = userId;
+            }
+
+            // Append a note on destination so the audit trail tells the story.
+            var mergedFrom = string.Join(", ", sources.Select(s => s.OrderNumber));
+            dest.Notes = string.IsNullOrEmpty(dest.Notes)
+                ? $"รวมจากบิล: {mergedFrom}"
+                : $"{dest.Notes} / รวมจากบิล: {mergedFrom}";
+            dest.UpdatedBy = userId;
+
+            var vatRate = await GetCompanyVatRateAsync(companyId);
+            RecalculateOrder(dest, vatRate);
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+        return await GetOrderAsync(companyId, dest.Id);
+    }
+
+    /// <summary>Move an order to a different table number. The item list,
+    /// payments, and totals stay intact — only the TableNumber changes,
+    /// with an audit note appended.</summary>
+    public async Task<OrderResponse> TransferTableAsync(Guid companyId, Guid orderId, string? newTableNumber, string userId)
+    {
+        var order = await _db.PosOrders.FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิด/ยกเลิกแล้ว — ย้ายโต๊ะไม่ได้");
+        var old = order.TableNumber ?? "(ไม่ระบุ)";
+        var dest = string.IsNullOrWhiteSpace(newTableNumber) ? null : newTableNumber.Trim();
+        order.TableNumber = dest;
+        order.Notes = string.IsNullOrEmpty(order.Notes)
+            ? $"ย้ายโต๊ะ {old} → {dest ?? "(ไม่ระบุ)"}"
+            : $"{order.Notes} / ย้ายโต๊ะ {old} → {dest ?? "(ไม่ระบุ)"}";
+        order.UpdatedBy = userId;
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
+    /// <summary>Email a plain-HTML copy of the receipt to a customer address.
+    /// Uses the company's email sender (Microsoft Graph / Gmail / SMTP) — falls
+    /// back to the global SMTP if no per-company config exists. The order must
+    /// be Completed; we don't send drafts.</summary>
+    public async Task EmailReceiptAsync(Guid companyId, Guid orderId, string email)
+    {
+        if (_emailFactory == null)
+            throw new InvalidOperationException("ระบบส่งอีเมลยังไม่ตั้งค่า — ติดต่อแอดมิน");
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+            throw new ArgumentException("อีเมลไม่ถูกต้อง");
+        var order = await _db.PosOrders
+            .Include(o => o.Items).Include(o => o.Payments)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status != PosOrderStatus.Completed)
+            throw new InvalidOperationException("ออเดอร์ยังไม่ปิดบิล — ส่งใบเสร็จไม่ได้");
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        var companyName = company?.Name ?? company?.NameEn ?? "ร้านค้า";
+
+        var itemsHtml = string.Concat(order.Items.Where(i => !i.IsDeleted).Select(i =>
+            $"<tr><td>{System.Net.WebUtility.HtmlEncode(i.ItemName)}</td><td style='text-align:center'>{i.Quantity}</td><td style='text-align:right'>{i.UnitPrice:N2}</td><td style='text-align:right'>{i.TotalAmount:N2}</td></tr>"));
+        var paymentsHtml = string.Concat(order.Payments.Where(p => !p.IsDeleted).Select(p =>
+            $"<tr><td>{PaymentMethodThaiLabel(p.PaymentMethod)}</td><td style='text-align:right'>{p.Amount:N2}</td></tr>"));
+
+        var html = $@"<!DOCTYPE html><html><body style='font-family:Tahoma,sans-serif;max-width:520px;margin:auto;padding:20px;color:#0f172a'>
+<h2 style='text-align:center;margin:0 0 4px'>{System.Net.WebUtility.HtmlEncode(companyName)}</h2>
+<div style='text-align:center;color:#64748b;font-size:13px;margin-bottom:14px'>ใบเสร็จรับเงิน #{order.OrderNumber}</div>
+<div style='border-top:1px dashed #cbd5e1;border-bottom:1px dashed #cbd5e1;padding:10px 0'>
+  <div>วันที่: {order.CompletedAt:yyyy-MM-dd HH:mm}</div>
+  {(string.IsNullOrEmpty(order.TableNumber) ? "" : $"<div>โต๊ะ: {order.TableNumber}</div>")}
+  {(string.IsNullOrEmpty(order.CustomerName) ? "" : $"<div>ลูกค้า: {System.Net.WebUtility.HtmlEncode(order.CustomerName)}</div>")}
+</div>
+<table style='width:100%;border-collapse:collapse;margin:14px 0;font-size:13px'>
+  <thead><tr style='background:#f1f5f9'><th style='text-align:left;padding:6px'>รายการ</th><th style='padding:6px'>จน.</th><th style='text-align:right;padding:6px'>ราคา</th><th style='text-align:right;padding:6px'>รวม</th></tr></thead>
+  <tbody>{itemsHtml}</tbody>
+</table>
+<div style='border-top:1px dashed #cbd5e1;padding-top:10px'>
+  <div style='display:flex;justify-content:space-between'><span>รวม</span><span>{order.SubTotal:N2}</span></div>
+  {(order.DiscountAmount > 0 ? $"<div style='display:flex;justify-content:space-between;color:#dc2626'><span>ส่วนลด</span><span>-{order.DiscountAmount:N2}</span></div>" : "")}
+  {(order.ServiceChargeAmount > 0 ? $"<div style='display:flex;justify-content:space-between'><span>Service Charge</span><span>{order.ServiceChargeAmount:N2}</span></div>" : "")}
+  {(order.VatAmount > 0 ? $"<div style='display:flex;justify-content:space-between'><span>VAT</span><span>{order.VatAmount:N2}</span></div>" : "")}
+  {(order.TipAmount > 0 ? $"<div style='display:flex;justify-content:space-between;color:#16a34a'><span>ทิป</span><span>{order.TipAmount:N2}</span></div>" : "")}
+  <div style='display:flex;justify-content:space-between;font-weight:700;font-size:16px;border-top:1px solid #0f172a;padding-top:6px;margin-top:6px'><span>ยอดสุทธิ</span><span>{order.NetAmount:N2} ฿</span></div>
+</div>
+<table style='width:100%;margin-top:14px;font-size:13px'>
+  <thead><tr style='background:#f1f5f9'><th style='text-align:left;padding:6px'>การชำระเงิน</th><th style='text-align:right;padding:6px'>จำนวน</th></tr></thead>
+  <tbody>{paymentsHtml}</tbody>
+</table>
+<div style='text-align:center;color:#64748b;font-size:11px;margin-top:20px'>ขอบคุณที่ใช้บริการ — ส่งจากระบบ POS อัตโนมัติ</div>
+</body></html>";
+
+        var sender = await _emailFactory.GetSenderAsync(companyId);
+        var msg = new EmailMessage
+        {
+            FromAddress = company?.Email ?? "noreply@accounting.local",
+            FromName = companyName,
+            To = new List<string> { email.Trim() },
+            Subject = $"ใบเสร็จรับเงิน #{order.OrderNumber} - {companyName}",
+            HtmlBody = html,
+        };
+        var result = await sender.SendAsync(msg);
+        if (!result.Success)
+            throw new InvalidOperationException("ส่งอีเมลไม่สำเร็จ: " + result.ErrorMessage);
+        _logger.LogInformation("Receipt for order {Order} emailed to {Email}", order.OrderNumber, email);
+    }
+
+    private static string PaymentMethodThaiLabel(PaymentMethod m) => m switch
+    {
+        PaymentMethod.Cash         => "เงินสด",
+        PaymentMethod.BankTransfer => "โอนธนาคาร",
+        PaymentMethod.PromptPay    => "พร้อมเพย์",
+        PaymentMethod.CreditCard   => "บัตรเครดิต",
+        PaymentMethod.Cheque       => "เช็ค",
+        PaymentMethod.DirectDebit  => "หักบัญชี",
+        PaymentMethod.EWallet      => "e-Wallet",
+        _                          => m.ToString()
+    };
 }

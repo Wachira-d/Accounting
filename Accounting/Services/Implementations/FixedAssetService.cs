@@ -23,6 +23,14 @@ public class FixedAssetService : IFixedAssetService
         if (existing)
             throw new InvalidOperationException($"รหัสสินทรัพย์ {request.AssetCode} ซ้ำ");
 
+        // For a Right-of-Use lease, useful life defaults to the lease term if
+        // the caller didn't supply it explicitly — TFRS 16 amortizes over the
+        // shorter of useful life or lease term, and lease term is the safer
+        // default for an intangible right.
+        var effectiveLife = request.UsefulLifeMonths;
+        if (request.AssetType == AssetType.RightOfUse && effectiveLife <= 0 && request.LeaseTermMonths.HasValue)
+            effectiveLife = request.LeaseTermMonths.Value;
+
         var asset = new FixedAsset
         {
             CompanyId = companyId,
@@ -35,12 +43,17 @@ public class FixedAssetService : IFixedAssetService
             PurchaseDate = request.PurchaseDate,
             PurchaseCost = request.PurchaseCost,
             SalvageValue = request.SalvageValue,
-            UsefulLifeMonths = request.UsefulLifeMonths,
+            UsefulLifeMonths = effectiveLife,
             DepreciationMethod = request.DepreciationMethod,
             NetBookValue = request.PurchaseCost,
             AssetAccountId = request.AssetAccountId,
             DepreciationExpenseAccountId = request.DepreciationExpenseAccountId,
             AccumulatedDepreciationAccountId = request.AccumulatedDepreciationAccountId,
+            AssetType = request.AssetType,
+            LeaseTermMonths = request.LeaseTermMonths,
+            LessorName = request.LessorName,
+            MonthlyLeasePayment = request.MonthlyLeasePayment,
+            LeaseLiabilityAccountId = request.LeaseLiabilityAccountId,
             CreatedBy = createdBy
         };
 
@@ -859,5 +872,6 @@ public class FixedAssetService : IFixedAssetService
             a.AccumulatedDepreciation, a.NetBookValue, a.Status,
             a.DisposalDate, a.DisposalAmount, a.CreatedAt,
             a.AssetAccountId, a.DepreciationExpenseAccountId,
-            a.AccumulatedDepreciationAccountId);
+            a.AccumulatedDepreciationAccountId,
+            a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment);
 }

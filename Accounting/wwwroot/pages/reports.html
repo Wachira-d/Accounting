@@ -13,7 +13,9 @@
       <div><h2 class="page-title">รายงานการเงิน</h2><p class="page-subtitle">งบทดลอง งบแสดงฐานะการเงิน งบกำไรขาดทุน กระแสเงินสด</p></div>
     </div>
 
-    <div class="tabs">
+    <div class="tabs"
+         data-tour-step="1"
+         data-tour-text="ขั้นที่ 1 — เลือกรายงาน: งบทดลอง / ฐานะการเงิน / กำไรขาดทุน / กระแสเงินสด / บัญชีแยกประเภท / รายงานกำหนดเอง">
       <div class="tab active" onclick="Page.showReport('trial',this)">งบทดลอง</div>
       <div class="tab" onclick="Page.showReport('balance',this)">งบแสดงฐานะการเงิน</div>
       <div class="tab" onclick="Page.showReport('pnl',this)">งบกำไรขาดทุน</div>
@@ -22,7 +24,9 @@
       <div class="tab" onclick="Page.showReport('custom',this)">รายงานกำหนดเอง</div>
     </div>
 
-    <div class="toolbar">
+    <div class="toolbar"
+         data-tour-step="2"
+         data-tour-text="ขั้นที่ 2 — ตั้งวันที่ปลายงวด / ช่วงงวด + Export PDF / Excel · เลือกประเภทกระแสเงินสด (ทางตรง / ทางอ้อม)">
       <label class="text-sm font-medium">ณ วันที่:</label>
       <input type="date" class="form-input" id="asOfDate" style="width:180px">
       <label class="text-sm font-medium" style="margin-left:12px">จาก:</label>
@@ -433,6 +437,7 @@
       }
     };
     Page.init();
+    Layout.enableTour('reports');
   </script>
 </body>
 </html>

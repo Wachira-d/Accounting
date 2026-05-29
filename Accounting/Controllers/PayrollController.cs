@@ -13,7 +13,28 @@ namespace Accounting.Controllers;
 public class PayrollController : ControllerBase
 {
     private readonly IPayrollService _service;
-    public PayrollController(IPayrollService service) => _service = service;
+    private readonly ISensitivityService _sensitivity;
+    public PayrollController(IPayrollService service, ISensitivityService sensitivity)
+    {
+        _service = service;
+        _sensitivity = sensitivity;
+    }
+
+    /// <summary>Gate every payroll endpoint behind the Payroll sensitivity rule.
+    /// Returns 403 with a structured body so integrations distinguish "no access"
+    /// from "no such record". Owner / SystemAdmin pass through.</summary>
+    private async Task<ActionResult?> CheckPayrollAccessAsync(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await _sensitivity.CanViewAsync(companyId, userId, Models.Enums.SensitivityKind.Payroll))
+            return StatusCode(403, new ApiResponse<object>(false, new
+            {
+                redacted = true,
+                kind = "Payroll",
+                requiredPermission = Models.Constants.PermissionKeys.PayrollView,
+            }, "ต้องมีสิทธิ์ดูข้อมูลเงินเดือน"));
+        return null;
+    }
 
     // Employees
     [HttpPost("employees")]
@@ -60,11 +81,17 @@ public class PayrollController : ControllerBase
 
     [HttpGet("runs/{runId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> GetRun(Guid companyId, Guid runId)
-        => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.GetPayrollRunAsync(companyId, runId)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollRunResponse>(true, await _service.GetPayrollRunAsync(companyId, runId)));
+    }
 
     [HttpGet("runs")]
     public async Task<ActionResult<ApiResponse<PagedResponse<PayrollRunResponse>>>> GetRuns(Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        => Ok(new ApiResponse<PagedResponse<PayrollRunResponse>>(true, await _service.GetPayrollRunsAsync(companyId, new PagedRequest(page, pageSize))));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<PagedResponse<PayrollRunResponse>>(true, await _service.GetPayrollRunsAsync(companyId, new PagedRequest(page, pageSize))));
+    }
 
     [HttpPost("runs/{runId:guid}/calculate")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Calculate(Guid companyId, Guid runId)
@@ -80,11 +107,18 @@ public class PayrollController : ControllerBase
 
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollDetailResponse>>> GetDetail(Guid companyId, Guid runId, Guid employeeId)
-        => Ok(new ApiResponse<PayrollDetailResponse>(true, await _service.GetPayrollDetailAsync(companyId, runId, employeeId)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollDetailResponse>(true, await _service.GetPayrollDetailAsync(companyId, runId, employeeId)));
+    }
 
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}/payslip")]
     public async Task<ActionResult> GetPayslip(Guid companyId, Guid runId, Guid employeeId)
-    { var slip = await _service.GeneratePayslipAsync(companyId, runId, employeeId); return File(slip.PdfData, "application/pdf", slip.FileName); }
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var slip = await _service.GeneratePayslipAsync(companyId, runId, employeeId);
+        return File(slip.PdfData, "application/pdf", slip.FileName);
+    }
 
     // Leave
     [HttpPost("leaves")]
@@ -129,10 +163,15 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
     { await _service.VoidPayrollAsync(companyId, runId); return Ok(new ApiResponse<bool>(true, true)); }
 
-    // Reports
+    // Reports — ภงด.1 exposes individual employee salary/WHT and is sensitive
+    // payroll data, so it sits behind the same Payroll permission gate. ภงด.3
+    // (vendor / freelancer WHT) stays open since it's part of the regular AP flow.
     [HttpGet("pnd1/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetPnd1(Guid companyId, int year, int month)
-        => Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month)));
+    }
 
     [HttpGet("pnd3/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetPnd3(Guid companyId, int year, int month)

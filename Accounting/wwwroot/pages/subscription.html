@@ -28,8 +28,14 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">แพ็กเกจและการสมัครสมาชิก</h2><p class="page-subtitle">จัดการแพ็กเกจ การทดลองใช้ และการชำระเงิน</p></div>
+      <div><h2 class="page-title">แพ็กเกจของบริษัทนี้</h2><p class="page-subtitle">แพ็กเกจระดับบริษัท (Company-level) · ใช้เมื่อต้องการแยกบิลจาก License ส่วนตัว</p></div>
+      <a href="/pages/account-subscription.html" class="btn btn-secondary">🎫 ดู License ของฉัน →</a>
     </div>
+
+    <!-- Account Plan banner — surfaces when this Company is covered by the
+         user's AccountSubscription so the user understands they don't need
+         a per-company plan unless they explicitly want one (separate billing). -->
+    <div id="accountPlanBanner"></div>
 
     <!-- Current Subscription Status -->
     <div id="trialBanner"></div>
@@ -114,8 +120,50 @@
       async load() {
         const cid = Layout.getCompanyId();
         if (!cid) return;
-        await Promise.all([this.loadSubscription(cid), this.loadPlans(), this.loadPayments(cid)]);
+        await Promise.all([this.loadSubscription(cid), this.loadPlans(), this.loadPayments(cid), this.loadAccountBanner(cid)]);
         await this.loadTrialStatus(cid);
+      },
+
+      /// <summary>Hit the effective-plan resolver. When this Company is under
+      /// an Account Plan (License at User level), tell the user — most people
+      /// land here looking for billing and need to understand "no, the License
+      /// covers this from your personal account".</summary>
+      async loadAccountBanner(cid) {
+        try {
+          const r = await fetch(`/api/account-subscription/effective/${cid}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success || !j.data?.hasPlan) return;
+          const d = j.data;
+          const banner = document.getElementById('accountPlanBanner');
+          if (d.source === 'Account') {
+            banner.innerHTML = `
+              <div style="background:linear-gradient(135deg,#ecfeff,#fef9c3);border:1px solid #67e8f9;border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                <div style="font-size:32px">🎫</div>
+                <div style="flex:1;min-width:260px">
+                  <div style="font-weight:700;font-size:15px;color:#0c4a6e">บริษัทนี้อยู่ใต้ License ของคุณ</div>
+                  <div style="font-size:12px;color:#475569;margin-top:2px">
+                    สถานะ ${d.status} · หมดอายุ ${new Date(d.endDate).toLocaleDateString('th-TH')}
+                    · MaxUsers ${d.maxUsers} · MaxDocs ${d.maxDocumentsPerMonth}/เดือน (รวมทุกบริษัทใต้ License)
+                  </div>
+                </div>
+                <a href="/pages/account-subscription.html" class="btn btn-primary btn-sm">จัดการ License</a>
+              </div>`;
+          } else if (d.source === 'Company') {
+            banner.innerHTML = `
+              <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                <div style="font-size:32px">💼</div>
+                <div style="flex:1;min-width:260px">
+                  <div style="font-weight:700;font-size:15px;color:#9a3412">บริษัทนี้จ่ายเองแยกบิล</div>
+                  <div style="font-size:12px;color:#475569;margin-top:2px">
+                    ใช้แพ็กเกจของตัวเอง · ผูกกับ License ส่วนตัวก็ได้เพื่อรวมบิลและคุ้มกว่า
+                  </div>
+                </div>
+                <a href="/pages/account-subscription.html" class="btn btn-secondary btn-sm">+ ผูกเข้า License ส่วนตัว</a>
+              </div>`;
+          }
+        } catch { /* banner is best-effort */ }
       },
       async init() {
         if (!Layout.init('subscription')) return;

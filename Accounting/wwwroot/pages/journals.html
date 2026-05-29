@@ -27,7 +27,9 @@
     </div>
 
     <!-- Journal Type Tabs -->
-    <div class="journal-tabs" id="journalTabs">
+    <div class="journal-tabs" id="journalTabs"
+         data-tour-step="1"
+         data-tour-text="ขั้นที่ 1 — เลือกประเภทสมุดบัญชี 5 เล่มตามมาตรฐานบัญชีไทย (JV/SV/UV/RV/PV) ระบบสร้าง JE จากเอกสารให้อัตโนมัติเข้าเล่มที่ถูก">
       <button class="journal-tab active" data-type="" onclick="Page.setType('')">ทั้งหมด <span class="tab-badge" id="countAll">-</span></button>
       <button class="journal-tab" data-type="General" onclick="Page.setType('General')">JV สมุดรายวันทั่วไป <span class="tab-badge" id="countGeneral">-</span></button>
       <button class="journal-tab" data-type="Sales" onclick="Page.setType('Sales')">SV สมุดรายวันขาย <span class="tab-badge" id="countSales">-</span></button>
@@ -36,7 +38,9 @@
       <button class="journal-tab" data-type="CashPayments" onclick="Page.setType('CashPayments')">PV สมุดรายวันจ่าย <span class="tab-badge" id="countCashPayments">-</span></button>
     </div>
 
-    <div class="toolbar" style="flex-wrap:wrap;gap:8px">
+    <div class="toolbar" style="flex-wrap:wrap;gap:8px"
+         data-tour-step="2"
+         data-tour-text="ขั้นที่ 2 — ค้นหา/กรองตามสถานะ ช่วงวันที่ โครงการ สาขา แท็ก · กรองรายการสมุดรายวันให้แคบเพื่อดู / export">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่รายการ..." id="searchInput" oninput="Page.debounceSearch()">
       <select class="filter-select" id="statusFilter">
         <option value="">ทุกสถานะ</option>
@@ -235,7 +239,10 @@
         this.loadCounts();
         this.checkDraftCount();
         const entryId = params.get('entryId');
-        if (entryId) this.detail(entryId);
+        if (entryId) {
+          this.detail(entryId);
+          if (params.get('fromDeepLink') === '1') Layout.toast('🔗 เปิดจากระบบที่เชื่อมต่อ', 'success');
+        }
       },
       renderHeaderActions() {
         const holder = document.getElementById('pageActions');
@@ -956,6 +963,7 @@
       }
     };
     Page.init();
+    Layout.enableTour('journals');
   </script>
 </body>
 </html>

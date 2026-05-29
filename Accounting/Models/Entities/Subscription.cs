@@ -12,6 +12,14 @@ public class Subscription : BaseEntity
     public Guid CompanyId { get; set; }
     public Company Company { get; set; } = null!;
 
+    /// <summary>When set, this Company gets its quota / features from the
+    /// owner's AccountSubscription instead of this row. The row still exists
+    /// so per-month usage counters (DocumentsThisMonth etc.) have somewhere to
+    /// live — but limits + features come from the account plan.
+    /// Null = legacy per-company plan, this row's limits are authoritative.</summary>
+    public Guid? AccountSubscriptionId { get; set; }
+    public AccountSubscription? AccountSubscription { get; set; }
+
     // Plan
     public SubscriptionPlan Plan { get; set; } = SubscriptionPlan.FreeTrial;
     public SubscriptionStatus Status { get; set; } = SubscriptionStatus.Trial;

@@ -53,7 +53,9 @@
             <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">📄 ดาวน์โหลด Template เปล่า</a>
           </div>
         </div>
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มบัญชีในผังบัญชี (1xxxx สินทรัพย์ / 2xxxx หนี้สิน / 3xxxx ทุน / 4xxxx รายได้ / 5xxxx ค่าใช้จ่าย) ตามมาตรฐานบัญชีไทย">+ เพิ่มบัญชี</button>
       </div>
     </div>
 
@@ -714,6 +716,7 @@
       },
     };
     Page.init();
+    Layout.enableTour('accounts');
   </script>
 </body>
 </html>

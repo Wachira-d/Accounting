@@ -107,6 +107,7 @@ builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 
 // New modules
 builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
@@ -566,6 +567,19 @@ app.MapFallback(context =>
             "text/html"
         ).ExecuteAsync(context);
     }
+
+    // Deep-link rewrite for API callbacks. External systems creating records
+    // via API can ship the user a link like /{companyId}/journals/{entryId}
+    // — we rewrite to /pages/{entity}.html?company=X&{paramName}=Y so the
+    // existing per-page deep-link handlers (already wired) auto-open the
+    // record. 302 keeps the URL in the browser bar clean for sharing.
+    var deep = Accounting.Helpers.DeepLinkRewriter.TryMap(path);
+    if (deep != null)
+    {
+        context.Response.Redirect(deep, false);
+        return Task.CompletedTask;
+    }
+
     // Non-API routes: serve index.html for SPA client-side routing
     return Results.File(
         Path.Combine(app.Environment.WebRootPath, "index.html"),

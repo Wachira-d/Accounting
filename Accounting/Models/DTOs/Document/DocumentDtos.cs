@@ -32,7 +32,12 @@ public record CreateDocumentRequest(
     // service auto-fetches the BoT mid-rate at DocumentDate if ExchangeRate
     // is omitted; callers can override with a contracted rate.
     string Currency = "THB",
-    decimal? ExchangeRate = null);
+    decimal? ExchangeRate = null,
+    // ===== Sensitivity classification (optional) =====
+    // Internal callers (e.g. PayrollService) pass Sensitivity to gate the
+    // resulting document behind the matching role. External clients leave it
+    // None (the default) and the document is publicly visible within the company.
+    SensitivityKind Sensitivity = SensitivityKind.None);
 
 public record DocumentLineRequest(
     string Description,
@@ -135,7 +140,15 @@ public record DocumentResponse(
     // Multi-currency — Currency is doc's denomination; ExchangeRate is THB per
     // 1 unit of Currency captured at Create. Both default to ("THB", 1).
     string Currency = "THB",
-    decimal ExchangeRate = 1m);
+    decimal ExchangeRate = 1m,
+    // Sensitivity — None for the regular sales/purchase stream. Payroll vouchers
+    // and other restricted records stamp this. When the requesting user lacks
+    // the matching permission the API returns a stub with IsRedacted=true and
+    // amounts/contact/notes blanked out so integration targets know the record
+    // exists but is hidden — they should not 404 or pretend it isn't there.
+    SensitivityKind Sensitivity = SensitivityKind.None,
+    bool IsRedacted = false,
+    string? RedactedReason = null);
 
 public record DocumentLineResponse(
     Guid Id,
@@ -278,7 +291,10 @@ public record ContactResponse(
     string? District = null,
     string? Province = null,
     string? PostalCode = null,
-    string? CountryCode = "TH");
+    string? CountryCode = "TH",
+    int LoyaltyPoints = 0,
+    DateTime? LastVisitAt = null,
+    int TotalVisitCount = 0);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);

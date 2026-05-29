@@ -12,8 +12,12 @@
     <div class="page-header">
       <div><h2 class="page-title">e-Tax Invoice / e-Receipt</h2><p class="page-subtitle">ใบกำกับภาษีอิเล็กทรอนิกส์ ตามมาตรฐาน ETDA / กรมสรรพากร</p></div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-outline" onclick="Page.showConfig()">ตั้งค่า</button>
-        <button class="btn btn-primary" onclick="Page.openGenerate()">+ สร้าง e-Tax</button>
+        <button class="btn btn-outline" onclick="Page.showConfig()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — ตั้งค่าครั้งแรก: เลข PID ผู้เสียภาษี / Certificate / URL ETDA · ต้องตั้งให้ครบก่อนสร้าง e-Tax ใบแรก">ตั้งค่า</button>
+        <button class="btn btn-primary" onclick="Page.openGenerate()"
+                data-tour-step="2"
+                data-tour-text="ขั้นที่ 2 — สร้าง e-Tax จากเอกสารที่มีอยู่ (ใบกำกับ/ใบเสร็จ/ใบลดหนี้) ระบบจะแปลงเป็น XML + PDF/A-3 พร้อม sign อัตโนมัติ">+ สร้าง e-Tax</button>
       </div>
     </div>
 
@@ -536,6 +540,7 @@
   };
 
   Page.init();
+  Layout.enableTour('etax');
   </script>
 </body>
 </html>

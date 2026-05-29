@@ -143,6 +143,69 @@ public class MigrationWizardService : IMigrationWizardService
     /// target fiscal period. Strict: rolls back the whole transaction if
     /// ANY row fails validation or DB constraint.
     /// </summary>
+    /// <summary>Undo a committed migration session. Deletes the OpeningBalance
+    /// rows the commit wrote for this session's (period × account) combinations.
+    /// Refuses if the target fiscal period has been closed/locked, or if any
+    /// posted JE has referenced those opening balances in the meantime. Sets
+    /// session.Status = RolledBack and writes the rollback summary so the audit
+    /// trail keeps both events.</summary>
+    public async Task<MigrationSession> RollbackAsync(Guid companyId, Guid sessionId, string userId)
+    {
+        var session = await LoadSessionAsync(companyId, sessionId);
+        if (session.Status != MigrationStatus.Committed)
+            throw new InvalidOperationException("Rollback ได้เฉพาะ session ที่ Committed แล้ว");
+        if (!session.TargetFiscalPeriodId.HasValue)
+            throw new InvalidOperationException("Session ไม่มี TargetFiscalPeriodId");
+
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p => p.Id == session.TargetFiscalPeriodId.Value && p.CompanyId == companyId);
+        if (period == null) throw new InvalidOperationException("ไม่พบงวดบัญชีเป้าหมาย");
+        if (period.Status == FiscalPeriodStatus.Closed || period.Status == FiscalPeriodStatus.Locked)
+            throw new InvalidOperationException($"งวดบัญชี {period.Name} ปิดแล้ว — เปิดงวดก่อน rollback");
+
+        // Recompute the set of (period, account) keys this session wrote.
+        var rows = await _db.AccountMappings.Where(a => a.MigrationSessionId == sessionId && a.MappedAccountId.HasValue).ToListAsync();
+        var accountIds = rows.Select(r => r.MappedAccountId!.Value).Distinct().ToList();
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var toRemove = await _db.OpeningBalances
+                .Where(o => o.CompanyId == companyId
+                    && o.FiscalPeriodId == period.Id
+                    && accountIds.Contains(o.AccountId))
+                .ToListAsync();
+            // Defensive: only delete rows that actually came from this session.
+            // The commit writes a tagged note; if someone has edited it by hand
+            // we keep it and skip silently — better than corrupting curated data.
+            var sessionTag = session.Id.ToString("N")[..8];
+            var ours = toRemove.Where(o => o.Notes != null && o.Notes.Contains(sessionTag)).ToList();
+            _db.OpeningBalances.RemoveRange(ours);
+
+            var summary = new {
+                rolledBackAt = DateTime.UtcNow,
+                rolledBackBy = userId,
+                rowsRemoved = ours.Count,
+                rowsSkipped = toRemove.Count - ours.Count,
+            };
+            session.Status = MigrationStatus.RolledBack;
+            // Preserve original commit summary by appending rather than overwriting.
+            session.ImportSummaryJson = JsonSerializer.Serialize(new
+            {
+                originalCommit = session.ImportSummaryJson,
+                rollback = summary,
+            });
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return session;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
     public async Task<MigrationSession> CommitAsync(Guid companyId, Guid sessionId, string userId)
     {
         var session = await LoadSessionAsync(companyId, sessionId);

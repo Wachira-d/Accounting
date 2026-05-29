@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>จองโต๊ะ</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing:border-box; }
+    body { font-family:'Noto Sans Thai',system-ui,sans-serif; background:#f8fafc; margin:0; color:#0f172a; }
+    .bk-shell { max-width:520px; margin:0 auto; padding:24px 16px; }
+    .bk-card { background:#fff; border-radius:14px; box-shadow:0 4px 18px rgba(0,0,0,.06); overflow:hidden; }
+    .bk-hero { background:linear-gradient(135deg,#0ea5e9,#7c3aed); color:#fff; padding:28px 22px; text-align:center; }
+    .bk-hero img { max-width:80px; max-height:80px; border-radius:50%; background:#fff; padding:6px; margin-bottom:10px; }
+    .bk-hero h1 { margin:0 0 4px; font-size:22px; font-weight:700; }
+    .bk-hero .phone { font-size:13px; opacity:.9; }
+    .bk-body { padding:22px; }
+    .bk-body h2 { font-size:15px; margin:0 0 14px; color:#475569; }
+    .bk-form .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+    .bk-form .full { grid-column:1/-1; }
+    .bk-form label { display:block; font-size:12px; color:#475569; margin-bottom:4px; font-weight:600; }
+    .bk-form input, .bk-form select, .bk-form textarea {
+      width:100%; padding:11px 12px; border:1.5px solid #cbd5e1; border-radius:8px;
+      font-size:14px; font-family:inherit; outline:none; transition:border-color .15s;
+      background:#fff;
+    }
+    .bk-form input:focus, .bk-form select:focus, .bk-form textarea:focus { border-color:#0ea5e9; }
+    .bk-party { display:flex; gap:6px; }
+    .bk-party button { flex:1; padding:10px 0; background:#f1f5f9; border:1.5px solid transparent; border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; color:#475569; }
+    .bk-party button.active { background:#0ea5e9; color:#fff; border-color:#0284c7; }
+    .bk-slots { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+    .bk-slot { padding:10px 4px; background:#f1f5f9; border:1.5px solid transparent; border-radius:8px; cursor:pointer; text-align:center; font-size:13px; font-weight:600; color:#475569; }
+    .bk-slot.active { background:#0ea5e9; color:#fff; border-color:#0284c7; }
+    .bk-slot.busy { opacity:.45; cursor:not-allowed; background:#fee2e2; color:#991b1b; }
+    .bk-slot .free { font-size:10px; color:#16a34a; font-weight:700; margin-top:2px; }
+    .bk-slot.active .free { color:#86efac; }
+    .bk-slot.busy .free { color:#991b1b; }
+    .bk-policy { background:#fef3c7; border:1px solid #fbbf24; border-radius:8px; padding:10px 12px; font-size:12px; line-height:1.6; color:#78350f; margin:14px 0; }
+    .bk-submit { width:100%; padding:14px; background:#0ea5e9; color:#fff; border:none; border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; margin-top:10px; }
+    .bk-submit:hover { background:#0284c7; }
+    .bk-submit:disabled { background:#94a3b8; cursor:not-allowed; }
+    .bk-success { text-align:center; padding:40px 22px; }
+    .bk-success .check { font-size:64px; line-height:1; margin-bottom:14px; }
+    .bk-success h2 { margin:0 0 8px; font-size:22px; color:#0f172a; }
+    .bk-success p { color:#475569; font-size:14px; line-height:1.6; }
+    .bk-success .manage-btn { display:inline-block; margin-top:14px; padding:10px 20px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px; color:#0f172a; text-decoration:none; font-weight:600; font-size:13px; }
+    .bk-error { background:#fee2e2; border:1px solid #fca5a5; color:#991b1b; padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:12px; display:none; }
+    .bk-loading { text-align:center; padding:40px; color:#94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="bk-shell">
+    <div class="bk-card">
+      <div id="bkContent">
+        <div class="bk-loading">กำลังโหลด...</div>
+      </div>
+    </div>
+    <p style="text-align:center;color:#94a3b8;font-size:11px;margin-top:14px">Powered by Next Acc</p>
+  </div>
+
+  <script>
+    const Page = {
+      info: null,
+      sel: { date: null, time: null, party: 2 },
+      _today: '',
+
+      async init() {
+        const params = new URLSearchParams(location.search);
+        this._companyId = params.get('c');
+        if (!this._companyId) {
+          document.getElementById('bkContent').innerHTML = '<div class="bk-loading">ลิงก์ไม่ถูกต้อง</div>';
+          return;
+        }
+        try {
+          const r = await fetch('/api/public/reservations/info/' + this._companyId);
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'load failed');
+          this.info = j.data;
+          // Default: today 1 hour from now (rounded to 30 min).
+          const d = new Date(); d.setMinutes(d.getMinutes() + 60);
+          d.setMinutes(d.getMinutes() < 30 ? 30 : 0, 0, 0);
+          if (d.getMinutes() === 0 && new Date().getMinutes() >= 30) d.setHours(d.getHours() + 1);
+          this.sel.date = this._isoDate(d);
+          this._today = this._isoDate(new Date());
+          this.render();
+        } catch(e) { document.getElementById('bkContent').innerHTML = '<div class="bk-loading">โหลดไม่สำเร็จ: ' + e.message + '</div>'; }
+      },
+
+      _isoDate(d) {
+        const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+        return `${y}-${m}-${day}`;
+      },
+      _esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); },
+
+      render() {
+        const I = this.info;
+        const slots = I.slotsToday || [];
+        // Filter to selected date.
+        const sameDate = slots.filter(s => this._isoDate(new Date(s.time)) === this.sel.date);
+        const slotsHtml = sameDate.length
+          ? sameDate.map(s => {
+              const t = new Date(s.time);
+              const lbl = t.toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
+              const busy = s.freeTablesAt <= 0;
+              const active = lbl === this.sel.time;
+              return `<div class="bk-slot ${busy?'busy':''} ${active?'active':''}" ${busy?'':`onclick="Page.pickSlot('${lbl}','${t.toISOString()}')"`}>
+                ${lbl}<div class="free">${busy?'เต็ม':'ว่าง '+s.freeTablesAt}</div>
+              </div>`;
+            }).join('')
+          : '<div style="grid-column:1/-1;color:#94a3b8;font-size:13px;text-align:center;padding:14px">ไม่มีช่วงเวลาให้เลือกในวันนี้ — เลือกวันอื่น</div>';
+
+        document.getElementById('bkContent').innerHTML = `
+          <div class="bk-hero">
+            ${I.logoUrl ? `<img src="${this._esc(I.logoUrl)}" alt="">` : ''}
+            <h1>${this._esc(I.companyName)}</h1>
+            ${I.phone ? `<div class="phone">📞 ${this._esc(I.phone)}</div>` : ''}
+          </div>
+          <div class="bk-body">
+            <div class="bk-error" id="bkErr"></div>
+            <h2>📅 วันที่</h2>
+            <input type="date" id="fDate" value="${this.sel.date}" min="${this._today}" onchange="Page.sel.date=this.value;Page.sel.time=null;Page._fetchAndRender()" style="margin-bottom:14px">
+
+            <h2>🕒 เวลา (ระบบจะตรงตามเวลาว่างจริง)</h2>
+            <div class="bk-slots">${slotsHtml}</div>
+
+            <h2 style="margin-top:18px">🧑‍🤝‍🧑 จำนวนคน</h2>
+            <div class="bk-party">
+              ${[1,2,3,4,5,6,8,10].map(n =>
+                `<button type="button" class="${this.sel.party===n?'active':''}" onclick="Page.sel.party=${n};Page.render()">${n}${n===10?'+':''}</button>`).join('')}
+            </div>
+
+            <div class="bk-policy">
+              💡 <strong>นโยบายการจอง:</strong> ระบบจะส่งการจองให้ร้านทราบ ร้านจะติดต่อกลับเพื่อยืนยัน
+              · ยกเลิกฟรีก่อนถึงเวลานัด 24 ชม.
+              · กรุณามาตามเวลานัด หากเกิน 15 นาทีร้านสงวนสิทธิ์ยกเลิก
+            </div>
+
+            <h2 style="margin-top:18px">ข้อมูลผู้จอง</h2>
+            <div class="bk-form">
+              <div class="row">
+                <div class="full"><label>ชื่อ-นามสกุล *</label><input type="text" id="fName" placeholder="คุณ..."></div>
+                <div class="full"><label>เบอร์ติดต่อ *</label><input type="tel" id="fPhone" placeholder="0XX-XXX-XXXX"></div>
+                <div class="full"><label>อีเมล (ไม่บังคับ)</label><input type="email" id="fEmail" placeholder="you@example.com"></div>
+                <div class="full"><label>หมายเหตุ (ถ้ามี)</label><textarea id="fNotes" rows="2" placeholder="เช่น โต๊ะนอก, งานวันเกิด"></textarea></div>
+              </div>
+            </div>
+
+            <button class="bk-submit" id="bkSubmit" onclick="Page.submit()">📅 จองโต๊ะ</button>
+          </div>`;
+      },
+
+      pickSlot(label, iso) {
+        this.sel.time = label;
+        this.sel.iso = iso;
+        // Soft re-render — keep form values typed so far.
+        const slots = document.querySelectorAll('.bk-slot');
+        slots.forEach(el => el.classList.remove('active'));
+        Array.from(slots).find(el => el.textContent.startsWith(label))?.classList.add('active');
+      },
+
+      async _fetchAndRender() {
+        // Just re-render with the new date highlighted — we already loaded
+        // 6 hours of slots covering today + into tomorrow morning.
+        this.render();
+      },
+
+      async submit() {
+        const err = document.getElementById('bkErr');
+        err.style.display = 'none';
+        const name = document.getElementById('fName').value.trim();
+        const phone = document.getElementById('fPhone').value.trim();
+        const email = document.getElementById('fEmail').value.trim();
+        const notes = document.getElementById('fNotes').value.trim();
+        if (!name || !phone) {
+          err.textContent = '⚠️ กรอกชื่อและเบอร์ติดต่อ';
+          err.style.display = 'block'; return;
+        }
+        if (!this.sel.iso) {
+          err.textContent = '⚠️ เลือกเวลานัด';
+          err.style.display = 'block'; return;
+        }
+        const btn = document.getElementById('bkSubmit');
+        btn.disabled = true; btn.textContent = 'กำลังจอง...';
+        try {
+          const r = await fetch('/api/public/reservations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              companyId: this._companyId,
+              customerName: name, phone, email,
+              partySize: this.sel.party,
+              reservedAt: this.sel.iso,
+              durationMinutes: 90,
+              notes: notes || null
+            })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'จองไม่สำเร็จ');
+          this.renderSuccess(j.data);
+        } catch(e) {
+          err.textContent = '⚠️ ' + e.message;
+          err.style.display = 'block';
+          btn.disabled = false; btn.textContent = '📅 จองโต๊ะ';
+        }
+      },
+
+      renderSuccess(d) {
+        const at = new Date(d.reservedAt);
+        const when = at.toLocaleString('th-TH', {dateStyle:'full', timeStyle:'short'});
+        document.getElementById('bkContent').innerHTML = `
+          <div class="bk-success">
+            <div class="check">✅</div>
+            <h2>จองสำเร็จ</h2>
+            <p>คุณ <strong>${this._esc(d.customerName)}</strong><br>
+            ${this._esc(when)}<br>
+            <span style="color:#94a3b8;font-size:12px">รหัสจอง ${this._esc(d.token).slice(0,8)}</span></p>
+            <p style="margin-top:14px;font-size:13px">ทางร้านจะติดต่อกลับเพื่อยืนยันการจอง</p>
+            <a class="manage-btn" href="${this._esc(d.manageUrl)}">✏️ ดู/ยกเลิก การจอง</a>
+          </div>`;
+      }
+    };
+    window.Page = Page;
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

@@ -66,6 +66,34 @@
     .empty-order { text-align:center; color:var(--gray-400); padding:40px 20px; font-size:14px; }
     .change-display { background:var(--gray-100); border-radius:6px; padding:8px 12px; margin-top:4px; text-align:center; font-size:13px; }
     .change-display .change-amount { font-size:20px; font-weight:700; color:var(--success); }
+
+    /* ===== Pay-pad calculator modal ===== */
+    .paypad-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:12px; }
+    .paypad-tabs .ppt { padding:10px 0; background:#f1f5f9; border:2px solid transparent; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; }
+    .paypad-tabs .ppt.active { background:#ecfdf5; border-color:#10b981; color:#047857; }
+    .paypad-summary { background:#f8fafc; border-radius:8px; padding:10px 14px; margin-bottom:10px; }
+    .paypad-summary .ppr { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:14px; }
+    .paypad-summary .ppr-due { border-top:1px solid #e2e8f0; padding-top:8px; margin-top:4px; font-size:16px; }
+    .paypad-summary .ppr-due strong { color:#dc2626; font-size:20px; }
+    .paypad-received { margin-bottom:10px; }
+    .paypad-received label { display:block; font-size:13px; color:#475569; margin-bottom:4px; font-weight:600; }
+    .paypad-received input { width:100%; padding:14px 16px; font-size:28px; font-weight:700; text-align:right; border:2px solid #cbd5e1; border-radius:8px; background:#fff; color:#0f172a; }
+    .paypad-change { display:flex; justify-content:space-between; align-items:center; background:#ecfdf5; border:1px solid #6ee7b7; border-radius:8px; padding:10px 14px; margin-top:8px; }
+    .paypad-change strong { font-size:24px; color:#047857; }
+    .paypad-quick { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:8px; }
+    .paypad-quick button { padding:10px 0; background:#fef3c7; border:1px solid #fbbf24; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer; }
+    .paypad-quick button:hover { background:#fde68a; }
+    .paypad-keys { display:grid; grid-template-columns:repeat(3,1fr) 1fr 1fr; grid-template-rows:repeat(4,1fr); gap:6px; }
+    .paypad-keys button { padding:18px 0; background:#fff; border:1px solid #cbd5e1; border-radius:8px; font-size:22px; font-weight:600; cursor:pointer; }
+    .paypad-keys button:hover { background:#f1f5f9; }
+    .paypad-keys button:active { background:#e2e8f0; transform:scale(0.97); }
+    .paypad-keys .pk-back { background:#fef3c7; grid-column:4; grid-row:1/3; }
+    .paypad-keys .pk-clear { background:#fee2e2; color:#b91c1c; grid-column:5; grid-row:1/3; }
+    @media (max-width:540px) {
+      .paypad-received input { font-size:24px; padding:12px; }
+      .paypad-keys button { padding:14px 0; font-size:18px; }
+    }
+
     /* Session setup overlay */
     .session-setup { position:absolute; inset:0; background:rgba(255,255,255,.95); display:flex; align-items:center; justify-content:center; z-index:10; }
     .session-card { background:#fff; border-radius:var(--radius-lg); box-shadow:var(--shadow-xl); padding:32px; width:400px; max-width:90vw; }
@@ -124,6 +152,7 @@
           <input type="text" placeholder="ค้นหา หรือ สแกนบาร์โค้ด แล้วกด Enter…" id="searchInput" oninput="Page.filterItems()" onkeydown="if(event.key==='Enter'){event.preventDefault();Page.onScan();}" autocomplete="off" style="flex:1">
           <button class="btn btn-secondary" onclick="Page.openCameraScanner()" title="สแกนบาร์โค้ดด้วยกล้อง (มือถือ / แท็บเล็ต)" style="padding:8px 14px;font-size:18px">📷</button>
           <button class="btn btn-ghost" onclick="Page.openCustomerDisplay()" title="เปิดจอลูกค้า (Customer Display) ในแท็บใหม่ — ลากไปจอที่ 2 ให้ลูกค้าเห็นยอดเงิน" style="padding:8px 14px;font-size:18px">📺</button>
+          <button class="btn btn-ghost" id="langToggleBtn" onclick="Page.toggleMenuLang()" title="เปลี่ยนภาษาเมนู (ไทย / English) สำหรับลูกค้าต่างชาติ" style="padding:8px 12px;font-size:13px;font-weight:600">🌐 TH</button>
         </div>
         <div class="pos-categories" id="categories"></div>
         <div class="pos-grid" id="productGrid">
@@ -133,8 +162,10 @@
       <!-- RIGHT: Order Panel -->
       <div class="pos-right">
         <div class="order-header">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <strong style="font-size:14px;" id="orderTitle">ออเดอร์ใหม่</strong>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+            <strong style="font-size:14px;flex:1;" id="orderTitle">ออเดอร์ใหม่</strong>
+            <button type="button" onclick="Page.openFloorView()" title="ดูผังโต๊ะ — เห็นสถานะทุกโต๊ะ" style="background:#dbeafe;border:1px solid #93c5fd;color:#1e40af;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">🪑 ผังโต๊ะ</button>
+            <button type="button" id="recallBtn" onclick="Page.openHeldOrders()" title="ดูบิลที่พักไว้" style="background:#fef3c7;border:1px solid #fbbf24;color:#92400e;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">📌 บิลพัก <span id="heldCount" style="background:#fbbf24;color:#fff;border-radius:10px;padding:0 6px;font-size:11px;display:none;">0</span></button>
             <select id="orderType" style="font-size:12px;padding:4px 8px;border:1px solid var(--gray-300);border-radius:6px;" onchange="Page.onOrderTypeChange()">
               <option value="0">ทานที่ร้าน</option>
               <option value="1">สั่งกลับบ้าน</option>
@@ -143,10 +174,15 @@
               <option value="4">นัดหมาย</option>
             </select>
           </div>
-          <div class="order-fields">
-            <input type="text" id="fCustomerName" placeholder="ชื่อลูกค้า (ไม่บังคับ)">
+          <div class="order-fields" style="position:relative">
+            <input type="text" id="fCustomerName" placeholder="ชื่อลูกค้า / เบอร์โทร (ไม่บังคับ)" autocomplete="off" oninput="Page.onCustomerInput(this.value)">
             <input type="text" id="fTableNo" placeholder="โต๊ะ">
             <input type="text" id="fQueueNo" placeholder="คิว" style="display:none;">
+            <div id="customerResults" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:100;max-height:260px;overflow:auto;font-size:13px"></div>
+          </div>
+          <div id="memberBadge" style="display:none;margin-top:6px;padding:6px 10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534;display:flex;align-items:center;gap:8px">
+            <span>🎁 <strong id="memberName">-</strong> · <span id="memberPoints">0</span> แต้ม · เคยมา <span id="memberVisits">0</span> ครั้ง</span>
+            <button type="button" onclick="Page.clearMember()" style="margin-left:auto;background:transparent;border:none;color:#64748b;cursor:pointer">×</button>
           </div>
         </div>
         <div class="order-items" id="orderItems">
@@ -154,33 +190,139 @@
         </div>
         <div class="order-summary" id="orderSummary" style="display:none;">
           <div class="sum-row"><span data-i18n="common.total">รวม</span><span id="sumSubtotal">0.00</span></div>
-          <div class="sum-row"><span>ส่วนลด</span><span id="sumDiscount">0.00</span></div>
+          <div class="sum-row" id="sumDiscountRow" style="display:none"><span>ส่วนลด <span id="sumCouponBadge" style="display:none;font-size:10px;background:#fef3c7;color:#92400e;border-radius:3px;padding:1px 6px;margin-left:4px"></span></span><span id="sumDiscount">0.00</span></div>
           <div class="sum-row"><span>Service Charge</span><span id="sumSc">0.00</span></div>
           <div class="sum-row"><span>VAT 7%</span><span id="sumVat">0.00</span></div>
+          <div class="sum-row" id="sumTipRow" style="display:none"><span>💝 ทิปพนักงาน</span><span id="sumTip">0.00</span></div>
           <div class="sum-row sum-total"><span>ยอดสุทธิ</span><span id="sumNet">0.00</span></div>
+          <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+            <button type="button" onclick="Page.openTip()" style="flex:1;background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:6px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">💝 ทิป</button>
+            <button type="button" onclick="Page.openCoupon()" style="flex:1;background:#fef3c7;border:1px solid #fbbf24;color:#92400e;padding:6px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">🎟️ คูปอง</button>
+            <button type="button" onclick="Page.openSplit()" style="flex:1;background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;padding:6px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">✂️ แยกบิล</button>
+          </div>
         </div>
         <div class="order-actions">
-          <div class="pay-row">
-            <select id="payMethod">
-              <option value="Cash">เงินสด</option>
-              <option value="PromptPay">พร้อมเพย์</option>
-              <option value="BankTransfer">โอน</option>
-              <option value="CreditCard">บัตร</option>
-            </select>
-            <input type="number" id="payAmount" placeholder="จำนวนเงิน" step="0.01">
-            <input type="text" id="payRef" placeholder="อ้างอิง" style="max-width:100px;">
-          </div>
           <div id="changeDisplay" class="change-display" style="display:none;">
             เงินทอน: <span class="change-amount" id="changeAmount">0.00</span>
           </div>
           <div class="btn-row">
-            <button class="btn btn-pay" onclick="Page.addPayment()">ชำระเงิน</button>
+            <button class="btn btn-pay" onclick="Page.openPayPad()" style="font-size:18px;padding:14px 0">💰 ชำระเงิน</button>
             <button class="btn btn-complete" onclick="Page.completeOrder()">ปิดบิล</button>
-            <button class="btn btn-void" onclick="Page.voidOrder()" data-i18n="common.cancel">ยกเลิก</button>
           </div>
           <div class="btn-row">
-            <button class="btn btn-secondary" style="flex:1;font-size:13px;" onclick="Page.printKitchenTicket()" title="พิมพ์ใบออเดอร์ส่งครัว/บาร์">🍳 พิมพ์เข้าครัว/บาร์</button>
+            <button class="btn btn-void" style="flex:1" onclick="Page.voidOrder()" data-i18n="common.cancel">ยกเลิก</button>
+            <button class="btn btn-secondary" style="flex:1;font-size:13px;background:#fef3c7;color:#92400e;border:1px solid #fbbf24" onclick="Page.holdOrder()" title="พักบิลไว้ก่อน — รับลูกค้าคนถัดไปได้">📌 พักบิล</button>
+            <button class="btn btn-secondary" style="flex:2;font-size:13px;" onclick="Page.printKitchenTicket()" title="พิมพ์ใบออเดอร์ส่งครัว/บาร์">🍳 พิมพ์เข้าครัว/บาร์</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payment keypad modal — calculator-style for cash/transfer/card.
+         Big buttons + change calc + quick-cash presets. -->
+    <div class="modal-overlay" id="payPadModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">💰 ชำระเงิน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('payPadModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:14px">
+          <div class="paypad-tabs" id="payPadTabs">
+            <button type="button" class="ppt active" data-method="Cash" onclick="Page.payPadMethod(this,'Cash')">💵 เงินสด</button>
+            <button type="button" class="ppt" data-method="PromptPay" onclick="Page.payPadMethod(this,'PromptPay')">📱 พร้อมเพย์</button>
+            <button type="button" class="ppt" data-method="BankTransfer" onclick="Page.payPadMethod(this,'BankTransfer')">🏦 โอน</button>
+            <button type="button" class="ppt" data-method="CreditCard" onclick="Page.payPadMethod(this,'CreditCard')">💳 บัตร</button>
+          </div>
+          <div class="paypad-summary">
+            <div class="ppr"><span>ยอดที่ต้องชำระ</span><strong id="ppDue">0.00</strong></div>
+            <div class="ppr"><span>ชำระแล้ว</span><span id="ppPaid">0.00</span></div>
+            <div class="ppr ppr-due"><span>คงเหลือ</span><strong id="ppRemaining">0.00</strong></div>
+          </div>
+          <div class="paypad-received">
+            <label>รับเงินมา <span id="ppRecvLabel" style="font-size:12px;color:#64748b">(พิมพ์ตัวเลขด้านล่าง)</span></label>
+            <input type="text" id="ppReceived" readonly value="0" inputmode="none">
+            <div class="paypad-change" id="ppChangeRow" style="display:none">
+              <span>💸 เงินทอน</span><strong id="ppChange">0.00</strong>
+            </div>
+          </div>
+          <div class="paypad-quick" id="ppQuickRow">
+            <button type="button" onclick="Page.payPadExact()">พอดี</button>
+            <button type="button" onclick="Page.payPadAdd(100)">+100</button>
+            <button type="button" onclick="Page.payPadAdd(500)">+500</button>
+            <button type="button" onclick="Page.payPadAdd(1000)">+1,000</button>
+          </div>
+          <div class="paypad-keys">
+            <button type="button" onclick="Page.payPadKey('7')">7</button>
+            <button type="button" onclick="Page.payPadKey('8')">8</button>
+            <button type="button" onclick="Page.payPadKey('9')">9</button>
+            <button type="button" onclick="Page.payPadKey('4')">4</button>
+            <button type="button" onclick="Page.payPadKey('5')">5</button>
+            <button type="button" onclick="Page.payPadKey('6')">6</button>
+            <button type="button" onclick="Page.payPadKey('1')">1</button>
+            <button type="button" onclick="Page.payPadKey('2')">2</button>
+            <button type="button" onclick="Page.payPadKey('3')">3</button>
+            <button type="button" onclick="Page.payPadKey('0')">0</button>
+            <button type="button" onclick="Page.payPadKey('00')">00</button>
+            <button type="button" onclick="Page.payPadKey('.')">.</button>
+            <button type="button" class="pk-back" onclick="Page.payPadBackspace()">⌫</button>
+            <button type="button" class="pk-clear" onclick="Page.payPadClear()">C</button>
+          </div>
+          <input type="text" id="ppRef" placeholder="เลขอ้างอิง (เช็ค / สลิป / 4 ตัวท้ายบัตร)" style="width:100%;margin-top:10px;padding:8px;border:1px solid #cbd5e1;border-radius:6px">
+        </div>
+        <div class="modal-footer" style="gap:8px">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('payPadModal')">ยกเลิก</button>
+          <button class="btn btn-pay" style="font-size:16px;padding:12px 28px" onclick="Page.payPadConfirm()">✓ ยืนยันการชำระ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Split-bill modal -->
+    <div class="modal-overlay" id="splitModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title">✂️ แยกบิล</h3>
+          <button class="modal-close" onclick="Layout.closeModal('splitModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="splitModalBody" style="padding:14px"></div>
+        <div class="modal-footer" style="gap:8px">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('splitModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.confirmSplit()">✓ ยืนยันแยกบิล</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floor view modal — live floor plan with table status colors -->
+    <div class="modal-overlay" id="floorViewModal">
+      <div class="modal" style="max-width:1100px;width:95vw;max-height:90vh">
+        <div class="modal-header">
+          <h3 class="modal-title">🪑 ผังโต๊ะ <span id="fvLegend" style="font-size:12px;font-weight:400;color:#64748b;margin-left:14px">🟢 ว่าง · 🔵 มีออเดอร์ · 🟡 บิลพัก · 🟣 จองล่วงหน้า · ⚪ ปิด</span></h3>
+          <button class="modal-close" onclick="Layout.closeModal('floorViewModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:0;background:#f1f5f9">
+          <div id="fvFloorTabs" style="display:flex;gap:4px;padding:10px 14px;background:#fff;border-bottom:1px solid #e5e7eb;overflow-x:auto;flex-wrap:nowrap"></div>
+          <div id="fvCanvasWrap" style="overflow:auto;max-height:calc(90vh - 200px);padding:20px">
+            <div id="fvCanvas" style="position:relative;background:#fff;background-image:linear-gradient(#f1f5f9 1px, transparent 1px), linear-gradient(90deg, #f1f5f9 1px, transparent 1px);background-size:20px 20px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.06);margin:0 auto"></div>
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between;padding:10px 16px">
+          <div style="display:flex;gap:14px">
+            <a href="/pages/pos-reservations.html" target="_blank" style="font-size:12px;color:#7c3aed;text-decoration:none;font-weight:600">📅 จัดการการจอง</a>
+            <a href="/pages/pos-floorplan.html" target="_blank" style="font-size:12px;color:#64748b;text-decoration:none">⚙️ จัดการผังโต๊ะ</a>
+          </div>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('floorViewModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Held-orders (recall) modal -->
+    <div class="modal-overlay" id="heldOrdersModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+          <h3 class="modal-title">📌 บิลพัก</h3>
+          <button class="modal-close" onclick="Layout.closeModal('heldOrdersModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="heldOrdersBody" style="padding:14px;max-height:60vh;overflow:auto;">
+          <div style="text-align:center;color:#94a3b8;padding:40px">กำลังโหลด...</div>
         </div>
       </div>
     </div>
@@ -681,6 +823,22 @@
       async init() {
         if (!Layout.init('pos')) return;
         Layout.setTitle('POS หน้าขาย');
+        // ?table=A1 deep-link — the reservation page opens this URL when the
+        // host clicks "🪑 นั่งโต๊ะ" so the cashier lands ready to take orders.
+        const params = new URLSearchParams(location.search);
+        const seedTable = params.get('table');
+        if (seedTable) {
+          // Defer setting the field until DOM is ready; the layout JS hasn't
+          // wired up #fTableNo when init() runs the first time.
+          setTimeout(() => {
+            const el = document.getElementById('fTableNo');
+            if (el) el.value = seedTable;
+          }, 50);
+        }
+        // Remember the cashier's last menu language choice across page reloads.
+        this._menuLang = localStorage.getItem('pos:menuLang') || 'th';
+        const btn = document.getElementById('langToggleBtn');
+        if (btn) btn.textContent = this._menuLang === 'en' ? '🌐 EN' : '🌐 TH';
         // Kiosk mode — hide the accounting sidebar/header for a focused
         // full-screen cashier experience.
         document.body.classList.add('pos-mode');
@@ -1075,6 +1233,7 @@
             this.session = sessions[0];
             this.updateSessionUI(true);
             await this.loadCatalog();
+            this._refreshHeldCount();
           } else {
             this.session = null;
             this.updateSessionUI(false);
@@ -1158,9 +1317,12 @@
           ]);
           this.products = (prodRes.data?.items || prodRes.data || []).filter(p => p.isActive);
           this.packages = (pkgRes.data || []).filter(p => p.isActive);
+          // Keep both Thai + English names on every item so the lang toggle
+          // can swap display without re-fetching. nameEn falls back to name
+          // when not set, so toggling EN doesn't blank anything.
           this.allItems = [
-            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, code:p.code, barcode:p.barcode, price:p.sellingPrice, category:p.category||'สินค้า' })),
-            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, code:p.sku, barcode:null, price:p.price, category:p.category||'บริการ' }))
+            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, nameEn:p.nameEn||p.name, code:p.code, barcode:p.barcode, price:p.sellingPrice, category:p.category||'สินค้า', printStation:p.printStation })),
+            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, nameEn:p.nameEn||p.name, code:p.sku, barcode:null, price:p.price, category:p.category||'บริการ', printStation:null }))
           ];
           this.buildCategories();
           this.filterItems();
@@ -1220,7 +1382,7 @@
         }
         grid.innerHTML = this.filteredItems.map(i => `
           <div class="pos-item" onclick="Page.addToCart('${i.type}','${i.id}')">
-            <div class="item-name">${i.name}</div>
+            <div class="item-name">${this._menuLang==='en'?(i.nameEn||i.name):i.name}</div>
             <div class="item-price">${Layout.money(i.price)}</div>
             ${i.code ? `<div class="item-code">${i.code}</div>` : ''}
           </div>
@@ -1240,20 +1402,128 @@
             itemId: id,
             name: item.name,
             unitPrice: item.price,
-            quantity: 1
+            quantity: 1,
+            printStation: item.printStation
           });
         }
         this.renderCart();
+        // If the order is already on the server, push the change so totals stay correct.
+        if (this.currentOrderId) this._pushCartChange(existing, item, type, id);
+      },
+
+      // Sync a single add-to-cart action with the server. We do it after the local
+      // optimistic update so the UI feels snappy, then reconcile on response.
+      async _pushCartChange(existing, item, type, id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          if (existing && existing.serverItemId) {
+            const res = await api.updatePosOrderItemQty(this.currentOrderId, existing.serverItemId, existing.quantity);
+            this._syncCartFromServer(res.data);
+          } else {
+            const res = await api.addPosOrderItem(this.currentOrderId, {
+              productId: type === 'product' ? id : null,
+              servicePackageId: type === 'package' ? id : null,
+              itemName: item.name,
+              quantity: 1,
+              unitPrice: item.price,
+              modifiers: []
+            });
+            this._syncCartFromServer(res.data);
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // Rebuild this.cart from the server's authoritative item list so qty/price
+      // never drift from the GL. Preserves the visible row order.
+      _syncCartFromServer(order) {
+        if (!order || !order.items) return;
+        this.cart = order.items.filter(i => !i.isDeleted).map(i => ({
+          type: i.productId ? 'product' : 'package',
+          itemId: i.productId || i.servicePackageId,
+          serverItemId: i.id,
+          name: i.itemName,
+          unitPrice: i.unitPrice,
+          quantity: i.quantity,
+          discountAmount: i.discountAmount,
+          discountPercent: i.discountPercent
+        }));
+        this.currentOrder = order;
+        this.renderCart();
+        this.updateSummaryFromOrder(order);
+      },
+
+      // ===== Per-line discount =====
+      async openItemDiscount(idx) {
+        const line = this.cart[idx];
+        if (!line) return;
+        if (!this.currentOrderId || !line.serverItemId) {
+          // Item not yet on the server — flush it first so it has an id.
+          await this.createOrderIfNeeded();
+          if (!this.currentOrderId) return;
+          // After sync, the visible row order is preserved so the same idx points at the same line.
+        }
+        const gross = line.unitPrice * line.quantity;
+        const cur = line.discountAmount || 0;
+        const input = prompt(`ส่วนลด "${line.name}"\nยอดก่อนส่วนลด: ${gross.toFixed(2)} บาท\n\nพิมพ์จำนวน เช่น "10" (ลด ฿10) หรือ "10%" (ลด 10%) — เว้นว่างเพื่อยกเลิกส่วนลด`, cur > 0 ? String(cur) : '');
+        if (input === null) return; // cancelled
+        const trimmed = input.trim();
+        const api = Layout.api(); if (!api) return;
+        let body = {};
+        if (trimmed === '') body = { discountAmount: 0, discountPercent: 0 };
+        else if (trimmed.endsWith('%')) {
+          const pct = parseFloat(trimmed.slice(0, -1));
+          if (isNaN(pct) || pct < 0 || pct > 100) { Layout.toast('เปอร์เซ็นต์ 0-100','warning'); return; }
+          body = { discountPercent: pct };
+        } else {
+          const amt = parseFloat(trimmed);
+          if (isNaN(amt) || amt < 0) { Layout.toast('จำนวนไม่ถูกต้อง','warning'); return; }
+          if (amt > gross) { Layout.toast('ส่วนลดเกินยอดรายการ','warning'); return; }
+          body = { discountAmount: amt };
+        }
+        // Find serverItemId on the (possibly resynced) cart line.
+        const live = this.cart[idx];
+        if (!live?.serverItemId) { Layout.toast('ไม่พบรายการบนเซิร์ฟเวอร์','error'); return; }
+        try {
+          const res = await api.setPosItemDiscount(this.currentOrderId, live.serverItemId, body);
+          this._syncCartFromServer(res.data);
+          Layout.toast('บันทึกส่วนลดสำเร็จ');
+        } catch(e) { Layout.toast(e.message,'error'); }
       },
 
       removeFromCart(idx) {
+        const line = this.cart[idx];
+        if (this.currentOrderId && line && line.serverItemId) {
+          const api = Layout.api(); if (!api) return;
+          api.removePosOrderItem(this.currentOrderId, line.serverItemId)
+            .then(() => api.getPosOrder(this.currentOrderId))
+            .then(res => this._syncCartFromServer(res.data))
+            .catch(e => Layout.toast(e.message, 'error'));
+          return;
+        }
         this.cart.splice(idx, 1);
         this.renderCart();
       },
 
       updateQty(idx, delta) {
-        this.cart[idx].quantity += delta;
-        if (this.cart[idx].quantity <= 0) this.cart.splice(idx, 1);
+        const line = this.cart[idx];
+        if (!line) return;
+        const newQty = line.quantity + delta;
+        if (this.currentOrderId && line.serverItemId) {
+          const api = Layout.api(); if (!api) return;
+          if (newQty <= 0) {
+            api.removePosOrderItem(this.currentOrderId, line.serverItemId)
+              .then(() => api.getPosOrder(this.currentOrderId))
+              .then(res => this._syncCartFromServer(res.data))
+              .catch(e => Layout.toast(e.message, 'error'));
+          } else {
+            api.updatePosOrderItemQty(this.currentOrderId, line.serverItemId, newQty)
+              .then(res => this._syncCartFromServer(res.data))
+              .catch(e => Layout.toast(e.message, 'error'));
+          }
+          return;
+        }
+        line.quantity = newQty;
+        if (line.quantity <= 0) this.cart.splice(idx, 1);
         this.renderCart();
       },
 
@@ -1268,16 +1538,21 @@
           return;
         }
         sumEl.style.display = 'block';
-        el.innerHTML = this.cart.map((c, i) => `
+        el.innerHTML = this.cart.map((c, i) => {
+          const gross = c.unitPrice * c.quantity;
+          const disc = c.discountAmount || 0;
+          const net = gross - disc;
+          return `
           <div class="order-item-row">
-            <div class="oi-name">${c.name}</div>
+            <div class="oi-name">${c.name}${disc>0?`<div style="font-size:11px;color:#dc2626">ลด ${Layout.money(disc)}${c.discountPercent?` (${c.discountPercent}%)`:''}</div>`:''}</div>
             <button class="oi-remove" onclick="Page.updateQty(${i},-1)">-</button>
             <span class="oi-qty">${c.quantity}</span>
             <button class="oi-remove" style="color:var(--success)" onclick="Page.updateQty(${i},1)">+</button>
-            <div class="oi-price">${Layout.money(c.unitPrice * c.quantity)}</div>
+            <div class="oi-price">${disc>0?`<span style="text-decoration:line-through;color:#94a3b8;font-size:11px">${Layout.money(gross)}</span><br>`:''}${Layout.money(net)}</div>
+            <button class="oi-remove" style="color:#f59e0b;font-size:14px" onclick="Page.openItemDiscount(${i})" title="ส่วนลดรายการ">%</button>
             <button class="oi-remove" onclick="Page.removeFromCart(${i})">x</button>
-          </div>
-        `).join('');
+          </div>`;
+        }).join('');
         this.calcTotals();
       },
 
@@ -1319,6 +1594,7 @@
           const res = await api.createPosOrder({
             sessionId: this.session.id,
             orderType: ot,
+            customerId: this._attachedCustomerId || null,
             customerName: document.getElementById('fCustomerName').value || null,
             tableNumber: document.getElementById('fTableNo').value || null,
             queueNumber: document.getElementById('fQueueNo').value || null,
@@ -1327,51 +1603,312 @@
           this.currentOrder = res.data;
           this.currentOrderId = res.data.id;
           document.getElementById('orderTitle').textContent = `#${res.data.orderNumber}`;
-          // Sync cart with server response
+          // Sync local cart from the server's items (their ids let us
+          // edit individual lines later without recreating the order).
           this.paidTotal = 0;
-          this.updateSummaryFromOrder(res.data);
+          this._syncCartFromServer(res.data);
           return this.currentOrderId;
         } catch (e) { Layout.toast(e.message, 'error'); return null; }
       },
 
       updateSummaryFromOrder(order) {
         document.getElementById('sumSubtotal').textContent = Layout.money(order.subTotal);
-        document.getElementById('sumDiscount').textContent = Layout.money(order.discountAmount);
+        const discRow = document.getElementById('sumDiscountRow');
+        if (order.discountAmount > 0) {
+          discRow.style.display = '';
+          document.getElementById('sumDiscount').textContent = Layout.money(order.discountAmount);
+          const badge = document.getElementById('sumCouponBadge');
+          if (order.couponCode) { badge.style.display=''; badge.textContent='🎟 '+order.couponCode; }
+          else badge.style.display='none';
+        } else discRow.style.display='none';
         document.getElementById('sumSc').textContent = Layout.money(order.serviceChargeAmount);
         document.getElementById('sumVat').textContent = Layout.money(order.vatAmount);
+        const tipRow = document.getElementById('sumTipRow');
+        if (order.tipAmount > 0) {
+          tipRow.style.display='';
+          document.getElementById('sumTip').textContent = Layout.money(order.tipAmount);
+        } else tipRow.style.display='none';
         document.getElementById('sumNet').textContent = Layout.money(order.netAmount);
         this.paidTotal = (order.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
       },
 
-      async addPayment() {
+      // ===== Menu language toggle =====
+      toggleMenuLang() {
+        this._menuLang = this._menuLang === 'en' ? 'th' : 'en';
+        localStorage.setItem('pos:menuLang', this._menuLang);
+        document.getElementById('langToggleBtn').textContent = this._menuLang === 'en' ? '🌐 EN' : '🌐 TH';
+        this.renderGrid();
+      },
+
+      // ===== Member / contact lookup =====
+      onCustomerInput(q) {
+        clearTimeout(this._custTimer);
+        this._custTimer = setTimeout(() => this._searchCustomer(q), 250);
+      },
+      async _searchCustomer(q) {
+        const results = document.getElementById('customerResults');
+        if (!q || q.length < 2) { results.style.display='none'; return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getContacts(`?search=${encodeURIComponent(q)}&pageSize=8`);
+          const items = (res.data?.items || []).filter(c => c.isCustomer !== false);
+          if (!items.length) { results.style.display='none'; return; }
+          results.style.display = '';
+          results.innerHTML = items.map(c => `
+            <div onclick="Page.attachCustomer('${c.id}','${(c.name||'').replace(/'/g,'\\\'')}',${c.loyaltyPoints||0},${c.totalVisitCount||0})" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+              <div style="font-weight:600">${Layout.esc(c.name)}</div>
+              <div style="font-size:11px;color:#64748b">${c.phone?'📞 '+Layout.esc(c.phone)+' · ':''}🎁 ${c.loyaltyPoints||0} แต้ม · มาแล้ว ${c.totalVisitCount||0} ครั้ง</div>
+            </div>`).join('');
+        } catch { results.style.display='none'; }
+      },
+      attachCustomer(id, name, points, visits) {
+        this._attachedCustomerId = id;
+        document.getElementById('fCustomerName').value = name;
+        document.getElementById('customerResults').style.display = 'none';
+        document.getElementById('memberName').textContent = name;
+        document.getElementById('memberPoints').textContent = points;
+        document.getElementById('memberVisits').textContent = visits;
+        document.getElementById('memberBadge').style.display = 'flex';
+      },
+      clearMember() {
+        this._attachedCustomerId = null;
+        document.getElementById('fCustomerName').value = '';
+        document.getElementById('memberBadge').style.display = 'none';
+      },
+
+      // ===== Tip =====
+      async openTip() {
         const orderId = await this.createOrderIfNeeded();
         if (!orderId) return;
+        const cur = this.currentOrder?.tipAmount || 0;
+        const subtotal = this.currentOrder?.subTotal || 0;
+        const input = prompt(`💝 ทิปพนักงาน\nยอดบิล (ก่อนทิป): ${subtotal.toFixed(2)} บาท\n\nพิมพ์จำนวนทิป (บาท), "10%"/"15%"/"20%" หรือเว้นว่างเพื่อยกเลิก`, cur > 0 ? String(cur) : '');
+        if (input === null) return;
+        const t = input.trim();
+        let tip = 0;
+        if (t === '') tip = 0;
+        else if (t.endsWith('%')) {
+          const pct = parseFloat(t.slice(0,-1));
+          if (isNaN(pct) || pct < 0 || pct > 100) { Layout.toast('เปอร์เซ็นต์ 0-100','warning'); return; }
+          tip = Math.round(subtotal * pct) / 100 * 1; tip = +(subtotal * pct / 100).toFixed(2);
+        } else {
+          tip = parseFloat(t);
+          if (isNaN(tip) || tip < 0) { Layout.toast('จำนวนไม่ถูกต้อง','warning'); return; }
+        }
         const api = Layout.api(); if (!api) return;
-        const method = document.getElementById('payMethod').value;
-        const amount = parseFloat(document.getElementById('payAmount').value);
-        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงิน', 'warning'); return; }
+        try {
+          const res = await api.setPosTip(this.currentOrderId, tip);
+          this._syncCartFromServer(res.data);
+          Layout.toast(tip > 0 ? `บันทึกทิป ${tip.toFixed(2)} บาท` : 'ลบทิปแล้ว');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== Coupon =====
+      async openCoupon() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        const cur = this.currentOrder?.couponCode || '';
+        const input = prompt('🎟️ ใส่โค้ดคูปอง (เว้นว่างเพื่อลบคูปอง)', cur);
+        if (input === null) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.applyPosCoupon(this.currentOrderId, input.trim() || null);
+          this._syncCartFromServer(res.data);
+          if (input.trim()) Layout.toast(`ใช้คูปอง "${input.trim()}" — ลด ${res.data.couponDiscountAmount} บาท`);
+          else Layout.toast('ลบคูปองแล้ว');
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== Split bill =====
+      async openSplit() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        if (!this.cart.length) { Layout.toast('ไม่มีรายการให้แยก','warning'); return; }
+        if ((this.currentOrder?.payments || []).length > 0) { Layout.toast('มีการชำระเงินแล้ว — ยกเลิกการชำระก่อนแยกบิล','warning'); return; }
+        // Initial state: every item belongs to check #1.
+        this._splitChecks = this.cart.map(_ => 1);
+        this._splitCount = 2;
+        this._renderSplitModal();
+        Layout.openModal('splitModal');
+      },
+      _renderSplitModal() {
+        const body = document.getElementById('splitModalBody');
+        const checkCount = this._splitCount;
+        const totalsByCheck = Array(checkCount).fill(0);
+        const html = this.cart.map((c, i) => {
+          const lineTotal = (c.unitPrice * c.quantity) - (c.discountAmount || 0);
+          totalsByCheck[this._splitChecks[i] - 1] += lineTotal;
+          return `<div style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #f1f5f9">
+            <div style="flex:1">${Layout.esc(c.name)} <span style="color:#94a3b8">×${c.quantity}</span></div>
+            <div style="color:#0f172a;font-weight:600">${Layout.money(lineTotal)}</div>
+            <select onchange="Page._splitChecks[${i}]=parseInt(this.value);Page._renderSplitModal()" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px">
+              ${Array.from({length: checkCount}, (_, k) => `<option value="${k+1}" ${this._splitChecks[i]===k+1?'selected':''}>บิล ${k+1}</option>`).join('')}
+            </select>
+          </div>`;
+        }).join('');
+        const totals = totalsByCheck.map((t,k) =>
+          `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;text-align:center;flex:1">
+            <div style="font-size:11px;color:#64748b">บิล ${k+1}</div>
+            <div style="font-weight:700;font-size:16px;color:#0f172a">${Layout.money(t)}</div>
+          </div>`).join('');
+        body.innerHTML = `
+          <div style="display:flex;gap:8px;margin-bottom:12px">${totals}</div>
+          <div style="display:flex;gap:6px;margin-bottom:12px">
+            <button onclick="Page._splitCount=Math.max(2,Page._splitCount-1);Page._renderSplitModal()" style="padding:6px 12px;background:#fff;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer">− บิล</button>
+            <button onclick="Page._splitCount=Math.min(8,Page._splitCount+1);Page._renderSplitModal()" style="padding:6px 12px;background:#fff;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer">+ บิล</button>
+            <button onclick="Page._splitEvenly()" style="padding:6px 12px;background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;border-radius:6px;cursor:pointer;font-weight:600">⚖️ แบ่งเฉลี่ย</button>
+          </div>
+          <div style="max-height:300px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px">${html}</div>
+          <div style="margin-top:10px;font-size:11px;color:#64748b">💡 แต่ละบิลต้องมีอย่างน้อย 1 รายการ · ระบบจะสร้างบิลใหม่ + ยกเลิกบิลต้นทาง</div>`;
+      },
+      _splitEvenly() {
+        // Distribute items round-robin so each check has roughly equal item count.
+        this._splitChecks = this.cart.map((_, i) => (i % this._splitCount) + 1);
+        this._renderSplitModal();
+      },
+      async confirmSplit() {
+        const groups = Array.from({length: this._splitCount}, () => []);
+        this.cart.forEach((c, i) => {
+          if (c.serverItemId) groups[this._splitChecks[i] - 1].push(c.serverItemId);
+        });
+        if (groups.some(g => g.length === 0)) { Layout.toast('แต่ละบิลต้องมีอย่างน้อย 1 รายการ','warning'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.splitPosOrder(this.currentOrderId, groups);
+          Layout.closeModal('splitModal');
+          Layout.toast(`แยกบิลสำเร็จ — ${res.data.length} บิลใหม่ พักไว้ในรายการบิลพัก`);
+          // After split, every child is Open. Hold them all + reset the screen
+          // so the cashier sees a fresh panel and can recall whichever bill to charge.
+          for (const o of res.data) {
+            await api.updatePosOrderStatus(o.id, { status: 'OnHold' });
+          }
+          this.resetOrder();
+          this._refreshHeldCount();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== Pay-pad calculator =====
+      async openPayPad() {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) return;
+        this._payPadMethod = 'Cash';
+        // Reset tab UI
+        document.querySelectorAll('#payPadTabs .ppt').forEach(b => b.classList.toggle('active', b.dataset.method === 'Cash'));
+        document.getElementById('ppReceived').value = '0';
+        document.getElementById('ppRef').value = '';
+        this._payPadRecalc();
+        Layout.openModal('payPadModal');
+      },
+      payPadMethod(btn, method) {
+        this._payPadMethod = method;
+        document.querySelectorAll('#payPadTabs .ppt').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // Hide change row for non-cash (you don't give change for a transfer).
+        document.getElementById('ppQuickRow').style.display = method === 'Cash' ? '' : 'none';
+        document.getElementById('ppRecvLabel').textContent = method === 'Cash'
+          ? '(รับเงินสดมา)'
+          : '(ใส่จำนวนที่จะหัก จากใบนี้)';
+        // For non-cash default the received field to the remaining balance.
+        if (method !== 'Cash') {
+          const remaining = this._payPadRemaining();
+          document.getElementById('ppReceived').value = remaining.toFixed(2);
+        } else {
+          document.getElementById('ppReceived').value = '0';
+        }
+        this._payPadRecalc();
+      },
+      _payPadRemaining() {
+        const order = this.currentOrder;
+        if (!order) return 0;
+        const paid = (order.payments || []).reduce((s, p) => s + p.amount, 0);
+        return Math.max(0, +(order.netAmount - paid).toFixed(2));
+      },
+      _payPadRecalc() {
+        const order = this.currentOrder;
+        const net = order?.netAmount || 0;
+        const paid = (order?.payments || []).reduce((s, p) => s + p.amount, 0);
+        const remaining = Math.max(0, +(net - paid).toFixed(2));
+        const received = parseFloat(document.getElementById('ppReceived').value) || 0;
+        document.getElementById('ppDue').textContent = Layout.money(net);
+        document.getElementById('ppPaid').textContent = Layout.money(paid);
+        document.getElementById('ppRemaining').textContent = Layout.money(remaining);
+        // Change only applies to cash AND only when received exceeds remaining.
+        if (this._payPadMethod === 'Cash' && received > remaining) {
+          document.getElementById('ppChangeRow').style.display = '';
+          document.getElementById('ppChange').textContent = Layout.money(received - remaining);
+        } else {
+          document.getElementById('ppChangeRow').style.display = 'none';
+        }
+      },
+      payPadKey(k) {
+        const inp = document.getElementById('ppReceived');
+        let v = inp.value === '0' ? '' : inp.value;
+        if (k === '.') { if (v.includes('.')) return; if (!v) v = '0'; v += '.'; }
+        else v += k;
+        // Cap input to a sane max so a stray long-press doesn't enter ฿9-trillion.
+        if (v.length > 12) return;
+        inp.value = v;
+        this._payPadRecalc();
+      },
+      payPadBackspace() {
+        const inp = document.getElementById('ppReceived');
+        inp.value = inp.value.length <= 1 ? '0' : inp.value.slice(0, -1);
+        this._payPadRecalc();
+      },
+      payPadClear() {
+        document.getElementById('ppReceived').value = '0';
+        this._payPadRecalc();
+      },
+      payPadAdd(n) {
+        const inp = document.getElementById('ppReceived');
+        const cur = parseFloat(inp.value) || 0;
+        inp.value = (cur + n).toFixed(2);
+        this._payPadRecalc();
+      },
+      payPadExact() {
+        document.getElementById('ppReceived').value = this._payPadRemaining().toFixed(2);
+        this._payPadRecalc();
+      },
+      async payPadConfirm() {
+        const api = Layout.api(); if (!api) return;
+        const orderId = this.currentOrderId;
+        if (!orderId) return;
+        const method = this._payPadMethod || 'Cash';
+        const received = parseFloat(document.getElementById('ppReceived').value) || 0;
+        const remaining = this._payPadRemaining();
+        if (received <= 0) { Layout.toast('ใส่จำนวนเงินก่อน', 'warning'); return; }
+        // For cash: amount = min(received, remaining) — overpayment becomes change.
+        // For non-cash: amount = received (no change concept).
+        const amount = method === 'Cash' ? Math.min(received, remaining) : received;
+        if (amount <= 0) { Layout.toast('ออเดอร์นี้ชำระครบแล้ว', 'warning'); return; }
         try {
           const res = await api.addPosPayment({
             orderId: orderId,
             paymentMethod: method,
             amount: amount,
-            receivedAmount: method === 'Cash' ? amount : amount,
-            referenceNo: document.getElementById('payRef').value || null
+            receivedAmount: received,
+            referenceNo: document.getElementById('ppRef').value || null
           });
-          this.currentOrder = res.data;
-          this.updateSummaryFromOrder(res.data);
+          this._syncCartFromServer(res.data);
           Layout.toast('บันทึกการชำระเงินสำเร็จ');
-          document.getElementById('payAmount').value = '';
-          document.getElementById('payRef').value = '';
-          // Show change for cash
+          // Show change badge in main order panel for cashier visibility.
           if (method === 'Cash') {
-            const net = res.data.netAmount;
-            const totalPaid = (res.data.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
-            if (totalPaid >= net) {
-              const lastPay = res.data.payments[res.data.payments.length - 1];
+            const lastPay = res.data.payments[res.data.payments.length - 1];
+            if (lastPay && lastPay.changeAmount > 0) {
               document.getElementById('changeDisplay').style.display = 'block';
               document.getElementById('changeAmount').textContent = Layout.money(lastPay.changeAmount);
             }
+          }
+          // Auto-close + auto-complete when fully paid.
+          const newRemaining = this._payPadRemaining();
+          if (newRemaining <= 0.005) {
+            Layout.closeModal('payPadModal');
+            // Tiny pause so the user sees the change amount before the receipt prints.
+            setTimeout(() => this.completeOrder(), 200);
+          } else {
+            // Partial payment — reset received for the next leg, keep modal open.
+            document.getElementById('ppReceived').value = '0';
+            this._payPadRecalc();
           }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -1390,12 +1927,74 @@
           const res = await api.completePosOrder(orderId);
           const snap = this._buildReceiptSnapshot(res?.data);
           Layout.toast('ปิดบิลสำเร็จ!');
+          // Stash the completed order so the post-checkout actions (issue tax
+          // invoice, email receipt) know which order to act on.
+          this._lastCompletedOrder = res?.data;
           // Thank-you screen on the customer display (if window is open).
           this._pushCustomerDisplay({ type: 'paid', change: snap.change });
           this.resetOrder();
           if ((this._printSettings || this.loadPrintSettings()).autoPrint !== false)
             this.printReceipt(snap);
+          this._showPostCheckoutActions();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /// <summary>Toast-style action bar that lets the cashier issue a full tax
+      /// invoice (เต็มรูป — needed when the customer is a juristic person)
+      /// OR email a copy of the e-receipt right after checkout. Auto-dismisses
+      /// after 12 s so the next sale isn't blocked.</summary>
+      _showPostCheckoutActions() {
+        const o = this._lastCompletedOrder;
+        if (!o) return;
+        const existing = document.getElementById('postCheckoutBar');
+        if (existing) existing.remove();
+        const bar = document.createElement('div');
+        bar.id = 'postCheckoutBar';
+        bar.style.cssText = 'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:12px 18px;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);z-index:10000;display:flex;gap:10px;align-items:center;font-size:13px';
+        bar.innerHTML = `
+          <span>#${this.esc(o.orderNumber)} ปิดแล้ว ฿${o.netAmount.toFixed(2)}</span>
+          <button onclick="Page.openIssueTaxInvoice('${o.id}')" style="background:#3b82f6;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">📄 ออกใบกำกับเต็ม</button>
+          <button onclick="Page.openEmailReceipt('${o.id}')" style="background:#10b981;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">📧 ส่งอีเมล</button>
+          <button onclick="document.getElementById('postCheckoutBar').remove()" style="background:transparent;color:#94a3b8;border:none;cursor:pointer;font-size:18px;padding:0 4px">×</button>`;
+        document.body.appendChild(bar);
+        setTimeout(() => { const el = document.getElementById('postCheckoutBar'); if (el) el.remove(); }, 12000);
+      },
+      esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); },
+
+      async openIssueTaxInvoice(orderId) {
+        const customerName = prompt('ชื่อผู้ซื้อ (จะแสดงในใบกำกับเต็ม)');
+        if (customerName === null) return;
+        const taxId = prompt('เลขผู้เสียภาษีของผู้ซื้อ (13 หลัก) — เว้นว่างได้ถ้าบุคคลธรรมดา', '');
+        if (taxId === null) return;
+        const address = prompt('ที่อยู่ผู้ซื้อ (สำคัญสำหรับใบกำกับเต็ม)', '');
+        if (address === null) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.issuePosTaxInvoice(orderId, {
+            customerName: customerName.trim(),
+            customerTaxId: taxId.trim() || null,
+            customerAddress: address.trim() || null
+          });
+          Layout.toast(`✓ ออกใบกำกับเต็ม #${res.data.documentNumber || ''} แล้ว`, 'success');
+          const bar = document.getElementById('postCheckoutBar'); if (bar) bar.remove();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async openEmailReceipt(orderId) {
+        const email = prompt('อีเมลที่จะส่งใบเสร็จไป');
+        if (!email) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await fetch(`/api/companies/${Layout.getCompanyId()}/pos/orders/${orderId}/email-receipt`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+          }).then(r => r.json()).then(j => {
+            if (!j.success) throw new Error(j.message || 'send failed');
+            Layout.toast(`✓ ส่งใบเสร็จไปที่ ${email} แล้ว`, 'success');
+            const bar = document.getElementById('postCheckoutBar'); if (bar) bar.remove();
+          });
+        } catch(e) { Layout.toast('ส่งไม่สำเร็จ: ' + e.message, 'error'); }
       },
 
       // ===== Offline sale queue (IndexedDB) =====
@@ -1543,7 +2142,7 @@
           clientOrderId: this._uuid(),
           sessionId: this.session.id,
           orderType: document.getElementById('orderType').value || 'DineIn',
-          customerId: null,
+          customerId: this._attachedCustomerId || null,
           customerName: document.getElementById('fCustomerName').value || null,
           tableNumber: document.getElementById('fTableNo').value || null,
           queueNumber: document.getElementById('fQueueNo').value || null,
@@ -1682,19 +2281,37 @@
         const table = document.getElementById('fTableNo')?.value || '';
         const queue = document.getElementById('fQueueNo')?.value || '';
         const cust = document.getElementById('fCustomerName')?.value || '';
-        const rows = this.cart.map(c =>
-          `<tr><td class="big">${c.quantity}×</td><td class="big">${esc(c.name)}</td></tr>`).join('');
-        const body = `
-          <h2>🍳 ออเดอร์เข้าครัว/บาร์</h2>
-          <div class="c b">${esc(typeLabel)}${table ? ' · โต๊ะ ' + esc(table) : ''}${queue ? ' · คิว ' + esc(queue) : ''}</div>
-          ${cust ? `<div class="c muted">ลูกค้า: ${esc(cust)}</div>` : ''}
-          <div class="c muted">เวลา: ${esc(new Date().toLocaleTimeString('th-TH'))}</div>
-          <div class="line"></div>
-          <table>${rows}</table>
-          <div class="line"></div>
-          <div class="c muted">รวม ${this.cart.reduce((s, c) => s + c.quantity, 0)} รายการ</div>`;
+
+        // Group items by PrintStation so each station prints its own ticket.
+        // Items with no PrintStation default to "ครัว" so nothing falls through.
+        const byStation = {};
+        this.cart.forEach(c => {
+          const station = c.printStation || 'ครัว';
+          (byStation[station] ??= []).push(c);
+        });
+        const stations = Object.keys(byStation).sort();
+        const stationIcon = { 'Kitchen-Hot':'🔥', 'Kitchen-Cold':'❄️', 'Bar':'🍹', 'Drinks':'🥤', 'ครัว':'🍳' };
+        const stationLabel = { 'Kitchen-Hot':'ครัวร้อน', 'Kitchen-Cold':'ครัวเย็น', 'Bar':'บาร์', 'Drinks':'เครื่องดื่ม' };
+
+        const sections = stations.map(st => {
+          const items = byStation[st];
+          const rows = items.map(c =>
+            `<tr><td class="big">${c.quantity}×</td><td class="big">${esc(c.name)}</td></tr>`).join('');
+          const label = stationLabel[st] || st;
+          const icon = stationIcon[st] || '🍴';
+          return `<div style="page-break-after:always">
+            <h2>${icon} ${esc(label)}</h2>
+            <div class="c b">${esc(typeLabel)}${table ? ' · โต๊ะ ' + esc(table) : ''}${queue ? ' · คิว ' + esc(queue) : ''}</div>
+            ${cust ? `<div class="c muted">ลูกค้า: ${esc(cust)}</div>` : ''}
+            <div class="c muted">เวลา: ${esc(new Date().toLocaleTimeString('th-TH'))}</div>
+            <div class="line"></div>
+            <table>${rows}</table>
+            <div class="line"></div>
+            <div class="c muted">รวม ${items.reduce((s, c) => s + c.quantity, 0)} รายการ · สถานี: ${esc(label)}</div>
+          </div>`;
+        }).join('');
         const s = this._printSettings || this.loadPrintSettings();
-        this._openPrintWindow('ออเดอร์ครัว', s.paper, 14, body);
+        this._openPrintWindow('ออเดอร์ครัว', s.paper, 14, sections);
       },
 
       async voidOrder() {
@@ -1711,18 +2328,265 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      // ===== Visual floor plan =====
+      async openFloorView() {
+        if (!this.session) { Layout.toast('กรุณาเปิดกะก่อน','warning'); return; }
+        Layout.openModal('floorViewModal');
+        await this._loadFloors();
+      },
+      async _loadFloors() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans?includeStatus=true&sessionId=${this.session.id}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          this._floors = j.data || [];
+          if (!this._floors.length) {
+            document.getElementById('fvFloorTabs').innerHTML = '';
+            document.getElementById('fvCanvas').innerHTML = `
+              <div style="padding:60px 20px;text-align:center;color:#64748b">
+                ยังไม่มีผังโต๊ะ<br>
+                <a href="/pages/pos-floorplan.html" target="_blank" style="color:#3b82f6;margin-top:10px;display:inline-block">⚙️ สร้างผังโต๊ะ</a>
+              </div>`;
+            document.getElementById('fvCanvas').style.width = '100%';
+            document.getElementById('fvCanvas').style.height = '300px';
+            return;
+          }
+          this._currentFloorIdx = 0;
+          this._renderFloorTabs();
+          this._renderFloorCanvas();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      _renderFloorTabs() {
+        const el = document.getElementById('fvFloorTabs');
+        el.innerHTML = this._floors.map((f, i) => {
+          const total = (f.tables || []).length;
+          const active = i === this._currentFloorIdx;
+          const occupied = (f.tables || []).filter(t => t.status === 'Active' || t.status === 'OnHold').length;
+          return `<button onclick="Page._switchFloor(${i})" style="padding:8px 14px;background:${active?'#0ea5e9':'#f1f5f9'};color:${active?'#fff':'#475569'};border:none;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap">
+            ${Layout.esc(f.name)} <span style="opacity:.7;margin-left:4px">${occupied}/${total}</span>
+          </button>`;
+        }).join('');
+      },
+      _switchFloor(i) {
+        this._currentFloorIdx = i;
+        this._renderFloorTabs();
+        this._renderFloorCanvas();
+      },
+      _renderFloorCanvas() {
+        const f = this._floors[this._currentFloorIdx];
+        if (!f) return;
+        const canvas = document.getElementById('fvCanvas');
+        canvas.style.width = f.canvasWidth + 'px';
+        canvas.style.height = f.canvasHeight + 'px';
+        canvas.innerHTML = (f.tables || []).map(t => {
+          // Status → color: free = green, active = blue, hold = yellow,
+          // reserved = purple, inactive = grey. Reservations override the
+          // "Free" green so the host knows a free-looking table is actually
+          // pre-booked.
+          let bg = '#dcfce7', border = '#22c55e', tip = 'ว่าง';
+          if (!t.isActive) { bg = '#f1f5f9'; border = '#94a3b8'; tip = 'ปิด'; }
+          else if (t.status === 'OnHold') { bg = '#fef3c7'; border = '#f59e0b'; tip = 'บิลพัก'; }
+          else if (t.status === 'Active') { bg = '#dbeafe'; border = '#3b82f6'; tip = 'มีออเดอร์'; }
+          else if (t.status === 'Reserved') { bg = '#ede9fe'; border = '#8b5cf6'; tip = `จองโดย ${t.upcomingReservationName||''}`; }
+          else if (t.color) { bg = t.color + '40'; border = t.color; }
+          const dataAttrs = t.activeOrderId ? `data-oid="${t.activeOrderId}"` : '';
+          const radius = t.shape === 'circle' ? '50%' : (t.shape === 'square' ? '6px' : '8px');
+          // Reservation time badge — countdown to the booking so cashier sees
+          // urgency at a glance.
+          let resvBadge = '';
+          if (t.upcomingReservationAt) {
+            const at = new Date(t.upcomingReservationAt);
+            const mins = Math.round((at.getTime() - Date.now()) / 60000);
+            const inLabel = mins <= 0 ? 'ถึงเวลาแล้ว' : (mins < 60 ? `อีก ${mins} น.` : at.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}));
+            resvBadge = `<div style="font-size:9px;color:#7c3aed;font-weight:700;margin-top:2px">📅 ${Layout.esc(inLabel)}</div>`;
+          }
+          return `<div ${dataAttrs} onclick="Page._tableClick('${Layout.esc(t.tableNumber).replace(/'/g,'&apos;')}','${t.activeOrderId || ''}','${t.status || ''}',${t.isActive?'true':'false'},'${t.upcomingReservationId || ''}')"
+                       style="position:absolute;left:${t.x}px;top:${t.y}px;width:${t.width}px;height:${t.height}px;background:${bg};border:2px solid ${border};border-radius:${radius};transform:rotate(${t.rotation}deg);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${t.isActive?'pointer':'not-allowed'};user-select:none;font-weight:700;color:#0f172a;transition:transform .12s,box-shadow .12s"
+                       onmouseover="this.style.transform='rotate(${t.rotation}deg) scale(1.04)';this.style.boxShadow='0 8px 20px rgba(0,0,0,.15)'"
+                       onmouseout="this.style.transform='rotate(${t.rotation}deg)';this.style.boxShadow=''"
+                       title="${Layout.esc(tip)}${t.activeOrderNumber?' · '+Layout.esc(t.activeOrderNumber):''}${t.activeOrderAmount?' · ฿'+t.activeOrderAmount.toFixed(2):''}">
+            <div style="font-size:${Math.min(20, t.width/4)}px">${Layout.esc(t.tableNumber)}</div>
+            <div style="font-size:11px;color:#475569;font-weight:600">🪑 ${t.seats}</div>
+            ${t.activeOrderNumber ? `<div style="font-size:10px;color:${border};font-weight:700;margin-top:2px">${Layout.esc(t.activeOrderNumber)}</div>` : ''}
+            ${t.activeOrderAmount ? `<div style="font-size:11px;color:#0f172a;font-weight:700">฿${t.activeOrderAmount.toFixed(0)}</div>` : ''}
+            ${resvBadge}
+          </div>`;
+        }).join('');
+      },
+      async _tableClick(tableNumber, orderId, status, isActive, reservationId) {
+        if (!isActive) { Layout.toast('โต๊ะนี้ปิดใช้งานอยู่','warning'); return; }
+        Layout.closeModal('floorViewModal');
+        // Reservation flow: free table with an upcoming booking. Ask if the
+        // customer just arrived — yes → mark reservation Seated and seed the
+        // new order with their info.
+        if (!orderId && reservationId) {
+          await this._seatFromReservation(reservationId, tableNumber);
+          return;
+        }
+        if (orderId) {
+          // Recall the existing order on that table — works for both Active and OnHold.
+          if (status === 'OnHold') {
+            await this.recallOrder(orderId);
+          } else {
+            // Active order — just load it into the panel.
+            const api = Layout.api();
+            try {
+              const res = await api.getPosOrder(orderId);
+              if (this.currentOrderId) await this.holdOrder();
+              this.currentOrderId = orderId;
+              this._syncCartFromServer(res.data);
+              document.getElementById('orderTitle').textContent = `#${res.data.orderNumber}`;
+              document.getElementById('fTableNo').value = tableNumber;
+              Layout.toast(`เปิดบิลโต๊ะ ${tableNumber}`);
+            } catch(e) { Layout.toast(e.message, 'error'); }
+          }
+        } else {
+          // Free table — set tableNumber on current cart or start a new order.
+          if (this.currentOrderId) {
+            // Already have an active order — transfer it to this table.
+            try {
+              await fetch(`/api/companies/${Layout.getCompanyId()}/pos/orders/${this.currentOrderId}/table`, {
+                method: 'PUT',
+                headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tableNumber })
+              });
+              document.getElementById('fTableNo').value = tableNumber;
+              Layout.toast(`ย้ายไปโต๊ะ ${tableNumber}`);
+            } catch(e) { Layout.toast(e.message, 'error'); }
+          } else {
+            document.getElementById('fTableNo').value = tableNumber;
+            Layout.toast(`เลือกโต๊ะ ${tableNumber} แล้ว — เพิ่มสินค้าได้เลย`);
+          }
+        }
+      },
+
+      // Reservation → Seat: fetch the reservation, flip its status to Seated,
+      // and pre-fill the POS panel with table + customer info so the cashier
+      // can start adding items right away. We don't auto-create the order —
+      // the cashier still has to add the first item, which is the trigger for
+      // createOrderIfNeeded to fire.
+      async _seatFromReservation(reservationId, tableNumber) {
+        try {
+          const cid = Layout.getCompanyId();
+          // Load the reservation so we can show the customer's name + party size.
+          const list = await fetch(`/api/companies/${cid}/pos/reservations/today`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          }).then(r => r.json());
+          const resv = (list.data || []).find(r => r.id === reservationId);
+          if (!resv) { Layout.toast('ไม่พบการจอง','warning'); return; }
+          const partyLine = resv.partySize ? ` (${resv.partySize} คน)` : '';
+          if (!confirm(`โต๊ะ ${tableNumber} จองโดย ${resv.customerName}${partyLine}\nเวลานัด ${new Date(resv.reservedAt).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}\n\nลูกค้ามาแล้ว — เปิดบิลให้?`)) return;
+          // Flip status → Seated (host station perspective).
+          await fetch(`/api/companies/${cid}/pos/reservations/${reservationId}/status`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'Seated' })
+          });
+          // Hold current order if any so we don't blow it away.
+          if (this.currentOrderId) await this.holdOrder();
+          document.getElementById('fTableNo').value = tableNumber;
+          document.getElementById('fCustomerName').value = resv.customerName;
+          if (resv.contactId) this._attachedCustomerId = resv.contactId;
+          Layout.toast(`✓ นั่งโต๊ะ ${tableNumber} — เพิ่มสินค้าได้เลย`);
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Hold / recall =====
+      async holdOrder() {
+        // Nothing to hold: just clear the panel.
+        if (!this.currentOrderId) {
+          if (this.cart.length === 0) { Layout.toast('ยังไม่มีรายการให้พัก','warning'); return; }
+          // Force the cart to the server first so we have something to recall later.
+          const id = await this.createOrderIfNeeded();
+          if (!id) return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.updatePosOrderStatus(this.currentOrderId, { status: 'OnHold' });
+          Layout.toast('พักบิลแล้ว — กด 📌 บิลพัก เพื่อเรียกกลับมา');
+          this.resetOrder();
+          this._refreshHeldCount();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async openHeldOrders() {
+        Layout.openModal('heldOrdersModal');
+        await this._loadHeldOrders();
+      },
+
+      async _loadHeldOrders() {
+        const api = Layout.api(); if (!api) return;
+        const body = document.getElementById('heldOrdersBody');
+        body.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">กำลังโหลด...</div>';
+        try {
+          const res = await api.getPosOrders(`?status=OnHold&pageSize=50`);
+          const items = res.data?.items || [];
+          if (!items.length) {
+            body.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ไม่มีบิลพัก</div>';
+            return;
+          }
+          body.innerHTML = items.map(o => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff">
+              <div>
+                <div style="font-weight:700">#${Layout.esc(o.orderNumber)}${o.tableNumber?' · โต๊ะ '+Layout.esc(o.tableNumber):''}</div>
+                <div style="font-size:12px;color:#64748b">${o.customerName?Layout.esc(o.customerName)+' · ':''}${(o.items||[]).length} รายการ · ${Layout.money(o.netAmount)} บาท</div>
+                <div style="font-size:11px;color:#94a3b8">${new Date(o.createdAt).toLocaleString('th-TH')}</div>
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="Page.recallOrder('${o.id}')">เรียกกลับ →</button>
+            </div>`).join('');
+        } catch (e) { body.innerHTML = `<div style="color:#b91c1c;padding:20px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      async recallOrder(id) {
+        // If there's an active cart, hold the current order first so we don't lose it.
+        if (this.currentOrderId) await this.holdOrder();
+        else if (this.cart.length > 0) {
+          if (!confirm('มีรายการในตะกร้าที่ยังไม่ได้บันทึก — ทิ้งและเรียกบิลพักแทน?')) return;
+          this.resetOrder();
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          // Reopen: flip back to Open status so cart edits are allowed again.
+          await api.updatePosOrderStatus(id, { status: 'Open' });
+          const res = await api.getPosOrder(id);
+          this.currentOrderId = id;
+          this._syncCartFromServer(res.data);
+          document.getElementById('orderTitle').textContent = `#${res.data.orderNumber}`;
+          document.getElementById('fCustomerName').value = res.data.customerName || '';
+          document.getElementById('fTableNo').value = res.data.tableNumber || '';
+          Layout.closeModal('heldOrdersModal');
+          Layout.toast('เรียกบิลพักกลับมาแล้ว');
+          this._refreshHeldCount();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async _refreshHeldCount() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getPosOrders(`?status=OnHold&pageSize=1`);
+          const total = res.data?.totalCount ?? res.data?.total ?? (res.data?.items?.length || 0);
+          const badge = document.getElementById('heldCount');
+          if (total > 0) { badge.textContent = total; badge.style.display = ''; }
+          else { badge.style.display = 'none'; }
+        } catch { /* badge is best-effort */ }
+      },
+
       resetOrder() {
         this.cart = [];
         this.currentOrderId = null;
         this.currentOrder = null;
         this.paidTotal = 0;
+        this._attachedCustomerId = null;
         document.getElementById('orderTitle').textContent = 'ออเดอร์ใหม่';
         document.getElementById('fCustomerName').value = '';
         document.getElementById('fTableNo').value = '';
         document.getElementById('fQueueNo').value = '';
-        document.getElementById('payAmount').value = '';
-        document.getElementById('payRef').value = '';
         document.getElementById('changeDisplay').style.display = 'none';
+        const memberBadge = document.getElementById('memberBadge');
+        if (memberBadge) memberBadge.style.display = 'none';
         this.renderCart();
       },
 

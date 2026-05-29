@@ -12,11 +12,15 @@
     <div class="page-header">
       <div><h2 class="page-title">บัญชีธนาคาร</h2><p class="page-subtitle">จัดการบัญชีธนาคารและกระทบยอด</p></div>
       <div class="flex gap-2">
-        <button class="btn btn-secondary" onclick="Page.openImport()">นำเข้า Statement</button>
+        <button class="btn btn-secondary" onclick="Page.openImport()"
+                data-tour-step="2"
+                data-tour-text="นำเข้า Statement CSV/Excel/OFX/MT940 ของ KBank/SCB/BBL/KTB/BAY/TTB — ระบบ map คอลัมน์ + parse วันที่ + ปี พ.ศ. อัตโนมัติ">นำเข้า Statement</button>
         <button class="btn btn-secondary" onclick="Page.openGroupReconcile()" title="จับคู่หลายรายการธนาคารกับหลายเอกสารพร้อมหักล้าง (Net-off)">🔗 กลุ่มกระทบยอด</button>
         <button class="btn btn-secondary" onclick="Page.exportReconciliationReport()" title="ดาวน์โหลดรายงานการกระทบยอดเป็น Excel">📊 ส่งออกรายงาน</button>
         <button class="btn btn-secondary" onclick="Page.openConnections()">Open Banking</button>
-        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มบัญชี</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — เพิ่มบัญชีธนาคาร ผูกกับบัญชีในผังบัญชี (1012) → ใช้สำหรับ reconciliation + statement import">+ เพิ่มบัญชี</button>
       </div>
     </div>
 
@@ -2083,6 +2087,7 @@
     };
 
     Page.init();
+    Layout.enableTour('bank');
   </script>
 </body>
 </html>

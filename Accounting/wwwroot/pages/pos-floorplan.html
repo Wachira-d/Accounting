@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ผังโต๊ะ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* ===== Floor plan editor ===== */
+    .fp-layout { display:grid; grid-template-columns:240px 1fr 280px; gap:0; height:calc(100vh - 60px); background:#f1f5f9; }
+    .fp-side { background:#fff; padding:14px; overflow:auto; }
+    .fp-side h3 { margin:0 0 10px; font-size:14px; color:#475569; text-transform:uppercase; letter-spacing:.5px; }
+    .fp-floor-item { display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; margin-bottom:4px; }
+    .fp-floor-item:hover { background:#f1f5f9; }
+    .fp-floor-item.active { background:#dbeafe; color:#1e40af; }
+    .fp-add-btn { width:100%; padding:10px; background:#eff6ff; border:1px dashed #93c5fd; border-radius:8px; color:#1e40af; cursor:pointer; font-weight:600; margin-bottom:14px; font-size:13px; }
+    .fp-add-btn:hover { background:#dbeafe; }
+
+    .fp-canvas-wrap { position:relative; overflow:auto; background:#fafafa; }
+    .fp-toolbar { background:#fff; border-bottom:1px solid #e5e7eb; padding:8px 14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .fp-toolbar .sep { width:1px; background:#e5e7eb; height:24px; margin:0 4px; }
+    .fp-toolbar button { padding:6px 12px; background:#fff; border:1px solid #cbd5e1; border-radius:6px; cursor:pointer; font-size:13px; font-weight:600; }
+    .fp-toolbar button:hover { background:#f1f5f9; }
+    .fp-toolbar button.danger { color:#dc2626; border-color:#fca5a5; }
+    .fp-toolbar button.danger:hover { background:#fee2e2; }
+    .fp-toolbar .save-btn { background:#10b981; color:#fff; border-color:#10b981; }
+    .fp-toolbar .save-btn:hover { background:#059669; }
+    .fp-toolbar .save-btn.dirty { background:#f59e0b; border-color:#f59e0b; }
+    .fp-toolbar .save-btn.dirty:hover { background:#d97706; }
+
+    .fp-canvas { position:relative; background:#fff; background-image:linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px); background-size:20px 20px; margin:20px; box-shadow:0 4px 12px rgba(0,0,0,.06); border-radius:8px; }
+    .fp-canvas.dropping { background-color:#ecfeff; }
+
+    .fp-table { position:absolute; cursor:move; user-select:none; display:flex; align-items:center; justify-content:center; flex-direction:column; font-weight:700; color:#0f172a; background:#e0f2fe; border:2px solid #38bdf8; transition:box-shadow .12s, transform .08s; }
+    .fp-table:hover { box-shadow:0 4px 14px rgba(56,189,248,.4); }
+    .fp-table.selected { box-shadow:0 0 0 3px #f59e0b, 0 4px 14px rgba(245,158,11,.5); z-index:10; }
+    .fp-table.shape-circle { border-radius:50%; }
+    .fp-table.shape-square { border-radius:6px; }
+    .fp-table.shape-rectangle { border-radius:8px; }
+    .fp-table .t-num { font-size:18px; line-height:1.1; }
+    .fp-table .t-seats { font-size:11px; color:#0369a1; font-weight:600; }
+
+    /* Selection handles for resize */
+    .fp-handle { position:absolute; width:12px; height:12px; background:#f59e0b; border:2px solid #fff; border-radius:50%; cursor:nwse-resize; z-index:11; box-shadow:0 1px 4px rgba(0,0,0,.2); }
+    .fp-handle.h-br { cursor:nwse-resize; }
+    .fp-handle.h-rot { background:#3b82f6; cursor:grab; border-radius:3px; }
+
+    .fp-prop { background:#fff; padding:14px; overflow:auto; }
+    .fp-prop h3 { margin:0 0 10px; font-size:14px; color:#475569; text-transform:uppercase; letter-spacing:.5px; }
+    .fp-prop .form-group { margin-bottom:12px; }
+    .fp-prop .form-label { font-size:12px; color:#475569; margin-bottom:4px; display:block; font-weight:600; }
+    .fp-prop input, .fp-prop select { width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; box-sizing:border-box; }
+    .fp-prop .form-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .fp-prop .pal { display:grid; grid-template-columns:repeat(8,1fr); gap:4px; }
+    .fp-prop .pal-swatch { aspect-ratio:1; border-radius:4px; cursor:pointer; border:2px solid transparent; }
+    .fp-prop .pal-swatch.active { border-color:#0f172a; }
+    .fp-empty-state { text-align:center; padding:40px 20px; color:#94a3b8; font-size:13px; }
+
+    /* Top hint */
+    .fp-hint { background:#fef3c7; border-bottom:1px solid #fbbf24; padding:8px 14px; font-size:12px; color:#78350f; }
+    .fp-hint kbd { background:#fff; border:1px solid #cbd5e1; border-radius:3px; padding:1px 5px; font-family:monospace; font-size:11px; box-shadow:0 1px 0 #cbd5e1; }
+
+    /* Add-table palette */
+    .fp-palette { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
+    .fp-palette button { background:#fff; border:2px dashed #cbd5e1; border-radius:8px; padding:14px 8px; cursor:pointer; font-size:11px; font-weight:600; color:#475569; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all .15s; }
+    .fp-palette button:hover { border-color:#38bdf8; background:#eff6ff; color:#0c4a6e; transform:translateY(-1px); }
+    .fp-palette .swatch { width:34px; height:24px; background:#38bdf8; border-radius:4px; }
+    .fp-palette .swatch.circle { border-radius:50%; height:34px; }
+    .fp-palette .swatch.square { width:30px; height:30px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="fp-hint">
+      💡 <strong>วิธีใช้:</strong>
+      • คลิกที่ปุ่มรูปร่างด้านซ้าย เพื่อเพิ่มโต๊ะใหม่ • ลากโต๊ะเพื่อย้าย • ลากปุ่ม 🟠 มุมขวาล่างเพื่อเปลี่ยนขนาด
+      • <kbd>Del</kbd> ลบโต๊ะที่เลือก • <kbd>Ctrl+S</kbd> บันทึก • <kbd>Esc</kbd> ยกเลิกเลือก
+    </div>
+
+    <div class="fp-layout">
+      <!-- LEFT: floor list + add-table palette -->
+      <div class="fp-side">
+        <h3>🏢 ชั้น / โซน</h3>
+        <button class="fp-add-btn" onclick="Page.addFloor()">+ เพิ่มชั้น / โซน</button>
+        <div id="floorList"></div>
+
+        <h3 style="margin-top:24px">🪑 เพิ่มโต๊ะใหม่</h3>
+        <div class="fp-palette">
+          <button onclick="Page.addTable('rectangle', 100, 80)" title="โต๊ะสี่เหลี่ยม 2-4 ที่นั่ง">
+            <div class="swatch"></div>
+            <span>สี่เหลี่ยม</span>
+            <span style="color:#94a3b8;font-size:10px">4 ที่นั่ง</span>
+          </button>
+          <button onclick="Page.addTable('circle', 90, 90, 6)" title="โต๊ะกลม 4-8 ที่นั่ง">
+            <div class="swatch circle"></div>
+            <span>กลม</span>
+            <span style="color:#94a3b8;font-size:10px">6 ที่นั่ง</span>
+          </button>
+          <button onclick="Page.addTable('square', 80, 80, 2)" title="โต๊ะ 2 ที่นั่ง">
+            <div class="swatch square"></div>
+            <span>เล็ก</span>
+            <span style="color:#94a3b8;font-size:10px">2 ที่นั่ง</span>
+          </button>
+          <button onclick="Page.addTable('rectangle', 200, 80, 8)" title="โต๊ะยาว 6-10 ที่นั่ง">
+            <div class="swatch" style="width:46px"></div>
+            <span>ยาว</span>
+            <span style="color:#94a3b8;font-size:10px">8 ที่นั่ง</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- CENTER: canvas -->
+      <div class="fp-canvas-wrap">
+        <div class="fp-toolbar">
+          <span style="font-weight:700;font-size:14px" id="currentFloorName">—</span>
+          <span class="sep"></span>
+          <button onclick="Page.renameFloor()" title="เปลี่ยนชื่อชั้น">✏️ เปลี่ยนชื่อ</button>
+          <button onclick="Page.resizeCanvas()" title="เปลี่ยนขนาด canvas">📐 ขนาด</button>
+          <button class="danger" onclick="Page.deleteFloor()" title="ลบชั้นนี้">🗑️ ลบชั้น</button>
+          <div style="flex:1"></div>
+          <span style="font-size:12px;color:#64748b" id="tableCount">0 โต๊ะ</span>
+          <button class="save-btn" id="saveBtn" onclick="Page.saveLayout()">💾 บันทึก</button>
+        </div>
+        <div id="canvasArea" style="padding:0;min-height:400px">
+          <div class="fp-empty-state" id="canvasEmpty">เลือกชั้น / โซน ทางซ้าย หรือกด + เพิ่มชั้น</div>
+          <div class="fp-canvas" id="fpCanvas" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- RIGHT: selected table properties -->
+      <div class="fp-prop">
+        <h3>⚙️ คุณสมบัติโต๊ะ</h3>
+        <div id="propsEmpty" class="fp-empty-state">คลิกโต๊ะใดโต๊ะหนึ่ง<br>เพื่อแก้ไขคุณสมบัติ</div>
+        <div id="propsForm" style="display:none">
+          <div class="form-group">
+            <label class="form-label">เลขโต๊ะ</label>
+            <input type="text" id="pNumber" oninput="Page.updateSelected({tableNumber:this.value})">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">จำนวนที่นั่ง</label>
+              <input type="number" id="pSeats" min="1" max="50" oninput="Page.updateSelected({seats:+this.value})">
+            </div>
+            <div class="form-group">
+              <label class="form-label">รูปร่าง</label>
+              <select id="pShape" onchange="Page.updateSelected({shape:this.value})">
+                <option value="rectangle">สี่เหลี่ยมผืนผ้า</option>
+                <option value="square">สี่เหลี่ยมจัตุรัส</option>
+                <option value="circle">กลม</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">กว้าง (px)</label>
+              <input type="number" id="pWidth" min="20" max="500" step="10" oninput="Page.updateSelected({width:+this.value})">
+            </div>
+            <div class="form-group">
+              <label class="form-label">สูง (px)</label>
+              <input type="number" id="pHeight" min="20" max="500" step="10" oninput="Page.updateSelected({height:+this.value})">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">มุมหมุน</label>
+              <select id="pRotation" onchange="Page.updateSelected({rotation:+this.value})">
+                <option value="0">0°</option><option value="45">45°</option>
+                <option value="90">90°</option><option value="135">135°</option>
+                <option value="180">180°</option><option value="270">270°</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">ใช้งาน</label>
+              <select id="pActive" onchange="Page.updateSelected({isActive:this.value==='true'})">
+                <option value="true">✓ พร้อมใช้</option>
+                <option value="false">✗ ปิดใช้ชั่วคราว</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">สี (กลุ่ม / โซน)</label>
+            <div class="pal" id="palColor"></div>
+          </div>
+          <div style="margin-top:14px;display:flex;gap:6px">
+            <button onclick="Page.duplicateSelected()" style="flex:1;padding:8px;background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;border-radius:6px;font-weight:600;cursor:pointer">📋 ทำซ้ำ</button>
+            <button onclick="Page.deleteSelected()" style="flex:1;padding:8px;background:#fee2e2;border:1px solid #fca5a5;color:#b91c1c;border-radius:6px;font-weight:600;cursor:pointer">🗑️ ลบ</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const COLORS = ['#38bdf8','#fb7185','#a78bfa','#fbbf24','#34d399','#f97316','#94a3b8','#ec4899'];
+
+    const Page = {
+      floors: [],
+      currentFloor: null,
+      tables: [],          // working copy with .id (server id or null for new)
+      selectedId: null,
+      dirty: false,
+      _dragState: null,
+
+      async init() {
+        if (!Layout.init('pos-floorplan')) return;
+        Layout.setTitle('ผังโต๊ะ');
+        document.body.style.background = '#f1f5f9';
+        await this.loadFloors();
+        // Keyboard shortcuts
+        document.addEventListener('keydown', e => {
+          if (e.target.matches('input,select,textarea')) return;
+          if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelected(); }
+          else if ((e.ctrlKey||e.metaKey) && e.key === 's') { e.preventDefault(); this.saveLayout(); }
+          else if (e.key === 'Escape') { this.select(null); }
+        });
+        // Block accidental navigation away with unsaved changes
+        window.addEventListener('beforeunload', e => {
+          if (this.dirty) { e.preventDefault(); e.returnValue = ''; }
+        });
+      },
+
+      async loadFloors() {
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          this.floors = j.data || [];
+          this.renderFloorList();
+          if (this.floors.length > 0 && !this.currentFloor) {
+            this.selectFloor(this.floors[0].id);
+          }
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      renderFloorList() {
+        const el = document.getElementById('floorList');
+        if (!this.floors.length) {
+          el.innerHTML = '<div style="color:#94a3b8;font-size:12px;text-align:center;padding:20px">ยังไม่มีชั้น<br>กด + ด้านบน</div>';
+          return;
+        }
+        el.innerHTML = this.floors.map(f => `
+          <div class="fp-floor-item ${this.currentFloor?.id===f.id?'active':''}" onclick="Page.selectFloor('${f.id}')">
+            <span style="font-size:18px">🏢</span>
+            <div style="flex:1;min-width:0;overflow:hidden">
+              <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${Layout.esc(f.name)}</div>
+              <div style="font-size:11px;color:#64748b;font-weight:400">${f.tables.length} โต๊ะ</div>
+            </div>
+          </div>
+        `).join('');
+      },
+
+      async selectFloor(id) {
+        if (this.dirty && !confirm('คุณยังไม่ได้บันทึก — ทิ้งและสลับชั้น?')) return;
+        this.currentFloor = this.floors.find(f => f.id === id);
+        this.tables = (this.currentFloor?.tables || []).map(t => ({...t}));
+        this.selectedId = null;
+        this.dirty = false;
+        this.renderFloorList();
+        this.renderCanvas();
+        this.renderProps();
+        this.updateSaveButton();
+      },
+
+      renderCanvas() {
+        const empty = document.getElementById('canvasEmpty');
+        const canvas = document.getElementById('fpCanvas');
+        if (!this.currentFloor) { empty.style.display=''; canvas.style.display='none'; return; }
+        empty.style.display='none'; canvas.style.display='block';
+        document.getElementById('currentFloorName').textContent = this.currentFloor.name;
+        canvas.style.width = this.currentFloor.canvasWidth + 'px';
+        canvas.style.height = this.currentFloor.canvasHeight + 'px';
+        document.getElementById('tableCount').textContent = this.tables.length + ' โต๊ะ';
+        canvas.innerHTML = this.tables.map(t => this._tableHtml(t)).join('');
+      },
+
+      _tableHtml(t) {
+        const sel = this.selectedId === t.id ? 'selected' : '';
+        const inactive = !t.isActive ? 'opacity:.45;filter:grayscale(.6);' : '';
+        const bg = t.color || '#e0f2fe';
+        const border = this._darken(t.color || '#38bdf8');
+        return `<div class="fp-table shape-${t.shape} ${sel}"
+                     data-id="${t.id}"
+                     style="left:${t.x}px;top:${t.y}px;width:${t.width}px;height:${t.height}px;transform:rotate(${t.rotation}deg);background:${bg};border-color:${border};${inactive}"
+                     onmousedown="Page.startDrag(event,'${t.id}')"
+                     ontouchstart="Page.startDrag(event,'${t.id}')">
+          <div class="t-num">${Layout.esc(t.tableNumber)}</div>
+          <div class="t-seats">🪑 ${t.seats}</div>
+          ${sel ? `<div class="fp-handle h-br" style="right:-7px;bottom:-7px" onmousedown="event.stopPropagation();Page.startResize(event,'${t.id}')" ontouchstart="event.stopPropagation();Page.startResize(event,'${t.id}')"></div>` : ''}
+        </div>`;
+      },
+
+      _darken(hex) {
+        // Quick visual darken for the border. Pure black isn't ideal; -20% lightness works.
+        const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+        if (!m) return '#0c4a6e';
+        const n = parseInt(m[1],16);
+        const r = Math.max(0,(n>>16)-40), g = Math.max(0,((n>>8)&255)-40), b = Math.max(0,(n&255)-40);
+        return `#${((r<<16)|(g<<8)|b).toString(16).padStart(6,'0')}`;
+      },
+
+      // ===== Add new table =====
+      addTable(shape, w, h, seats) {
+        if (!this.currentFloor) { Layout.toast('สร้างชั้น/โซนก่อน','warning'); return; }
+        // Drop new tables near top-left but offset so several adds in a row don't overlap.
+        const n = this.tables.length;
+        const x = 40 + (n % 8) * 30;
+        const y = 40 + Math.floor(n / 8) * 30;
+        const num = this._suggestNumber();
+        this.tables.push({
+          id: 'new-' + Date.now() + '-' + Math.random().toString(36).slice(2,7),
+          tableNumber: num, seats: seats || 4, shape,
+          x, y, width: w, height: h, rotation: 0, color: null, isActive: true
+        });
+        this.markDirty();
+        this.renderCanvas();
+        this.select(this.tables[this.tables.length-1].id);
+      },
+      _suggestNumber() {
+        const existing = new Set(this.tables.map(t => t.tableNumber.toUpperCase()));
+        for (let i = 1; i < 200; i++) {
+          const candidate = String(i);
+          if (!existing.has(candidate)) return candidate;
+        }
+        return 'NEW';
+      },
+
+      // ===== Selection =====
+      select(id) {
+        this.selectedId = id;
+        this.renderCanvas();
+        this.renderProps();
+      },
+
+      renderProps() {
+        const empty = document.getElementById('propsEmpty');
+        const form = document.getElementById('propsForm');
+        const t = this.tables.find(x => x.id === this.selectedId);
+        if (!t) { empty.style.display=''; form.style.display='none'; return; }
+        empty.style.display='none'; form.style.display='';
+        document.getElementById('pNumber').value = t.tableNumber;
+        document.getElementById('pSeats').value = t.seats;
+        document.getElementById('pShape').value = t.shape;
+        document.getElementById('pWidth').value = t.width;
+        document.getElementById('pHeight').value = t.height;
+        document.getElementById('pRotation').value = t.rotation;
+        document.getElementById('pActive').value = t.isActive ? 'true' : 'false';
+        const pal = document.getElementById('palColor');
+        pal.innerHTML = `<div class="pal-swatch ${!t.color?'active':''}" style="background:#e0f2fe;border:1px dashed #94a3b8" onclick="Page.updateSelected({color:null})" title="ค่าเริ่มต้น"></div>` +
+          COLORS.map(c => `<div class="pal-swatch ${t.color===c?'active':''}" style="background:${c}" onclick="Page.updateSelected({color:'${c}'})"></div>`).join('');
+      },
+
+      updateSelected(patch) {
+        const t = this.tables.find(x => x.id === this.selectedId);
+        if (!t) return;
+        Object.assign(t, patch);
+        this.markDirty();
+        this.renderCanvas();
+        // Don't re-render props on every keystroke — only when the change
+        // requires a UI swap (shape select swaps the swatch palette nothing,
+        // color swap re-paints active state).
+        if ('color' in patch || 'shape' in patch || 'isActive' in patch) this.renderProps();
+      },
+
+      duplicateSelected() {
+        const t = this.tables.find(x => x.id === this.selectedId);
+        if (!t) return;
+        const copy = {...t, id: 'new-' + Date.now() + '-' + Math.random().toString(36).slice(2,7),
+          tableNumber: this._suggestNumber(), x: t.x + 20, y: t.y + 20};
+        this.tables.push(copy);
+        this.markDirty();
+        this.renderCanvas();
+        this.select(copy.id);
+      },
+
+      deleteSelected() {
+        const t = this.tables.find(x => x.id === this.selectedId);
+        if (!t) return;
+        if (!confirm(`ลบโต๊ะ "${t.tableNumber}"?`)) return;
+        this.tables = this.tables.filter(x => x.id !== this.selectedId);
+        this.selectedId = null;
+        this.markDirty();
+        this.renderCanvas();
+        this.renderProps();
+      },
+
+      // ===== Drag to move =====
+      startDrag(e, id) {
+        this.select(id);
+        const pt = this._pointer(e);
+        const t = this.tables.find(x => x.id === id);
+        if (!t) return;
+        this._dragState = { mode:'move', id, startPt: pt, startX: t.x, startY: t.y };
+        e.preventDefault();
+        document.addEventListener('mousemove', this._onMove);
+        document.addEventListener('touchmove', this._onMove, {passive:false});
+        document.addEventListener('mouseup', this._onUp);
+        document.addEventListener('touchend', this._onUp);
+      },
+
+      startResize(e, id) {
+        const pt = this._pointer(e);
+        const t = this.tables.find(x => x.id === id);
+        if (!t) return;
+        this._dragState = { mode:'resize', id, startPt: pt, startW: t.width, startH: t.height };
+        e.preventDefault();
+        document.addEventListener('mousemove', this._onMove);
+        document.addEventListener('touchmove', this._onMove, {passive:false});
+        document.addEventListener('mouseup', this._onUp);
+        document.addEventListener('touchend', this._onUp);
+      },
+
+      _pointer(e) {
+        const ev = e.touches ? e.touches[0] : e;
+        return { x: ev.clientX, y: ev.clientY };
+      },
+
+      _onMove: (e) => {
+        const s = Page._dragState; if (!s) return;
+        const pt = Page._pointer(e);
+        const dx = pt.x - s.startPt.x, dy = pt.y - s.startPt.y;
+        const t = Page.tables.find(x => x.id === s.id);
+        if (!t) return;
+        if (s.mode === 'move') {
+          // Snap to 10px grid for clean alignment.
+          t.x = Math.max(0, Math.round((s.startX + dx) / 10) * 10);
+          t.y = Math.max(0, Math.round((s.startY + dy) / 10) * 10);
+          // Clamp inside canvas.
+          const fp = Page.currentFloor;
+          if (fp) {
+            t.x = Math.min(t.x, fp.canvasWidth - t.width);
+            t.y = Math.min(t.y, fp.canvasHeight - t.height);
+          }
+        } else if (s.mode === 'resize') {
+          t.width  = Math.max(40, Math.round((s.startW + dx) / 10) * 10);
+          t.height = Math.max(40, Math.round((s.startH + dy) / 10) * 10);
+        }
+        e.preventDefault();
+        Page.markDirty();
+        Page.renderCanvas();
+      },
+
+      _onUp: () => {
+        Page._dragState = null;
+        document.removeEventListener('mousemove', Page._onMove);
+        document.removeEventListener('touchmove', Page._onMove);
+        document.removeEventListener('mouseup', Page._onUp);
+        document.removeEventListener('touchend', Page._onUp);
+        Page.renderProps();   // sync width/height inputs
+      },
+
+      // ===== Floor CRUD =====
+      async addFloor() {
+        const name = prompt('ชื่อชั้น/โซน (เช่น "ชั้น 1", "ลานนอก", "VIP")');
+        if (!name) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, canvasWidth: 1200, canvasHeight: 800 })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          await this.loadFloors();
+          await this.selectFloor(j.data);
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async renameFloor() {
+        if (!this.currentFloor) return;
+        const name = prompt('ชื่อใหม่', this.currentFloor.name);
+        if (!name) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans/${this.currentFloor.id}`, {
+            method: 'PUT', headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, sortOrder: this.currentFloor.sortOrder, canvasWidth: this.currentFloor.canvasWidth, canvasHeight: this.currentFloor.canvasHeight })
+          });
+          const j = await r.json(); if (!j.success) throw new Error(j.message);
+          Layout.toast('เปลี่ยนชื่อแล้ว'); await this.loadFloors();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async resizeCanvas() {
+        if (!this.currentFloor) return;
+        const w = parseInt(prompt('ความกว้าง canvas (px)', this.currentFloor.canvasWidth));
+        if (!w || isNaN(w)) return;
+        const h = parseInt(prompt('ความสูง canvas (px)', this.currentFloor.canvasHeight));
+        if (!h || isNaN(h)) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans/${this.currentFloor.id}`, {
+            method: 'PUT', headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: this.currentFloor.name, sortOrder: this.currentFloor.sortOrder, canvasWidth: w, canvasHeight: h })
+          });
+          const j = await r.json(); if (!j.success) throw new Error(j.message);
+          await this.loadFloors();
+          await this.selectFloor(this.currentFloor.id);
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      async deleteFloor() {
+        if (!this.currentFloor) return;
+        if (!confirm(`ลบชั้น "${this.currentFloor.name}" และโต๊ะ ${this.tables.length} โต๊ะ?`)) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans/${this.currentFloor.id}`, {
+            method: 'DELETE', headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          if (!r.ok) throw new Error('ลบไม่สำเร็จ');
+          this.currentFloor = null; this.tables = []; this.selectedId = null; this.dirty = false;
+          await this.loadFloors();
+          if (this.floors.length > 0) await this.selectFloor(this.floors[0].id);
+          else this.renderCanvas();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== Save =====
+      markDirty() { this.dirty = true; this.updateSaveButton(); },
+      updateSaveButton() {
+        const b = document.getElementById('saveBtn');
+        if (!b) return;
+        if (this.dirty) { b.classList.add('dirty'); b.textContent = '💾 บันทึก (ยังไม่ได้บันทึก)'; }
+        else { b.classList.remove('dirty'); b.textContent = '💾 บันทึก'; }
+      },
+
+      async saveLayout() {
+        if (!this.currentFloor) { Layout.toast('เลือกชั้นก่อน','warning'); return; }
+        const payload = {
+          tables: this.tables.map(t => ({
+            id: t.id && !String(t.id).startsWith('new-') ? t.id : null,
+            tableNumber: t.tableNumber, seats: t.seats, shape: t.shape,
+            x: t.x, y: t.y, width: t.width, height: t.height,
+            rotation: t.rotation, color: t.color, isActive: t.isActive
+          }))
+        };
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans/${this.currentFloor.id}/tables/bulk`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(`✓ ${j.message}`);
+          this.dirty = false;
+          // Pick up server ids so subsequent saves update in place instead of creating duplicates.
+          await this.loadFloors();
+          const sameFloor = this.floors.find(f => f.id === this.currentFloor.id);
+          if (sameFloor) {
+            this.currentFloor = sameFloor;
+            this.tables = sameFloor.tables.map(t => ({...t}));
+            this.renderCanvas();
+            this.updateSaveButton();
+          }
+        } catch(e) { Layout.toast(e.message,'error'); }
+      }
+    };
+    window.Page = Page;
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

@@ -128,6 +128,61 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateItemStatus(Guid companyId, Guid orderId, Guid itemId, [FromBody] UpdateItemStatusRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateItemStatusAsync(companyId, orderId, itemId, request)));
 
+    public record UpdateItemQtyRequest(decimal Quantity);
+    [HttpPut("orders/{orderId:guid}/items/{itemId:guid}/qty")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateItemQty(Guid companyId, Guid orderId, Guid itemId, [FromBody] UpdateItemQtyRequest request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateOrderItemQuantityAsync(companyId, orderId, itemId, request.Quantity)));
+
+    public record SetItemDiscountRequest(decimal? DiscountAmount, decimal? DiscountPercent);
+    [HttpPut("orders/{orderId:guid}/items/{itemId:guid}/discount")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> SetItemDiscount(Guid companyId, Guid orderId, Guid itemId, [FromBody] SetItemDiscountRequest request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetItemDiscountAsync(companyId, orderId, itemId, request.DiscountAmount, request.DiscountPercent)));
+
+    public record SetTipRequest(decimal TipAmount);
+    [HttpPut("orders/{orderId:guid}/tip")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> SetTip(Guid companyId, Guid orderId, [FromBody] SetTipRequest request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetTipAsync(companyId, orderId, request.TipAmount)));
+
+    public record ApplyCouponRequest2(string? Code);
+    [HttpPost("orders/{orderId:guid}/coupon")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> ApplyCoupon(Guid companyId, Guid orderId, [FromBody] ApplyCouponRequest2 request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.ApplyCouponAsync(companyId, orderId, request.Code)));
+
+    public record MergeOrdersRequest(List<Guid> SourceOrderIds);
+    [HttpPost("orders/{orderId:guid}/merge")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> Merge(Guid companyId, Guid orderId, [FromBody] MergeOrdersRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        return Ok(new ApiResponse<OrderResponse>(true, await _pos.MergeOrdersAsync(companyId, orderId, request.SourceOrderIds, userId)));
+    }
+
+    public record TransferTableRequest(string? TableNumber);
+    [HttpPut("orders/{orderId:guid}/table")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> TransferTable(Guid companyId, Guid orderId, [FromBody] TransferTableRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        return Ok(new ApiResponse<OrderResponse>(true, await _pos.TransferTableAsync(companyId, orderId, request.TableNumber, userId)));
+    }
+
+    public record EmailReceiptRequest(string Email);
+    [HttpPost("orders/{orderId:guid}/email-receipt")]
+    public async Task<ActionResult<ApiResponse<string>>> EmailReceipt(Guid companyId, Guid orderId, [FromBody] EmailReceiptRequest request)
+    {
+        await _pos.EmailReceiptAsync(companyId, orderId, request.Email);
+        return Ok(new ApiResponse<string>(true, null, "ส่งใบเสร็จทางอีเมลแล้ว"));
+    }
+
+    public record SplitOrderRequest(List<List<Guid>> Checks);
+    /// <summary>Split an order into multiple checks. Caller sends a list of
+    /// item-id groups — each group becomes a new child order. The original
+    /// order is voided. Returns all child orders in order.</summary>
+    [HttpPost("orders/{orderId:guid}/split")]
+    public async Task<ActionResult<ApiResponse<List<OrderResponse>>>> SplitOrder(Guid companyId, Guid orderId, [FromBody] SplitOrderRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        return Ok(new ApiResponse<List<OrderResponse>>(true, await _pos.SplitOrderAsync(companyId, orderId, request.Checks, userId)));
+    }
+
     // ===== Payment =====
     [HttpPost("payments")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddPayment(Guid companyId, [FromBody] CreatePaymentRequest request)

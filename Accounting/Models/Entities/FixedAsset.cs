@@ -15,6 +15,27 @@ public class FixedAsset : TenantEntity
     public string? Location { get; set; }
     public string? SerialNumber { get; set; }
 
+    /// <summary>Asset classification — drives the accounting treatment
+    /// (depreciation vs amortization), GL account suggestions, and the labels
+    /// the UI uses. Default Tangible keeps existing rows behaving exactly as
+    /// before; new rows are typed at creation. Class name stays FixedAsset
+    /// for code stability but the user-facing label is "สินทรัพย์".</summary>
+    public AssetType AssetType { get; set; } = AssetType.Tangible;
+
+    // ===== Right-of-Use (TFRS 16 lease) — only set when AssetType = RightOfUse =====
+    /// <summary>Total lease term in months. Drives amortization period when
+    /// UsefulLifeMonths isn't set explicitly.</summary>
+    public int? LeaseTermMonths { get; set; }
+    /// <summary>Lessor name — surfaces on the asset card so it's clear this
+    /// isn't an owned item.</summary>
+    public string? LessorName { get; set; }
+    /// <summary>Monthly lease payment for disclosure / future cash flow note.</summary>
+    public decimal? MonthlyLeasePayment { get; set; }
+    /// <summary>Lease liability GL account — credited when the ROU asset is
+    /// first recognized. Optional; falls back to a default if null.</summary>
+    public Guid? LeaseLiabilityAccountId { get; set; }
+    public ChartOfAccount? LeaseLiabilityAccount { get; set; }
+
     // Financials
     public DateTime PurchaseDate { get; set; }
     public decimal PurchaseCost { get; set; }

@@ -16,9 +16,15 @@ public class AccountingDbContext : DbContext
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
     public DbSet<CompanyRole> CompanyRoles => Set<CompanyRole>();
     public DbSet<CompanyRolePermission> CompanyRolePermissions => Set<CompanyRolePermission>();
+    public DbSet<SensitivityAccessRule> SensitivityAccessRules => Set<SensitivityAccessRule>();
+    public DbSet<VatFilingHistory> VatFilingHistories => Set<VatFilingHistory>();
+    public DbSet<PosFloorPlan> PosFloorPlans => Set<PosFloorPlan>();
+    public DbSet<PosTable> PosTables => Set<PosTable>();
+    public DbSet<PosReservation> PosReservations => Set<PosReservation>();
 
     // Subscription & Trial
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<AccountSubscription> AccountSubscriptions => Set<AccountSubscription>();
     public DbSet<TrialConfig> TrialConfigs => Set<TrialConfig>();
     public DbSet<SubscriptionHistory> SubscriptionHistories => Set<SubscriptionHistory>();
     public DbSet<PlanTemplate> PlanTemplates => Set<PlanTemplate>();

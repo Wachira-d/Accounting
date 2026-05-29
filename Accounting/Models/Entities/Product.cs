@@ -47,6 +47,13 @@ public class Product : TenantEntity
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>POS multi-printer routing key — "Kitchen-Hot" / "Kitchen-Cold" /
+    /// "Bar" / "Drinks" / custom string. Null = default cashier printer only.
+    /// Used when the cashier prints kitchen tickets so items group to the right
+    /// station. Restaurants typically route hot food to the kitchen printer and
+    /// cold drinks to the bar printer.</summary>
+    public string? PrintStation { get; set; }
+
     // Media — JSON array of image URLs (gallery). First is featured.
     // Gets surfaced on /pages/products.html cards and falls through to the
     // storefront when SiteProduct.ImageUrlsJson hasn't been overridden.

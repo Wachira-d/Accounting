@@ -156,15 +156,32 @@
               <td>${this._statusBadge(s.status)}</td>
               <td>${Layout.date(s.createdAt)}</td>
               <td>${s.completedAt ? Layout.date(s.completedAt) : '-'}</td>
-              <td><button class="btn btn-sm btn-ghost" onclick="Page.openSession('${s.id}')">${s.status === 'Committed' ? 'ดู' : 'แก้ไข →'}</button></td>
+              <td>
+                <button class="btn btn-sm btn-ghost" onclick="Page.openSession('${s.id}')">${s.status === 'Committed' ? 'ดู' : 'แก้ไข →'}</button>
+                ${s.status === 'Committed' ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.rollback('${s.id}','${(s.sessionName||'').replace(/'/g,'&apos;')}')" title="ย้อนการ commit — ลบ Opening Balance ที่ session นี้สร้าง">↶ Rollback</button>` : ''}
+              </td>
             </tr>`).join('')}</tbody></table></div>`;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       _statusBadge(s) {
-        const colors = { 0:'#94a3b8', 1:'#3b82f6', 2:'#f59e0b', 3:'#10b981', 4:'#22c55e', 5:'#ef4444', 6:'#94a3b8',
-          'Draft':'#94a3b8','Mapping':'#3b82f6','Validating':'#f59e0b','ReadyToCommit':'#10b981','Committed':'#22c55e','Failed':'#ef4444','Cancelled':'#94a3b8' };
-        const label = typeof s === 'number' ? ['Draft','Mapping','Validating','ReadyToCommit','Committed','Failed','Cancelled'][s] || s : s;
+        const colors = { 0:'#94a3b8', 1:'#3b82f6', 2:'#f59e0b', 3:'#10b981', 4:'#22c55e', 5:'#ef4444', 6:'#94a3b8', 7:'#a855f7',
+          'Draft':'#94a3b8','Mapping':'#3b82f6','Validating':'#f59e0b','ReadyToCommit':'#10b981','Committed':'#22c55e','Failed':'#ef4444','Cancelled':'#94a3b8','RolledBack':'#a855f7' };
+        const label = typeof s === 'number' ? ['Draft','Mapping','Validating','ReadyToCommit','Committed','Failed','Cancelled','RolledBack'][s] || s : s;
         return `<span style="background:${colors[s]||'#e5e7eb'}20;color:${colors[s]||'#475569'};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">${label}</span>`;
+      },
+
+      async rollback(sessionId, name) {
+        if (!confirm(`ย้อนการ commit ของ "${name}"?\n\nระบบจะลบ Opening Balance ที่ session นี้สร้างใน fiscal period เป้าหมาย\nงวดบัญชีต้องยังไม่ปิด/ล็อก จึงจะ rollback ได้`)) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/migration-wizard/sessions/${sessionId}/rollback`, {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'rollback failed');
+          Layout.toast('ย้อนการ commit สำเร็จ');
+          await this.loadSessions();
+        } catch(e) { Layout.toast(e.message, 'error'); }
       },
 
       async openCreate() {

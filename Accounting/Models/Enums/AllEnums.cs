@@ -181,6 +181,7 @@ public enum MigrationStatus
     Committed = 4,     // data persisted
     Failed = 5,        // commit aborted on integrity error
     Cancelled = 6,
+    RolledBack = 7,    // a Committed session whose entries were undone
 }
 
 // ==================== RD Compliance ====================
@@ -229,6 +230,21 @@ public enum DocumentType
     Expense = 9,              // ใบบันทึกค่าใช้จ่าย
     PaymentVoucher = 13,      // ใบสำคัญจ่าย
     CertificateInLieu = 15,   // ใบรับรองแทนใบเสร็จ
+}
+
+/// <summary>
+/// Sensitivity classification for documents, JEs, and payroll records.
+/// Owner configures, per company, which roles can see each kind. The API
+/// returns redacted stubs (not 404) so integration targets know the record
+/// exists but is hidden.
+/// </summary>
+public enum SensitivityKind
+{
+    None = 0,        // เปิดเผยปกติ
+    Payroll = 1,     // ข้อมูลเงินเดือน / ใบจ่ายเงินเดือน / สลิป / JE เงินเดือน
+    ExecutivePay = 2,// โบนัส / เงินพิเศษผู้บริหาร
+    HrPersonal = 3,  // ข้อมูลส่วนตัวพนักงาน
+    Confidential = 9 // เอกสารลับอื่นๆ — กำหนดสิทธิ์เอง
 }
 
 public enum DocumentStatus
@@ -332,6 +348,23 @@ public enum AssetStatus
     Disposed = 2,
     FullyDepreciated = 3,
     WrittenOff = 4
+}
+
+/// <summary>
+/// Classifies an asset by accounting treatment so the same module can hold
+/// the four broad categories of non-current assets defined by TFRS:
+///   • Tangible       → ที่ดิน อาคาร อุปกรณ์ — straight-line / declining-balance depreciation
+///   • Intangible     → ซอฟต์แวร์ ลิขสิทธิ์ — amortization (terminology + GL accounts differ)
+///   • RightOfUse     → สินทรัพย์สิทธิการใช้ (TFRS 16 lease) — amortization over lease term
+///   • InvestmentProperty → อสังหาริมทรัพย์เพื่อการลงทุน — cost or fair-value model
+/// Existing rows migrate to Tangible by default so the rename is non-breaking.
+/// </summary>
+public enum AssetType
+{
+    Tangible = 1,            // ที่ดิน อาคาร และอุปกรณ์ (Property, Plant, Equipment)
+    Intangible = 2,          // สินทรัพย์ไม่มีตัวตน — software, patents, trademarks
+    RightOfUse = 3,          // สินทรัพย์สิทธิการใช้ (TFRS 16 lease)
+    InvestmentProperty = 4   // อสังหาริมทรัพย์เพื่อการลงทุน
 }
 
 // ==================== Approval Workflow ====================
@@ -598,6 +631,19 @@ public enum PosOrderStatus
     Voided = 4,            // ยกเลิก
     Refunded = 5,          // คืนเงิน
     OnHold = 6             // พักบิล
+}
+
+/// <summary>Table reservation lifecycle. Pending → Confirmed → Seated →
+/// Completed is the happy path; Cancelled / NoShow are tracked separately
+/// so the host can report on no-show rates.</summary>
+public enum ReservationStatus
+{
+    Pending = 0,           // ลูกค้าจองแต่ยังไม่ยืนยัน
+    Confirmed = 1,         // ยืนยันแล้ว (โทรกลับ / LINE)
+    Seated = 2,            // ลูกค้ามาถึงและนั่งโต๊ะแล้ว — ลิงก์กับ PosOrder
+    Completed = 3,         // จบบิลแล้ว
+    Cancelled = 4,         // ลูกค้ายกเลิก
+    NoShow = 5             // ไม่มาตามนัด
 }
 
 public enum PosItemStatus

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สิทธิ์ดูเอกสารลับ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .ss-shell { max-width:960px; margin:0 auto; padding:24px 16px 60px; }
+    .ss-header h1 { margin:0 0 6px; font-size:24px; }
+    .ss-header p  { margin:0 0 18px; color:var(--gray-600); font-size:13px; line-height:1.6; }
+    .ss-card { background:#fff; border:1px solid var(--gray-200); border-radius:10px; padding:16px; margin-bottom:14px; }
+    .ss-card h3 { margin:0 0 4px; font-size:16px; }
+    .ss-card .desc { font-size:12px; color:var(--gray-500); margin-bottom:12px; }
+    table.ss-table { width:100%; border-collapse:collapse; font-size:13px; }
+    table.ss-table th, table.ss-table td { padding:8px 10px; text-align:center; border-bottom:1px solid var(--gray-100); }
+    table.ss-table th { background:#f8fafc; font-weight:600; color:#475569; text-align:left; }
+    table.ss-table td:first-child { text-align:left; font-weight:600; }
+    .ss-pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .ss-pill.allow { background:#dcfce7; color:#166534; }
+    .ss-pill.deny  { background:#fee2e2; color:#991b1b; }
+    .ss-toggle { width:38px; height:22px; border-radius:11px; background:#cbd5e1; position:relative; cursor:pointer; transition:background .15s; display:inline-block; }
+    .ss-toggle::after { content:''; position:absolute; left:2px; top:2px; width:18px; height:18px; border-radius:50%; background:#fff; transition:transform .15s; }
+    .ss-toggle.on { background:#10b981; }
+    .ss-toggle.on::after { transform:translateX(16px); }
+    .ss-toggle.lock { background:#e2e8f0; cursor:not-allowed; opacity:.6; }
+    .ss-note { background:#fef3c7; border:1px solid #fbbf24; border-radius:8px; padding:10px 14px; font-size:12px; color:#78350f; margin-bottom:14px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="ss-shell">
+      <div class="ss-header">
+        <h1>🔐 สิทธิ์ดูเอกสารลับ</h1>
+        <p>กำหนดว่าตำแหน่งใดในบริษัทจะเห็นเอกสารแต่ละประเภทได้ — เอกสารที่ถูกซ่อนจะยังปรากฏใน API แต่จะมี flag <code>isRedacted: true</code> เพื่อให้ระบบที่เชื่อมต่อรู้ว่ามีเอกสารถูกซ่อนและไปจัดการต่อเอง · เจ้าของบริษัทเห็นทุกอย่างเสมอ ไม่สามารถปิดได้</p>
+      </div>
+
+      <div class="ss-note">
+        💡 <strong>API integration:</strong> ระบบที่เรียก API ด้วย token ของผู้ใช้ที่ไม่มีสิทธิ์ จะได้รับ <code>{ isRedacted: true, redactedReason: "..." }</code> แทนข้อมูลจริง · endpoint <code>/api/companies/{cid}/payroll/runs</code> จะตอบ 403 พร้อม body ที่มี <code>kind</code> + <code>requiredPermission</code>
+      </div>
+
+      <div id="rulesContainer"></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      kinds: {
+        Payroll:      { label: '💰 เงินเดือน', desc: 'ใบจ่ายเงินเดือน, สลิป, JE ที่ระบบสร้างจากการทำเงินเดือน' },
+        ExecutivePay: { label: '👔 ค่าตอบแทนผู้บริหาร', desc: 'โบนัส / สวัสดิการพิเศษของผู้บริหาร' },
+        HrPersonal:   { label: '🧑‍💼 ข้อมูลบุคลากร', desc: 'ข้อมูลส่วนตัว, ประวัติ, เลขบัญชี, เอกสาร HR' },
+        Confidential: { label: '🔒 เอกสารลับอื่นๆ', desc: 'เอกสารที่ติด flag Confidential แบบกำหนดเอง' },
+      },
+      roleOrder: ['Owner','Accountant','Staff','Auditor','Viewer','ExternalAccountant','SystemAdmin'],
+      roleLabels: {
+        Owner: 'เจ้าของ', Accountant: 'นักบัญชี', Staff: 'พนักงาน',
+        Auditor: 'ผู้ตรวจสอบ', Viewer: 'ผู้ดูข้อมูล',
+        ExternalAccountant: 'นักบัญชีภายนอก', SystemAdmin: 'แอดมินระบบ'
+      },
+
+      async init() {
+        if (!Layout.init('sensitivity')) return;
+        Layout.setTitle('สิทธิ์ดูเอกสารลับ');
+        await this.load();
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await fetch(`/api/companies/${Layout.getCompanyId()}/sensitivity`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const json = await res.json();
+          if (!json.success) throw new Error(json.message || 'load failed');
+          this.render(json.data);
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      render(rules) {
+        // Group rules by Kind for the table.
+        const byKind = {};
+        rules.forEach(r => { (byKind[r.kind] ??= {})[r.role] = r.canView; });
+        const container = document.getElementById('rulesContainer');
+        container.innerHTML = Object.entries(this.kinds).map(([kind, meta]) => `
+          <div class="ss-card">
+            <h3>${meta.label}</h3>
+            <div class="desc">${meta.desc}</div>
+            <table class="ss-table">
+              <thead>
+                <tr><th>ตำแหน่ง</th><th style="width:120px">สถานะ</th><th style="width:80px">เปิด/ปิด</th></tr>
+              </thead>
+              <tbody>
+                ${this.roleOrder.map(role => {
+                  const allowed = byKind[kind]?.[role] ?? false;
+                  const locked = role === 'Owner' || role === 'SystemAdmin';
+                  return `<tr>
+                    <td>${this.roleLabels[role] || role}</td>
+                    <td><span class="ss-pill ${allowed?'allow':'deny'}">${allowed?'✓ เห็นได้':'✗ ถูกซ่อน'}</span></td>
+                    <td>
+                      <span class="ss-toggle ${allowed?'on':''} ${locked?'lock':''}"
+                            ${locked?'title="ตำแหน่งนี้เห็นเสมอ ไม่สามารถปิดได้"':`onclick="Page.toggle('${kind}','${role}',${!allowed})"`}></span>
+                    </td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `).join('');
+      },
+
+      async toggle(kind, role, canView) {
+        try {
+          const res = await fetch(`/api/companies/${Layout.getCompanyId()}/sensitivity/rules`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind, role, canView })
+          });
+          const json = await res.json();
+          if (!json.success) throw new Error(json.message || 'save failed');
+          Layout.toast('บันทึกแล้ว');
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+    };
+    window.Page = Page;
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

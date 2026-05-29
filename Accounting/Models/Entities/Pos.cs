@@ -75,6 +75,17 @@ public class PosOrder : TenantEntity
     public decimal RoundingAmount { get; set; }                  // ปัดเศษ
     public decimal NetAmount { get; set; }                       // ยอดสุทธิหลังปัดเศษ
 
+    /// <summary>ทิปที่ลูกค้าให้ — รวมในยอดที่ลูกค้าจ่าย (NetAmount + Tip)
+    /// แต่ลงบัญชี Cr "เงินรับฝาก-ทิปพนักงาน" (Liability) แทน Revenue
+    /// เพื่อให้กำไรขั้นต้นไม่บวมจากทิป + จ่ายต่อพนักงานในรอบเงินเดือน.</summary>
+    public decimal TipAmount { get; set; }
+
+    /// <summary>คูปองที่ใช้ (ถ้ามี) — โค้ดจาก CmsCoupon (cross-channel)
+    /// หรือโค้ดที่พนักงานสร้างเฉพาะหน้า. CouponDiscountAmount ลงในส่วนลด
+    /// (รวมใน DiscountAmount) แต่เก็บแยกเพื่อ report.</summary>
+    public string? CouponCode { get; set; }
+    public decimal CouponDiscountAmount { get; set; }
+
     public string? Notes { get; set; }
     public string? Reference { get; set; }                       // เลขอ้างอิง (delivery order#, etc.)
 

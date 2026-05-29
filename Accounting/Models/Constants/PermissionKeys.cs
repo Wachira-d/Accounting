@@ -33,6 +33,14 @@ public static class PermissionKeys
     public const string PayrollRun      = P + "Payroll.Run";
     public const string PayrollApprove  = P + "Payroll.Approve";
     public const string PayrollPay      = P + "Payroll.Pay";
+    /// <summary>Read payroll runs / payslips / payroll-related GL entries.
+    /// Without this permission the API returns redacted stubs so integration
+    /// targets know the records exist but are hidden.</summary>
+    public const string PayrollView     = P + "Payroll.View";
+
+    // Sensitive documents (manager bonus vouchers, executive expense reports, etc.)
+    // Owner-configurable per company — default allow list = Owner + Accountant.
+    public const string SensitiveDocsView = P + "SensitiveDocs.View";
 
     // Expense claims
     public const string ExpenseApprove  = P + "Expense.Approve";
