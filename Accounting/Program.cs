@@ -185,6 +185,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.CrossTenantKn
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.ActiveLearningRanker>();
 // Nightly batch — aggregator + miner — runs in-process via IHostedService
 builder.Services.AddHostedService<Accounting.Services.Implementations.OcrMlBackgroundService>();
+builder.Services.AddHostedService<Accounting.Services.Implementations.Jobs.AiFeedbackTrainingJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkflowService>();
 // Embedded OCR is a singleton — the TesseractEngine is expensive to construct,
 // and the service maintains a thread-local engine pool for thread safety.
@@ -215,6 +216,7 @@ builder.Services.AddScoped<Accounting.Services.Ai.IAiResponseCacheService, Accou
 builder.Services.AddScoped<Accounting.Services.Ai.IAiBudgetGuard, Accounting.Services.Ai.AiBudgetGuard>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiFeedbackRecorder, Accounting.Services.Ai.AiFeedbackRecorder>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiOrchestrator, Accounting.Services.Ai.AiOrchestrator>();
+builder.Services.AddScoped<Accounting.Services.Ai.IOcrAiAugmenter, Accounting.Services.Ai.OcrAiAugmenter>();
 
 // Email service
 builder.Services.AddScoped<IEmailService, EmailService>();

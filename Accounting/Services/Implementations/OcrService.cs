@@ -48,6 +48,7 @@ public class OcrService : IOcrService
     private readonly Ocr.VendorKnownGoodCorrector _knownGoodCorrector;
     private readonly Ocr.RdComplianceValidator? _rdComplianceValidator;
     private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
+    private readonly Services.Ai.IOcrAiAugmenter? _aiAugmenter;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -63,9 +64,11 @@ public class OcrService : IOcrService
         Ocr.AzureDiPatternLearner azureLearner,
         Ocr.VendorKnownGoodCorrector knownGoodCorrector,
         Ocr.RdComplianceValidator? rdComplianceValidator = null,
-        Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null)
+        Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null,
+        Services.Ai.IOcrAiAugmenter? aiAugmenter = null)
     {
         _docWorkflowLearner = docWorkflowLearner;
+        _aiAugmenter = aiAugmenter;
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -1162,6 +1165,68 @@ public class OcrService : IOcrService
                         extractedData.ReasoningTrace.Add(
                             $"[Fuzzy] จับคู่ผู้ติดต่อ '{best.Name}' similarity {best.Sim:P0}");
                     }
+                }
+            }
+
+            // ───── AI Augmentation: vendor canonicalisation ─────
+            // Runs only when local matchers (TaxId + substring + fuzzy
+            // ≥0.85) ALL missed. The augmenter sees the local pick
+            // (none, in this branch) + a fresh candidate list and may
+            // produce a match that fuzzy edit-distance couldn't (Thai
+            // ↔ English company names, abbreviation expansion, missing
+            // legal suffix, OCR-introduced character noise).
+            //
+            // ALL failure paths fall through cleanly — the local
+            // auto-create logic below still runs unchanged. AI down /
+            // disabled / over-budget = behave like AI wasn't there.
+            if (!scanResult.MatchedContactId.HasValue && _aiAugmenter != null
+                && (!string.IsNullOrEmpty(extractedData.VendorName)
+                    || !string.IsNullOrEmpty(extractedData.VendorTaxId)))
+            {
+                try
+                {
+                    using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var aiResult = await _aiAugmenter.CanonicaliseVendorAsync(
+                        companyId, scanResult.Id,
+                        extractedData.VendorName, extractedData.VendorTaxId,
+                        extractedData.VendorAddress,
+                        localBestContactId: null, localConfidence: 0m,
+                        aiCts.Token);
+                    if (aiResult.UsedAi
+                        && !string.IsNullOrEmpty(aiResult.Answer) && aiResult.Answer != "__NEW__"
+                        && (aiResult.Confidence ?? 0m) >= 0.70m
+                        && Guid.TryParse(aiResult.Answer, out var aiContactId))
+                    {
+                        // Verify the contact still exists + belongs to
+                        // the tenant — AI could hallucinate a GUID.
+                        var verified = await _db.Contacts.AsNoTracking()
+                            .AnyAsync(c => c.Id == aiContactId && c.CompanyId == companyId && !c.IsDeleted);
+                        if (verified)
+                        {
+                            scanResult.MatchedContactId = aiContactId;
+                            scanResult.AiSuggestedContactId = aiContactId;
+                            scanResult.AiSuggestionFeedbackId = aiResult.FeedbackId;
+                            extractedData.ReasoningTrace.Add(
+                                $"[AI] vendor canon → contact {aiContactId} ({aiResult.Confidence:P0})"
+                                + (string.IsNullOrEmpty(aiResult.Reasoning) ? "" : ": " + aiResult.Reasoning));
+                            foreach (var risk in aiResult.Risks)
+                                extractedData.ReasoningTrace.Add("[AI risk] " + risk);
+                        }
+                    }
+                    else if (!aiResult.UsedAi && aiResult.FeedbackId.HasValue)
+                    {
+                        // AI was attempted but unavailable — store the
+                        // feedback row id anyway so the UI shows "AI
+                        // tried, fell back to local" badge.
+                        scanResult.AiSuggestionFeedbackId = aiResult.FeedbackId;
+                    }
+                }
+                catch (Exception aiEx)
+                {
+                    // Belt-and-braces — augmenter catches internally,
+                    // but if anything else throws (DI / context-disposed
+                    // race) we still continue the OCR pipeline.
+                    _logger.LogWarning(aiEx, "AI vendor canon hook failed; continuing without AI suggestion");
                 }
             }
 

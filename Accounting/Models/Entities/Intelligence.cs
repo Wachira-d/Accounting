@@ -159,6 +159,15 @@ public class OcrScanResult : TenantEntity
     // Matching
     public Guid? MatchedContactId { get; set; }
     public Guid? CreatedDocumentId { get; set; }           // Document created from OCR
+
+    // AI augmentation trail — populated when IOcrAiAugmenter ran post-
+    // extraction. AiSuggestedContactId is what AI proposed (may equal
+    // MatchedContactId when AI's pick was accepted, or differ when the
+    // user later overrides via the review modal). AiSuggestionFeedbackId
+    // is the FK back to AiSuggestionFeedback so the UI can post a
+    // user-accept back to that row.
+    public Guid? AiSuggestedContactId { get; set; }
+    public Guid? AiSuggestionFeedbackId { get; set; }
     public string? RawTextContent { get; set; }
     public string? ProcessingNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }

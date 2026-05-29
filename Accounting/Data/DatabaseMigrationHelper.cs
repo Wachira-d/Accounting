@@ -3229,6 +3229,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiStripPiiInPrompts" boolean NOT NULL DEFAULT true;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiVerifyAgainstThaiComplianceRules" boolean NOT NULL DEFAULT true;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiLastFeedbackTrainingAt" timestamp NULL;""",
+
+            // OcrScanResult — AI augmentation trail.
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestedContactId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestionFeedbackId" uuid NULL;""",
         };
 
         foreach (var sql in statements)
