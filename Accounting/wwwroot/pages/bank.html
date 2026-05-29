@@ -563,6 +563,7 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/ai-suggestion.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
@@ -669,9 +670,9 @@
           <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
           <td class="text-right">${Layout.money(t.balanceAfter)}</td>
           <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
-          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Suggested' ? '<span class="badge" style="background:#ddd6fe;color:#5b21b6">🤖 AI แนะนำ — รอยืนยัน</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
           <td>
-            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>`}
+            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>${t.reconciliationStatus !== 'Suggested' ? `<button class="btn btn-sm btn-ghost" onclick="Page.askAiBankMatch(event, '${t.id}')" title="ขอความเห็น AI">🤖</button>` : ''}`}
             <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>
           </td>
         </tr>`).join('');
@@ -1128,6 +1129,36 @@
       _pickerAmtFilter: false,
       _compSelectedTxnId: null,
       _compUnreconciled: [],
+      // 🤖 Ask AI to suggest a match for a single unmatched bank txn.
+      // Surfaces the AI popover inline so the user can accept/dismiss
+      // without opening the full reconcile modal. AI's pick + alternatives
+      // come from /ai/bank/suggest-match which itself short-lists by
+      // amount ±15% + date ±14d + direction.
+      askAiBankMatch(ev, transId) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const btn = ev?.currentTarget;
+        AiSuggestion.show({
+          anchorEl: btn,
+          fetch: () => API.post(`/api/companies/${cid}/ai/bank/suggest-match`,
+            { bankTransactionId: transId, currentMatchedDocId: null }),
+          applyAnswer: (docId) => {
+            if (!docId || docId === '__NEW__') {
+              Layout.toast('AI แนะนำให้สร้างเอกสารใหม่ — เปิดหน้าเลือกเต็ม', 'info');
+              this.openReconcileOne(transId);
+              return;
+            }
+            // Open the reconcile modal pre-populated with the AI's pick.
+            this.openReconcileOne(transId);
+            // The modal's picker handles selection by id; user confirms via existing button.
+            setTimeout(() => {
+              const cb = document.querySelector(`#pickerBody input[type=checkbox][data-id="${docId}"]`);
+              if (cb) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+            }, 250);
+          },
+          answerToLabel: (v) => v === '__NEW__' ? 'สร้างเอกสารใหม่' : ('Document ' + v.substring(0, 8) + '…'),
+        });
+      },
+
       async openReconcileOne(transId) {
         document.getElementById('rTransId').value = transId;
         document.getElementById('rPickerSearch').value = '';

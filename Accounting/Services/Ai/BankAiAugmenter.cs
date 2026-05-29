@@ -55,7 +55,13 @@ public class BankAiAugmenter : IBankAiAugmenter
                 ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt }
                 : new[] { DocumentType.PurchaseInvoice, DocumentType.PaymentVoucher };
 
-            var openDocs = await _db.Documents.AsNoTracking()
+            // Fetch matching window THEN sort by date-proximity in
+            // memory — Math.Abs on TimeSpan.TotalDays isn't always
+            // EF-translatable across providers, and the window is
+            // already small enough (≤candidates*2) that client-side
+            // sort is fine.
+            var prefetchLimit = CandidateLimit * 3;
+            var raw = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
                             && direction.Contains(d.DocumentType)
                             && d.DocumentDate >= dateLow && d.DocumentDate <= dateHigh
@@ -63,8 +69,7 @@ public class BankAiAugmenter : IBankAiAugmenter
                             && d.BalanceDue >= amountLow && d.BalanceDue <= amountHigh
                             && (d.Status == DocumentStatus.Approved
                                 || d.Status == DocumentStatus.PartiallyPaid))
-                .OrderBy(d => Math.Abs((d.DocumentDate - txnDate).TotalDays))
-                .Take(CandidateLimit)
+                .Take(prefetchLimit)
                 .Select(d => new
                 {
                     d.Id,
@@ -75,6 +80,10 @@ public class BankAiAugmenter : IBankAiAugmenter
                     ContactName = d.Contact != null ? d.Contact.Name : null,
                 })
                 .ToListAsync(ct);
+            var openDocs = raw
+                .OrderBy(d => Math.Abs((d.DocumentDate - txnDate).TotalDays))
+                .Take(CandidateLimit)
+                .ToList();
 
             if (openDocs.Count == 0)
             {
