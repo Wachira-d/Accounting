@@ -11,6 +11,7 @@ public interface IMigrationWizardService
     Task ApplyMappingsAsync(Guid companyId, Guid sessionId, Dictionary<string, Guid> codeToAccountId, string userId);
     Task<List<string>> ValidateSessionAsync(Guid companyId, Guid sessionId);
     Task<MigrationSession> CommitAsync(Guid companyId, Guid sessionId, string userId);
+    Task<MigrationSession> RollbackAsync(Guid companyId, Guid sessionId, string userId);
     Task<List<MigrationSession>> ListSessionsAsync(Guid companyId);
     Task<MigrationSession> GetSessionAsync(Guid companyId, Guid sessionId);
     Task<List<AccountMapping>> GetMappingsAsync(Guid companyId, Guid sessionId);

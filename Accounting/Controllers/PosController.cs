@@ -148,6 +148,22 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<OrderResponse>>> ApplyCoupon(Guid companyId, Guid orderId, [FromBody] ApplyCouponRequest2 request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.ApplyCouponAsync(companyId, orderId, request.Code)));
 
+    public record MergeOrdersRequest(List<Guid> SourceOrderIds);
+    [HttpPost("orders/{orderId:guid}/merge")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> Merge(Guid companyId, Guid orderId, [FromBody] MergeOrdersRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        return Ok(new ApiResponse<OrderResponse>(true, await _pos.MergeOrdersAsync(companyId, orderId, request.SourceOrderIds, userId)));
+    }
+
+    public record TransferTableRequest(string? TableNumber);
+    [HttpPut("orders/{orderId:guid}/table")]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> TransferTable(Guid companyId, Guid orderId, [FromBody] TransferTableRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        return Ok(new ApiResponse<OrderResponse>(true, await _pos.TransferTableAsync(companyId, orderId, request.TableNumber, userId)));
+    }
+
     public record EmailReceiptRequest(string Email);
     [HttpPost("orders/{orderId:guid}/email-receipt")]
     public async Task<ActionResult<ApiResponse<string>>> EmailReceipt(Guid companyId, Guid orderId, [FromBody] EmailReceiptRequest request)

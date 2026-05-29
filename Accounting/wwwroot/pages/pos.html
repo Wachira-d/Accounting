@@ -152,6 +152,7 @@
           <input type="text" placeholder="ค้นหา หรือ สแกนบาร์โค้ด แล้วกด Enter…" id="searchInput" oninput="Page.filterItems()" onkeydown="if(event.key==='Enter'){event.preventDefault();Page.onScan();}" autocomplete="off" style="flex:1">
           <button class="btn btn-secondary" onclick="Page.openCameraScanner()" title="สแกนบาร์โค้ดด้วยกล้อง (มือถือ / แท็บเล็ต)" style="padding:8px 14px;font-size:18px">📷</button>
           <button class="btn btn-ghost" onclick="Page.openCustomerDisplay()" title="เปิดจอลูกค้า (Customer Display) ในแท็บใหม่ — ลากไปจอที่ 2 ให้ลูกค้าเห็นยอดเงิน" style="padding:8px 14px;font-size:18px">📺</button>
+          <button class="btn btn-ghost" id="langToggleBtn" onclick="Page.toggleMenuLang()" title="เปลี่ยนภาษาเมนู (ไทย / English) สำหรับลูกค้าต่างชาติ" style="padding:8px 12px;font-size:13px;font-weight:600">🌐 TH</button>
         </div>
         <div class="pos-categories" id="categories"></div>
         <div class="pos-grid" id="productGrid">
@@ -798,6 +799,10 @@
       async init() {
         if (!Layout.init('pos')) return;
         Layout.setTitle('POS หน้าขาย');
+        // Remember the cashier's last menu language choice across page reloads.
+        this._menuLang = localStorage.getItem('pos:menuLang') || 'th';
+        const btn = document.getElementById('langToggleBtn');
+        if (btn) btn.textContent = this._menuLang === 'en' ? '🌐 EN' : '🌐 TH';
         // Kiosk mode — hide the accounting sidebar/header for a focused
         // full-screen cashier experience.
         document.body.classList.add('pos-mode');
@@ -1276,9 +1281,12 @@
           ]);
           this.products = (prodRes.data?.items || prodRes.data || []).filter(p => p.isActive);
           this.packages = (pkgRes.data || []).filter(p => p.isActive);
+          // Keep both Thai + English names on every item so the lang toggle
+          // can swap display without re-fetching. nameEn falls back to name
+          // when not set, so toggling EN doesn't blank anything.
           this.allItems = [
-            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, code:p.code, barcode:p.barcode, price:p.sellingPrice, category:p.category||'สินค้า', printStation:p.printStation })),
-            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, code:p.sku, barcode:null, price:p.price, category:p.category||'บริการ', printStation:null }))
+            ...this.products.map(p => ({ type:'product', id:p.id, name:p.name, nameEn:p.nameEn||p.name, code:p.code, barcode:p.barcode, price:p.sellingPrice, category:p.category||'สินค้า', printStation:p.printStation })),
+            ...this.packages.map(p => ({ type:'package', id:p.id, name:p.name, nameEn:p.nameEn||p.name, code:p.sku, barcode:null, price:p.price, category:p.category||'บริการ', printStation:null }))
           ];
           this.buildCategories();
           this.filterItems();
@@ -1338,7 +1346,7 @@
         }
         grid.innerHTML = this.filteredItems.map(i => `
           <div class="pos-item" onclick="Page.addToCart('${i.type}','${i.id}')">
-            <div class="item-name">${i.name}</div>
+            <div class="item-name">${this._menuLang==='en'?(i.nameEn||i.name):i.name}</div>
             <div class="item-price">${Layout.money(i.price)}</div>
             ${i.code ? `<div class="item-code">${i.code}</div>` : ''}
           </div>
@@ -1586,6 +1594,14 @@
         } else tipRow.style.display='none';
         document.getElementById('sumNet').textContent = Layout.money(order.netAmount);
         this.paidTotal = (order.payments || []).reduce((s, p) => s + p.amount - p.changeAmount, 0);
+      },
+
+      // ===== Menu language toggle =====
+      toggleMenuLang() {
+        this._menuLang = this._menuLang === 'en' ? 'th' : 'en';
+        localStorage.setItem('pos:menuLang', this._menuLang);
+        document.getElementById('langToggleBtn').textContent = this._menuLang === 'en' ? '🌐 EN' : '🌐 TH';
+        this.renderGrid();
       },
 
       // ===== Member / contact lookup =====

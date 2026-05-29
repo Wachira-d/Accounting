@@ -90,4 +90,15 @@ public class MigrationWizardController : ControllerBase
         var s = await _svc.CommitAsync(companyId, sessionId, userId);
         return Ok(new ApiResponse<object>(true, new { s.Id, s.Status, s.CompletedAt, s.ImportSummaryJson }, "Commit migration สำเร็จ"));
     }
+
+    /// <summary>Undo a Committed session — deletes the opening balances it
+    /// wrote and flips the status to RolledBack. Blocked when the target
+    /// fiscal period is closed/locked.</summary>
+    [HttpPost("sessions/{sessionId:guid}/rollback")]
+    public async Task<ActionResult<ApiResponse<object>>> Rollback(Guid companyId, Guid sessionId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var s = await _svc.RollbackAsync(companyId, sessionId, userId);
+        return Ok(new ApiResponse<object>(true, new { s.Id, s.Status, s.ImportSummaryJson }, "ย้อนการ commit สำเร็จ"));
+    }
 }

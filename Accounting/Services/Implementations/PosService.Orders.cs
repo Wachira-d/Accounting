@@ -1324,6 +1324,114 @@ public partial class PosService
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.Level >= 4);
     }
 
+    /// <summary>Merge one or more open orders into a destination order — items
+    /// move to the destination, source orders get voided. Used when two parties
+    /// at separate tables decide to share one bill. Both sides must be Open,
+    /// unpaid, and belong to the same session/company. Returns the destination.</summary>
+    public async Task<OrderResponse> MergeOrdersAsync(Guid companyId, Guid destinationOrderId, List<Guid> sourceOrderIds, string userId)
+    {
+        if (sourceOrderIds == null || sourceOrderIds.Count == 0)
+            throw new ArgumentException("ระบุ source order อย่างน้อย 1 บิล");
+        if (sourceOrderIds.Contains(destinationOrderId))
+            throw new ArgumentException("source ห้ามมีปลายทางอยู่ในนั้น");
+
+        var dest = await _db.PosOrders.Include(o => o.Items).Include(o => o.Payments)
+            .FirstOrDefaultAsync(o => o.Id == destinationOrderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบบิลปลายทาง");
+        if (dest.Status == PosOrderStatus.Completed || dest.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("บิลปลายทางปิดแล้ว — รวมไม่ได้");
+        if (dest.Payments.Any(p => !p.IsDeleted))
+            throw new InvalidOperationException("บิลปลายทางมีการชำระเงินแล้ว — ยกเลิกการชำระก่อน");
+
+        var sources = await _db.PosOrders.Include(o => o.Items).Include(o => o.Payments)
+            .Where(o => sourceOrderIds.Contains(o.Id) && o.CompanyId == companyId && !o.IsDeleted)
+            .ToListAsync();
+        if (sources.Count != sourceOrderIds.Count)
+            throw new InvalidOperationException("มีบิล source บางใบหาไม่เจอ / ถูกลบไปแล้ว");
+        foreach (var src in sources)
+        {
+            if (src.Status == PosOrderStatus.Completed || src.Status == PosOrderStatus.Voided)
+                throw new InvalidOperationException($"บิล {src.OrderNumber} ปิดแล้ว — รวมไม่ได้");
+            if (src.Payments.Any(p => !p.IsDeleted))
+                throw new InvalidOperationException($"บิล {src.OrderNumber} มีการชำระเงินแล้ว — ยกเลิกก่อน");
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var nextLine = dest.Items.Where(i => !i.IsDeleted).Select(i => i.LineOrder).DefaultIfEmpty(0).Max() + 1;
+            foreach (var src in sources)
+            {
+                foreach (var srcItem in src.Items.Where(i => !i.IsDeleted))
+                {
+                    dest.Items.Add(new PosOrderItem
+                    {
+                        CompanyId = companyId,
+                        ProductId = srcItem.ProductId,
+                        ServicePackageId = srcItem.ServicePackageId,
+                        ItemName = srcItem.ItemName,
+                        ItemCode = srcItem.ItemCode,
+                        Unit = srcItem.Unit,
+                        Quantity = srcItem.Quantity,
+                        UnitPrice = srcItem.UnitPrice,
+                        DiscountAmount = srcItem.DiscountAmount,
+                        DiscountPercent = srcItem.DiscountPercent,
+                        SubTotal = srcItem.SubTotal,
+                        TotalAmount = srcItem.TotalAmount,
+                        VatAmount = 0,
+                        LineOrder = nextLine++,
+                        Status = srcItem.Status,
+                        Notes = srcItem.Notes != null ? $"{srcItem.Notes} [จาก {src.OrderNumber}]" : $"[จาก {src.OrderNumber}]",
+                    });
+                    srcItem.IsDeleted = true;
+                }
+                src.Status = PosOrderStatus.Voided;
+                src.Notes = string.IsNullOrEmpty(src.Notes)
+                    ? $"รวมเข้าบิล {dest.OrderNumber}"
+                    : $"{src.Notes} / รวมเข้าบิล {dest.OrderNumber}";
+                src.UpdatedBy = userId;
+            }
+
+            // Append a note on destination so the audit trail tells the story.
+            var mergedFrom = string.Join(", ", sources.Select(s => s.OrderNumber));
+            dest.Notes = string.IsNullOrEmpty(dest.Notes)
+                ? $"รวมจากบิล: {mergedFrom}"
+                : $"{dest.Notes} / รวมจากบิล: {mergedFrom}";
+            dest.UpdatedBy = userId;
+
+            var vatRate = await GetCompanyVatRateAsync(companyId);
+            RecalculateOrder(dest, vatRate);
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+        return await GetOrderAsync(companyId, dest.Id);
+    }
+
+    /// <summary>Move an order to a different table number. The item list,
+    /// payments, and totals stay intact — only the TableNumber changes,
+    /// with an audit note appended.</summary>
+    public async Task<OrderResponse> TransferTableAsync(Guid companyId, Guid orderId, string? newTableNumber, string userId)
+    {
+        var order = await _db.PosOrders.FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId && !o.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        if (order.Status == PosOrderStatus.Completed || order.Status == PosOrderStatus.Voided)
+            throw new InvalidOperationException("ออเดอร์ปิด/ยกเลิกแล้ว — ย้ายโต๊ะไม่ได้");
+        var old = order.TableNumber ?? "(ไม่ระบุ)";
+        var dest = string.IsNullOrWhiteSpace(newTableNumber) ? null : newTableNumber.Trim();
+        order.TableNumber = dest;
+        order.Notes = string.IsNullOrEmpty(order.Notes)
+            ? $"ย้ายโต๊ะ {old} → {dest ?? "(ไม่ระบุ)"}"
+            : $"{order.Notes} / ย้ายโต๊ะ {old} → {dest ?? "(ไม่ระบุ)"}";
+        order.UpdatedBy = userId;
+        await _db.SaveChangesAsync();
+        return await GetOrderAsync(companyId, orderId);
+    }
+
     /// <summary>Email a plain-HTML copy of the receipt to a customer address.
     /// Uses the company's email sender (Microsoft Graph / Gmail / SMTP) — falls
     /// back to the global SMTP if no per-company config exists. The order must

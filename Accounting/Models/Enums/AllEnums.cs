@@ -181,6 +181,7 @@ public enum MigrationStatus
     Committed = 4,     // data persisted
     Failed = 5,        // commit aborted on integrity error
     Cancelled = 6,
+    RolledBack = 7,    // a Committed session whose entries were undone
 }
 
 // ==================== RD Compliance ====================
