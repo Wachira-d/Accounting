@@ -148,9 +148,15 @@
     async function _ensurePlanTemplates() {
       if (_planTemplates) return _planTemplates;
       try {
-        const r = await AdminAPI.get('/plan-templates');
+        // Endpoint lives at /api/admin/plans (the AdminAPI.plans() helper).
+        // Earlier draft hit /plan-templates which 404'd silently and left
+        // the create-License dropdown empty.
+        const r = await AdminAPI.plans(false);
         _planTemplates = (r.data || []).filter(p => p.isActive);
-      } catch { _planTemplates = []; }
+      } catch (e) {
+        console.warn('Plan template load failed', e);
+        _planTemplates = [];
+      }
       return _planTemplates;
     }
     async function openLicense(userId, fullName, email, apStr) {
@@ -165,9 +171,37 @@
       ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
 
       const fmtBytes = (b) => { if(!b)return '0';const u=['B','KB','MB','GB'];let i=0,v=b;while(v>=1024&&i<3){v/=1024;i++;}return v.toFixed(v<10?1:0)+' '+u[i]; };
-      const tplOptions = tpls.map(t => `<option value="${t.id}">${t.name} — ${t.maxCompanies} companies × ${t.maxUsers} users</option>`).join('');
+      // Build the template dropdown. Empty list = no PlanTemplate rows or the
+      // endpoint failed — render a clear empty state + link to the plans page
+      // instead of an invisible-but-empty <select>.
+      const tplOptions = tpls.length
+        ? '<option value="">— เลือก plan —</option>' +
+          tpls.map(t => `<option value="${t.id}">${t.name} — ${t.maxCompanies} companies × ${t.maxUsers} users / company · ฿${(t.monthlyPrice||0).toLocaleString()}/เดือน</option>`).join('')
+        : '';
 
       const hasPlan = !!ap;
+      // Build the no-plan block content separately so we can show an empty
+      // state when the PlanTemplate list is empty (typical on a fresh DB or
+      // after admin deleted all active templates).
+      const noPlanForm = tpls.length ? `
+        <div class="admin-form-group">
+          <label class="admin-label">เลือก Plan Template</label>
+          <select id="luNewPlan">${tplOptions}</select>
+        </div>
+        <div class="admin-form-group">
+          <label class="admin-label">MaxCompanies override (ว่าง = ใช้ตาม template)</label>
+          <input type="number" min="1" id="luNewMax" class="admin-input" placeholder="เช่น 5 สำหรับ enterprise deal">
+        </div>
+        <div class="admin-form-group">
+          <label class="admin-label">วันสิ้นสุด custom (ว่าง = +1 เดือนจากวันนี้)</label>
+          <input type="date" id="luNewEnd" class="admin-input">
+        </div>
+        <button class="admin-btn admin-btn-primary" onclick="luCreate('${userId}')">+ สร้าง License ให้ผู้ใช้</button>` : `
+        <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:14px 16px;font-size:13px;color:#991b1b;line-height:1.6">
+          ⚠️ <strong>ไม่มี Plan Template ที่ active</strong> — สร้าง License ไม่ได้ตอนนี้<br>
+          ไปที่หน้า <a href="/admin/plans.html" style="color:#0ea5e9;font-weight:600">💎 จัดการแพ็กเกจ</a> เพื่อสร้าง PlanTemplate ก่อน (หรือ activate ที่มีอยู่)
+        </div>`;
+
       const summary = hasPlan ? `
         <div style="background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:12px 14px;margin-bottom:14px">
           <div style="font-size:14px;font-weight:700;color:#0c4a6e">🎫 ${ap.planName} <span style="background:#0ea5e9;color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;margin-left:6px">${ap.status||'Active'}</span></div>
@@ -193,19 +227,7 @@
         <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px 16px;margin-bottom:14px;font-size:13px;color:#78350f">
           ⚠️ ผู้ใช้นี้ยังไม่มี License (Account Plan) · บริษัทที่ user เป็นเจ้าของใช้ subscription ของตัวเองแยก
         </div>
-        <div class="admin-form-group">
-          <label class="admin-label">เลือก Plan Template</label>
-          <select id="luNewPlan">${tplOptions}</select>
-        </div>
-        <div class="admin-form-group">
-          <label class="admin-label">MaxCompanies override (ว่าง = ใช้ตาม template)</label>
-          <input type="number" min="1" id="luNewMax" class="admin-input" placeholder="เช่น 5 สำหรับ enterprise deal">
-        </div>
-        <div class="admin-form-group">
-          <label class="admin-label">วันสิ้นสุด custom (ว่าง = +1 เดือนจากวันนี้)</label>
-          <input type="date" id="luNewEnd" class="admin-input">
-        </div>
-        <button class="admin-btn admin-btn-primary" onclick="luCreate('${userId}')">+ สร้าง License ให้ผู้ใช้</button>`;
+        ${noPlanForm}`;
 
       ov.innerHTML = `
         <div style="background:#fff;border-radius:12px;max-width:680px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">
@@ -296,7 +318,9 @@
       } catch(e) { alert(e.message); }
     }
     async function luCreate(userId) {
-      const planId = document.getElementById('luNewPlan').value;
+      const planEl = document.getElementById('luNewPlan');
+      if (!planEl) { alert('ไม่มี PlanTemplate ที่ active'); return; }
+      const planId = planEl.value;
       if (!planId) { alert('เลือก Plan'); return; }
       const max = document.getElementById('luNewMax').value;
       const end = document.getElementById('luNewEnd').value;
