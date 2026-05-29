@@ -199,6 +199,18 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.VendorCanonicalization) => await TrainVendorCanonAsync(db, row, ct),
             nameof(AiFeatureKey.GlAccountSuggestion) => await TrainGlAccountAsync(db, row, ct),
             nameof(AiFeatureKey.PaymentVoucherAccountingSuggestion) => await TrainGlAccountAsync(db, row, ct),
+            // CreditNote / DocType / WHT / BankMatch / ApprovalFix don't
+            // need a dedicated local-table write — the feedback row
+            // ITSELF is the training signal (LocalModelHealth tracks
+            // accuracy; future local-model versions can replay these
+            // rows during retrain). Mark as consumed so we don't keep
+            // re-counting them.
+            nameof(AiFeatureKey.CreditNoteReasonClassification) => true,
+            nameof(AiFeatureKey.DocumentTypeClassification) => true,
+            nameof(AiFeatureKey.WhtCategoryInference) => true,
+            nameof(AiFeatureKey.BankStatementMatch) => true,
+            nameof(AiFeatureKey.ApprovalWarningFixSuggestion) => true,
+            nameof(AiFeatureKey.AnomalyExplanation) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release.
             _ => false,
