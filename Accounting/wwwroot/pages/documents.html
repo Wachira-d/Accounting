@@ -106,25 +106,30 @@
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
               <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
-                  <option value="Quotation">ใบเสนอราคา</option>
-                  <option value="Invoice">ใบแจ้งหนี้</option>
-                  <option value="TaxInvoice">ใบกำกับภาษี</option>
-                  <option value="Receipt">ใบเสร็จรับเงิน</option>
-                  <option value="DeliveryNote">ใบส่งของ</option>
-                  <option value="BillingNote">ใบวางบิล</option>
-                  <option value="DebitNote">ใบเพิ่มหนี้</option>
-                  <option value="CreditNote">ใบลดหนี้</option>
-                  <option value="ReceiptVoucher">ใบสำคัญรับ</option>
+                  <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
+                  <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้ — เริ่มนับ aging">ใบแจ้งหนี้</option>
+                  <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้ + Cr Output VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
+                  <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR (หรือ Cr รายได้+VAT ถ้าจ่ายสด)">ใบเสร็จรับเงิน</option>
+                  <option value="DeliveryNote" title="ส่งของแล้วแต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL, เป็นเอกสารโลจิสติก">ใบส่งของ</option>
+                  <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL, เป็นเอกสารเรียกเก็บ">ใบวางบิล</option>
+                  <option value="DebitNote" title="เพิ่มยอดที่ลูกค้าต้องจ่าย (เช่นค่าปรับ, ค่าขนส่งเพิ่ม) — Dr AR / Cr รายได้/VAT">ใบเพิ่มหนี้</option>
+                  <option value="CreditNote" title="ลดยอดที่ลูกค้าต้องจ่าย (คืนสินค้า/ส่วนลด/ตัดหนี้สูญ) — §82/10, ต้องระบุเหตุผล">ใบลดหนี้</option>
+                  <option value="ReceiptVoucher" title="ใบสำคัญรับ (รับเงินที่ไม่ออกใบเสร็จเช่นรับเงินมัดจำ) — Dr Cash / Cr รายได้รับล่วงหน้า">ใบสำคัญรับ</option>
                 </optgroup>
                 <optgroup label="📤 ฝั่งรายจ่าย" id="fDocTypeExpense">
-                  <option value="PurchaseRequisition">ใบขอซื้อ (PR)</option>
-                  <option value="PurchaseOrder">ใบสั่งซื้อ (PO)</option>
-                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
-                  <option value="Expense">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
-                  <option value="PaymentVoucher">ใบสำคัญจ่าย (ตัดยอด AP)</option>
-                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
+                  <option value="PurchaseRequisition" title="ใบขอซื้อภายใน (PR) — แผนกขออนุมัติซื้อ ก่อนสั่งจริง, ไม่ลง GL">ใบขอซื้อ (PR)</option>
+                  <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) ส่งให้ vendor — Commitment, ยังไม่ลง GL, ใช้ track ยอดสั่งซื้อ">ใบสั่งซื้อ (PO)</option>
+                  <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ที่ vendor ออกใบกำกับให้ — Dr Inventory/Asset + VAT / Cr AP, กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
+                  <option value="Expense" title="ค่าใช้จ่ายทั่วไป (ค่าน้ำ ค่าไฟ ค่าเช่า) — บริษัทจ่ายเอง — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
+                  <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ใช้ตอนชำระ PI / Expense ทีหลัง — Dr AP / Cr Cash — ตัดยอดเจ้าหนี้">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                  <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — ใช้เมื่อ vendor ออกใบเสร็จไม่ได้ (ตลาดสด, taxi, ผู้ขายไม่จด VAT) — บริษัทออกใบรับรองให้ตัวเอง">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
                 </optgroup>
               </select>
+              <!-- 💡 Live hint — updates on select-change from the title
+                   attribute of the currently-chosen option. Native browser
+                   tooltips on <option> are unreliable across browsers
+                   (Safari doesn't show them); this hint line is guaranteed. -->
+              <div id="docTypeHint" class="hint" style="margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5"></div>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
@@ -372,21 +377,24 @@
             <label class="form-label">แปลงเป็นเอกสารประเภท</label>
             <select class="form-select" id="convertTarget" onchange="Page.onConvertTargetChange()">
               <optgroup label="📥 ฝั่งรายรับ">
-                <option value="Invoice">ใบแจ้งหนี้</option>
-                <option value="TaxInvoice">ใบกำกับภาษี</option>
-                <option value="Receipt">ใบเสร็จรับเงิน</option>
-                <option value="DeliveryNote">ใบส่งของ</option>
-                <option value="BillingNote">ใบวางบิล</option>
-                <option value="ReceiptVoucher">ใบสำคัญรับ</option>
+                <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้">ใบแจ้งหนี้</option>
+                <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้+VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
+                <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR">ใบเสร็จรับเงิน</option>
+                <option value="DeliveryNote" title="ส่งของแล้ว แต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL">ใบส่งของ</option>
+                <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL">ใบวางบิล</option>
+                <option value="ReceiptVoucher" title="รับเงินที่ไม่ออกใบเสร็จ (มัดจำ) — Dr Cash / Cr รายได้รับล่วงหน้า">ใบสำคัญรับ</option>
               </optgroup>
               <optgroup label="📤 ฝั่งรายจ่าย">
-                <option value="PurchaseOrder">ใบสั่งซื้อ (PO)</option>
-                <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
-                <option value="Expense">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
-                <option value="PaymentVoucher">ใบสำคัญจ่าย (ตัดยอด AP)</option>
-                <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
+                <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) — commitment, ยังไม่ลง GL">ใบสั่งซื้อ (PO)</option>
+                <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ — Dr Inventory/Asset+VAT / Cr AP — กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
+                <option value="Expense" title="ค่าใช้จ่ายทั่วไป (บริษัทจ่ายเอง) — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
+                <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ชำระ PI/Expense ทีหลัง — Dr AP / Cr Cash">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — กรณี vendor ออกใบเสร็จไม่ได้">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
               </optgroup>
             </select>
+            <!-- Live hint for the convert target — same pattern as
+                 docTypeHint above the form select. -->
+            <div id="convertTargetHint" class="hint" style="margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5"></div>
           </div>
           <!-- Partial conversion: choose lines & quantities -->
           <div id="convertLinesWrap" style="display:none">
@@ -769,7 +777,18 @@
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
-        const docType = document.getElementById('fDocType')?.value;
+        // 💡 Live tooltip — pull the `title` attribute from the
+        // currently-selected option into the hint line below the select.
+        // We do this rather than relying on browser-native option tooltips
+        // because Safari + several mobile browsers don't show those.
+        const sel = document.getElementById('fDocType');
+        const opt = sel?.options[sel.selectedIndex];
+        const hint = document.getElementById('docTypeHint');
+        if (hint && opt) {
+          hint.textContent = opt.title || '';
+          hint.style.display = opt.title ? '' : 'none';
+        }
+        const docType = sel?.value;
         // Show/hide expense category based on document type
         const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
         const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
@@ -1221,6 +1240,11 @@
         // the cleared subject/body when the user picks a contact.
         this._lastAutoSubject = '';
         this._lastAutoBody = '';
+        // Fire the change handler once so docTypeHint shows the
+        // explanation of the default-selected type immediately on modal
+        // open (otherwise user sees an empty hint until they touch
+        // the dropdown).
+        this.onDocTypeChange();
         Layout.openModal('formModal');
       },
       async openEdit(id) {
@@ -1291,6 +1315,10 @@
           // the user enables "send email" on this Edit session.
           this._lastAutoSubject = '';
           this._lastAutoBody = '';
+          // Refresh docTypeHint to reflect the doc's type even though
+          // the select is disabled in edit mode — useful context for
+          // the operator.
+          this.onDocTypeChange();
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -2458,7 +2486,17 @@
 
       async onConvertTargetChange() {
         const id = document.getElementById('convertDocId').value;
-        const target = document.getElementById('convertTarget').value;
+        const targetSel = document.getElementById('convertTarget');
+        const target = targetSel.value;
+        // Live hint mirror — same as onDocTypeChange. Browser tooltips
+        // on <option> are unreliable so we surface the title attribute
+        // explicitly in a hint line.
+        const targetOpt = targetSel.options[targetSel.selectedIndex];
+        const targetHint = document.getElementById('convertTargetHint');
+        if (targetHint && targetOpt) {
+          targetHint.textContent = targetOpt.title || '';
+          targetHint.style.display = targetOpt.title ? '' : 'none';
+        }
         const wrap = document.getElementById('convertLinesWrap');
         const axis = this.convertAxis(target);
         if (!axis || !id) { wrap.style.display = 'none'; this._convertFulfillment = null; return; }
