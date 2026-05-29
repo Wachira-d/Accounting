@@ -2,6 +2,7 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Pos;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;   // EmailMessage / IEmailSenderFactory
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -827,7 +828,7 @@ public partial class PosService
                 var srcItem = parent.Items.First(i => i.Id == srcItemId);
                 var copy = new PosOrderItem
                 {
-                    CompanyId = companyId,
+                    // PosOrderItem is BaseEntity (scoped via OrderId.Order.CompanyId)
                     ProductId = srcItem.ProductId,
                     ServicePackageId = srcItem.ServicePackageId,
                     ItemName = srcItem.ItemName,
@@ -1366,7 +1367,7 @@ public partial class PosService
                 {
                     dest.Items.Add(new PosOrderItem
                     {
-                        CompanyId = companyId,
+                        // PosOrderItem is BaseEntity — CompanyId inherited via dest's OrderId.
                         ProductId = srcItem.ProductId,
                         ServicePackageId = srcItem.ServicePackageId,
                         ItemName = srcItem.ItemName,

@@ -291,7 +291,7 @@ public class CompanyService : ICompanyService
         if (cu.Role == UserRole.Owner)
         {
             var ownerCount = await _db.CompanyUsers
-                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner && !x.IsDeleted);
+                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner);
             if (ownerCount <= 1)
                 throw new InvalidOperationException("ลบไม่ได้ — บริษัทต้องมีเจ้าของอย่างน้อย 1 คน");
         }
@@ -315,7 +315,7 @@ public class CompanyService : ICompanyService
         if (cu.Role == UserRole.Owner && newRole != UserRole.Owner)
         {
             var ownerCount = await _db.CompanyUsers
-                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner && !x.IsDeleted);
+                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner);
             if (ownerCount <= 1)
                 throw new InvalidOperationException("ลดสิทธิ์ไม่ได้ — บริษัทต้องมีเจ้าของอย่างน้อย 1 คน");
         }

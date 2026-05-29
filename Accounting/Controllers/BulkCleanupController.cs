@@ -34,7 +34,7 @@ public class BulkCleanupController : ControllerBase
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
         if (user?.IsSystemAdmin == true) return true;
         var cu = await _db.CompanyUsers.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == userId && !c.IsDeleted);
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == userId);
         return cu?.Role == UserRole.Owner;
     }
 
@@ -96,8 +96,10 @@ public class BulkCleanupController : ControllerBase
 
         // Order matters: delete child rows before parents so the soft-delete
         // doesn't tickle any "child references deleted parent" guards in code.
-        await SoftDelete(_db.PosPayments.Where(p => p.CompanyId == companyId && !p.IsDeleted), "PosPayments");
-        await SoftDelete(_db.PosOrderItems.Where(i => i.CompanyId == companyId && !i.IsDeleted), "PosOrderItems");
+        // PosPayments + PosOrderItems are BaseEntity (no CompanyId) — we
+        // scope through their parent PosOrder's CompanyId instead.
+        await SoftDelete(_db.PosPayments.Where(p => p.Order.CompanyId == companyId && !p.IsDeleted), "PosPayments");
+        await SoftDelete(_db.PosOrderItems.Where(i => i.Order.CompanyId == companyId && !i.IsDeleted), "PosOrderItems");
         await SoftDelete(_db.PosOrders.Where(p => p.CompanyId == companyId && !p.IsDeleted), "PosOrders");
         await SoftDelete(_db.Payments.Where(p => p.CompanyId == companyId && !p.IsDeleted), "Payments");
         await SoftDelete(_db.JournalEntryLines.Where(l => l.JournalEntry.CompanyId == companyId && !l.IsDeleted), "JournalEntryLines");
