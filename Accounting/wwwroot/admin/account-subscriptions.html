@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account Plans (User License) - Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .as-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+    .as-toolbar input, .as-toolbar select { padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; }
+    .as-toolbar input { flex:1; min-width:220px; }
+    .as-pill { display:inline-block; padding:2px 10px; border-radius:10px; font-size:11px; font-weight:700; }
+    .as-status-Trial     { background:#e0e7ff; color:#3730a3; }
+    .as-status-Active    { background:#dcfce7; color:#166534; }
+    .as-status-PastDue   { background:#fef3c7; color:#92400e; }
+    .as-status-Expired   { background:#fee2e2; color:#991b1b; }
+    .as-status-Cancelled { background:#f1f5f9; color:#475569; }
+    .as-status-Suspended { background:#fed7aa; color:#9a3412; }
+    .as-pct { display:inline-flex; align-items:center; gap:6px; font-variant-numeric:tabular-nums; }
+    .as-pct .bar { width:50px; height:4px; background:#e2e8f0; border-radius:2px; overflow:hidden; }
+    .as-pct .bar > div { height:100%; background:#10b981; transition:width .3s; }
+    .as-pct .bar > div.warn { background:#f59e0b; }
+    .as-pct .bar > div.danger { background:#dc2626; }
+    .as-modal-body { padding:16px 20px; max-height:75vh; overflow-y:auto; }
+    .as-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:8px; margin-bottom:14px; }
+    .as-stat { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; text-align:center; }
+    .as-stat .v { font-size:18px; font-weight:700; color:#0f172a; }
+    .as-stat .l { font-size:10px; color:#64748b; text-transform:uppercase; letter-spacing:.3px; margin-top:2px; }
+    .as-section-title { font-size:12px; color:#475569; text-transform:uppercase; letter-spacing:.5px; font-weight:700; margin:16px 0 8px; }
+  </style>
+</head>
+<body>
+  <div id="adminLayout"></div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('account-subs');
+
+    const Page = {
+      all: [],
+      async init() {
+        await this.load();
+      },
+      async load() {
+        try {
+          const status = document.getElementById('fStatus')?.value || '';
+          const search = document.getElementById('fSearch')?.value || '';
+          const inc = document.getElementById('fIncInactive')?.checked ? 'true' : 'false';
+          let q = `?includeInactive=${inc}`;
+          if (status) q += `&status=${status}`;
+          if (search) q += `&search=${encodeURIComponent(search)}`;
+          const r = await AdminAPI.get('/account-subscriptions' + q);
+          this.all = r.data || [];
+          this.render();
+        } catch(e) { alert(e.message); }
+      },
+      _money(n) { return (n||0).toLocaleString('th-TH'); },
+      _fmtBytes(b) {
+        if(!b) return '0';
+        const u=['B','KB','MB','GB']; let i=0,v=b;
+        while(v>=1024&&i<3){v/=1024;i++;}
+        return v.toFixed(v<10?1:0)+' '+u[i];
+      },
+      _esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); },
+      render() {
+        const tbody = document.getElementById('tbody');
+        if (!this.all.length) {
+          tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มี Account Plan</td></tr>';
+          return;
+        }
+        tbody.innerHTML = this.all.map(a => {
+          const pct = a.maxCompanies > 0 ? Math.min(100, (a.companiesUsed / a.maxCompanies) * 100) : 0;
+          const klass = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '';
+          const exp = new Date(a.endDate);
+          const daysLeft = Math.floor((exp - Date.now()) / 86400000);
+          const expHtml = daysLeft < 0
+            ? `<span style="color:#dc2626;font-weight:700">หมดอายุ ${Math.abs(daysLeft)} วัน</span>`
+            : daysLeft < 7
+              ? `<span style="color:#f59e0b;font-weight:700">เหลือ ${daysLeft} วัน</span>`
+              : `${exp.toLocaleDateString('th-TH')} (${daysLeft}ว.)`;
+          return `<tr>
+            <td><strong>${this._esc(a.ownerName)}</strong><div style="font-size:11px;color:#64748b">${this._esc(a.ownerEmail)}</div></td>
+            <td>${this._esc(a.planName)}</td>
+            <td><span class="as-pill as-status-${a.status}">${a.status}</span></td>
+            <td><span class="as-pct"><span>${a.companiesUsed}/${a.maxCompanies}</span><span class="bar"><div class="${klass}" style="width:${pct}%"></div></span></span></td>
+            <td>${a.maxUsersPerCompany}</td>
+            <td>${a.maxDocumentsPerMonth.toLocaleString()}</td>
+            <td>${this._fmtBytes(a.maxStorageBytes)}</td>
+            <td>${expHtml}</td>
+            <td>
+              <button class="admin-btn-sm" onclick="Page.openDetail('${a.id}')">ดู</button>
+              <button class="admin-btn-sm" onclick="Page.openExtend('${a.id}','${a.endDate}')">ขยายอายุ</button>
+              <button class="admin-btn-sm" onclick="Page.openLimits('${a.id}')">ปรับ Limits</button>
+              <button class="admin-btn-sm" onclick="Page.openStatus('${a.id}','${a.status}')">เปลี่ยนสถานะ</button>
+            </td>
+          </tr>`;
+        }).join('');
+      },
+
+      async openDetail(id) {
+        try {
+          const r = await AdminAPI.get('/account-subscriptions/' + id);
+          const d = r.data;
+          const u = d.usage || {};
+          const gauge = (used, max, fmt) => {
+            const pct = max > 0 ? Math.min(100, (used/max)*100) : 0;
+            const color = pct >= 90 ? '#dc2626' : pct >= 70 ? '#f59e0b' : '#10b981';
+            return `<div><div style="display:flex;justify-content:space-between;font-size:11px;color:#475569">
+              <span>${fmt(used)}</span><span>${fmt(max)}</span></div>
+              <div style="height:5px;background:#e2e8f0;border-radius:3px;margin-top:2px;overflow:hidden">
+              <div style="height:100%;width:${pct}%;background:${color}"></div></div></div>`;
+          };
+          const attached = (d.attachedCompanies || []).map(c => `
+            <tr>
+              <td>${this._esc(c.companyName)}<div style="font-size:11px;color:#64748b">${this._esc(c.taxId||'')}</div></td>
+              <td><span class="as-pill as-status-${c.status}">${c.status}</span></td>
+              <td>${(c.currentMonthDocuments||0).toLocaleString()}</td>
+              <td>${(c.currentMonthJournalEntries||0).toLocaleString()}</td>
+              <td>${(c.currentMonthOcrPages||0).toLocaleString()}</td>
+              <td>${this._fmtBytes(c.currentStorageUsed||0)}</td>
+            </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;padding:18px;color:#94a3b8">ยังไม่มีบริษัทผูก</td></tr>';
+
+          const body = `
+            <div class="as-section-title">ผู้ใช้ (License Holder)</div>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:8px">
+              <div><strong>${this._esc(d.ownerName)}</strong> · ${this._esc(d.ownerEmail)}${d.ownerPhone?' · '+this._esc(d.ownerPhone):''}</div>
+            </div>
+
+            <div class="as-section-title">แพ็กเกจ</div>
+            <div class="as-grid">
+              <div class="as-stat"><div class="v">${this._esc(d.planName)}</div><div class="l">Plan</div></div>
+              <div class="as-stat"><div class="v"><span class="as-pill as-status-${d.status}">${d.status}</span></div><div class="l">Status</div></div>
+              <div class="as-stat"><div class="v">${new Date(d.endDate).toLocaleDateString('th-TH')}</div><div class="l">End Date</div></div>
+              <div class="as-stat"><div class="v">${d.gracePeriodDays}ว.</div><div class="l">Grace</div></div>
+              <div class="as-stat"><div class="v">฿${this._money(d.monthlyPrice)}</div><div class="l">Monthly Price</div></div>
+              <div class="as-stat"><div class="v">฿${this._money(d.annualPrice)}</div><div class="l">Annual Price</div></div>
+            </div>
+
+            <div class="as-section-title">Aggregate Usage (รวมทุกบริษัท)</div>
+            <div class="as-grid">
+              <div><div style="font-size:11px;color:#475569;font-weight:600">บริษัท</div>${gauge(u.companiesUsed||0, u.maxCompanies||d.maxCompanies, v=>v)}</div>
+              <div><div style="font-size:11px;color:#475569;font-weight:600">เอกสาร</div>${gauge(u.documents||0, u.maxDocuments||d.maxDocumentsPerMonth, v=>v.toLocaleString())}</div>
+              <div><div style="font-size:11px;color:#475569;font-weight:600">JE</div>${gauge(u.journalEntries||0, u.maxJournalEntries||d.maxJournalEntriesPerMonth, v=>v.toLocaleString())}</div>
+              <div><div style="font-size:11px;color:#475569;font-weight:600">OCR</div>${gauge(u.ocrPages||0, u.maxOcrPages||d.maxOcrPagesPerMonth, v=>v)}</div>
+              <div><div style="font-size:11px;color:#475569;font-weight:600">Storage</div>${gauge(u.storageBytes||0, u.maxStorageBytes||d.maxStorageBytes, v=>this._fmtBytes(v))}</div>
+              <div class="as-stat"><div class="v">${d.maxUsersPerCompany}</div><div class="l">Users / บริษัท</div></div>
+            </div>
+
+            <div class="as-section-title">บริษัทที่ผูก (${(d.attachedCompanies||[]).length})</div>
+            <table class="admin-table" style="width:100%;font-size:13px">
+              <thead><tr><th>บริษัท</th><th>สถานะ</th><th>เอกสาร</th><th>JE</th><th>OCR</th><th>Storage</th></tr></thead>
+              <tbody>${attached}</tbody>
+            </table>`;
+          document.getElementById('mTitle').textContent = '🎫 รายละเอียด Account Plan';
+          document.getElementById('mBody').innerHTML = body;
+          document.getElementById('detailModal').style.display = 'flex';
+        } catch(e) { alert(e.message); }
+      },
+
+      openExtend(id, currentEnd) {
+        const cur = new Date(currentEnd);
+        // Default to extend by 30 days from current EndDate
+        cur.setDate(cur.getDate() + 30);
+        const local = new Date(cur.getTime() - cur.getTimezoneOffset()*60000).toISOString().slice(0,10);
+        const newDate = prompt('วันสิ้นสุดใหม่ (YYYY-MM-DD)', local);
+        if (!newDate) return;
+        AdminAPI.put('/account-subscriptions/' + id + '/extend', { endDate: newDate + 'T00:00:00Z' })
+          .then(j => { if (j.success) { alert('✓ ' + j.message); this.load(); } else alert(j.message); })
+          .catch(e => alert(e.message));
+      },
+
+      openStatus(id, current) {
+        const next = prompt('สถานะใหม่ (Trial / Active / PastDue / Cancelled / Expired / Suspended)', current);
+        if (!next) return;
+        const reason = prompt('เหตุผล (เก็บใน audit)', '') || '';
+        AdminAPI.put('/account-subscriptions/' + id + '/status', { status: next, reason })
+          .then(j => { if (j.success) { alert('✓ ' + j.message); this.load(); } else alert(j.message); })
+          .catch(e => alert(e.message));
+      },
+
+      async openLimits(id) {
+        const a = this.all.find(x => x.id === id);
+        if (!a) return;
+        // Lazy inline prompt — keeps the admin tool simple. For richer
+        // limit editing, /admin/plans.html template management exists.
+        const mc = parseInt(prompt('MaxCompanies', a.maxCompanies));
+        if (isNaN(mc)) return;
+        const mu = parseInt(prompt('MaxUsersPerCompany', a.maxUsersPerCompany));
+        if (isNaN(mu)) return;
+        const md = parseInt(prompt('MaxDocumentsPerMonth (aggregate)', a.maxDocumentsPerMonth));
+        if (isNaN(md)) return;
+        const mj = parseInt(prompt('MaxJournalEntriesPerMonth (aggregate)', a.maxJournalEntriesPerMonth));
+        if (isNaN(mj)) return;
+        const mo = parseInt(prompt('MaxOcrPagesPerMonth (aggregate)', a.maxOcrPagesPerMonth));
+        if (isNaN(mo)) return;
+        try {
+          const r = await AdminAPI.put('/account-subscriptions/' + id + '/limits', {
+            maxCompanies: mc, maxUsersPerCompany: mu,
+            maxDocumentsPerMonth: md, maxJournalEntriesPerMonth: mj,
+            maxOcrPagesPerMonth: mo,
+          });
+          if (!r.success) throw new Error(r.message);
+          alert('✓ ' + r.message);
+          this.load();
+        } catch(e) { alert(e.message); }
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('pageContent').innerHTML = `
+        <h1 style="margin:0 0 6px">🎫 Account Plans (User License)</h1>
+        <p style="color:#64748b;margin:0 0 18px;font-size:13px">User-level subscriptions ที่คุ้มหลายบริษัท · resolver จะใช้แผนนี้เมื่อ <code>Subscription.AccountSubscriptionId</code> ของบริษัทไม่เป็น null</p>
+
+        <div class="as-toolbar">
+          <input type="text" id="fSearch" placeholder="ค้นหาชื่อ / อีเมล / plan..." oninput="Page.load()">
+          <select id="fStatus" onchange="Page.load()">
+            <option value="">ทุกสถานะ</option>
+            <option value="Trial">Trial</option>
+            <option value="Active">Active</option>
+            <option value="PastDue">PastDue</option>
+            <option value="Suspended">Suspended</option>
+            <option value="Cancelled">Cancelled</option>
+            <option value="Expired">Expired</option>
+          </select>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="fIncInactive" onchange="Page.load()"> include cancelled/expired
+          </label>
+        </div>
+
+        <table class="admin-table" style="width:100%">
+          <thead><tr>
+            <th>เจ้าของ License</th><th>Plan</th><th>สถานะ</th>
+            <th>บริษัท</th><th>Users/บริษัท</th><th>Docs/mo</th>
+            <th>Storage</th><th>หมดอายุ</th><th>จัดการ</th>
+          </tr></thead>
+          <tbody id="tbody"><tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
+        </table>
+
+        <div id="detailModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px">
+          <div style="background:#fff;border-radius:12px;max-width:920px;width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+            <div style="padding:14px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
+              <h3 style="margin:0;font-size:16px" id="mTitle">รายละเอียด</h3>
+              <button onclick="document.getElementById('detailModal').style.display='none'" style="background:transparent;border:none;font-size:22px;cursor:pointer;color:#64748b">&times;</button>
+            </div>
+            <div class="as-modal-body" id="mBody"></div>
+          </div>
+        </div>`;
+      Page.init();
+    });
+  </script>
+</body>
+</html>

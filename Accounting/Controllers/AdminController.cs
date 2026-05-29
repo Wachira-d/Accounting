@@ -76,6 +76,25 @@ public class AdminController : ControllerBase
         var expiredSubs = subscriptions.Count(s => s.Status == SubscriptionStatus.Expired);
         var cancelledSubs = subscriptions.Count(s => s.Status == SubscriptionStatus.Cancelled);
 
+        // Account Plans (User-level Licenses) — separate KPI block so support
+        // staff can see how many Licenses are out, how many are about to expire,
+        // and the user-side MRR vs company-side MRR.
+        var accountPlans = await _db.AccountSubscriptions.Where(a => !a.IsDeleted).ToListAsync();
+        var accountActive = accountPlans.Count(a => a.Status == SubscriptionStatus.Active);
+        var accountTrial = accountPlans.Count(a => a.Status == SubscriptionStatus.Trial);
+        var accountExpiring = accountPlans.Count(a => a.Status == SubscriptionStatus.Active
+                                                  && a.EndDate <= now.AddDays(7));
+        var accountCompaniesCovered = await _db.Subscriptions
+            .CountAsync(s => s.AccountSubscriptionId != null && !s.IsDeleted);
+        var accountMrr = accountPlans
+            .Where(a => a.Status == SubscriptionStatus.Active)
+            .Sum(a => a.BillingCycle switch
+            {
+                BillingCycle.Monthly => a.MonthlyPrice,
+                BillingCycle.Annual => a.AnnualPrice / 12m,
+                _ => a.MonthlyPrice,
+            });
+
         // MRR (Monthly Recurring Revenue) - from active subscriptions
         var mrr = subscriptions
             .Where(s => s.Status == SubscriptionStatus.Active)
@@ -129,6 +148,17 @@ public class AdminController : ControllerBase
                 expired = expiredSubs,
                 cancelled = cancelledSubs,
                 total = subscriptions.Count
+            },
+            accountPlans = new
+            {
+                active = accountActive,
+                trial = accountTrial,
+                expiringIn7d = accountExpiring,
+                total = accountPlans.Count,
+                companiesCovered = accountCompaniesCovered,
+                companiesUnderAccount = accountCompaniesCovered,
+                companiesStandalone = subscriptions.Count(s => s.AccountSubscriptionId == null),
+                mrr = Math.Round(accountMrr, 2),
             },
             revenue = new
             {
@@ -241,6 +271,32 @@ public class AdminController : ControllerBase
         var docCount = await _db.Documents.CountAsync(d => d.CompanyId == companyId);
         var journalCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
 
+        // When the company is under an Account Plan, surface who pays + the
+        // plan name so support can jump there to renew / extend at the right
+        // layer. Without this admin would extend Company.Subscription.EndDate
+        // while the parent AccountSubscription.EndDate quietly expires.
+        object? accountPlan = null;
+        if (company.Subscription?.AccountSubscriptionId != null)
+        {
+            var acct = await _db.AccountSubscriptions
+                .Include(a => a.Owner).Include(a => a.PlanTemplate)
+                .FirstOrDefaultAsync(a => a.Id == company.Subscription.AccountSubscriptionId.Value && !a.IsDeleted);
+            if (acct != null)
+            {
+                accountPlan = new
+                {
+                    id = acct.Id,
+                    ownerUserId = acct.OwnerUserId,
+                    ownerName = acct.Owner.FullName,
+                    ownerEmail = acct.Owner.Email,
+                    planName = acct.PlanTemplate.Name,
+                    status = acct.Status.ToString(),
+                    endDate = acct.EndDate,
+                    maxCompanies = acct.MaxCompanies,
+                };
+            }
+        }
+
         return Ok(new ApiResponse<object>(true, new
         {
             company = new
@@ -259,8 +315,10 @@ public class AdminController : ControllerBase
                 company.Subscription.Id, company.Subscription.Plan, company.Subscription.Status,
                 company.Subscription.BillingCycle, company.Subscription.PricePerCycle,
                 company.Subscription.StartDate, company.Subscription.EndDate,
-                company.Subscription.EnabledFeatures
+                company.Subscription.EnabledFeatures,
+                company.Subscription.AccountSubscriptionId,
             },
+            accountPlan,
             trial = trial == null ? null : new
             {
                 trial.TrialStartDate, trial.TrialEndDate, trial.ExtensionsUsed,
@@ -318,9 +376,42 @@ public class AdminController : ControllerBase
             })
             .ToListAsync();
 
+        // Per-user AccountSubscription badge — surface "🎫 Pro 2/3" so support
+        // staff can see at a glance whose License is covering what before
+        // touching company-level subscriptions.
+        var userIds = users.Select(u => u.Id).ToList();
+        var plans = await _db.AccountSubscriptions
+            .Include(a => a.PlanTemplate)
+            .Where(a => userIds.Contains(a.OwnerUserId) && !a.IsDeleted
+                && (a.Status == SubscriptionStatus.Trial || a.Status == SubscriptionStatus.Active
+                    || a.Status == SubscriptionStatus.PastDue || a.Status == SubscriptionStatus.Suspended))
+            .ToListAsync();
+        var planIds = plans.Select(p => p.Id).ToList();
+        var coCounts = await _db.Subscriptions
+            .Where(s => s.AccountSubscriptionId != null && planIds.Contains(s.AccountSubscriptionId.Value) && !s.IsDeleted)
+            .GroupBy(s => s.AccountSubscriptionId!.Value)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Id, x => x.Count);
+        var byUser = plans.ToDictionary(p => p.OwnerUserId, p => new
+        {
+            planId = p.Id,
+            planName = p.PlanTemplate.Name,
+            status = p.Status.ToString(),
+            maxCompanies = p.MaxCompanies,
+            companiesUsed = coCounts.GetValueOrDefault(p.Id, 0),
+            endDate = p.EndDate,
+        });
+
+        var withPlans = users.Select(u => new
+        {
+            u.Id, u.Email, u.FullName, u.Phone, u.Status, u.IsSystemAdmin,
+            u.LastLoginAt, u.CreatedAt, u.companies,
+            accountPlan = byUser.TryGetValue(u.Id, out var ap) ? ap : null,
+        });
+
         return Ok(new ApiResponse<object>(true, new
         {
-            items = users, total, page, pageSize,
+            items = withPlans, total, page, pageSize,
             totalPages = (int)Math.Ceiling(total / (double)pageSize)
         }));
     }

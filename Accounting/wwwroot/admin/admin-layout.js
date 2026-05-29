@@ -7,6 +7,7 @@ const AdminLayout = {
     { section: 'จัดการลูกค้า' },
     { id: 'customers', label: 'ลูกค้า/บริษัท', icon: '🏢', href: '/admin/customers.html' },
     { id: 'users', label: 'ผู้ใช้งาน', icon: '👥', href: '/admin/users.html' },
+    { id: 'account-subs', label: '🎫 Account Plans (User License)', icon: '🎫', href: '/admin/account-subscriptions.html' },
     { section: 'แพ็กเกจ' },
     { id: 'plans', label: 'จัดการแพ็กเกจ', icon: '💎', href: '/admin/plans.html' },
     { section: 'การเงิน' },

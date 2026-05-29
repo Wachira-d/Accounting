@@ -81,7 +81,7 @@
                     <span>ผู้ใช้สูงสุด</span><strong>${p.maxUsers}</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
-                    <span>บริษัทสูงสุด</span><strong>${p.maxCompanies}</strong>
+                    <span title="จำนวน Company slots เมื่อใช้เป็น Account Plan (User-level License). บน Subscription ระดับบริษัท ค่านี้ถูกเก็บเป็น 1 เสมอ">บริษัทสูงสุด <span style="color:#94a3b8;font-size:11px">(slots)</span></span><strong>${p.maxCompanies}</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
                     <span>เอกสาร/เดือน</span><strong>${p.maxDocumentsPerMonth?.toLocaleString() || '-'}</strong>
@@ -282,8 +282,9 @@
                   <input type="number" min="1" class="admin-input" id="ep_users" value="${p.maxUsers}">
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">บริษัทสูงสุด</label>
+                  <label class="admin-label">บริษัทสูงสุด <span style="font-weight:400;color:#94a3b8;font-size:11px">— ใช้เป็น "slots" บน Account Plan / ระดับบริษัท = 1</span></label>
                   <input type="number" min="1" class="admin-input" id="ep_companies" value="${p.maxCompanies}">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">เลข ≥2 = plan รองรับ Account-level License ครอบหลายบริษัท</div>
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">เอกสาร/เดือน</label>
