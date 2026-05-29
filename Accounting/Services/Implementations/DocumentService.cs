@@ -321,7 +321,7 @@ public class DocumentService : IDocumentService
         // Fetch only the bare-minimum metadata needed for the stub.
         var stub = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == documentId && d.CompanyId == companyId)
-            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.DueDate, d.CreatedAt, d.Sensitivity })
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.DueDate, d.CreatedAt, d.Sensitivity, d.CreditNoteReason })
             .FirstAsync();
         return new DocumentResponse(stub.Id, stub.DocumentNumber, stub.DocumentType, stub.Status,
             stub.DocumentDate, stub.DueDate,
@@ -569,15 +569,28 @@ public class DocumentService : IDocumentService
         return await GetDocumentAsync(companyId, documentId);
     }
 
-    public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
+    public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
+        => ApproveDocumentAsync(companyId, documentId, approvedBy, acknowledgeWarnings: false);
+
+    public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings)
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)
+            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
+
+        // Soft warnings — legal/correct but unusual patterns the operator
+        // should eyeball before approving. Hard errors still throw below.
+        // When AcknowledgeWarnings is false and warnings exist, throw a
+        // typed exception the controller turns into a 422 with the list
+        // so the UI can prompt for explicit confirmation.
+        var warnings = await CollectApprovalWarningsAsync(companyId, doc);
+        if (warnings.Count > 0 && !acknowledgeWarnings)
+            throw new DocumentApprovalWarningsException(warnings);
 
         // CreditNote must declare its reason — per ประมวลรัษฎากร §82/10 the
         // CN reason distinguishes whether goods physically returned (restocks)
@@ -3568,4 +3581,119 @@ public class DocumentService : IDocumentService
 
     // Projection type for the recursive cycle-detection CTE
     private sealed record AncestorRow(Guid Id, string DocumentNumber, int DocumentType);
+
+    /// <summary>Pre-approval soft-warning collector. Returns user-facing
+    /// messages for legal-but-unusual patterns that the operator should
+    /// eyeball before approving. The list is empty when nothing is amiss.
+    /// HARD errors continue to throw inline above — they're never returned
+    /// as warnings because they'd corrupt the books on save. Examples that
+    /// pass the audit but get flagged:
+    ///   • document-date drifted &gt;90d in the past or &gt;30d in the future
+    ///   • VAT rate other than 0 / 7
+    ///   • WHT rate not in the canonical ภ.ง.ด.3 / 53 list
+    ///   • TaxInvoice / Receipt without contact TaxId (e-Tax falls to
+    ///     Non-VAT format silently otherwise)
+    ///   • large amount (&gt;500k THB) — could be a typo
+    ///   • foreign currency without an explicit FX rate update
+    ///   • inventory-tracked product would go negative on this approval
+    /// </summary>
+    private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc)
+    {
+        var warnings = new List<string>();
+        var today = DateTime.UtcNow.Date;
+
+        // Date drift — covers backdated invoices that may have missed
+        // their VAT filing window and forward-dated invoices that look
+        // like a fat-finger.
+        var daysPast = (today - doc.DocumentDate.Date).TotalDays;
+        if (daysPast > 90)
+            warnings.Add($"วันที่เอกสาร ({doc.DocumentDate:yyyy-MM-dd}) ย้อนหลัง {(int)daysPast} วัน — ตรวจรอบการยื่นภาษีก่อนอนุมัติ");
+        else if (daysPast < -30)
+            warnings.Add($"วันที่เอกสาร ({doc.DocumentDate:yyyy-MM-dd}) ล่วงหน้าเกิน 30 วัน — โดยปกติออกเอกสารวันจริงเท่านั้น");
+
+        // VAT-eligible types need a contact TaxId for proper e-Tax XML and
+        // ภ.พ.30 cross-matching. Without TaxId the e-Tax generator falls
+        // back to Non-VAT format silently — works, but the customer can't
+        // claim Input VAT on the other side.
+        var vatTypes = new[] { DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.DebitNote, DocumentType.CreditNote };
+        if (vatTypes.Contains(doc.DocumentType) && doc.Contact != null && string.IsNullOrWhiteSpace(doc.Contact.TaxId))
+            warnings.Add($"ผู้ติดต่อ '{doc.Contact.Name}' ไม่มีเลขผู้เสียภาษี — e-Tax XML จะใช้รูปแบบ Non-VAT ผู้รับใช้เป็นหลักฐาน Input VAT ไม่ได้");
+
+        // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
+        // create path; this is the "rate is technically legal but unusual"
+        // shoulder (e.g. ratio that doesn't match a known ภ.ง.ด. code).
+        var knownWhtRates = new HashSet<decimal> { 0m, 1m, 1.5m, 2m, 3m, 5m, 10m, 15m };
+        foreach (var line in doc.Lines)
+        {
+            if (line.WithholdingTaxRate > 0 && !knownWhtRates.Contains(line.WithholdingTaxRate))
+                warnings.Add($"อัตรา WHT ของ '{line.Description}' = {line.WithholdingTaxRate}% — ไม่ใช่อัตรามาตรฐาน (1 / 1.5 / 2 / 3 / 5 / 10 / 15%) ตรวจ Income Type Code อีกครั้ง");
+        }
+
+        // Sticker-shock guard — flag invoices > 500k THB. Catches a typo
+        // like 4,500,000 vs 450,000.
+        if (doc.TotalAmount >= 500_000m)
+            warnings.Add($"ยอดรวมเอกสาร {doc.TotalAmount:N2} {doc.Currency} — ตรวจตัวเลขก่อนยืนยัน (จำนวนเงินสูงผิดปกติ)");
+
+        // Foreign currency without explicit FX rate (means the rate was
+        // either captured at create-time or fell back to BoT) — surface so
+        // operator can override with the contracted rate before posting.
+        if (!string.Equals(doc.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+            warnings.Add($"สกุลเงิน {doc.Currency} (เรทใช้จริง {doc.ExchangeRate:F4}) — ถ้าเป็นเรทเช่าบริการ/สัญญา ให้อัพเดทก่อนอนุมัติ");
+
+        // Stock-going-negative warning for the AR side. Allowed (back-orders
+        // are legitimate) but the operator should be told before the GL
+        // commits a sale we can't actually deliver.
+        if (doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice)
+        {
+            var lineCodes = doc.Lines.Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+                .Select(l => l.ProductCode!).Distinct().ToList();
+            if (lineCodes.Count > 0)
+            {
+                var products = await _db.Products.AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && lineCodes.Contains(p.Code) && p.TrackStock && !p.IsDeleted)
+                    .ToDictionaryAsync(p => p.Code);
+                foreach (var line in doc.Lines)
+                {
+                    if (string.IsNullOrWhiteSpace(line.ProductCode)) continue;
+                    if (!products.TryGetValue(line.ProductCode!, out var product)) continue;
+                    if (product.CurrentStock - line.Quantity < 0)
+                        warnings.Add($"สินค้า '{product.Name}' คงเหลือ {product.CurrentStock} {product.Unit} จะติดลบ {Math.Abs(product.CurrentStock - line.Quantity):N2} หลังบันทึก (back-order)");
+                }
+            }
+        }
+
+        // Customer carrying past-due invoices — surface so the operator
+        // chases collection before booking more AR with the same party.
+        if (doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote)
+        {
+            var overdue = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
+                    && d.Id != doc.Id && !d.IsDeleted
+                    && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Overdue)
+                    && d.AgingDays != null && d.AgingDays > 30)
+                .Select(d => new { d.DocumentNumber, d.BalanceDue, d.AgingDays })
+                .ToListAsync();
+            if (overdue.Count > 0)
+            {
+                var total = overdue.Sum(d => d.BalanceDue);
+                warnings.Add($"ผู้ติดต่อนี้ยังค้างชำระ {overdue.Count} ใบ รวม {total:N2} THB — ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่");
+            }
+        }
+
+        return warnings;
+    }
+}
+
+/// <summary>Thrown by ApproveDocumentAsync when the pre-approval validator
+/// surfaces soft warnings AND the request didn't carry AcknowledgeWarnings.
+/// Controllers catch this and return HTTP 422 with the warning list so the
+/// frontend can prompt the operator and retry with the acknowledge flag.</summary>
+public class DocumentApprovalWarningsException : Exception
+{
+    public IReadOnlyList<string> Warnings { get; }
+    public DocumentApprovalWarningsException(IReadOnlyList<string> warnings)
+        : base("เอกสารมีจุดที่ต้องตรวจก่อนยืนยันการอนุมัติ (" + warnings.Count + " รายการ)")
+    {
+        Warnings = warnings;
+    }
 }

@@ -90,7 +90,14 @@ const API = {
           const details = Object.entries(json.errors).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ');
           if (details) msg += ' — ' + details;
         }
-        throw new Error(msg);
+        // Attach the response body + status to the thrown Error so callers
+        // that care (e.g. approve-with-warnings flow) can inspect it. Most
+        // catch sites just use err.message; the warning UI checks err.status
+        // and err.body.data for the warnings list.
+        const err = new Error(msg);
+        err.status = res.status;
+        err.body = json;
+        throw err;
       }
       return json;
     } catch (err) {
@@ -177,7 +184,7 @@ const API = {
       getDocumentLinkedScan: (id) => API.get(`${base}/document/${id}/linked-scan`),
       createDocument: (d) => API.post(`${base}/document`, d),
       updateDocument: (id, d) => API.put(`${base}/document/${id}`, d),
-      approveDocument: (id) => API.post(`${base}/document/${id}/approve`),
+      approveDocument: (id, body) => API.post(`${base}/document/${id}/approve`, body ?? {}),
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
       purgeDocument: (id) => API.del(`${base}/document/${id}/purge`),

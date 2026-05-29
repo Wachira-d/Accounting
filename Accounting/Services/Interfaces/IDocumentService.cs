@@ -17,6 +17,12 @@ public interface IDocumentService
     Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false);
     Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request);
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy);
+    /// <summary>Approve with explicit acknowledge-warnings flag. When the
+    /// pre-approval check surfaces soft warnings AND acknowledgeWarnings is
+    /// false, throws DocumentApprovalWarningsException so the controller can
+    /// return 422 with the warning list. Frontend re-issues with true to
+    /// proceed.</summary>
+    Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings);
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
     Task VoidDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>ลบเอกสารถาวร: เฉพาะ Draft ที่ยังไม่กระทบบัญชี</summary>

@@ -1379,7 +1379,10 @@
             // of truth so the Payment metadata can't drift from the GL.
             const method = this._deriveMethodFromChannel().method;
             try {
-              await api.approveDocument(savedDocId);
+              // Cash-sale chain implies the operator already committed to
+              // immediate approval — short-circuit the warnings prompt by
+              // acknowledging up front. Hard errors still throw.
+              await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
               // Re-fetch to get authoritative totals + balanceDue (server
               // rounding / VAT calc can drift from client-side sum).
               const detail = await api.getDocument(savedDocId);
@@ -1655,15 +1658,66 @@
       },
       async approve(id) {
         const api = Layout.api(); if (!api) return;
-        try {
-          await api.approveDocument(id);
-          Layout.closeModal('detailModal');
-          // After approve the backend may auto-generate the e-Tax record (when
-          // the company has e-Tax enabled). Reload so the list shows the new
-          // e-Tax badge and download button.
-          Layout.toast('อนุมัติเอกสารสำเร็จ');
-          await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        // Two-phase approve to surface soft warnings. First call: omit the
+        // acknowledge flag. If backend returns 422 with a warnings list, we
+        // show a modal listing them + a "ยอมรับและอนุมัติต่อ" button. Click
+        // → second call with acknowledgeWarnings=true. Hard errors (lines
+        // empty, fiscal period closed, WHT cap exceeded, etc.) still throw
+        // back through the normal error toast — they're never optional.
+        const tryApprove = async (acknowledge) => {
+          try {
+            await api.approveDocument(id, { acknowledgeWarnings: !!acknowledge });
+            Layout.closeModal('detailModal');
+            Layout.toast('อนุมัติเอกสารสำเร็จ');
+            await this.load();
+          } catch (e) {
+            if (e.status === 422 && e.body && e.body.data && Array.isArray(e.body.data.warnings)) {
+              this._showApprovalWarnings(id, e.body.data.warnings, () => tryApprove(true));
+              return;
+            }
+            Layout.toast(e.message, 'error');
+          }
+        };
+        await tryApprove(false);
+      },
+
+      _showApprovalWarnings(docId, warnings, onConfirm) {
+        let wrap = document.getElementById('approvalWarningsModal');
+        if (!wrap) {
+          wrap = document.createElement('div');
+          wrap.id = 'approvalWarningsModal';
+          wrap.className = 'modal-overlay';
+          wrap.innerHTML = `
+            <div class="modal" style="max-width:560px">
+              <div class="modal-header" style="background:#fef3c7;border-bottom:1px solid #f59e0b">
+                <h3 class="modal-title" style="color:#92400e">⚠️ ตรวจรายการก่อนอนุมัติ</h3>
+                <button class="modal-close" onclick="document.getElementById('approvalWarningsModal').classList.remove('active')">&times;</button>
+              </div>
+              <div class="modal-body">
+                <p style="font-size:13px;color:#475569;margin-bottom:12px">
+                  ระบบเจอจุดที่ <strong>ยังถูกตามหลักบัญชี</strong> แต่ผิดจากแบบที่พบบ่อย —
+                  โปรดตรวจรายการด้านล่างก่อนยืนยันการอนุมัติ
+                </p>
+                <ul id="awList" style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px"></ul>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" id="awCancel">กลับไปแก้ไข</button>
+                <button class="btn btn-warning" id="awConfirm">ยอมรับและอนุมัติต่อ</button>
+              </div>
+            </div>`;
+          document.body.appendChild(wrap);
+        }
+        document.getElementById('awList').innerHTML = warnings.map(w =>
+          `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:8px 12px;font-size:13px;color:#713f12;line-height:1.6">⚠️ ${Layout.esc(w)}</li>`
+        ).join('');
+        const cancelBtn = document.getElementById('awCancel');
+        const confirmBtn = document.getElementById('awConfirm');
+        cancelBtn.onclick = () => wrap.classList.remove('active');
+        confirmBtn.onclick = async () => {
+          wrap.classList.remove('active');
+          await onConfirm();
+        };
+        wrap.classList.add('active');
       },
       /**
        * Manually create the e-Tax Invoice XML record for an approved document.
