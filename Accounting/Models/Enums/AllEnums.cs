@@ -616,6 +616,19 @@ public enum PosOrderStatus
     OnHold = 6             // พักบิล
 }
 
+/// <summary>Table reservation lifecycle. Pending → Confirmed → Seated →
+/// Completed is the happy path; Cancelled / NoShow are tracked separately
+/// so the host can report on no-show rates.</summary>
+public enum ReservationStatus
+{
+    Pending = 0,           // ลูกค้าจองแต่ยังไม่ยืนยัน
+    Confirmed = 1,         // ยืนยันแล้ว (โทรกลับ / LINE)
+    Seated = 2,            // ลูกค้ามาถึงและนั่งโต๊ะแล้ว — ลิงก์กับ PosOrder
+    Completed = 3,         // จบบิลแล้ว
+    Cancelled = 4,         // ลูกค้ายกเลิก
+    NoShow = 5             // ไม่มาตามนัด
+}
+
 public enum PosItemStatus
 {
     Pending = 0,           // รอดำเนินการ

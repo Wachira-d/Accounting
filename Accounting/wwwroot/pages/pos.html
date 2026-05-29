@@ -295,7 +295,7 @@
     <div class="modal-overlay" id="floorViewModal">
       <div class="modal" style="max-width:1100px;width:95vw;max-height:90vh">
         <div class="modal-header">
-          <h3 class="modal-title">🪑 ผังโต๊ะ <span id="fvLegend" style="font-size:12px;font-weight:400;color:#64748b;margin-left:14px">🟢 ว่าง · 🔵 มีออเดอร์ · 🟡 บิลพัก · ⚪ ปิด</span></h3>
+          <h3 class="modal-title">🪑 ผังโต๊ะ <span id="fvLegend" style="font-size:12px;font-weight:400;color:#64748b;margin-left:14px">🟢 ว่าง · 🔵 มีออเดอร์ · 🟡 บิลพัก · 🟣 จองล่วงหน้า · ⚪ ปิด</span></h3>
           <button class="modal-close" onclick="Layout.closeModal('floorViewModal')">&times;</button>
         </div>
         <div class="modal-body" style="padding:0;background:#f1f5f9">
@@ -305,7 +305,10 @@
           </div>
         </div>
         <div class="modal-footer" style="justify-content:space-between;padding:10px 16px">
-          <a href="/pages/pos-floorplan.html" target="_blank" style="font-size:12px;color:#64748b;text-decoration:none">⚙️ จัดการผังโต๊ะ</a>
+          <div style="display:flex;gap:14px">
+            <a href="/pages/pos-reservations.html" target="_blank" style="font-size:12px;color:#7c3aed;text-decoration:none;font-weight:600">📅 จัดการการจอง</a>
+            <a href="/pages/pos-floorplan.html" target="_blank" style="font-size:12px;color:#64748b;text-decoration:none">⚙️ จัดการผังโต๊ะ</a>
+          </div>
           <button class="btn btn-secondary" onclick="Layout.closeModal('floorViewModal')">ปิด</button>
         </div>
       </div>
@@ -820,6 +823,18 @@
       async init() {
         if (!Layout.init('pos')) return;
         Layout.setTitle('POS หน้าขาย');
+        // ?table=A1 deep-link — the reservation page opens this URL when the
+        // host clicks "🪑 นั่งโต๊ะ" so the cashier lands ready to take orders.
+        const params = new URLSearchParams(location.search);
+        const seedTable = params.get('table');
+        if (seedTable) {
+          // Defer setting the field until DOM is ready; the layout JS hasn't
+          // wired up #fTableNo when init() runs the first time.
+          setTimeout(() => {
+            const el = document.getElementById('fTableNo');
+            if (el) el.value = seedTable;
+          }, 50);
+        }
         // Remember the cashier's last menu language choice across page reloads.
         this._menuLang = localStorage.getItem('pos:menuLang') || 'th';
         const btn = document.getElementById('langToggleBtn');
@@ -2367,15 +2382,28 @@
         canvas.style.width = f.canvasWidth + 'px';
         canvas.style.height = f.canvasHeight + 'px';
         canvas.innerHTML = (f.tables || []).map(t => {
-          // Status → color: free = green, active = blue, hold = yellow, inactive = grey
+          // Status → color: free = green, active = blue, hold = yellow,
+          // reserved = purple, inactive = grey. Reservations override the
+          // "Free" green so the host knows a free-looking table is actually
+          // pre-booked.
           let bg = '#dcfce7', border = '#22c55e', tip = 'ว่าง';
           if (!t.isActive) { bg = '#f1f5f9'; border = '#94a3b8'; tip = 'ปิด'; }
           else if (t.status === 'OnHold') { bg = '#fef3c7'; border = '#f59e0b'; tip = 'บิลพัก'; }
           else if (t.status === 'Active') { bg = '#dbeafe'; border = '#3b82f6'; tip = 'มีออเดอร์'; }
+          else if (t.status === 'Reserved') { bg = '#ede9fe'; border = '#8b5cf6'; tip = `จองโดย ${t.upcomingReservationName||''}`; }
           else if (t.color) { bg = t.color + '40'; border = t.color; }
           const dataAttrs = t.activeOrderId ? `data-oid="${t.activeOrderId}"` : '';
           const radius = t.shape === 'circle' ? '50%' : (t.shape === 'square' ? '6px' : '8px');
-          return `<div ${dataAttrs} onclick="Page._tableClick('${Layout.esc(t.tableNumber).replace(/'/g,'&apos;')}','${t.activeOrderId || ''}','${t.status || ''}',${t.isActive?'true':'false'})"
+          // Reservation time badge — countdown to the booking so cashier sees
+          // urgency at a glance.
+          let resvBadge = '';
+          if (t.upcomingReservationAt) {
+            const at = new Date(t.upcomingReservationAt);
+            const mins = Math.round((at.getTime() - Date.now()) / 60000);
+            const inLabel = mins <= 0 ? 'ถึงเวลาแล้ว' : (mins < 60 ? `อีก ${mins} น.` : at.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}));
+            resvBadge = `<div style="font-size:9px;color:#7c3aed;font-weight:700;margin-top:2px">📅 ${Layout.esc(inLabel)}</div>`;
+          }
+          return `<div ${dataAttrs} onclick="Page._tableClick('${Layout.esc(t.tableNumber).replace(/'/g,'&apos;')}','${t.activeOrderId || ''}','${t.status || ''}',${t.isActive?'true':'false'},'${t.upcomingReservationId || ''}')"
                        style="position:absolute;left:${t.x}px;top:${t.y}px;width:${t.width}px;height:${t.height}px;background:${bg};border:2px solid ${border};border-radius:${radius};transform:rotate(${t.rotation}deg);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${t.isActive?'pointer':'not-allowed'};user-select:none;font-weight:700;color:#0f172a;transition:transform .12s,box-shadow .12s"
                        onmouseover="this.style.transform='rotate(${t.rotation}deg) scale(1.04)';this.style.boxShadow='0 8px 20px rgba(0,0,0,.15)'"
                        onmouseout="this.style.transform='rotate(${t.rotation}deg)';this.style.boxShadow=''"
@@ -2384,12 +2412,20 @@
             <div style="font-size:11px;color:#475569;font-weight:600">🪑 ${t.seats}</div>
             ${t.activeOrderNumber ? `<div style="font-size:10px;color:${border};font-weight:700;margin-top:2px">${Layout.esc(t.activeOrderNumber)}</div>` : ''}
             ${t.activeOrderAmount ? `<div style="font-size:11px;color:#0f172a;font-weight:700">฿${t.activeOrderAmount.toFixed(0)}</div>` : ''}
+            ${resvBadge}
           </div>`;
         }).join('');
       },
-      async _tableClick(tableNumber, orderId, status, isActive) {
+      async _tableClick(tableNumber, orderId, status, isActive, reservationId) {
         if (!isActive) { Layout.toast('โต๊ะนี้ปิดใช้งานอยู่','warning'); return; }
         Layout.closeModal('floorViewModal');
+        // Reservation flow: free table with an upcoming booking. Ask if the
+        // customer just arrived — yes → mark reservation Seated and seed the
+        // new order with their info.
+        if (!orderId && reservationId) {
+          await this._seatFromReservation(reservationId, tableNumber);
+          return;
+        }
         if (orderId) {
           // Recall the existing order on that table — works for both Active and OnHold.
           if (status === 'OnHold') {
@@ -2425,6 +2461,37 @@
             Layout.toast(`เลือกโต๊ะ ${tableNumber} แล้ว — เพิ่มสินค้าได้เลย`);
           }
         }
+      },
+
+      // Reservation → Seat: fetch the reservation, flip its status to Seated,
+      // and pre-fill the POS panel with table + customer info so the cashier
+      // can start adding items right away. We don't auto-create the order —
+      // the cashier still has to add the first item, which is the trigger for
+      // createOrderIfNeeded to fire.
+      async _seatFromReservation(reservationId, tableNumber) {
+        try {
+          const cid = Layout.getCompanyId();
+          // Load the reservation so we can show the customer's name + party size.
+          const list = await fetch(`/api/companies/${cid}/pos/reservations/today`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          }).then(r => r.json());
+          const resv = (list.data || []).find(r => r.id === reservationId);
+          if (!resv) { Layout.toast('ไม่พบการจอง','warning'); return; }
+          const partyLine = resv.partySize ? ` (${resv.partySize} คน)` : '';
+          if (!confirm(`โต๊ะ ${tableNumber} จองโดย ${resv.customerName}${partyLine}\nเวลานัด ${new Date(resv.reservedAt).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}\n\nลูกค้ามาแล้ว — เปิดบิลให้?`)) return;
+          // Flip status → Seated (host station perspective).
+          await fetch(`/api/companies/${cid}/pos/reservations/${reservationId}/status`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'Seated' })
+          });
+          // Hold current order if any so we don't blow it away.
+          if (this.currentOrderId) await this.holdOrder();
+          document.getElementById('fTableNo').value = tableNumber;
+          document.getElementById('fCustomerName').value = resv.customerName;
+          if (resv.contactId) this._attachedCustomerId = resv.contactId;
+          Layout.toast(`✓ นั่งโต๊ะ ${tableNumber} — เพิ่มสินค้าได้เลย`);
+        } catch(e) { Layout.toast(e.message, 'error'); }
       },
 
       // ===== Hold / recall =====

@@ -32,7 +32,11 @@ public class PosFloorPlanController : ControllerBase
         int X, int Y, int Width, int Height, int Rotation, string? Color, bool IsActive,
         // Runtime state for the floor view — null when caller only wants config.
         string? Status = null, Guid? ActiveOrderId = null, string? ActiveOrderNumber = null,
-        decimal? ActiveOrderAmount = null, DateTime? ActiveOrderOpenedAt = null);
+        decimal? ActiveOrderAmount = null, DateTime? ActiveOrderOpenedAt = null,
+        // Upcoming reservation (next one in the 4-hour window). Helps the host
+        // see "this table is booked at 19:00 by Mr. X" right on the floor view.
+        Guid? UpcomingReservationId = null, string? UpcomingReservationName = null,
+        DateTime? UpcomingReservationAt = null, int? UpcomingReservationPartySize = null);
 
     // ===== Floor plans =====
 
@@ -48,6 +52,7 @@ public class PosFloorPlanController : ControllerBase
         // When the caller wants runtime status, pull all open orders for this
         // session in one go and join on TableNumber.
         Dictionary<string, PosOrder>? openByTable = null;
+        Dictionary<Guid, PosReservation>? upcomingByTable = null;
         if (includeStatus)
         {
             var query = _db.PosOrders.Include(o => o.Payments).AsNoTracking()
@@ -62,6 +67,23 @@ public class PosFloorPlanController : ControllerBase
                 // If multiple orders share a table number, surface the newest —
                 // unusual but possible if a kitchen ticket was reprinted etc.
                 .ToDictionary(g => g.Key, g => g.OrderByDescending(o => o.CreatedAt).First());
+
+            // Upcoming reservations — anything in the next 4 hours that hasn't
+            // been seated / cancelled / completed yet. Per-table keyed so the
+            // floor view can highlight tables with a pending booking.
+            var nowUtc = DateTime.UtcNow;
+            var windowEnd = nowUtc.AddHours(4);
+            var resv = await _db.PosReservations.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.TableId.HasValue
+                    && r.ReservedAt >= nowUtc.AddMinutes(-15) && r.ReservedAt <= windowEnd
+                    && r.Status != ReservationStatus.Cancelled
+                    && r.Status != ReservationStatus.NoShow
+                    && r.Status != ReservationStatus.Completed)
+                .ToListAsync();
+            upcomingByTable = resv
+                .GroupBy(r => r.TableId!.Value)
+                .ToDictionary(g => g.Key, g => g.OrderBy(r => r.ReservedAt).First());
         }
 
         var result = floors.Select(f => new FloorPlanDto(f.Id, f.Name, f.SortOrder, f.IsActive,
@@ -76,8 +98,19 @@ public class PosFloorPlanController : ControllerBase
                     oid = po.Id; onum = po.OrderNumber; oamt = po.NetAmount; oat = po.CreatedAt;
                 }
                 else if (openByTable != null) status = "Free";
+
+                Guid? rId = null; string? rName = null; DateTime? rAt = null; int? rParty = null;
+                if (upcomingByTable != null && upcomingByTable.TryGetValue(t.Id, out var rv))
+                {
+                    rId = rv.Id; rName = rv.CustomerName; rAt = rv.ReservedAt; rParty = rv.PartySize;
+                    // Bump status to Reserved when the table is free but has a
+                    // pending booking — host should see it before walk-ins sit.
+                    if (status == "Free") status = "Reserved";
+                }
+
                 return new TableDto(t.Id, t.TableNumber, t.Seats, t.Shape, t.X, t.Y, t.Width, t.Height, t.Rotation, t.Color, t.IsActive,
-                    status, oid, onum, oamt, oat);
+                    status, oid, onum, oamt, oat,
+                    rId, rName, rAt, rParty);
             }).ToList())).ToList();
 
         return Ok(new ApiResponse<List<FloorPlanDto>>(true, result));

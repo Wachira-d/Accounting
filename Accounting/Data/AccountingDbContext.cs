@@ -20,6 +20,7 @@ public class AccountingDbContext : DbContext
     public DbSet<VatFilingHistory> VatFilingHistories => Set<VatFilingHistory>();
     public DbSet<PosFloorPlan> PosFloorPlans => Set<PosFloorPlan>();
     public DbSet<PosTable> PosTables => Set<PosTable>();
+    public DbSet<PosReservation> PosReservations => Set<PosReservation>();
 
     // Subscription & Trial
     public DbSet<Subscription> Subscriptions => Set<Subscription>();

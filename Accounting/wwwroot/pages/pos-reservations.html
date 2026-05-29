@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>การจองโต๊ะ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .rsv-tabs { display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; }
+    .rsv-tabs button { padding:8px 16px; background:#f1f5f9; border:none; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; color:#475569; }
+    .rsv-tabs button.active { background:#0ea5e9; color:#fff; }
+    .rsv-tabs button .count { background:rgba(255,255,255,.25); border-radius:10px; padding:1px 8px; margin-left:6px; font-size:11px; }
+    .rsv-tabs button:not(.active) .count { background:#cbd5e1; color:#475569; }
+
+    .rsv-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:12px 14px; margin-bottom:8px; display:flex; gap:12px; align-items:center; }
+    .rsv-card.over { background:#fef2f2; border-color:#fca5a5; }
+    .rsv-card.starting { background:#fef3c7; border-color:#fbbf24; }
+    .rsv-time { width:80px; text-align:center; }
+    .rsv-time .h { font-size:22px; font-weight:700; color:#0f172a; line-height:1; }
+    .rsv-time .d { font-size:11px; color:#94a3b8; margin-top:2px; }
+    .rsv-info { flex:1; min-width:0; }
+    .rsv-info .name { font-size:15px; font-weight:600; color:#0f172a; }
+    .rsv-info .meta { font-size:12px; color:#64748b; margin-top:2px; }
+    .rsv-info .notes { font-size:12px; color:#475569; margin-top:4px; background:#f8fafc; padding:4px 8px; border-radius:4px; display:inline-block; }
+    .rsv-table-chip { background:#dbeafe; color:#1e40af; padding:2px 10px; border-radius:10px; font-size:12px; font-weight:600; }
+    .rsv-table-chip.unassigned { background:#fef3c7; color:#92400e; }
+    .rsv-status { padding:3px 10px; border-radius:10px; font-size:11px; font-weight:700; }
+    .rsv-status.Pending   { background:#e0e7ff; color:#3730a3; }
+    .rsv-status.Confirmed { background:#dcfce7; color:#166534; }
+    .rsv-status.Seated    { background:#dbeafe; color:#1e40af; }
+    .rsv-status.Completed { background:#f1f5f9; color:#475569; }
+    .rsv-status.Cancelled { background:#fee2e2; color:#991b1b; }
+    .rsv-status.NoShow    { background:#fed7aa; color:#9a3412; }
+    .rsv-actions { display:flex; gap:4px; flex-shrink:0; }
+    .rsv-actions button { padding:5px 10px; background:#fff; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; color:#475569; }
+    .rsv-actions button:hover { background:#f1f5f9; }
+    .rsv-actions .ok { color:#166534; border-color:#86efac; }
+    .rsv-actions .seat { color:#1e40af; border-color:#93c5fd; background:#dbeafe; }
+    .rsv-actions .del { color:#991b1b; border-color:#fca5a5; }
+    .rsv-group-day { font-size:13px; color:#64748b; font-weight:700; margin:18px 0 8px; padding-bottom:6px; border-bottom:2px solid #e5e7eb; }
+    .rsv-empty { text-align:center; padding:60px 20px; color:#94a3b8; }
+    .rsv-form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">📅 การจองโต๊ะ</h2>
+        <p class="page-subtitle">รับจองโต๊ะล่วงหน้า · เห็นในผังโต๊ะ POS อัตโนมัติ</p>
+      </div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ จองใหม่</button>
+    </div>
+
+    <div class="rsv-tabs">
+      <button id="tab-today" class="active" onclick="Page.setTab('today')">วันนี้ <span class="count" id="cnt-today">0</span></button>
+      <button id="tab-upcoming" onclick="Page.setTab('upcoming')">ที่จะมาถึง <span class="count" id="cnt-upcoming">0</span></button>
+      <button id="tab-past" onclick="Page.setTab('past')">ผ่านมาแล้ว <span class="count" id="cnt-past">0</span></button>
+      <button id="tab-all" onclick="Page.setTab('all')">ทั้งหมด</button>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" class="search-input" placeholder="ค้นหา ชื่อ / เบอร์ / โต๊ะ..." id="searchInput" oninput="Page.debouncedRender()">
+      <select class="filter-select" id="statusFilter" onchange="Page.render()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Pending">รอยืนยัน</option>
+        <option value="Confirmed">ยืนยันแล้ว</option>
+        <option value="Seated">นั่งแล้ว</option>
+        <option value="Completed">เสร็จสิ้น</option>
+        <option value="Cancelled">ยกเลิก</option>
+        <option value="NoShow">ไม่มา</option>
+      </select>
+    </div>
+
+    <div id="rsvList"></div>
+
+    <!-- Form modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">จองโต๊ะใหม่</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <div class="rsv-form-row">
+            <div class="form-group"><label class="form-label">ชื่อลูกค้า *</label><input type="text" class="form-input" id="fName" placeholder="ชื่อ-นามสกุล" autocomplete="off" oninput="Page.searchCustomer(this.value)"></div>
+            <div class="form-group" style="position:relative">
+              <label class="form-label">เบอร์ติดต่อ</label>
+              <input type="tel" class="form-input" id="fPhone" placeholder="0XX-XXX-XXXX">
+              <div id="custResults" style="display:none;position:absolute;background:#fff;border:1px solid #cbd5e1;border-radius:6px;width:100%;max-height:200px;overflow:auto;z-index:100;box-shadow:0 6px 18px rgba(0,0,0,.1);font-size:13px"></div>
+            </div>
+          </div>
+          <div class="rsv-form-row">
+            <div class="form-group"><label class="form-label">วัน/เวลา *</label><input type="datetime-local" class="form-input" id="fDateTime"></div>
+            <div class="form-group">
+              <label class="form-label">ระยะเวลา</label>
+              <select class="form-select" id="fDuration">
+                <option value="60">1 ชั่วโมง</option>
+                <option value="90" selected>1.5 ชั่วโมง</option>
+                <option value="120">2 ชั่วโมง</option>
+                <option value="180">3 ชั่วโมง</option>
+                <option value="240">4 ชั่วโมง (งานสำคัญ)</option>
+              </select>
+            </div>
+          </div>
+          <div class="rsv-form-row">
+            <div class="form-group"><label class="form-label">จำนวนคน *</label><input type="number" class="form-input" id="fParty" min="1" max="50" value="2"></div>
+            <div class="form-group">
+              <label class="form-label">โต๊ะ (เลือกได้ภายหลัง)</label>
+              <select class="form-select" id="fTable">
+                <option value="">— ค่อยจัดให้ตอนมา —</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">แหล่งที่มา</label>
+            <select class="form-select" id="fSource">
+              <option value="Phone">📞 โทรศัพท์</option>
+              <option value="LINE">💬 LINE</option>
+              <option value="Web">🌐 หน้าเว็บ</option>
+              <option value="Walk-in">🚶 เดินเข้ามาจอง</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-textarea" id="fNotes" rows="2" placeholder="เช่น 'งานวันเกิด' หรือ 'ขอที่เงียบ'"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      tab: 'today',
+      all: [],
+      _custTimer: null,
+
+      async init() {
+        if (!Layout.init('pos-reservations')) return;
+        Layout.setTitle('การจองโต๊ะ');
+        await Promise.all([this.load(), this.loadTables()]);
+      },
+
+      async load() {
+        try {
+          // Pull last 90 days through next 90 days — covers calendar views.
+          const from = new Date(); from.setDate(from.getDate() - 90);
+          const to = new Date(); to.setDate(to.getDate() + 90);
+          const fromStr = from.toISOString().slice(0,19);
+          const toStr = to.toISOString().slice(0,19);
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/reservations?from=${fromStr}&to=${toStr}`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          this.all = j.data || [];
+          this.updateCounts();
+          this.render();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      async loadTables() {
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/floor-plans`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          if (!j.success) return;
+          const sel = document.getElementById('fTable');
+          (j.data || []).forEach(f => {
+            const og = document.createElement('optgroup'); og.label = f.name;
+            (f.tables || []).filter(t => t.isActive).forEach(t => {
+              const opt = document.createElement('option');
+              opt.value = t.id; opt.textContent = `${t.tableNumber} (${t.seats} ที่นั่ง)`;
+              og.appendChild(opt);
+            });
+            sel.appendChild(og);
+          });
+        } catch {}
+      },
+
+      updateCounts() {
+        const now = Date.now();
+        const startToday = new Date(); startToday.setHours(0,0,0,0);
+        const endToday = new Date(startToday); endToday.setDate(endToday.getDate()+1);
+        const today = this.all.filter(r => {
+          const d = new Date(r.reservedAt).getTime();
+          return d >= startToday.getTime() && d < endToday.getTime();
+        });
+        const upcoming = this.all.filter(r => new Date(r.reservedAt).getTime() >= endToday.getTime()
+          && r.status !== 'Cancelled' && r.status !== 'Completed' && r.status !== 'NoShow');
+        const past = this.all.filter(r => new Date(r.reservedAt).getTime() < startToday.getTime());
+        document.getElementById('cnt-today').textContent = today.length;
+        document.getElementById('cnt-upcoming').textContent = upcoming.length;
+        document.getElementById('cnt-past').textContent = past.length;
+      },
+
+      setTab(t) {
+        this.tab = t;
+        ['today','upcoming','past','all'].forEach(k =>
+          document.getElementById(`tab-${k}`).classList.toggle('active', k === t));
+        this.render();
+      },
+
+      debouncedRender() { clearTimeout(this._t); this._t = setTimeout(() => this.render(), 200); },
+
+      render() {
+        const q = document.getElementById('searchInput').value.toLowerCase();
+        const status = document.getElementById('statusFilter').value;
+        const now = Date.now();
+        const startToday = new Date(); startToday.setHours(0,0,0,0);
+        const endToday = new Date(startToday); endToday.setDate(endToday.getDate()+1);
+
+        let rows = this.all.slice();
+        if (this.tab === 'today') {
+          rows = rows.filter(r => {
+            const d = new Date(r.reservedAt).getTime();
+            return d >= startToday.getTime() && d < endToday.getTime();
+          });
+        } else if (this.tab === 'upcoming') {
+          rows = rows.filter(r => new Date(r.reservedAt).getTime() >= endToday.getTime()
+            && r.status !== 'Cancelled' && r.status !== 'Completed' && r.status !== 'NoShow');
+        } else if (this.tab === 'past') {
+          rows = rows.filter(r => new Date(r.reservedAt).getTime() < startToday.getTime());
+        }
+        if (status) rows = rows.filter(r => r.status === status);
+        if (q) rows = rows.filter(r => (r.customerName||'').toLowerCase().includes(q)
+          || (r.phone||'').includes(q) || (r.tableNumber||'').toLowerCase().includes(q));
+
+        const list = document.getElementById('rsvList');
+        if (!rows.length) {
+          list.innerHTML = '<div class="rsv-empty">ไม่พบรายการในช่วงนี้</div>';
+          return;
+        }
+
+        // Group by day
+        const byDay = {};
+        rows.forEach(r => {
+          const k = new Date(r.reservedAt).toISOString().slice(0,10);
+          (byDay[k] ??= []).push(r);
+        });
+        const dayKeys = Object.keys(byDay).sort();
+        list.innerHTML = dayKeys.map(k => {
+          const day = new Date(k+'T00:00:00');
+          const isToday = k === new Date().toISOString().slice(0,10);
+          const dayLabel = day.toLocaleDateString('th-TH', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+          return `<div class="rsv-group-day">${isToday?'📍 ':''}${Layout.esc(dayLabel)}</div>` +
+            byDay[k].map(r => this._row(r, now)).join('');
+        }).join('');
+      },
+
+      _row(r, now) {
+        const start = new Date(r.reservedAt).getTime();
+        const end = start + (r.durationMinutes || 90) * 60000;
+        const within15min = (start - now) > 0 && (start - now) < 15 * 60000;
+        const isOver = end < now && (r.status === 'Pending' || r.status === 'Confirmed');
+        const klass = isOver ? 'over' : (within15min ? 'starting' : '');
+        const timeStr = new Date(start).toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' });
+        const dateStr = new Date(start).toLocaleDateString('th-TH', { day:'numeric', month:'short' });
+        const tableChip = r.tableNumber
+          ? `<span class="rsv-table-chip">🪑 ${Layout.esc(r.tableNumber)}</span>`
+          : `<span class="rsv-table-chip unassigned">ยังไม่จัดโต๊ะ</span>`;
+        const statusLabels = { Pending:'รอยืนยัน', Confirmed:'ยืนยัน ✓', Seated:'นั่งแล้ว', Completed:'จบ', Cancelled:'ยกเลิก', NoShow:'ไม่มา' };
+        const acts = this._actions(r);
+        return `<div class="rsv-card ${klass}">
+          <div class="rsv-time">
+            <div class="h">${timeStr}</div>
+            <div class="d">${dateStr} · ${r.durationMinutes||90}น</div>
+          </div>
+          <div class="rsv-info">
+            <div class="name">${Layout.esc(r.customerName)} · 🧑‍🤝‍🧑 ${r.partySize} คน</div>
+            <div class="meta">
+              ${tableChip}
+              ${r.phone ? '📞 '+Layout.esc(r.phone) : ''}
+              · ${r.source||'-'}
+              <span class="rsv-status ${r.status}">${statusLabels[r.status]||r.status}</span>
+            </div>
+            ${r.notes ? `<div class="notes">📝 ${Layout.esc(r.notes)}</div>` : ''}
+          </div>
+          <div class="rsv-actions">${acts}</div>
+        </div>`;
+      },
+
+      _actions(r) {
+        const out = [];
+        if (r.status === 'Pending')   out.push(`<button class="ok" onclick="Page.setStatus('${r.id}','Confirmed')">✓ ยืนยัน</button>`);
+        if (r.status === 'Pending' || r.status === 'Confirmed')
+          out.push(`<button class="seat" onclick="Page.seatNow('${r.id}','${Layout.esc(r.tableNumber||'')}')">🪑 นั่งโต๊ะ</button>`);
+        if (r.status === 'Seated')
+          out.push(`<button class="ok" onclick="Page.setStatus('${r.id}','Completed')">✓ จบบิล</button>`);
+        if (r.status === 'Pending' || r.status === 'Confirmed')
+          out.push(`<button onclick="Page.setStatus('${r.id}','NoShow')" title="ลูกค้าไม่มาตามนัด">😞 ไม่มา</button>`);
+        out.push(`<button onclick="Page.edit('${r.id}')">✏️</button>`);
+        if (r.status !== 'Completed' && r.status !== 'Seated')
+          out.push(`<button class="del" onclick="Page.del('${r.id}','${Layout.esc(r.customerName).replace(/'/g,'&apos;')}')">🗑️</button>`);
+        return out.join('');
+      },
+
+      async setStatus(id, status) {
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/reservations/${id}/status`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('อัพเดตแล้ว');
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      async seatNow(id, tableNum) {
+        // Flip status to Seated and open POS pre-filled with the table number.
+        await this.setStatus(id, 'Seated');
+        const url = tableNum ? `/pages/pos.html?table=${encodeURIComponent(tableNum)}` : '/pages/pos.html';
+        window.open(url, '_blank');
+      },
+
+      openCreate() {
+        document.getElementById('formTitle').textContent = 'จองโต๊ะใหม่';
+        document.getElementById('editId').value = '';
+        ['fName','fPhone','fNotes'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('fParty').value = 2;
+        document.getElementById('fTable').value = '';
+        document.getElementById('fDuration').value = 90;
+        document.getElementById('fSource').value = 'Phone';
+        // Default to "in 1 hour" rounded to nearest 30 min.
+        const now = new Date(); now.setHours(now.getHours() + 1, 0, 0, 0);
+        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+        document.getElementById('fDateTime').value = local;
+        Layout.openModal('formModal');
+      },
+
+      edit(id) {
+        const r = this.all.find(x => x.id === id);
+        if (!r) return;
+        document.getElementById('formTitle').textContent = 'แก้ไขการจอง';
+        document.getElementById('editId').value = id;
+        document.getElementById('fName').value = r.customerName;
+        document.getElementById('fPhone').value = r.phone || '';
+        document.getElementById('fNotes').value = r.notes || '';
+        document.getElementById('fParty').value = r.partySize;
+        document.getElementById('fTable').value = r.tableId || '';
+        document.getElementById('fDuration').value = r.durationMinutes;
+        document.getElementById('fSource').value = r.source || 'Phone';
+        const d = new Date(r.reservedAt);
+        document.getElementById('fDateTime').value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+        Layout.openModal('formModal');
+      },
+
+      async save() {
+        const id = document.getElementById('editId').value;
+        const dateStr = document.getElementById('fDateTime').value;
+        if (!dateStr) { Layout.toast('เลือกวัน/เวลา','warning'); return; }
+        const body = {
+          tableId: document.getElementById('fTable').value || null,
+          customerName: document.getElementById('fName').value.trim(),
+          phone: document.getElementById('fPhone').value.trim() || null,
+          email: null,
+          contactId: this._attachedContactId || null,
+          partySize: parseInt(document.getElementById('fParty').value) || 1,
+          // datetime-local is in browser local time — convert to UTC ISO.
+          reservedAt: new Date(dateStr).toISOString(),
+          durationMinutes: parseInt(document.getElementById('fDuration').value) || 90,
+          notes: document.getElementById('fNotes').value.trim() || null,
+          source: document.getElementById('fSource').value
+        };
+        if (!body.customerName) { Layout.toast('ใส่ชื่อลูกค้า','warning'); return; }
+        try {
+          const url = id
+            ? `/api/companies/${Layout.getCompanyId()}/pos/reservations/${id}`
+            : `/api/companies/${Layout.getCompanyId()}/pos/reservations`;
+          const r = await fetch(url, {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.closeModal('formModal');
+          Layout.toast(j.message || 'บันทึกแล้ว');
+          this._attachedContactId = null;
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      async del(id, name) {
+        if (!confirm(`ลบการจองของ "${name}"?`)) return;
+        try {
+          const r = await fetch(`/api/companies/${Layout.getCompanyId()}/pos/reservations/${id}`, {
+            method: 'DELETE', headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          if (!r.ok) throw new Error('ลบไม่สำเร็จ');
+          Layout.toast('ลบแล้ว'); await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+
+      // ===== Customer auto-suggest from Contact list =====
+      searchCustomer(q) {
+        clearTimeout(this._custTimer);
+        this._custTimer = setTimeout(() => this._fetchCust(q), 250);
+      },
+      async _fetchCust(q) {
+        const results = document.getElementById('custResults');
+        if (!q || q.length < 2) { results.style.display='none'; return; }
+        try {
+          const api = Layout.api();
+          const r = await api.getContacts(`?search=${encodeURIComponent(q)}&pageSize=6`);
+          const items = (r.data?.items || []).filter(c => c.isCustomer !== false);
+          if (!items.length) { results.style.display='none'; return; }
+          results.style.display = '';
+          results.innerHTML = items.map(c => `
+            <div onclick="Page.attachCust('${c.id}','${(c.name||'').replace(/'/g,'\\\'')}','${(c.phone||'').replace(/'/g,'\\\'')}')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+              <div style="font-weight:600">${Layout.esc(c.name)}</div>
+              <div style="font-size:11px;color:#64748b">${c.phone?'📞 '+Layout.esc(c.phone)+' · ':''}🎁 ${c.loyaltyPoints||0} แต้ม · มาแล้ว ${c.totalVisitCount||0} ครั้ง</div>
+            </div>`).join('');
+        } catch {}
+      },
+      attachCust(id, name, phone) {
+        this._attachedContactId = id;
+        document.getElementById('fName').value = name;
+        document.getElementById('fPhone').value = phone;
+        document.getElementById('custResults').style.display = 'none';
+      },
+    };
+    window.Page = Page;
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

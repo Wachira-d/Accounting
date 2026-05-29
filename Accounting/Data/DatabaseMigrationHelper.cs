@@ -2185,6 +2185,40 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_PosTables_FloorPlan" ON "PosTables" ("FloorPlanId") WHERE "IsDeleted" = false;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PosTables_Floor_Number" ON "PosTables" ("FloorPlanId", "TableNumber") WHERE "IsDeleted" = false;""",
+
+            // Reservations.
+            """
+            CREATE TABLE IF NOT EXISTS "PosReservations" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "TableId" uuid NULL,
+                "TableNumber" varchar(50) NULL,
+                "ContactId" uuid NULL,
+                "CustomerName" varchar(200) NOT NULL,
+                "Phone" varchar(30) NULL,
+                "Email" varchar(200) NULL,
+                "PartySize" integer NOT NULL DEFAULT 2,
+                "ReservedAt" timestamp NOT NULL,
+                "DurationMinutes" integer NOT NULL DEFAULT 90,
+                "Status" integer NOT NULL DEFAULT 0,
+                "PosOrderId" uuid NULL,
+                "Notes" text NULL,
+                "Source" varchar(50) NULL,
+                "ReminderCount" integer NOT NULL DEFAULT 0,
+                "LastReminderAt" timestamp NULL,
+                "CompanyId" uuid NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PosReservations" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PosReservations_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_PosReservations_Table" FOREIGN KEY ("TableId") REFERENCES "PosTables"("Id") ON DELETE SET NULL,
+                CONSTRAINT "FK_PosReservations_Contact" FOREIGN KEY ("ContactId") REFERENCES "Contacts"("Id") ON DELETE SET NULL
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PosReservations_Company_Date" ON "PosReservations" ("CompanyId", "ReservedAt") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_PosReservations_Table_Date" ON "PosReservations" ("TableId", "ReservedAt") WHERE "IsDeleted" = false AND "TableId" IS NOT NULL;""",
             // OCR self-learning idempotency watermark — set when VendorIntelligenceService
             // counts this document into the per-vendor stats; prevents double-counting on
             // re-approval (Draft → Approved → Rejected → Draft → Approved).
