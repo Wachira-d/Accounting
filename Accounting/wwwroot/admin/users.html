@@ -45,15 +45,23 @@
           <div class="admin-table-wrap">
           <table class="admin-table">
             <thead><tr>
-              <th>ชื่อ</th><th>อีเมล</th><th>โทรศัพท์</th><th>บริษัท</th><th>สถานะ</th><th>Admin</th><th>เข้าใช้ล่าสุด</th><th>สมัครเมื่อ</th><th></th>
+              <th>ชื่อ</th><th>อีเมล</th><th>โทรศัพท์</th><th>บริษัท</th><th>🎫 License</th><th>สถานะ</th><th>Admin</th><th>เข้าใช้ล่าสุด</th><th>สมัครเมื่อ</th><th></th>
             </tr></thead>
             <tbody>
-              ${d.items.map(u => `
+              ${d.items.map(u => {
+                // License pill — populated from accountPlan field the API
+                // attaches (or "-" when the user has no plan of their own).
+                const ap = u.accountPlan;
+                const licenseChip = ap
+                  ? `<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🎫 ${ap.planName} <span style="opacity:.7">${ap.companiesUsed}/${ap.maxCompanies}</span></span>`
+                  : '<span style="color:#94a3b8">—</span>';
+                return `
                 <tr>
                   <td><strong>${u.fullName}</strong></td>
                   <td>${u.email}</td>
                   <td>${u.phone || '-'}</td>
                   <td>${u.companies.length > 0 ? u.companies.map(c => `<div style="font-size:12px">${c.name} <span style="color:#94a3b8">(${c.role})</span></div>`).join('') : '<span style="color:#94a3b8">-</span>'}</td>
+                  <td>${licenseChip}</td>
                   <td>${AdminLayout.statusBadge(u.status)}</td>
                   <td>
                     ${u.isSystemAdmin
@@ -76,7 +84,7 @@
                     </div>
                   </td>
                 </tr>
-              `).join('')}
+              `; }).join('')}
             </tbody>
           </table>
           </div>

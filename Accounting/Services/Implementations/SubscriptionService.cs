@@ -1316,6 +1316,37 @@ public class SubscriptionService : ISubscriptionService
 
             payment.SubscriptionExtendedTo = newEndDate;
 
+            // Cascade renewal to the AccountSubscription if this Company is
+            // covered by one. Without this the user's License (the layer above
+            // company-scoped Subscription) would expire even though they
+            // already paid. Sync EndDate + LastPaidAt + Status; quotas stay
+            // whatever the admin / sales set on the AccountSubscription so a
+            // negotiated enterprise limit isn't overwritten by a slip approval.
+            if (sub.AccountSubscriptionId.HasValue)
+            {
+                var acct = await _db.AccountSubscriptions
+                    .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+                if (acct != null)
+                {
+                    var acctBase = acct.EndDate > now ? acct.EndDate : now;
+                    var acctNewEnd = acctBase.AddMonths(payment.RequestedPeriodMonths);
+                    if (acctNewEnd > acct.EndDate)
+                    {
+                        acct.EndDate = acctNewEnd;
+                        acct.LastPaidAt = payment.PaymentDate;
+                        // Bring the parent plan out of expiry / past-due so all
+                        // companies under it light up immediately. Trial → Active
+                        // is intentional: paying mid-trial converts to paid.
+                        if (acct.Status == SubscriptionStatus.Expired
+                            || acct.Status == SubscriptionStatus.PastDue
+                            || acct.Status == SubscriptionStatus.Trial)
+                            acct.Status = SubscriptionStatus.Active;
+                        acct.UpdatedBy = performedBy;
+                        acct.UpdatedAt = DateTime.UtcNow;
+                    }
+                }
+            }
+
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
                 SubscriptionId = sub.Id,

@@ -156,6 +156,20 @@
       const c = d.company;
       const s = d.subscription;
       const t = d.trial;
+      const ap = d.accountPlan;
+      // Banner shown above the subscription panel when the company is covered
+      // by a parent Account Plan. Pure HTML, plugged into the existing template
+      // a few lines below.
+      const accountPlanBanner = ap ? `
+        <div style="background:linear-gradient(135deg,#ecfeff,#fef9c3);border:1px solid #67e8f9;border-radius:10px;padding:12px 16px;margin-bottom:14px">
+          <div style="font-weight:700;color:#0c4a6e;font-size:14px">🎫 บริษัทนี้อยู่ใต้ Account Plan</div>
+          <div style="font-size:12px;color:#475569;margin-top:4px">
+            License: <strong>${ap.planName}</strong> (${ap.status}) ·
+            เจ้าของ License: <strong>${ap.ownerName}</strong> &lt;${ap.ownerEmail}&gt; ·
+            หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}
+          </div>
+          <a href="/admin/account-subscriptions.html" style="font-size:12px;color:#0ea5e9;text-decoration:none;font-weight:600;display:inline-block;margin-top:6px">→ จัดการ Account Plan</a>
+        </div>` : '';
 
       const fmtDate = (d) => d ? new Date(d).toISOString().split('T')[0] : '';
       const fmtBytes = (b) => {
@@ -184,6 +198,8 @@
               <div class="detail-tab" onclick="switchTab('payments',this)">การชำระเงิน</div>
               <div class="detail-tab" onclick="switchTab('history',this)">ประวัติ</div>
             </div>
+
+            ${accountPlanBanner}
 
             <!-- Overview -->
             <div class="detail-panel active" id="panel-overview">
