@@ -144,7 +144,11 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 ContactId: c.Id.ToString(),
                 Name: c.Name,
                 TaxId: c.TaxId,
-                Industry: c.Industry,
+                // Contact has no Industry column today — pass null so
+                // the prompt builder simply omits it. Future enrichment
+                // (DBD business-type lookup) can fill this when
+                // available.
+                Industry: null,
                 PriorMatchCount: priorCounts.GetValueOrDefault(c.Id, 0))).ToList();
 
             // ── Hand off to the orchestrator ──

@@ -59,6 +59,8 @@ public class AiSuggestionController : ControllerBase
             return BadRequest(new ApiResponse<object>(false, null, "LineDescription ห้ามว่าง"));
 
         // Load source invoice for vendor context. NULL = treat as ad-hoc.
+        // (Contact has no Industry column today, so vendorIndustry stays
+        // null. Future enrichment can fill from DBD business-type lookup.)
         var src = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == req.SourceInvoiceId && d.CompanyId == companyId && !d.IsDeleted)
             .Select(d => new
@@ -66,7 +68,6 @@ public class AiSuggestionController : ControllerBase
                 d.Id, d.DocumentNumber, d.DocumentType, d.ContactId,
                 ContactName = d.Contact != null ? d.Contact.Name : null,
                 ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
-                ContactIndustry = d.Contact != null ? d.Contact.Industry : null,
             })
             .FirstOrDefaultAsync(ct);
 
@@ -74,7 +75,7 @@ public class AiSuggestionController : ControllerBase
             companyId, req.SourceInvoiceId,
             vendorName: src?.ContactName,
             vendorTaxId: src?.ContactTaxId,
-            vendorIndustry: src?.ContactIndustry,
+            vendorIndustry: null,
             lineDescription: req.LineDescription,
             amount: req.Amount,
             currency: req.Currency ?? "THB",
@@ -320,7 +321,6 @@ public class AiSuggestionController : ControllerBase
                 d.Id, d.Currency,
                 ContactName = d.Contact != null ? d.Contact.Name : null,
                 ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
-                ContactIndustry = d.Contact != null ? d.Contact.Industry : null,
                 Lines = d.Lines.Select(l => new { l.Id, l.Description, l.Amount, l.AccountId })
                                .ToList(),
             })
@@ -338,7 +338,7 @@ public class AiSuggestionController : ControllerBase
         {
             var r = await _docAi.SuggestPaymentVoucherAccountingAsync(
                 companyId, req.SourceInvoiceId,
-                src.ContactName, src.ContactTaxId, src.ContactIndustry,
+                src.ContactName, src.ContactTaxId, vendorIndustry: null,
                 ln.Description ?? "", ln.Amount, src.Currency ?? "THB",
                 localBestAccountCode: null, localConfidence: null,
                 aiCts.Token);
