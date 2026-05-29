@@ -29,7 +29,10 @@ public class FileAttachmentController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, "กรุณาอัพโหลดไฟล์"));
 
-        var allowedEntityTypes = new[] { "Document", "Contact", "Payment", "JournalEntry", "FixedAsset", "Expense", "Product", "Project" };
+        // "ExpenseClaim" added 2026 for the §65 ทวิ "ไม่มีใบเสร็จ" flow
+        // — employee must attach evidence (photo of goods, taxi meter,
+        // CC slip, etc.) before Submit can fire when NoReceipt = true.
+        var allowedEntityTypes = new[] { "Document", "Contact", "Payment", "JournalEntry", "FixedAsset", "Expense", "ExpenseClaim", "Product", "Project" };
         if (!allowedEntityTypes.Contains(entityType))
             return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, "ประเภทไม่ถูกต้อง"));
 

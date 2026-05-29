@@ -226,6 +226,28 @@ public class ExpenseClaimService : IExpenseClaimService
         if (claim.Status != ExpenseClaimStatus.Draft)
             throw new InvalidOperationException("สามารถส่งอนุมัติได้เฉพาะใบเบิกที่เป็น Draft");
 
+        // ───── §65 ทวิ evidence requirement ─────
+        // The Revenue Department doesn't accept a no-receipt claim
+        // without supporting evidence. Require at least one
+        // FileAttachment (EntityType="ExpenseClaim", EntityId=claimId)
+        // before letting the employee submit for approval. The
+        // attachment is typically a photo of the goods, the taxi
+        // meter, the bank/CC statement showing the transaction, or a
+        // signed handwritten receipt from the seller. Manager still
+        // reviews the evidence before approving.
+        if (claim.NoReceipt)
+        {
+            var attachmentCount = await _db.Set<FileAttachment>()
+                .CountAsync(a => a.CompanyId == companyId
+                    && a.EntityType == "ExpenseClaim"
+                    && a.EntityId == claim.Id
+                    && !a.IsDeleted);
+            if (attachmentCount == 0)
+                throw new InvalidOperationException(
+                    "เบิกแบบไม่มีใบเสร็จต้องแนบหลักฐานอย่างน้อย 1 ไฟล์ก่อนส่งอนุมัติ " +
+                    "(เช่น รูปสินค้า, รูป meter taxi, slip การโอน, statement บัตรเครดิต) — §65 ทวิ");
+        }
+
         claim.Status = ExpenseClaimStatus.Submitted;
         await _db.SaveChangesAsync();
 
