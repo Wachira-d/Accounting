@@ -2338,6 +2338,13 @@ public static class DatabaseMigrationHelper
             // Kasikorn" without editing the original document.
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "OverrideBankAccountId" uuid NULL;""",
 
+            // Payment.WithholdingTaxAmount — per-installment WHT, required
+            // under cash-basis WHT (§50/§52) when the customer withholds
+            // proportionally on each partial payment. Existing rows default
+            // to 0 (pre-cash-basis world; the source invoice already booked
+            // WHT-Asset upfront so per-payment WHT is irrelevant for them).
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "WithholdingTaxAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+
             // CompanySettings.WhtRecognitionBasis — 1=Cash (legal default
             // per §50/§52), 2=Accrual (existing SMB practice). Existing
             // tenants need to stay on Accrual to keep their historical GL

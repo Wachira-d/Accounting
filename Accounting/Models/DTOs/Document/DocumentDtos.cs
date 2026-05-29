@@ -344,7 +344,15 @@ public record CreatePaymentRequest(
     /// THIS payment only. Use when the cheque actually cleared through a
     /// different bank than the invoice originally targeted; the GL hit and
     /// bank-balance update follow this override, not doc.BankAccountId.</summary>
-    Guid? OverrideBankAccountId = null);
+    Guid? OverrideBankAccountId = null,
+    /// <summary>Optional — WHT withheld on THIS installment. Null = the
+    /// service computes a proportional default: Amount / Document.TotalAmount
+    /// × Document.WithholdingTaxAmount. Use the override when the customer's
+    /// WHT certificate shows a different amount than the proportional split
+    /// (e.g. they withhold the full amount on the first installment).
+    /// Cumulative WHT across all payments must not exceed the source's
+    /// WithholdingTaxAmount.</summary>
+    decimal? WithholdingTaxAmount = null);
 
 public record PaymentResponse(
     Guid Id,

@@ -2305,6 +2305,43 @@ public class DocumentService : IDocumentService
         if (request.Amount > doc.BalanceDue)
             throw new InvalidOperationException($"จำนวนเงินชำระ ({request.Amount:N2}) มากกว่ายอดค้างชำระ ({doc.BalanceDue:N2})");
 
+        // Installment WHT — for cash-basis WHT recognition (or when the
+        // source carries any WHT at all), each installment recognises its
+        // own slice of the WHT-Asset / WHT-Payable line. Default split is
+        // proportional to the amount being paid this round; operator can
+        // override (e.g. customer's withholding certificate shows the full
+        // WHT on installment 1). Cumulative WHT across all settled payments
+        // can't exceed source.WithholdingTaxAmount — that's the legal cap.
+        decimal paymentWht = 0m;
+        if (doc.WithholdingTaxAmount > 0m)
+        {
+            var alreadyWithheld = await _db.Payments.AsNoTracking()
+                .Where(p => p.DocumentId == doc.Id && !p.IsDeleted)
+                .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+            var remainingCap = Math.Max(0m, doc.WithholdingTaxAmount - alreadyWithheld);
+
+            if (request.WithholdingTaxAmount.HasValue)
+            {
+                paymentWht = Math.Round(request.WithholdingTaxAmount.Value, 2, MidpointRounding.AwayFromZero);
+                if (paymentWht < 0m)
+                    throw new InvalidOperationException("WHT ของงวดนี้ต้องไม่ติดลบ");
+                if (paymentWht > remainingCap + 0.01m)
+                    throw new InvalidOperationException(
+                        $"WHT งวดนี้ ({paymentWht:N2}) + ที่หักไปแล้ว ({alreadyWithheld:N2}) " +
+                        $"เกินยอด WHT ทั้งหมดของเอกสาร ({doc.WithholdingTaxAmount:N2})");
+            }
+            else
+            {
+                // Proportional default: this installment's share of the
+                // total WHT. Capped at the remaining slice so rounding can't
+                // overshoot on the last payment.
+                var proportional = doc.TotalAmount > 0m
+                    ? Math.Round(request.Amount * doc.WithholdingTaxAmount / doc.TotalAmount, 2, MidpointRounding.AwayFromZero)
+                    : 0m;
+                paymentWht = Math.Min(proportional, remainingCap);
+            }
+        }
+
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -2338,6 +2375,7 @@ public class DocumentService : IDocumentService
                 // to doc.BankAccountId when not provided.
                 BankAccountId = request.OverrideBankAccountId ?? doc.BankAccountId,
                 OverrideBankAccountId = request.OverrideBankAccountId,
+                WithholdingTaxAmount = paymentWht,
                 Notes = request.Notes,
                 CreatedBy = createdBy
             };
@@ -2919,20 +2957,23 @@ public class DocumentService : IDocumentService
                 var arAccount = await FindAccountAsync(companyId, "113");
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
-                    var src = await _db.Documents.AsNoTracking()
-                        .FirstOrDefaultAsync(d => d.Id == doc.RelatedDocumentId.Value);
-                    var srcWht = src?.WithholdingTaxAmount ?? 0m;
-                    // Cash actually received = doc.TotalAmount (net of WHT).
+                    // For partial / installment receipts, use the WHT
+                    // recorded on THIS receipt — not the source's full WHT.
+                    // The operator entered the per-installment WHT on the
+                    // receipt's own lines so cumulative across receipts
+                    // matches the source's total.
+                    var thisWht = doc.WithholdingTaxAmount;
+                    // Cash actually received = doc.TotalAmount (net of THIS receipt's WHT).
                     if (moneyAccount != null)
                         AddLine(moneyAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
-                    if (srcWht > 0)
+                    if (thisWht > 0)
                     {
                         var whtAccount = await FindAccountAsync(companyId, "11910");
                         if (whtAccount != null)
-                            AddLine(whtAccount.Id, srcWht, 0, "ภาษีหัก ณ ที่จ่าย (ลูกค้าหัก)");
+                            AddLine(whtAccount.Id, thisWht, 0, "ภาษีหัก ณ ที่จ่าย (ลูกค้าหัก)");
                     }
                     if (arAccount != null)
-                        AddLine(arAccount.Id, 0, doc.TotalAmount + srcWht,
+                        AddLine(arAccount.Id, 0, doc.TotalAmount + thisWht,
                             $"ตัดลูกหนี้ - {doc.DocumentNumber}");
                 }
                 else
@@ -2990,23 +3031,22 @@ public class DocumentService : IDocumentService
                 {
                     // Cash basis: PI booked AP at GROSS, skipped the WHT
                     // payable. Here we clear AP at gross, pay net cash, and
-                    // recognize WHT-Payable for the withheld portion. Pull
-                    // the WHT amount from the source PI to stay consistent.
-                    var src = await _db.Documents.AsNoTracking()
-                        .FirstOrDefaultAsync(d => d.Id == doc.RelatedDocumentId.Value);
-                    var srcWht = src?.WithholdingTaxAmount ?? 0m;
+                    // recognize WHT-Payable for the withheld portion. Use
+                    // THIS voucher's WHT (per-installment) so cumulative
+                    // matches the source PI's total over multiple PVs.
+                    var thisWht = doc.WithholdingTaxAmount;
                     if (apAccount != null)
-                        AddLine(apAccount.Id, doc.TotalAmount + srcWht, 0,
+                        AddLine(apAccount.Id, doc.TotalAmount + thisWht, 0,
                             $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
                     if (moneyAccount != null)
                         AddLine(moneyAccount.Id, 0, doc.TotalAmount,
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
-                    if (srcWht > 0)
+                    if (thisWht > 0)
                     {
                         var whtAccount = await FindAccountAsync(companyId, "21916")
                             ?? await FindAccountAsync(companyId, "21917");
                         if (whtAccount != null)
-                            AddLine(whtAccount.Id, 0, srcWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
+                            AddLine(whtAccount.Id, 0, thisWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
                     }
                 }
                 else
@@ -3179,25 +3219,59 @@ public class DocumentService : IDocumentService
         var cashAccount = await FindAccountAsync(companyId, "111");
         if (cashAccount == null) return;
 
+        // WHT basis decides whether THIS installment's WHT gets a GL line
+        // (cash basis = yes, recognised at payment time) or was already
+        // recognised at invoice approval (accrual = no, skip).
+        var whtSettings = await _db.CompanySettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var whtBasis = whtSettings?.WhtRecognitionBasis ?? Models.Enums.WhtRecognitionBasis.Cash;
+
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
         // Convert payment to THB (base) at the document's captured FX rate.
         // Note: this uses the doc rate, not a settlement-day rate, so FX gain/loss
         // on settlement isn't booked yet (separate feature when needed).
         var fx = doc.ExchangeRate;
         var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
+        var thbWht = fx == 1m ? payment.WithholdingTaxAmount
+            : Math.Round(payment.WithholdingTaxAmount * fx, 2, MidpointRounding.AwayFromZero);
+        var postPerPaymentWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash && thbWht > 0m;
+
         if (isRevenue)
         {
+            // Cash actually received this installment.
             pendingLines.Add((cashAccount.Id, thbAmount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            // Cash basis: book the WHT-Asset slice now so the GL AR clears
+            // at gross (cash + WHT).
+            if (postPerPaymentWht)
+            {
+                var whtAccount = await FindAccountAsync(companyId, "11910");
+                if (whtAccount != null)
+                    pendingLines.Add((whtAccount.Id, thbWht, 0, $"WHT (ถูกหัก) งวด {payment.PaymentNumber}"));
+            }
             var arAccount = await FindAccountAsync(companyId, "113");
             if (arAccount != null)
-                pendingLines.Add((arAccount.Id, 0, thbAmount, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+            {
+                var arClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
+                pendingLines.Add((arAccount.Id, 0, arClear, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+            }
         }
         else
         {
             var apAccount = await FindAccountAsync(companyId, "212");
             if (apAccount != null)
-                pendingLines.Add((apAccount.Id, thbAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+            {
+                var apClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
+                pendingLines.Add((apAccount.Id, apClear, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+            }
             pendingLines.Add((cashAccount.Id, 0, thbAmount, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            // Cash basis: Cr WHT-Payable for this installment's withholding.
+            if (postPerPaymentWht)
+            {
+                var whtAccount = await FindAccountAsync(companyId, "21916")
+                    ?? await FindAccountAsync(companyId, "21917");
+                if (whtAccount != null)
+                    pendingLines.Add((whtAccount.Id, 0, thbWht, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
+            }
         }
 
         if (pendingLines.Count < 2) return;

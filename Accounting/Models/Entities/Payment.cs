@@ -26,4 +26,15 @@ public class Payment : TenantEntity
     /// though the invoice was targeted at Bangkok Bank". Null = use doc's
     /// channel as-is. Audit-visible so we can trace overrides explicitly.</summary>
     public Guid? OverrideBankAccountId { get; set; }
+
+    /// <summary>WHT withheld by the customer (revenue side) / by us (purchase
+    /// side) on THIS installment. Per Thai practice + ประมวลรัษฎากร §50, when
+    /// the source invoice is paid in installments the customer withholds
+    /// proportionally per installment. Default at CreatePaymentAsync time is
+    /// proportional (Amount / Document.TotalAmount × Document.Withholding
+    /// TaxAmount); operator can override on the modal. Sum of WHT across
+    /// all payments of a document must not exceed Document.WithholdingTax
+    /// Amount — enforced inline. Drives the per-receipt Dr WHT-Asset / Cr
+    /// WHT-Payable line on the cash-basis GL.</summary>
+    public decimal WithholdingTaxAmount { get; set; }
 }
