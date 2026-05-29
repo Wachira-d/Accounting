@@ -244,22 +244,40 @@ const ThaiAddress = (() => {
     try {
       const results = await getByPostal(code);
       if (!results || !results.length) return null;
-      if (results.length === 1) {
-        const r = results[0];
-        if (!sub.value)  sub.value  = r.subDistrictNameTh;
-        if (!dist.value) dist.value = r.districtNameTh;
-        if (!prov.value) prov.value = r.provinceNameTh;
-        await _refreshSubs(prov, dist, sub);
-        return results;
-      }
-      // Multi-match — let the picker do the work. Reuses the same modal the
-      // input listener uses. Pre-fills province if it's the only common one
-      // (saves a click when all matches share a province).
+
+      // Pre-fill anything the results unambiguously agree on, regardless of
+      // how many tambon rows we got back. Example: 20110 has multiple tambons
+      // under ศรีราชา but every one of them shares province=ชลบุรี and
+      // district=ศรีราชา — so fill both silently and ask the user only for
+      // the tambon. Without this two of three fields stayed blank because
+      // the picker exited silently on multi-match.
       const uniqueProvs = [...new Set(results.map(r => r.provinceNameTh))];
-      if (uniqueProvs.length === 1 && !prov.value) prov.value = uniqueProvs[0];
-      _showPostalPicker(code, results, { sub, dist, prov });
+      const uniqueDists = [...new Set(results.map(r => r.districtNameTh))];
+      const uniqueSubs  = [...new Set(results.map(r => r.subDistrictNameTh))];
+      if (!prov.value && uniqueProvs.length === 1) prov.value = uniqueProvs[0];
+      if (!dist.value && uniqueDists.length === 1) dist.value = uniqueDists[0];
+      if (!sub.value  && uniqueSubs.length  === 1) sub.value  = uniqueSubs[0];
+
+      // Are we done? If only the tambon is still ambiguous, show a picker
+      // narrowed to whatever the user (or our pre-fill) settled on. The
+      // picker's existing district-filter logic handles the narrowing.
+      if (!sub.value) {
+        const filtered = dist.value
+          ? results.filter(r => r.districtNameTh === dist.value)
+          : results;
+        if (filtered.length === 1) {
+          sub.value = filtered[0].subDistrictNameTh;
+        } else {
+          _showPostalPicker(code, results, { sub, dist, prov });
+        }
+      }
+      // Refresh datalists so manual edits get the right cascade options.
+      await _refreshSubs(prov, dist, sub);
       return results;
-    } catch { return null; }
+    } catch (e) {
+      console.warn('[ThaiAddress] postal autofill failed', e);
+      return null;
+    }
   }
 
   function enhance(ids) {
