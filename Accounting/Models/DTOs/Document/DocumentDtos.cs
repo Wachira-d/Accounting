@@ -269,7 +269,12 @@ public record CreateContactRequest(
     string? District = null,
     string? Province = null,
     string? PostalCode = null,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    // ตั้งค่าการบันทึกบัญชี — per-contact GL overrides. Null leaves the
+    // system default in effect (FindAccountAsync "113" / "212" prefix).
+    Guid? DefaultArAccountId = null,
+    Guid? DefaultApAccountId = null,
+    Guid? DefaultIrGrAccountId = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -292,7 +297,10 @@ public record UpdateContactRequest(
     string? District = null,
     string? Province = null,
     string? PostalCode = null,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    Guid? DefaultArAccountId = null,
+    Guid? DefaultApAccountId = null,
+    Guid? DefaultIrGrAccountId = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -330,7 +338,18 @@ public record ContactResponse(
     string? CountryCode = "TH",
     int LoyaltyPoints = 0,
     DateTime? LastVisitAt = null,
-    int TotalVisitCount = 0);
+    int TotalVisitCount = 0,
+    // Per-contact GL overrides — null means "use system default
+    // (113/212 prefix)". UI shows the account labels too for display.
+    Guid? DefaultArAccountId = null,
+    string? DefaultArAccountCode = null,
+    string? DefaultArAccountName = null,
+    Guid? DefaultApAccountId = null,
+    string? DefaultApAccountCode = null,
+    string? DefaultApAccountName = null,
+    Guid? DefaultIrGrAccountId = null,
+    string? DefaultIrGrAccountCode = null,
+    string? DefaultIrGrAccountName = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);

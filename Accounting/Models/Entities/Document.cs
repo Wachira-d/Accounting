@@ -223,6 +223,26 @@ public class Contact : TenantEntity
     public string? ContactPerson { get; set; }
     public bool IsActive { get; set; } = true;
 
+    // ───── Per-contact GL account overrides ─────
+    // Default at the system level is the first level-4+ account starting
+    // with "113" (AR) / "212" (AP) / "212305" (IR/GR clearing) — see
+    // DocumentService.FindAccountAsync. When a contact has a specific
+    // override here, DocumentService uses THAT account on every doc
+    // created against this contact. Lets shops with multiple ลูกหนี้
+    // (เครดิตการค้า / ลูกหนี้พนักงาน / ลูกหนี้กรรมการ) book each contact
+    // straight to the right ledger without manual JE adjustment.
+    public Guid? DefaultArAccountId { get; set; }
+    public ChartOfAccount? DefaultArAccount { get; set; }
+
+    public Guid? DefaultApAccountId { get; set; }
+    public ChartOfAccount? DefaultApAccount { get; set; }
+
+    /// <summary>IR/GR clearing account — used by the goods-received-not-
+    /// invoiced and invoice-received-not-goods accruals. Default 212305
+    /// "ค่าใช้จ่ายค้างจ่ายอื่น" in the Thai SME template.</summary>
+    public Guid? DefaultIrGrAccountId { get; set; }
+    public ChartOfAccount? DefaultIrGrAccount { get; set; }
+
     /// <summary>Loyalty points balance — earned per POS sale, redeemable next visit.
     /// Default earn rate = 1 point per ฿100, set on the company config later.</summary>
     public int LoyaltyPoints { get; set; } = 0;

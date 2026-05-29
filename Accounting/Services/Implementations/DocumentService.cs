@@ -1280,7 +1280,7 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ไม่พบบัญชี 'หนี้สูญ' (64000) ในผังบัญชี กรุณาเพิ่มบัญชีก่อน");
 
-        var arAcc = await FindAccountAsync(companyId, "113")
+        var arAcc = await FindAccountAsync(companyId, "113", doc.Contact)
             ?? throw new InvalidOperationException("ไม่พบบัญชี 'ลูกหนี้การค้า' (113) ในผังบัญชี");
 
         var writeOffAmount = doc.BalanceDue;
@@ -2238,7 +2238,11 @@ public class DocumentService : IDocumentService
             CountryCode = request.CountryCode ?? "TH",
             Phone = request.Phone,
             Email = request.Email,
-            ContactPerson = request.ContactPerson
+            ContactPerson = request.ContactPerson,
+            // Per-contact GL overrides — null = use system default.
+            DefaultArAccountId = request.DefaultArAccountId,
+            DefaultApAccountId = request.DefaultApAccountId,
+            DefaultIrGrAccountId = request.DefaultIrGrAccountId,
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -2267,7 +2271,13 @@ public class DocumentService : IDocumentService
 
     public async Task<ContactResponse> GetContactAsync(Guid companyId, Guid contactId)
     {
-        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
+        var contact = await _db.Contacts
+            // Include GL-override nav properties so the UI can show the
+            // account codes/names alongside the FKs.
+            .Include(c => c.DefaultArAccount)
+            .Include(c => c.DefaultApAccount)
+            .Include(c => c.DefaultIrGrAccount)
+            .FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
         return MapContactToResponse(contact);
     }
@@ -2355,9 +2365,21 @@ public class DocumentService : IDocumentService
         if (request.Email != null) contact.Email = request.Email;
         if (request.ContactPerson != null) contact.ContactPerson = request.ContactPerson;
         if (request.IsActive.HasValue) contact.IsActive = request.IsActive.Value;
+        // Per-contact GL overrides — record.Nullable<Guid> can't tell
+        // "unset" from "explicitly clear to default", so we treat null
+        // as "no change". To clear an override the UI POSTs
+        // Guid.Empty which we map back to null below.
+        if (request.DefaultArAccountId.HasValue)
+            contact.DefaultArAccountId = request.DefaultArAccountId == Guid.Empty ? null : request.DefaultArAccountId;
+        if (request.DefaultApAccountId.HasValue)
+            contact.DefaultApAccountId = request.DefaultApAccountId == Guid.Empty ? null : request.DefaultApAccountId;
+        if (request.DefaultIrGrAccountId.HasValue)
+            contact.DefaultIrGrAccountId = request.DefaultIrGrAccountId == Guid.Empty ? null : request.DefaultIrGrAccountId;
 
         await _db.SaveChangesAsync();
-        return MapContactToResponse(contact);
+        // Reload with nav properties so MapContactToResponse can emit
+        // the AR/AP/IR-GR account codes for the UI labels.
+        return await GetContactAsync(companyId, contactId);
     }
 
     public async Task<ContactSmartDefaults> GetContactSmartDefaultsAsync(Guid companyId, Guid contactId)
@@ -2596,10 +2618,33 @@ public class DocumentService : IDocumentService
 
     /// <summary>
     /// ค้นหาบัญชีจากรหัส — exact match ก่อน แล้ว prefix match (level 4)
-    /// เช่น "113" จะ match "11310" (ลูกหนี้การค้า)
+    /// เช่น "113" จะ match "11310" (ลูกหนี้การค้า).
+    /// When contactOverride is set the contact's per-contact GL pin
+    /// wins (e.g. ลูกหนี้พนักงาน vs ลูกหนี้การค้า depending on contact).
+    /// codePrefix selects which override applies: "113" → AR, "212"
+    /// → AP, "212305" → IR/GR clearing.
     /// </summary>
-    private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
+    private async Task<ChartOfAccount?> FindAccountAsync(
+        Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
+        if (contactOverride != null)
+        {
+            Guid? overrideId = codePrefix switch
+            {
+                "113" => contactOverride.DefaultArAccountId,
+                "212" => contactOverride.DefaultApAccountId,
+                "212305" => contactOverride.DefaultIrGrAccountId,
+                _ => null,
+            };
+            if (overrideId.HasValue)
+            {
+                var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
+                if (pinned != null) return pinned;
+                // The override points at a deleted/inactive account —
+                // fall through to the system default rather than throw.
+            }
+        }
         return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts
@@ -2820,7 +2865,7 @@ public class DocumentService : IDocumentService
             // On Cash basis the AR balance is GROSS (full amount) and WHT
             // isn't recognized here — it's recognized when the customer
             // actually pays and withholds (Receipt path below).
-            var arAccount = await FindAccountAsync(companyId, "113");
+            var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
             var arAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
                 ? doc.TotalAmount + doc.WithholdingTaxAmount
                 : doc.TotalAmount;
@@ -3023,7 +3068,7 @@ public class DocumentService : IDocumentService
             // (we'll withhold when we pay). On Cash the AP carries GROSS
             // (full amount we owe before deducting the WHT we'll withhold
             // when actually paying).
-            var apAccount = await FindAccountAsync(companyId, "212");
+            var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
             var apAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
                 ? doc.TotalAmount + doc.WithholdingTaxAmount
                 : doc.TotalAmount;
@@ -3074,7 +3119,7 @@ public class DocumentService : IDocumentService
                 // balance. Pull the WHT amount from the source so we always
                 // match what was actually withheld, not whatever the operator
                 // typed on the Receipt.
-                var arAccount = await FindAccountAsync(companyId, "113");
+                var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     // For partial / installment receipts, use the WHT
@@ -3146,7 +3191,7 @@ public class DocumentService : IDocumentService
 
             if (doc.RelatedDocumentId.HasValue)
             {
-                var apAccount = await FindAccountAsync(companyId, "212");
+                var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     // Cash basis: PI booked AP at GROSS, skipped the WHT
@@ -3368,7 +3413,7 @@ public class DocumentService : IDocumentService
                 if (whtAccount != null)
                     pendingLines.Add((whtAccount.Id, thbWht, 0, $"WHT (ถูกหัก) งวด {payment.PaymentNumber}"));
             }
-            var arAccount = await FindAccountAsync(companyId, "113");
+            var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
             if (arAccount != null)
             {
                 var arClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
@@ -3377,7 +3422,7 @@ public class DocumentService : IDocumentService
         }
         else
         {
-            var apAccount = await FindAccountAsync(companyId, "212");
+            var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
             if (apAccount != null)
             {
                 var apClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
@@ -3544,7 +3589,16 @@ public class DocumentService : IDocumentService
         CountryCode: c.CountryCode,
         LoyaltyPoints: c.LoyaltyPoints,
         LastVisitAt: c.LastVisitAt,
-        TotalVisitCount: c.TotalVisitCount);
+        TotalVisitCount: c.TotalVisitCount,
+        DefaultArAccountId: c.DefaultArAccountId,
+        DefaultArAccountCode: c.DefaultArAccount?.AccountCode,
+        DefaultArAccountName: c.DefaultArAccount?.AccountName,
+        DefaultApAccountId: c.DefaultApAccountId,
+        DefaultApAccountCode: c.DefaultApAccount?.AccountCode,
+        DefaultApAccountName: c.DefaultApAccount?.AccountName,
+        DefaultIrGrAccountId: c.DefaultIrGrAccountId,
+        DefaultIrGrAccountCode: c.DefaultIrGrAccount?.AccountCode,
+        DefaultIrGrAccountName: c.DefaultIrGrAccount?.AccountName);
 
     // ==================== Smart Defaults ====================
 

@@ -3234,6 +3234,13 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestedContactId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestionFeedbackId" uuid NULL;""",
 
+            // Contact — per-contact GL account overrides. Default AR =
+            // "113" prefix in FindAccountAsync; specific contacts can pin
+            // their own (e.g. ลูกหนี้พนักงาน vs ลูกหนี้การค้า).
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultArAccountId" uuid NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultApAccountId" uuid NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultIrGrAccountId" uuid NULL;""",
+
             // ExpenseClaim — no-receipt claim (§65 ทวิ) auto-generates a
             // Document(CertificateInLieu) on Approve. New columns added
             // 2026 — idempotent ADD COLUMN IF NOT EXISTS.

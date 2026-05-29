@@ -679,6 +679,17 @@ public class AccountingDbContext : DbContext
         {
             e.Property(c => c.Name).HasMaxLength(500);
             e.Property(c => c.TaxId).HasMaxLength(13);
+            // Per-contact GL account overrides — SetNull on delete so
+            // deleting an account doesn't cascade-orphan the contact.
+            e.HasOne(c => c.DefaultArAccount).WithMany()
+                .HasForeignKey(c => c.DefaultArAccountId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(c => c.DefaultApAccount).WithMany()
+                .HasForeignKey(c => c.DefaultApAccountId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(c => c.DefaultIrGrAccount).WithMany()
+                .HasForeignKey(c => c.DefaultIrGrAccountId)
+                .OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(c => !c.IsDeleted);
         });
 
