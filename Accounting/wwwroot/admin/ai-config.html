@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Augmentation - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css?v=20260114b">
+  <style>
+    .ai-grid { display:grid; grid-template-columns:1fr; gap:24px; max-width:1100px; }
+    .form-group { margin-bottom:14px; }
+    .form-group label { display:block; font-size:13px; font-weight:600; color:#374151; margin-bottom:6px; }
+    .form-group .hint { font-size:12px; color:#6b7280; margin-top:4px; }
+    .form-group input, .form-group select, .form-group textarea {
+      width:100%; padding:9px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:14px;
+      font-family:inherit;
+    }
+    .form-group input:focus, .form-group select:focus { outline:none; border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.1); }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+    .form-row-4 { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:14px; }
+    .btn-primary { background:linear-gradient(135deg,#6366f1,#4f46e5); color:#fff; border:none; padding:10px 22px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit; }
+    .btn-primary:hover { filter:brightness(1.05); }
+    .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+    .btn-secondary { background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+    .btn-secondary:hover { background:#16a34a; color:#fff; }
+    .btn-danger { background:#fee2e2; color:#dc2626; border:1px solid #fecaca; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+    .btn-ghost { background:transparent; color:#475569; border:1px solid #cbd5e1; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
+    .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
+    .stat-card { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px; text-align:center; }
+    .stat-card .value { font-size:24px; font-weight:700; color:#1e293b; }
+    .stat-card .label { font-size:11px; color:#64748b; margin-top:4px; }
+    .badge { display:inline-block; padding:3px 9px; border-radius:9999px; font-size:11px; font-weight:600; }
+    .badge-active { background:#dcfce7; color:#16a34a; }
+    .badge-inactive { background:#f1f5f9; color:#64748b; }
+    .badge-error { background:#fee2e2; color:#dc2626; }
+    .badge-warning { background:#fef3c7; color:#d97706; }
+    .credit-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .credit-table th { text-align:left; padding:8px 10px; background:#f1f5f9; color:#475569; font-weight:600; font-size:12px; }
+    .credit-table td { padding:8px 10px; border-bottom:1px solid #e2e8f0; }
+    .toggle-switch { position:relative; display:inline-block; width:46px; height:24px; }
+    .toggle-switch input { opacity:0; width:0; height:0; }
+    .toggle-slider { position:absolute; cursor:pointer; inset:0; background:#cbd5e1; border-radius:24px; transition:.3s; }
+    .toggle-slider:before { content:''; position:absolute; width:18px; height:18px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.3s; }
+    .toggle-switch input:checked + .toggle-slider { background:#6366f1; }
+    .toggle-switch input:checked + .toggle-slider:before { transform:translateX(22px); }
+    .info-box { background:#eff6ff; border-left:4px solid #3b82f6; padding:12px 16px; border-radius:8px; font-size:13px; color:#1e40af; margin-bottom:16px; }
+    .info-box-warn { background:#fef3c7; border-left-color:#d97706; color:#92400e; }
+    .provider-row { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:14px; margin-bottom:10px; }
+    .provider-row.active { border:2px solid #16a34a; background:#f0fdf4; }
+    .provider-meta { font-size:12px; color:#64748b; margin-top:4px; display:flex; gap:14px; flex-wrap:wrap; }
+    .provider-meta b { color:#334155; font-weight:600; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(15,23,42,.55); display:none; align-items:center; justify-content:center; z-index:1000; }
+    .modal-overlay.show { display:flex; }
+    .modal { background:#fff; border-radius:14px; padding:24px; max-width:640px; width:90%; max-height:88vh; overflow:auto; }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>🤖 AI Augmentation</strong> — กำหนดค่า provider (DeepSeek / OpenAI / Anthropic / LocalLlama),
+      ตั้ง master switch + budget, ดูการใช้งานและความแม่นยำเทียบ AI vs Local model.
+      <span style="float:right;font-size:11px;font-family:monospace;color:#64748b" id="deployVersion">build: ai-config-v1</span>
+    </div>
+
+    <div class="info-box info-box-warn">
+      🔒 <strong>หลักความปลอดภัย</strong>: ถ้า AI provider ใช้งานไม่ได้ (network down / quota หมด / response ผิด schema)
+      ระบบจะ <em>fall back ไป local model ทันที</em> ไม่มี user-facing error. ทุกการเรียก AI จะถูกบันทึก
+      ใน AiSuggestionFeedback เพื่อใช้ train local model ตอนกลางคืน
+    </div>
+
+    <div class="ai-grid">
+
+      <!-- ─── Master switch + global settings ─────────────────────────── -->
+      <div class="admin-card">
+        <div class="admin-card-header"><div class="admin-card-title">⚙️ Master Settings</div></div>
+        <div class="form-row">
+          <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;padding:12px 16px;border-radius:10px;border:1px solid #e2e8f0">
+            <div>
+              <div style="font-weight:700;color:#1e293b">เปิดใช้ AI Augmentation</div>
+              <div style="font-size:12px;color:#64748b">Master switch — ปิดได้ทันที (kill-switch). Local model ยังทำงานตามปกติ</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="settingsEnabled" onchange="Page.markDirty()">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;padding:12px 16px;border-radius:10px;border:1px solid #e2e8f0">
+            <div>
+              <div style="font-weight:700;color:#1e293b">Strip PII ก่อนส่ง</div>
+              <div style="font-size:12px;color:#64748b">Mask Thai tax ID / phone / personal field (PDPA)</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="settingsStripPii" onchange="Page.markDirty()">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;padding:12px 16px;border-radius:10px;border:1px solid #e2e8f0">
+            <div>
+              <div style="font-weight:700;color:#1e293b">ตรวจซ้ำตามกฎภาษีไทย</div>
+              <div style="font-size:12px;color:#64748b">Reject คำตอบ AI ที่ผิดกฎ RD (Tax ID format, VAT rate, WHT code...)</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="settingsCompliance" onchange="Page.markDirty()">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label>Cache TTL (วัน)</label>
+            <input type="number" id="settingsCacheTtl" min="1" max="365" value="30" onchange="Page.markDirty()">
+            <div class="hint">prompt เดิมใช้ cache ได้ภายในกี่วัน (ลด cost)</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Confidence Threshold (Local→AI Review)</label>
+            <input type="number" id="settingsThreshold" min="0" max="1" step="0.05" value="0.65" onchange="Page.markDirty()">
+            <div class="hint">Local confidence ต่ำกว่าค่านี้ → ยิงถาม AI</div>
+          </div>
+          <div class="form-group">
+            <label>Sampling Rate (high-confidence cases)</label>
+            <input type="number" id="settingsSampling" min="0" max="1" step="0.05" value="0.10" onchange="Page.markDirty()">
+            <div class="hint">% ของ case ที่ local มั่นใจสูง แต่ยังยิงถาม AI เพื่อ calibrate</div>
+          </div>
+        </div>
+        <button class="btn-primary" id="saveSettingsBtn" onclick="Page.saveSettings()">บันทึก settings</button>
+        <span id="settingsStatus" style="margin-left:12px;font-size:13px;color:#64748b"></span>
+      </div>
+
+      <!-- ─── Usage widget ────────────────────────────────────────────── -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="admin-card-title">💰 การใช้งานเดือนนี้ (ทั้งระบบ)</div>
+          <button class="btn-ghost" onclick="Page.loadUsage()">รีเฟรช</button>
+        </div>
+        <div id="usageWidget" style="color:#94a3b8">กำลังโหลด...</div>
+      </div>
+
+      <!-- ─── Provider registry ──────────────────────────────────────── -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="admin-card-title">🔌 AI Providers</div>
+          <button class="btn-primary" onclick="Page.openProviderModal(null)">+ เพิ่ม Provider</button>
+        </div>
+        <div id="providerList" style="color:#94a3b8">กำลังโหลด...</div>
+      </div>
+
+      <!-- ─── Accuracy / Local-model health ──────────────────────────── -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="admin-card-title">📊 ความแม่นยำ (Local vs AI vs User) — 30 วันล่าสุด</div>
+          <button class="btn-ghost" onclick="Page.loadAccuracy()">รีเฟรช</button>
+        </div>
+        <div id="accuracyTable" style="color:#94a3b8">กำลังโหลด...</div>
+      </div>
+
+      <!-- ─── Recent calls (debug) ───────────────────────────────────── -->
+      <div class="admin-card">
+        <div class="admin-card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="admin-card-title">🔍 Recent AI Calls (debug)</div>
+          <button class="btn-ghost" onclick="Page.loadFeedback()">รีเฟรช</button>
+        </div>
+        <div id="feedbackList" style="color:#94a3b8">กำลังโหลด...</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── Provider edit modal ─────────────────────────────────────── -->
+  <div class="modal-overlay" id="providerModal">
+    <div class="modal">
+      <h2 id="providerModalTitle" style="margin:0 0 16px">เพิ่ม Provider</h2>
+      <input type="hidden" id="provId">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Provider Type</label>
+          <select id="provType">
+            <option value="1">DeepSeek</option>
+            <option value="2">OpenAI</option>
+            <option value="5">LocalLlama</option>
+            <option value="99">Custom (OpenAI-compatible)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Display Name</label>
+          <input type="text" id="provDisplayName" placeholder="DeepSeek Primary">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Endpoint <span class="hint">(ว่าง = ใช้ default ของ provider)</span></label>
+          <input type="text" id="provEndpoint" placeholder="https://api.deepseek.com">
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="provModel" value="deepseek-chat">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>API Key <span class="hint">(ว่าง = เก็บค่าเดิมไว้)</span></label>
+        <input type="password" id="provApiKey" placeholder="sk-...">
+      </div>
+      <div class="form-row-4">
+        <div class="form-group">
+          <label>Temperature</label>
+          <input type="number" id="provTemp" min="0" max="2" step="0.05" value="0.1">
+        </div>
+        <div class="form-group">
+          <label>Max Tokens</label>
+          <input type="number" id="provMaxTokens" min="16" max="32768" value="1024">
+        </div>
+        <div class="form-group">
+          <label>Timeout (s)</label>
+          <input type="number" id="provTimeout" min="2" max="120" value="8">
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px">
+          <label class="toggle-switch" style="margin-top:18px">
+            <input type="checkbox" id="provEnabled" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <span style="font-size:13px;color:#475569;margin-top:18px">Enabled</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Daily Call Cap <span class="hint">(ว่าง = ไม่จำกัด)</span></label>
+          <input type="number" id="provDailyCap" min="1">
+        </div>
+        <div class="form-group">
+          <label>Monthly Budget USD <span class="hint">(ว่าง = ไม่จำกัด)</span></label>
+          <input type="number" id="provMonthlyBudget" min="0" step="0.01">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Input Price USD / 1M tokens</label>
+          <input type="number" id="provPriceIn" min="0" step="0.0001" value="0.14">
+        </div>
+        <div class="form-group">
+          <label>Output Price USD / 1M tokens</label>
+          <input type="number" id="provPriceOut" min="0" step="0.0001" value="0.28">
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button class="btn-primary" onclick="Page.saveProvider()">บันทึก</button>
+        <button class="btn-ghost" onclick="Page.closeProviderModal()">ยกเลิก</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js?v=20260114"></script>
+  <script src="/admin/admin-layout.js?v=20260114"></script>
+  <script>
+    const Page = {
+      _dirty: false,
+      markDirty() { this._dirty = true; document.getElementById('settingsStatus').textContent = '* ยังไม่ได้บันทึก'; },
+
+      async init() {
+        try { await Promise.all([this.loadSettings(), this.loadUsage(), this.loadProviders(), this.loadAccuracy(), this.loadFeedback()]); }
+        catch (e) { console.error(e); }
+      },
+
+      // ─── Settings ─────────────────────────────────────────────
+      async loadSettings() {
+        const r = await AdminAPI.get('/ai/settings');
+        const d = r.data || {};
+        document.getElementById('settingsEnabled').checked = !!d.aiAugmentationEnabled;
+        document.getElementById('settingsStripPii').checked = !!d.aiStripPiiInPrompts;
+        document.getElementById('settingsCompliance').checked = !!d.aiVerifyAgainstThaiComplianceRules;
+        document.getElementById('settingsThreshold').value = d.aiReviewConfidenceThreshold ?? 0.65;
+        document.getElementById('settingsSampling').value = d.aiSamplingRate ?? 0.10;
+        document.getElementById('settingsCacheTtl').value = d.aiDefaultCacheTtlDays ?? 30;
+        this._dirty = false;
+        document.getElementById('settingsStatus').textContent = d.aiLastFeedbackTrainingAt
+          ? 'Local model trained: ' + new Date(d.aiLastFeedbackTrainingAt).toLocaleString('th-TH')
+          : 'ยังไม่เคย train local model';
+      },
+
+      async saveSettings() {
+        const btn = document.getElementById('saveSettingsBtn');
+        btn.disabled = true;
+        try {
+          await AdminAPI.put('/ai/settings', {
+            aiAugmentationEnabled: document.getElementById('settingsEnabled').checked,
+            aiReviewConfidenceThreshold: parseFloat(document.getElementById('settingsThreshold').value),
+            aiSamplingRate: parseFloat(document.getElementById('settingsSampling').value),
+            aiDefaultCacheTtlDays: parseInt(document.getElementById('settingsCacheTtl').value),
+            aiStripPiiInPrompts: document.getElementById('settingsStripPii').checked,
+            aiVerifyAgainstThaiComplianceRules: document.getElementById('settingsCompliance').checked,
+          });
+          this._dirty = false;
+          document.getElementById('settingsStatus').textContent = '✓ บันทึกแล้ว';
+        } catch (e) {
+          alert('บันทึกไม่สำเร็จ: ' + e.message);
+        } finally { btn.disabled = false; }
+      },
+
+      // ─── Usage widget ─────────────────────────────────────────
+      async loadUsage() {
+        const el = document.getElementById('usageWidget');
+        el.innerHTML = '<span style="color:#94a3b8">กำลังโหลด...</span>';
+        try {
+          const r = await AdminAPI.get('/ai/usage');
+          const d = r.data;
+          if (!d) { el.innerHTML = '<span style="color:#94a3b8">ยังไม่มีข้อมูล</span>'; return; }
+          const ap = d.activeProvider;
+          const t = d.totals;
+          const c = d.cost;
+          const featureRows = (d.byFeature || []).map(f => `
+            <tr>
+              <td>${f.feature}</td>
+              <td style="text-align:right">${f.calls}</td>
+              <td style="text-align:right">${f.successful}</td>
+              <td style="text-align:right">${f.cached}</td>
+              <td style="text-align:right;color:${f.failed > 0 ? '#dc2626' : '#16a34a'}">${f.failed}</td>
+              <td style="text-align:right">$${(f.cost || 0).toFixed(4)}</td>
+              <td style="text-align:right">${Math.round(f.avgLatency)}ms</td>
+            </tr>`).join('');
+          el.innerHTML = `
+            ${ap ? `<div style="margin-bottom:14px;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:13px">
+                Active: <b>${ap.displayName}</b> · ${ap.providerType} · model <code>${ap.model}</code>
+                ${ap.monthlyBudgetUsd ? `· budget $${ap.monthlyBudgetUsd}/mo` : ''}
+                ${ap.dailyCallCap ? `· daily cap ${ap.dailyCallCap}` : ''}
+              </div>` : '<div style="margin-bottom:14px;padding:10px;background:#fef3c7;border-radius:8px">ยังไม่มี active provider</div>'}
+            <div class="stat-grid" style="margin-bottom:14px">
+              <div class="stat-card"><div class="value">${t.calls}</div><div class="label">calls เดือนนี้</div></div>
+              <div class="stat-card"><div class="value">${t.successRate}%</div><div class="label">success rate</div></div>
+              <div class="stat-card"><div class="value">${t.cacheHitRatio}%</div><div class="label">cache hit ratio</div></div>
+              <div class="stat-card"><div class="value">฿${c.currentMonthThb.toFixed(2)}</div><div class="label">cost เดือนนี้</div></div>
+              <div class="stat-card"><div class="value">฿${c.forecastFullMonthThb.toFixed(2)}</div><div class="label">forecast ทั้งเดือน</div></div>
+              <div class="stat-card"><div class="value">${(t.inputTokens/1000).toFixed(0)}k</div><div class="label">input tokens</div></div>
+              <div class="stat-card"><div class="value">${(t.outputTokens/1000).toFixed(0)}k</div><div class="label">output tokens</div></div>
+              <div class="stat-card"><div class="value" style="color:${t.failed > 0 ? '#dc2626' : '#16a34a'}">${t.failed}</div><div class="label">failed (fallback ใช้ local)</div></div>
+            </div>
+            <div style="margin-top:8px;font-size:12px;color:#64748b">${d.daysElapsed}/${d.daysInMonth} วันของเดือน · USD→THB ${c.usdToThb}</div>
+            <table class="credit-table" style="margin-top:14px">
+              <thead><tr>
+                <th>Feature</th>
+                <th style="text-align:right">Calls</th>
+                <th style="text-align:right">OK</th>
+                <th style="text-align:right">Cached</th>
+                <th style="text-align:right">Failed</th>
+                <th style="text-align:right">Cost</th>
+                <th style="text-align:right">Latency</th>
+              </tr></thead>
+              <tbody>${featureRows || '<tr><td colspan="7" style="color:#94a3b8;text-align:center">ยังไม่มี call</td></tr>'}</tbody>
+            </table>`;
+        } catch (e) {
+          el.innerHTML = `<span style="color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</span>`;
+        }
+      },
+
+      // ─── Providers ────────────────────────────────────────────
+      async loadProviders() {
+        const el = document.getElementById('providerList');
+        try {
+          const r = await AdminAPI.get('/ai/providers');
+          const d = r.data;
+          if (!d || !d.providers.length) { el.innerHTML = '<p style="color:#94a3b8">ยังไม่มี provider — กด <b>+ เพิ่ม Provider</b> เพื่อเริ่มต้น</p>'; return; }
+          el.innerHTML = d.providers.map(p => `
+            <div class="provider-row ${p.isActive ? 'active' : ''}">
+              <div style="display:flex;justify-content:space-between;align-items:start;gap:12px">
+                <div style="flex:1">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <strong style="font-size:15px">${p.displayName}</strong>
+                    <span class="badge ${p.isActive ? 'badge-active' : 'badge-inactive'}">${p.isActive ? 'ACTIVE' : 'standby'}</span>
+                    ${p.isEnabled ? '' : '<span class="badge badge-warning">disabled</span>'}
+                    ${p.lastTestStatus === 'OK' ? '<span class="badge badge-active">✓ tested</span>' : (p.lastTestStatus ? `<span class="badge badge-error">✗ ${p.lastTestStatus.substring(0, 30)}</span>` : '')}
+                  </div>
+                  <div class="provider-meta">
+                    <span>${p.providerTypeName} · <code>${p.model}</code></span>
+                    ${p.endpoint ? `<span><b>endpoint:</b> ${p.endpoint}</span>` : ''}
+                    <span><b>key:</b> ${p.hasApiKey ? p.apiKeyMasked : 'ยังไม่ตั้ง'}</span>
+                    <span><b>temp:</b> ${p.temperature}</span>
+                    <span><b>max:</b> ${p.maxOutputTokens}</span>
+                    <span><b>timeout:</b> ${p.requestTimeoutSeconds}s</span>
+                    ${p.dailyCallCap ? `<span><b>daily cap:</b> ${p.dailyCallCap}</span>` : ''}
+                    ${p.monthlyBudgetUsd ? `<span><b>budget:</b> $${p.monthlyBudgetUsd}/mo</span>` : ''}
+                  </div>
+                </div>
+                <div style="display:flex;gap:6px;flex-shrink:0">
+                  ${p.isActive ? '' : `<button class="btn-secondary" onclick="Page.activateProvider('${p.id}')">Activate</button>`}
+                  <button class="btn-ghost" onclick="Page.testProvider('${p.id}')">Test</button>
+                  <button class="btn-ghost" onclick="Page.openProviderModal('${p.id}')">Edit</button>
+                  ${p.isActive ? '' : `<button class="btn-danger" onclick="Page.deleteProvider('${p.id}','${p.displayName}')">Delete</button>`}
+                </div>
+              </div>
+            </div>`).join('');
+        } catch (e) {
+          el.innerHTML = `<span style="color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</span>`;
+        }
+      },
+
+      openProviderModal(id) {
+        if (id) {
+          AdminAPI.get('/ai/providers').then(r => {
+            const p = r.data.providers.find(x => x.id === id);
+            if (!p) return;
+            document.getElementById('providerModalTitle').textContent = 'แก้ไข Provider';
+            document.getElementById('provId').value = p.id;
+            document.getElementById('provType').value = p.providerType;
+            document.getElementById('provDisplayName').value = p.displayName;
+            document.getElementById('provEndpoint').value = p.endpoint || '';
+            document.getElementById('provModel').value = p.model;
+            document.getElementById('provApiKey').value = '';
+            document.getElementById('provApiKey').placeholder = p.hasApiKey ? '(เก็บค่าเดิม — กรอกใหม่เพื่อแทนที่)' : 'sk-...';
+            document.getElementById('provTemp').value = p.temperature;
+            document.getElementById('provMaxTokens').value = p.maxOutputTokens;
+            document.getElementById('provTimeout').value = p.requestTimeoutSeconds;
+            document.getElementById('provEnabled').checked = p.isEnabled;
+            document.getElementById('provDailyCap').value = p.dailyCallCap || '';
+            document.getElementById('provMonthlyBudget').value = p.monthlyBudgetUsd || '';
+            document.getElementById('provPriceIn').value = p.pricePerInputTokenUsd1M || 0;
+            document.getElementById('provPriceOut').value = p.pricePerOutputTokenUsd1M || 0;
+          });
+        } else {
+          document.getElementById('providerModalTitle').textContent = 'เพิ่ม Provider';
+          document.getElementById('provId').value = '';
+          document.getElementById('provType').value = 1;
+          document.getElementById('provDisplayName').value = '';
+          document.getElementById('provEndpoint').value = '';
+          document.getElementById('provModel').value = 'deepseek-chat';
+          document.getElementById('provApiKey').value = '';
+          document.getElementById('provApiKey').placeholder = 'sk-...';
+          document.getElementById('provTemp').value = 0.1;
+          document.getElementById('provMaxTokens').value = 1024;
+          document.getElementById('provTimeout').value = 8;
+          document.getElementById('provEnabled').checked = true;
+          document.getElementById('provDailyCap').value = '';
+          document.getElementById('provMonthlyBudget').value = '';
+          document.getElementById('provPriceIn').value = 0.14;
+          document.getElementById('provPriceOut').value = 0.28;
+        }
+        document.getElementById('providerModal').classList.add('show');
+      },
+
+      closeProviderModal() {
+        document.getElementById('providerModal').classList.remove('show');
+      },
+
+      async saveProvider() {
+        const id = document.getElementById('provId').value;
+        const body = {
+          id: id || null,
+          providerType: parseInt(document.getElementById('provType').value),
+          displayName: document.getElementById('provDisplayName').value,
+          endpoint: document.getElementById('provEndpoint').value || null,
+          apiKey: document.getElementById('provApiKey').value || null,
+          model: document.getElementById('provModel').value,
+          temperature: parseFloat(document.getElementById('provTemp').value),
+          maxOutputTokens: parseInt(document.getElementById('provMaxTokens').value),
+          requestTimeoutSeconds: parseInt(document.getElementById('provTimeout').value),
+          dailyCallCap: document.getElementById('provDailyCap').value ? parseInt(document.getElementById('provDailyCap').value) : null,
+          monthlyBudgetUsd: document.getElementById('provMonthlyBudget').value ? parseFloat(document.getElementById('provMonthlyBudget').value) : null,
+          pricePerInputTokenUsd1M: parseFloat(document.getElementById('provPriceIn').value) || 0,
+          pricePerOutputTokenUsd1M: parseFloat(document.getElementById('provPriceOut').value) || 0,
+          isEnabled: document.getElementById('provEnabled').checked,
+        };
+        try {
+          await AdminAPI.post('/ai/providers', body);
+          this.closeProviderModal();
+          await this.loadProviders();
+        } catch (e) { alert('บันทึกไม่สำเร็จ: ' + e.message); }
+      },
+
+      async activateProvider(id) {
+        if (!confirm('ตั้ง provider นี้เป็น active? ทุก AI call ต่อจากนี้จะวิ่งไปที่ provider นี้')) return;
+        try { await AdminAPI.post(`/ai/providers/${id}/activate`); await this.loadProviders(); await this.loadUsage(); }
+        catch (e) { alert(e.message); }
+      },
+
+      async testProvider(id) {
+        try {
+          const r = await AdminAPI.post(`/ai/providers/${id}/test`);
+          alert(r.data.ok ? '✓ เชื่อมต่อสำเร็จ' : '✗ ' + r.data.error);
+          await this.loadProviders();
+        } catch (e) { alert('Test failed: ' + e.message); }
+      },
+
+      async deleteProvider(id, name) {
+        if (!confirm(`ลบ provider "${name}"? (rows ไม่ได้ถูกลบจริง — soft-delete)`)) return;
+        try { await AdminAPI.delete(`/ai/providers/${id}`); await this.loadProviders(); }
+        catch (e) { alert(e.message); }
+      },
+
+      // ─── Accuracy ─────────────────────────────────────────────
+      async loadAccuracy() {
+        const el = document.getElementById('accuracyTable');
+        try {
+          const r = await AdminAPI.get('/ai/accuracy?days=30');
+          const d = r.data;
+          if (!d.features.length) { el.innerHTML = '<p style="color:#94a3b8">ยังไม่มี user feedback — accuracy คำนวณจาก row ที่ user ยืนยันแล้วใน 30 วัน</p>'; return; }
+          el.innerHTML = `
+            <table class="credit-table">
+              <thead><tr>
+                <th>Feature</th>
+                <th style="text-align:right">samples</th>
+                <th style="text-align:right">AI %</th>
+                <th style="text-align:right">Local %</th>
+                <th style="text-align:right">เห็นด้วยกัน %</th>
+                <th style="text-align:right">avg AI conf</th>
+                <th style="text-align:right">avg local conf</th>
+              </tr></thead>
+              <tbody>${d.features.map(f => {
+                const ahead = f.aiAccuracy - f.localAccuracy;
+                const color = ahead > 10 ? '#16a34a' : (ahead < -5 ? '#dc2626' : '#64748b');
+                return `<tr>
+                  <td>${f.feature}</td>
+                  <td style="text-align:right">${f.samples}</td>
+                  <td style="text-align:right;font-weight:600;color:${color}">${f.aiAccuracy}%</td>
+                  <td style="text-align:right">${f.localAccuracy}%</td>
+                  <td style="text-align:right">${f.agreementRate}%</td>
+                  <td style="text-align:right">${(f.avgAiConfidence*100).toFixed(0)}%</td>
+                  <td style="text-align:right">${(f.avgLocalConfidence*100).toFixed(0)}%</td>
+                </tr>`;
+              }).join('')}</tbody>
+            </table>
+            ${d.health.length ? `<div style="margin-top:14px;font-size:13px;color:#475569">
+              <b>Local Model Health</b>:
+              ${d.health.map(h => `<div style="margin-top:6px"><b>${h.featureKey}</b> [${h.localModelVersion}] — ${h.status}${h.recommendation ? ' · ' + h.recommendation : ''}</div>`).join('')}
+            </div>` : ''}`;
+        } catch (e) { el.innerHTML = `<span style="color:#dc2626">${e.message}</span>`; }
+      },
+
+      // ─── Feedback debug ───────────────────────────────────────
+      async loadFeedback() {
+        const el = document.getElementById('feedbackList');
+        try {
+          const r = await AdminAPI.get('/ai/feedback?limit=30');
+          const rows = r.data || [];
+          if (!rows.length) { el.innerHTML = '<p style="color:#94a3b8">ยังไม่มี call</p>'; return; }
+          el.innerHTML = `
+            <table class="credit-table">
+              <thead><tr>
+                <th>เวลา</th>
+                <th>Feature</th>
+                <th>Status</th>
+                <th>AI answer</th>
+                <th>Local answer</th>
+                <th>User</th>
+                <th style="text-align:right">ms</th>
+                <th style="text-align:right">$</th>
+              </tr></thead>
+              <tbody>${rows.map(f => `<tr>
+                <td style="color:#64748b;font-size:11px">${new Date(f.createdAt).toLocaleString('th-TH')}</td>
+                <td>${f.featureKey}</td>
+                <td>${f.status}${f.errorMessage ? ` <span style="color:#dc2626;font-size:11px">(${f.errorMessage.substring(0,50)})</span>` : ''}</td>
+                <td style="font-size:12px">${(f.aiPrimaryAnswer||'').substring(0,40)}${f.aiConfidence ? ` <span style="color:#94a3b8">${Math.round(f.aiConfidence*100)}%</span>` : ''}</td>
+                <td style="font-size:12px">${(f.localModelAnswer||'').substring(0,40)}${f.localModelConfidence ? ` <span style="color:#94a3b8">${Math.round(f.localModelConfidence*100)}%</span>` : ''}</td>
+                <td style="font-size:12px">${f.userChosenAnswer ? `${(f.userChosenAnswer||'').substring(0,30)} ${f.userAcceptedAi ? '<span style="color:#16a34a">✓AI</span>' : '<span style="color:#d97706">≠</span>'}` : '<span style="color:#94a3b8">รอ</span>'}</td>
+                <td style="text-align:right">${f.latencyMs || 0}</td>
+                <td style="text-align:right">${(f.costUsd || 0).toFixed(6)}</td>
+              </tr>`).join('')}</tbody>
+            </table>`;
+        } catch (e) { el.innerHTML = `<span style="color:#dc2626">${e.message}</span>`; }
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>
