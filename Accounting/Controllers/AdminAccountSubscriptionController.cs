@@ -239,20 +239,23 @@ public class AdminAccountSubscriptionController : ControllerBase
     /// <summary>Admin-side attach — binds a Company's Subscription to an
     /// existing AccountSubscription (User License). The customers.html detail
     /// page calls this from the "🔗 ผูกเข้า License" action. Enforces
-    /// MaxCompanies slot count + active license check.</summary>
+    /// MaxCompanies slot count + active license check.
+    ///
+    /// Concurrency: wrapped in a Serializable transaction so two concurrent
+    /// attaches racing for the last slot can't both succeed — PG will abort
+    /// one with a serialization failure rather than over-fill the license.
+    /// </summary>
     [HttpPost("/api/admin/companies/{companyId:guid}/attach-to-account-plan")]
     public async Task<ActionResult<ApiResponse<string>>> AdminAttach(Guid companyId, [FromBody] AdminAttachRequest req)
     {
         if (!await IsSystemAdminAsync()) return Forbid();
 
+        await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+
         var ap = await _db.AccountSubscriptions.FirstOrDefaultAsync(a => a.Id == req.AccountSubscriptionId && !a.IsDeleted);
         if (ap == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบ License ที่ระบุ"));
         if (ap.Status != SubscriptionStatus.Trial && ap.Status != SubscriptionStatus.Active && ap.Status != SubscriptionStatus.PastDue)
             return BadRequest(new ApiResponse<string>(false, null, $"License นี้สถานะ {ap.Status} ไม่สามารถผูกบริษัทเพิ่มได้"));
-
-        var used = await _db.Subscriptions.CountAsync(s => s.AccountSubscriptionId == ap.Id && !s.IsDeleted);
-        if (used >= ap.MaxCompanies)
-            return BadRequest(new ApiResponse<string>(false, null, $"License ใช้ครบ {ap.MaxCompanies} บริษัทแล้ว — ต้องเพิ่ม MaxCompanies ก่อน"));
 
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
         if (sub == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบ Subscription ของบริษัท"));
@@ -260,6 +263,13 @@ public class AdminAccountSubscriptionController : ControllerBase
             return Ok(new ApiResponse<string>(true, null, "บริษัทผูกกับ License นี้อยู่แล้ว"));
         if (sub.AccountSubscriptionId != null)
             return BadRequest(new ApiResponse<string>(false, null, "บริษัทผูกกับ License อื่นอยู่ — ต้องถอดก่อน"));
+
+        // Slot check happens inside the transaction so the snapshot used here
+        // is the same one the COMMIT will validate. The unique index on
+        // Subscription.CompanyId guarantees we're not double-counting `sub`.
+        var used = await _db.Subscriptions.CountAsync(s => s.AccountSubscriptionId == ap.Id && !s.IsDeleted);
+        if (used >= ap.MaxCompanies)
+            return BadRequest(new ApiResponse<string>(false, null, $"License ใช้ครบ {ap.MaxCompanies} บริษัทแล้ว — ต้องเพิ่ม MaxCompanies ก่อน"));
 
         sub.AccountSubscriptionId = ap.Id;
         sub.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -274,6 +284,7 @@ public class AdminAccountSubscriptionController : ControllerBase
             PerformedBy = JwtHelper.GetUserIdFromClaims(User).ToString()
         });
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return Ok(new ApiResponse<string>(true, null, "ผูกบริษัทเข้า License สำเร็จ"));
     }
 
@@ -303,20 +314,46 @@ public class AdminAccountSubscriptionController : ControllerBase
 
     public record CreateAccountSubRequest(Guid OwnerUserId, Guid PlanTemplateId, int? OverrideMaxCompanies, DateTime? CustomEndDate);
     /// <summary>Provision a plan for a user — used when sales closes an
-    /// enterprise deal outside the self-serve trial flow.</summary>
+    /// enterprise deal outside the self-serve trial flow.
+    ///
+    /// Returns 400 with a specific message when something the admin can fix
+    /// is wrong (missing user / template, duplicate active license, bad date).
+    /// The previous version let DB-level errors fall through to the global
+    /// middleware which surfaced the unhelpful "An internal server error
+    /// occurred" — admin couldn't tell what to do next.
+    /// </summary>
     [HttpPost]
-    public async Task<ActionResult<ApiResponse<Guid>>> Create([FromBody] CreateAccountSubRequest req)
+    public async Task<ActionResult<ApiResponse<Guid>>> Create(
+        [FromBody] CreateAccountSubRequest req,
+        [FromServices] ILogger<AdminAccountSubscriptionController> log)
     {
         if (!await IsSystemAdminAsync()) return Forbid();
+
+        if (req.OwnerUserId == Guid.Empty)
+            return BadRequest(new ApiResponse<Guid>(false, default, "ระบุ ownerUserId ไม่ครบ"));
+        if (req.PlanTemplateId == Guid.Empty)
+            return BadRequest(new ApiResponse<Guid>(false, default, "ระบุ planTemplateId ไม่ครบ"));
+
+        var userExists = await _db.Users.AnyAsync(u => u.Id == req.OwnerUserId && !u.IsDeleted);
+        if (!userExists) return BadRequest(new ApiResponse<Guid>(false, default, "ไม่พบผู้ใช้ที่ระบุ"));
 
         var exists = await _db.AccountSubscriptions.AnyAsync(a =>
             a.OwnerUserId == req.OwnerUserId && !a.IsDeleted
             && (a.Status == SubscriptionStatus.Trial || a.Status == SubscriptionStatus.Active
                 || a.Status == SubscriptionStatus.PastDue || a.Status == SubscriptionStatus.Suspended));
-        if (exists) return BadRequest(new ApiResponse<Guid>(false, default, "ผู้ใช้นี้มี Account Plan ที่ active อยู่แล้ว"));
+        if (exists) return BadRequest(new ApiResponse<Guid>(false, default, "ผู้ใช้นี้มี Account Plan ที่ active อยู่แล้ว — ยกเลิก / ปล่อยให้หมดอายุก่อนค่อยสร้างใหม่"));
 
         var tpl = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Id == req.PlanTemplateId && p.IsActive);
-        if (tpl == null) return BadRequest(new ApiResponse<Guid>(false, default, "ไม่พบ plan template"));
+        if (tpl == null) return BadRequest(new ApiResponse<Guid>(false, default, "ไม่พบ plan template (หรือถูกปิดใช้งานอยู่)"));
+
+        // Frontend sends customEndDate as ISO with 'Z' suffix → System.Text.Json
+        // parses Kind=Utc. Legacy timestamp mode tolerates Utc on plain
+        // `timestamp` columns, but we still defend against past dates which
+        // would create a License that's expired on day-0.
+        var endDate = req.CustomEndDate ?? DateTime.UtcNow.AddMonths(1);
+        if (endDate <= DateTime.UtcNow)
+            return BadRequest(new ApiResponse<Guid>(false, default, "วันหมดอายุต้องอยู่หลังวันนี้"));
+        if (endDate.Kind != DateTimeKind.Utc) endDate = DateTime.SpecifyKind(endDate, DateTimeKind.Utc);
 
         var a = new AccountSubscription
         {
@@ -324,7 +361,7 @@ public class AdminAccountSubscriptionController : ControllerBase
             PlanTemplateId = tpl.Id,
             Status = SubscriptionStatus.Active,
             StartDate = DateTime.UtcNow,
-            EndDate = req.CustomEndDate ?? DateTime.UtcNow.AddMonths(1),
+            EndDate = endDate,
             MaxCompanies = req.OverrideMaxCompanies ?? Math.Max(1, tpl.MaxCompanies),
             MaxUsersPerCompany = tpl.MaxUsers,
             MaxDocumentsPerMonth = tpl.MaxDocumentsPerMonth,
@@ -341,7 +378,19 @@ public class AdminAccountSubscriptionController : ControllerBase
             CreatedBy = JwtHelper.GetUserIdFromClaims(User).ToString(),
         };
         _db.AccountSubscriptions.Add(a);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex)
+        {
+            // Surface the underlying PG message so admin can see UK/FK
+            // violations instead of the generic middleware fallback.
+            var inner = ex.InnerException?.Message ?? ex.Message;
+            log.LogError(ex, "Create AccountSubscription failed for user {U} template {T}: {Inner}",
+                req.OwnerUserId, req.PlanTemplateId, inner);
+            return BadRequest(new ApiResponse<Guid>(false, default, $"สร้าง License ไม่สำเร็จ: {inner}"));
+        }
         return StatusCode(201, new ApiResponse<Guid>(true, a.Id, "สร้าง Account Plan สำเร็จ"));
     }
 }
