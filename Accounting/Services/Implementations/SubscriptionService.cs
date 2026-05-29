@@ -321,12 +321,47 @@ public class SubscriptionService : ISubscriptionService
             if (sub == null) throw new KeyNotFoundException("ไม่พบ subscription");
         }
 
+        // Resolver overlay: when this company rides under a User License, the
+        // License's features/limits/status win. Without this overlay the
+        // SubscriptionMiddleware sees the stale per-company FreeTrial features
+        // and blocks paid routes even after admin attached the company to an
+        // Enterprise License. Mirrors the source-of-truth picked by
+        // GetEffectivePlanAsync but stays inline so we don't double-query.
+        var plan = sub.Plan;
+        var status = sub.Status;
+        var features = sub.EnabledFeatures;
+        var endDate = sub.EndDate;
+        var maxUsers = sub.MaxUsers;
+        var maxCompanies = sub.MaxCompanies;
+        var maxDocs = sub.MaxDocumentsPerMonth;
+        var maxJournals = sub.MaxJournalEntriesPerMonth;
+        var maxStorage = sub.MaxStorageBytes;
+
+        if (sub.AccountSubscriptionId.HasValue)
+        {
+            var acct = await _db.AccountSubscriptions
+                .Include(a => a.PlanTemplate)
+                .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+            if (acct != null)
+            {
+                plan = acct.PlanTemplate.Plan;
+                status = acct.Status;
+                features = acct.EnabledFeatures;
+                endDate = acct.EndDate;
+                maxUsers = acct.MaxUsersPerCompany;
+                maxCompanies = acct.MaxCompanies;
+                maxDocs = acct.MaxDocumentsPerMonth;
+                maxJournals = acct.MaxJournalEntriesPerMonth;
+                maxStorage = acct.MaxStorageBytes;
+            }
+        }
+
         return new SubscriptionResponse(
-            sub.Id, sub.CompanyId, sub.Plan, sub.Status, sub.BillingCycle,
-            sub.PricePerCycle, sub.StartDate, sub.EndDate, sub.NextBillingDate,
-            sub.EnabledFeatures,
-            FeatureFlagsHelper.ToNameList(sub.EnabledFeatures),
-            new UsageLimits(sub.MaxUsers, sub.MaxCompanies, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth, sub.MaxStorageBytes),
+            sub.Id, sub.CompanyId, plan, status, sub.BillingCycle,
+            sub.PricePerCycle, sub.StartDate, endDate, sub.NextBillingDate,
+            features,
+            FeatureFlagsHelper.ToNameList(features),
+            new UsageLimits(maxUsers, maxCompanies, maxDocs, maxJournals, maxStorage),
             new UsageCurrent(sub.CurrentMonthDocuments, sub.CurrentMonthJournalEntries, sub.CurrentStorageUsed),
             sub.IsPermanentFree);
     }
