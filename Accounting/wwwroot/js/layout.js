@@ -265,7 +265,10 @@ const Layout = {
     if (uiMode === 'simple') {
       html.push(`<a class="nav-item" href="/simple.html"><span class="icon">🏠</span><span class="label">หน้าหลัก (โหมดง่าย)</span></a>`);
       html.push(`<a class="nav-item" href="/pages/quick-sale.html"><span class="icon">⚡</span><span class="label">ขายเร็ว</span></a>`);
-      html.push(`<a class="nav-item" href="/pages/quick-expense.html"><span class="icon">🧾</span><span class="label">จ่ายเร็ว</span></a>`);
+      // quick-expense was removed 2026 — it bypassed VAT controls,
+      // vendor linkage, and approval workflow. Field-bookkeeping
+      // routes through expense.html (มี/ไม่มี ใบเสร็จ §65 ทวิ) or
+      // documents.html → ค่าใช้จ่าย which both enforce proper accounting.
       html.push(`<div style="height:1px;background:#e2e8f0;margin:10px 12px;"></div>`);
     }
 
@@ -640,8 +643,11 @@ const Layout = {
       description: 'พนักงานออกเงินก่อน → ส่ง manager อนุมัติ → บริษัทคืนเงิน' },
     { id: 'expense-no-receipt', label: 'เบิกค่าใช้จ่าย (ไม่มีใบเสร็จ)', icon: '📝', href: '/pages/expense.html?noReceipt=1', feature: 'ExpenseManagement',
       description: '§65 ทวิ — กรณี vendor ออกใบเสร็จไม่ได้ (ตลาดสด · taxi · ใบเสร็จหาย) → อนุมัติแล้วระบบสร้างใบรับรองแทนใบเสร็จให้อัตโนมัติ' },
-    { id: 'quick-expense', label: 'จ่ายเร็ว (ภาคสนาม)', icon: '💨', href: '/pages/quick-expense.html', feature: 'BasicAccounting',
-      description: 'ฟอร์มเดียวจบ — บันทึกค่าใช้จ่ายเล็ก ๆ ระหว่างออกงาน (Mobile-first)' },
+    // quick-expense was removed 2026 — bypassed VAT controls, vendor
+    // linkage, approval workflow; created data that failed audit. All
+    // field expenses now go through expense.html (มี/ไม่มี ใบเสร็จ)
+    // which enforces §65 ทวิ when no receipt + creates a proper
+    // ExpenseClaim with HR audit trail.
 
     { section: 'POS หน้าร้าน', icon: '🏪', description: 'ระบบหน้าขาย Point of Sale + แพ็คเกจบริการ + รายงาน' },
     { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html', feature: 'DocumentEngine', _i18nKey: 'nav.pos',
@@ -901,8 +907,11 @@ const Layout = {
           <a class="fab-item" href="/pages/quick-sale.html" title="ขายเร็ว">
             <span class="fab-ic">💰</span><span class="fab-lbl">ขายเร็ว</span>
           </a>
-          <a class="fab-item" href="/pages/quick-expense.html" title="จ่ายเร็ว">
-            <span class="fab-ic">🧾</span><span class="fab-lbl">จ่ายเร็ว</span>
+          <a class="fab-item" href="/pages/expense.html?noReceipt=1" title="เบิกค่าใช้จ่ายไม่มีใบเสร็จ">
+            <span class="fab-ic">📝</span><span class="fab-lbl">เบิกไม่มีบิล</span>
+          </a>
+          <a class="fab-item" href="/pages/expense.html" title="เบิกค่าใช้จ่ายมีใบเสร็จ">
+            <span class="fab-ic">🧾</span><span class="fab-lbl">เบิก (มีบิล)</span>
           </a>
           <a class="fab-item" href="/pages/document-scan.html" title="ถ่ายรูปบิล">
             <span class="fab-ic">📸</span><span class="fab-lbl">ถ่ายรูปบิล</span>
@@ -920,7 +929,7 @@ const Layout = {
         bn.innerHTML = `
           <a href="/simple.html"><span>🏠</span><span>หน้าหลัก</span></a>
           <a href="/pages/quick-sale.html"><span>💰</span><span>ขาย</span></a>
-          <a href="/pages/quick-expense.html"><span>🧾</span><span>จ่าย</span></a>
+          <a href="/pages/expense.html"><span>🧾</span><span>เบิก</span></a>
           <a href="/pages/bank.html"><span>🏦</span><span>เงิน</span></a>
           <a href="/pages/tax-calendar.html"><span>🏛️</span><span>ภาษี</span></a>`;
         document.body.appendChild(bn);

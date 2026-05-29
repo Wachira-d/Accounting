@@ -14,17 +14,14 @@
       <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างใบเบิก</button>
     </div>
     <!-- 💡 Help banner — clarifies which expense flow to use for what.
-         3 distinct modes within this page + 2 alternative pages. The
-         employee picks based on (a) who paid first (b) does receipt
-         exist (c) what speed is needed. -->
+         2 modes within this page + 1 alternative page. -->
     <div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;line-height:1.65;color:#1e40af">
       <strong>💡 ใช้หน้านี้เมื่อ:</strong> <b>พนักงานออกเงินส่วนตัวก่อน</b> แล้วมาเบิกคืน (manager อนุมัติก่อนจ่าย)<br>
       &nbsp;&nbsp;• <a href="/pages/expense.html" style="color:#1e40af;font-weight:600">มีใบเสร็จ</a> = เบิกปกติ
       &nbsp;•&nbsp;
-      <a href="/pages/expense.html?noReceipt=1" style="color:#7c2d12;font-weight:600">ไม่มีใบเสร็จ (§65 ทวิ)</a> = อนุมัติแล้วระบบสร้างใบรับรองให้อัตโนมัติ<br>
+      <a href="/pages/expense.html?noReceipt=1" style="color:#7c2d12;font-weight:600">ไม่มีใบเสร็จ (§65 ทวิ)</a> = แนบรูปหลักฐาน → อนุมัติแล้วระบบสร้างใบรับรองให้อัตโนมัติ<br>
       <strong>ใช้หน้าอื่นเมื่อ:</strong>
-      <a href="/pages/documents.html?openCreate=expense&type=Expense" style="color:#1e40af;font-weight:600">เอกสาร → ค่าใช้จ่าย</a> = บริษัทจ่ายเอง (Dr Expense / Cr Cash ทันที) ·
-      <a href="/pages/quick-expense.html" style="color:#1e40af;font-weight:600">จ่ายเร็ว</a> = รายการเล็ก ๆ ภาคสนาม (ฟอร์มเดียว, mobile-first)
+      <a href="/pages/documents.html?openCreate=expense&type=Expense" style="color:#1e40af;font-weight:600">เอกสาร → ค่าใช้จ่าย</a> = บริษัทจ่ายเอง (Dr Expense / Cr Cash ทันที, ไม่ใช่พนักงานเบิก)
     </div>
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" oninput="Page.load()">
