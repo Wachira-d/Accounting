@@ -31,7 +31,49 @@
   </style>
 </head>
 <body>
-  <div id="adminLayout"></div>
+  <!-- AdminLayout.render() expects #pageContent, reads its current innerHTML,
+       wraps it in the sidebar shell, and puts it back. So the page body goes
+       INSIDE this div — the previous version had #adminLayout instead and
+       AdminLayout silently returned, leaving the page blank. -->
+  <div id="pageContent">
+    <h1 style="margin:0 0 6px">🎫 Account Plans (User License)</h1>
+    <p style="color:#64748b;margin:0 0 18px;font-size:13px">License ระดับผู้ใช้ — 1 plan คุมหลายบริษัท · บริษัท attach เข้ามาเพื่อใช้สิทธิ์</p>
+
+    <div class="as-toolbar">
+      <input type="text" id="fSearch" placeholder="ค้นหาชื่อ / อีเมล / plan..." oninput="Page.load()">
+      <select id="fStatus" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="Trial">Trial</option>
+        <option value="Active">Active</option>
+        <option value="PastDue">PastDue</option>
+        <option value="Suspended">Suspended</option>
+        <option value="Cancelled">Cancelled</option>
+        <option value="Expired">Expired</option>
+      </select>
+      <label style="font-size:13px;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="fIncInactive" onchange="Page.load()"> include cancelled/expired
+      </label>
+    </div>
+
+    <table class="admin-table" style="width:100%">
+      <thead><tr>
+        <th>เจ้าของ License</th><th>Plan</th><th>สถานะ</th>
+        <th>บริษัท</th><th>Users/บริษัท</th><th>Docs/mo</th>
+        <th>Storage</th><th>หมดอายุ</th><th>จัดการ</th>
+      </tr></thead>
+      <tbody id="tbody"><tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
+    </table>
+
+    <div id="detailModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px">
+      <div style="background:#fff;border-radius:12px;max-width:920px;width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+        <div style="padding:14px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0;font-size:16px" id="mTitle">รายละเอียด</h3>
+          <button onclick="document.getElementById('detailModal').style.display='none'" style="background:transparent;border:none;font-size:22px;cursor:pointer;color:#64748b">&times;</button>
+        </div>
+        <div class="as-modal-body" id="mBody"></div>
+      </div>
+    </div>
+  </div>
 
   <script src="/admin/admin-api.js"></script>
   <script src="/admin/admin-layout.js"></script>
@@ -42,6 +84,10 @@
       all: [],
       async init() {
         await this.load();
+        // Deep-link from /admin/customers.html "→ ไปจัดการ License":
+        // ?id=<guid> opens the detail modal for that License automatically.
+        const deep = new URLSearchParams(location.search).get('id');
+        if (deep) this.openDetail(deep);
       },
       async load() {
         try {
@@ -232,47 +278,9 @@
       },
     };
 
-    document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('pageContent').innerHTML = `
-        <h1 style="margin:0 0 6px">🎫 Account Plans (User License)</h1>
-        <p style="color:#64748b;margin:0 0 18px;font-size:13px">User-level subscriptions ที่คุ้มหลายบริษัท · resolver จะใช้แผนนี้เมื่อ <code>Subscription.AccountSubscriptionId</code> ของบริษัทไม่เป็น null</p>
-
-        <div class="as-toolbar">
-          <input type="text" id="fSearch" placeholder="ค้นหาชื่อ / อีเมล / plan..." oninput="Page.load()">
-          <select id="fStatus" onchange="Page.load()">
-            <option value="">ทุกสถานะ</option>
-            <option value="Trial">Trial</option>
-            <option value="Active">Active</option>
-            <option value="PastDue">PastDue</option>
-            <option value="Suspended">Suspended</option>
-            <option value="Cancelled">Cancelled</option>
-            <option value="Expired">Expired</option>
-          </select>
-          <label style="font-size:13px;display:flex;align-items:center;gap:6px">
-            <input type="checkbox" id="fIncInactive" onchange="Page.load()"> include cancelled/expired
-          </label>
-        </div>
-
-        <table class="admin-table" style="width:100%">
-          <thead><tr>
-            <th>เจ้าของ License</th><th>Plan</th><th>สถานะ</th>
-            <th>บริษัท</th><th>Users/บริษัท</th><th>Docs/mo</th>
-            <th>Storage</th><th>หมดอายุ</th><th>จัดการ</th>
-          </tr></thead>
-          <tbody id="tbody"><tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
-        </table>
-
-        <div id="detailModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px">
-          <div style="background:#fff;border-radius:12px;max-width:920px;width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">
-            <div style="padding:14px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
-              <h3 style="margin:0;font-size:16px" id="mTitle">รายละเอียด</h3>
-              <button onclick="document.getElementById('detailModal').style.display='none'" style="background:transparent;border:none;font-size:22px;cursor:pointer;color:#64748b">&times;</button>
-            </div>
-            <div class="as-modal-body" id="mBody"></div>
-          </div>
-        </div>`;
-      Page.init();
-    });
+    // AdminLayout.init() wraps the existing #pageContent so the controls are
+    // already in the DOM by the time we get here. Just kick off the data load.
+    document.addEventListener('DOMContentLoaded', () => Page.init());
   </script>
 </body>
 </html>

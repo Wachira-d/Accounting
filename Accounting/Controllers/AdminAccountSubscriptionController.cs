@@ -235,6 +235,48 @@ public class AdminAccountSubscriptionController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "ถอดออกจาก License สำเร็จ"));
     }
 
+    public record AdminAttachRequest(Guid AccountSubscriptionId);
+    /// <summary>Admin-side attach — binds a Company's Subscription to an
+    /// existing AccountSubscription (User License). The customers.html detail
+    /// page calls this from the "🔗 ผูกเข้า License" action. Enforces
+    /// MaxCompanies slot count + active license check.</summary>
+    [HttpPost("/api/admin/companies/{companyId:guid}/attach-to-account-plan")]
+    public async Task<ActionResult<ApiResponse<string>>> AdminAttach(Guid companyId, [FromBody] AdminAttachRequest req)
+    {
+        if (!await IsSystemAdminAsync()) return Forbid();
+
+        var ap = await _db.AccountSubscriptions.FirstOrDefaultAsync(a => a.Id == req.AccountSubscriptionId && !a.IsDeleted);
+        if (ap == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบ License ที่ระบุ"));
+        if (ap.Status != SubscriptionStatus.Trial && ap.Status != SubscriptionStatus.Active && ap.Status != SubscriptionStatus.PastDue)
+            return BadRequest(new ApiResponse<string>(false, null, $"License นี้สถานะ {ap.Status} ไม่สามารถผูกบริษัทเพิ่มได้"));
+
+        var used = await _db.Subscriptions.CountAsync(s => s.AccountSubscriptionId == ap.Id && !s.IsDeleted);
+        if (used >= ap.MaxCompanies)
+            return BadRequest(new ApiResponse<string>(false, null, $"License ใช้ครบ {ap.MaxCompanies} บริษัทแล้ว — ต้องเพิ่ม MaxCompanies ก่อน"));
+
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบ Subscription ของบริษัท"));
+        if (sub.AccountSubscriptionId == ap.Id)
+            return Ok(new ApiResponse<string>(true, null, "บริษัทผูกกับ License นี้อยู่แล้ว"));
+        if (sub.AccountSubscriptionId != null)
+            return BadRequest(new ApiResponse<string>(false, null, "บริษัทผูกกับ License อื่นอยู่ — ต้องถอดก่อน"));
+
+        sub.AccountSubscriptionId = ap.Id;
+        sub.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        sub.UpdatedAt = DateTime.UtcNow;
+
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            AccountSubscriptionId = ap.Id,
+            Action = "AttachedToAccountPlan",
+            Notes = $"Admin attached company {companyId} to Account Plan {ap.Id}",
+            PerformedBy = JwtHelper.GetUserIdFromClaims(User).ToString()
+        });
+        await _db.SaveChangesAsync();
+        return Ok(new ApiResponse<string>(true, null, "ผูกบริษัทเข้า License สำเร็จ"));
+    }
+
     /// <summary>History feed for an Account Plan — pulls SubscriptionHistory
     /// rows where AccountSubscriptionId matches, plus the cross-cascade ones
     /// where the row's company-level Subscription belongs to this account.
