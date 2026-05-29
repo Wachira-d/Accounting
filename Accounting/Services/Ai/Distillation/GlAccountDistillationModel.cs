@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Accounting.Data;
 using Accounting.Models.Enums;
+using Accounting.Services.Ai.Embedding;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Ai.Distillation;
@@ -14,6 +15,12 @@ namespace Accounting.Services.Ai.Distillation;
 ///
 /// Two feature keys share this model because they ask for the same
 /// thing — which account to debit on a Thai-context business expense.
+///
+/// Embedding fallback: line descriptions vary enormously ("ค่าน้ำมัน
+/// ดีเซล" vs "ค่าน้ำมัน-ดีเซล รถบรรทุก") so exact-keyword lookup misses
+/// often. The keyword embedding index lets a near-neighbour query
+/// match a confirmed pattern and recover at a discounted confidence.
+/// Vendor part is matched exactly — we don't blur which vendor it is.
 /// </summary>
 public class GlAccountDistillationModel : ILocalDistillationModel
 {
@@ -22,15 +29,26 @@ public class GlAccountDistillationModel : ILocalDistillationModel
     public bool IsReady => _entries.Count > 0;
 
     private readonly IServiceProvider _services;
+    private readonly IEmbeddingService _embedding;
     private readonly ILogger<GlAccountDistillationModel> _logger;
 
     // (CompanyId, vendorKey, descriptionKeyword) → ranked candidates.
     private readonly Dictionary<(Guid, string, string), List<Score>> _entries = new();
+
+    // Per (CompanyId, vendorKey) → list of (keyword, vector) for the
+    // embedding fallback. Vendor stays exact — we only fuzz on keyword.
+    private readonly Dictionary<(Guid CompanyId, string VendorKey), List<(string Keyword, float[] Vector)>> _keywordIndex = new();
     private readonly object _lock = new();
 
+    /// <summary>Cosine threshold for keyword fuzzy match. Line descriptions
+    /// are noisier than vendor names so we set this lower (0.70) than
+    /// the vendor-canon threshold to catch more variants.</summary>
+    private const float FuzzyMatchThreshold = 0.70f;
+
     public GlAccountDistillationModel(IServiceProvider services,
+        IEmbeddingService embedding,
         ILogger<GlAccountDistillationModel> logger)
-    { _services = services; _logger = logger; }
+    { _services = services; _embedding = embedding; _logger = logger; }
 
     public async Task LoadFromFeedbackAsync(Guid companyId, CancellationToken ct)
     {
@@ -68,10 +86,21 @@ public class GlAccountDistillationModel : ILocalDistillationModel
                 ? (slot.Item1 + 1, slot.Item2) : (slot.Item1, slot.Item2 + 1);
         }
 
+        // Build per-vendor keyword embedding index. One Embed call per
+        // (vendor, keyword) combination this company has confirmed.
+        var keywordIndex = counts.Keys
+            .GroupBy(k => k.Item1)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(k => (Keyword: k.Item2, Vector: _embedding.Embed(k.Item2))).ToList());
+
         lock (_lock)
         {
             var stale = _entries.Keys.Where(k => k.Item1 == companyId).ToList();
             foreach (var k in stale) _entries.Remove(k);
+            var staleIdx = _keywordIndex.Keys.Where(k => k.CompanyId == companyId).ToList();
+            foreach (var k in staleIdx) _keywordIndex.Remove(k);
+
             foreach (var ((vendorKey, keyword), candidates) in counts)
             {
                 var scored = candidates.Select(kv => new Score(
@@ -82,6 +111,8 @@ public class GlAccountDistillationModel : ILocalDistillationModel
                     .OrderByDescending(s => s.WilsonScore).ToList();
                 _entries[(companyId, vendorKey, keyword)] = scored;
             }
+            foreach (var (vendorKey, list) in keywordIndex)
+                _keywordIndex[(companyId, vendorKey)] = list;
         }
         Version = "v" + DateTime.UtcNow.ToString("yyyyMMddHHmm");
         _logger.LogInformation(
@@ -95,14 +126,44 @@ public class GlAccountDistillationModel : ILocalDistillationModel
         if (string.IsNullOrEmpty(vendorKey) || string.IsNullOrEmpty(keyword))
             return Task.FromResult<LocalPrediction?>(null);
         List<Score>? candidates;
-        lock (_lock) candidates = _entries.GetValueOrDefault((companyId, vendorKey, keyword));
+        string matchedKeyword = keyword;
+        decimal confidenceMultiplier = 1m;
+        lock (_lock)
+        {
+            candidates = _entries.GetValueOrDefault((companyId, vendorKey, keyword));
+            // Exact miss → cosine over this vendor's confirmed keywords.
+            if (candidates == null || candidates.Count == 0)
+            {
+                var index = _keywordIndex.GetValueOrDefault((companyId, vendorKey));
+                if (index != null && index.Count > 0)
+                {
+                    var query = _embedding.Embed(keyword);
+                    string? bestKw = null;
+                    float bestSim = FuzzyMatchThreshold;
+                    foreach (var (kw, vec) in index)
+                    {
+                        var sim = IEmbeddingService.Cosine(query, vec);
+                        if (sim > bestSim) { bestSim = sim; bestKw = kw; }
+                    }
+                    if (bestKw != null)
+                    {
+                        candidates = _entries.GetValueOrDefault((companyId, vendorKey, bestKw));
+                        matchedKeyword = bestKw;
+                        confidenceMultiplier = (decimal)bestSim;
+                    }
+                }
+            }
+        }
         if (candidates == null || candidates.Count == 0)
             return Task.FromResult<LocalPrediction?>(null);
         var top = candidates[0];
         var alts = candidates.Skip(1).Take(3).Select(c => c.AccountCode).ToList();
         return Task.FromResult<LocalPrediction?>(new LocalPrediction(
-            top.AccountCode, top.WilsonScore, alts,
-            top.Confirmed + top.Overridden, Version));
+            top.AccountCode,
+            top.WilsonScore * confidenceMultiplier,
+            alts,
+            top.Confirmed + top.Overridden,
+            Version + (matchedKeyword == keyword ? "" : "+fuzzy")));
     }
 
     private static decimal Wilson(int successes, int n)

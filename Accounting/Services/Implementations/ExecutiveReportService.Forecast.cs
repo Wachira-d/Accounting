@@ -66,8 +66,11 @@ public partial class ExecutiveReportService
             historyStart, historyWeeks);
 
         var weekCount = (int)Math.Ceiling(days / 7.0);
-        var inflowFc = HoltWintersForecaster.Forecast(inflowSeries, seasonLength: 4, horizon: weekCount);
-        var outflowFc = HoltWintersForecaster.Forecast(outflowSeries, seasonLength: 4, horizon: weekCount);
+        // ForecastAuto grid-searches α/β/γ per series so each company
+        // gets parameters tuned to its own seasonality strength. Cheap
+        // (~125 fits × O(n)) for our 12-week buckets.
+        var inflowFc = HoltWintersForecaster.ForecastAuto(inflowSeries, seasonLength: 4, horizon: weekCount);
+        var outflowFc = HoltWintersForecaster.ForecastAuto(outflowSeries, seasonLength: 4, horizon: weekCount);
 
         // Confidence label on the model — MAPE under 20% is "good
         // enough to trust the recurring forecast", over 50% means too
