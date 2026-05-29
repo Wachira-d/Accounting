@@ -80,7 +80,6 @@ public class AccountPlanExpiryReminderJob : BackgroundService
         // sent yet so the owner doesn't get 3 emails in 7 days.
         int bucket = 0;
         string? subject = null; string? body = null;
-        var manageUrl = "/pages/account-subscription.html";
         var planName = a.PlanTemplate?.Name ?? "Plan";
 
         if (daysLeft <= 0 && (a.ExpiryRemindersSentMask & 8) == 0)
