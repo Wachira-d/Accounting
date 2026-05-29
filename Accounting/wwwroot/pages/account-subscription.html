@@ -62,13 +62,15 @@
       </div>
 
       <div class="ap-help">
-        💡 <strong>License ทำงานยังไง?</strong><br>
-        ระบบเลือก plan แบบ <strong>2 ชั้น</strong>:
-        <ol style="margin:6px 0;padding-left:22px">
-          <li>ถ้าบริษัทไหน "จ่ายเอง" → ใช้ Subscription ของบริษัทนั้น (เช่น holding ที่ต้องแยกบิล)</li>
-          <li>ถ้าบริษัทไม่ได้จ่ายเอง → ใช้ <strong>Account Plan ของคุณ</strong> (หน้านี้)</li>
-        </ol>
-        แนะนำ: เปิด Account Plan ครั้งเดียว → ผูกทุกบริษัทเข้ามา = คุ้มที่สุด
+        💡 <strong>License อยู่ที่ผู้ใช้ (User) เป็นหลัก</strong> — บริษัทเป็น workspace ใต้ License นี้<br>
+        <strong>เคสที่รองรับ:</strong>
+        <ul style="margin:6px 0;padding-left:22px">
+          <li><strong>เจ้าของบริษัทสมัครเอง</strong> → ผูกบริษัทตัวเอง + invite นักบัญชี/พนักงานเข้า — นักบัญชีเป็นแค่ User ใน Plan นี้</li>
+          <li><strong>นักบัญชีสมัครเอง</strong> → สร้าง 10 บริษัทให้ลูกค้า + invite เจ้าของจริงเข้ามา — ลูกค้าไม่ต้องจ่าย Plan</li>
+          <li><strong>1 คนเปิดหลายบริษัท</strong> (Holding/Franchise) → เปิด Plan ครั้งเดียว ครอบทุกบริษัท</li>
+        </ul>
+        ⚠️ <strong>ยอดใช้งาน</strong> (เอกสาร / JE / OCR / Storage) <strong>นับรวมทุกบริษัทใต้ Plan</strong> — ไม่ใช่ต่อบริษัท<br>
+        ⚙️ บริษัทเลือกได้ว่าจะ "จ่ายเอง" (subscription แยก) หรือ "ใต้ Account Plan" — ปุ่ม ผูก/ถอด ด้านล่าง
       </div>
 
       <div id="apContent">
@@ -131,10 +133,24 @@
 
       renderActive() {
         const p = this.info.plan;
+        const u = this.info.usage || {};
         const attached = this.info.attachedCompanies || [];
-        const owned = (this.info.ownedCompanies || []);
-        const attachedIds = new Set(attached.map(c => c.companyId));
-        const unattachedOwned = owned.filter(c => !attachedIds.has(c.id));
+        const unattachedOwned = this.info.ownedCompanies || [];
+
+        // Aggregate gauges — roll-up across every attached company. Bars in
+        // amber (>=70%) / red (>=90%) so over-quota is immediately visible.
+        const gauge = (used, max, fmt) => {
+          const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0;
+          const color = pct >= 90 ? '#dc2626' : pct >= 70 ? '#f59e0b' : '#10b981';
+          return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;font-weight:600">
+              <span>${fmt(used)}</span><span>${fmt(max)}</span>
+            </div>
+            <div style="height:6px;background:#e2e8f0;border-radius:3px;margin-top:4px;overflow:hidden">
+              <div style="height:100%;width:${pct}%;background:${color};transition:width .3s"></div>
+            </div>
+          </div>`;
+        };
 
         document.getElementById('apContent').innerHTML = `
           <div class="ap-card">
@@ -145,26 +161,34 @@
                 <div class="meta">สถานะ ${p.status} · หมดอายุ ${new Date(p.endDate).toLocaleDateString('th-TH')}</div>
               </div>
             </div>
+            <div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">
+              📊 ยอดใช้งาน <span style="color:#dc2626">รวมทุกบริษัทใต้ Plan</span> ในเดือนนี้
+            </div>
             <div class="ap-grid">
-              <div class="ap-stat"><div class="v">${p.companiesUsed} / ${p.maxCompanies}</div><div class="l">บริษัท</div></div>
+              <div class="ap-stat"><div class="v">${u.companiesUsed||0} / ${u.maxCompanies||p.maxCompanies}</div><div class="l">บริษัท</div></div>
+              <div>${gauge(u.documents||0, u.maxDocuments||p.maxDocumentsPerMonth, v=>v+' ใบ')}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">📄 เอกสาร</div></div>
+              <div>${gauge(u.journalEntries||0, u.maxJournalEntries||p.maxJournalEntriesPerMonth, v=>v+' JE')}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">📒 สมุดรายวัน</div></div>
+              <div>${gauge(u.ocrPages||0, u.maxOcrPages||p.maxOcrPagesPerMonth, v=>v+' หน้า')}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">📸 OCR</div></div>
+              <div>${gauge(u.storageBytes||0, u.maxStorageBytes||p.maxStorageBytes, v=>this._fmtBytes(v))}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">💾 พื้นที่</div></div>
               <div class="ap-stat"><div class="v">${p.maxUsersPerCompany}</div><div class="l">ผู้ใช้ / บริษัท</div></div>
-              <div class="ap-stat"><div class="v">${p.maxDocumentsPerMonth}</div><div class="l">เอกสาร / เดือน</div></div>
-              <div class="ap-stat"><div class="v">${p.maxJournalEntriesPerMonth}</div><div class="l">JE / เดือน</div></div>
-              <div class="ap-stat"><div class="v">${this._fmtBytes(p.maxStorageBytes)}</div><div class="l">พื้นที่</div></div>
-              <div class="ap-stat"><div class="v">${p.maxOcrPagesPerMonth}</div><div class="l">หน้า OCR / เดือน</div></div>
             </div>
           </div>
 
           <div class="ap-card">
             <h3>🏢 บริษัทที่ผูกกับ Account Plan</h3>
-            <div class="desc">ผูกบริษัทเข้า Account Plan = ใช้สิทธิ์ตามแผนนี้ · ถอดออก = บริษัทกลับไปใช้ subscription ของตัวเอง</div>
+            <div class="desc">License อยู่ที่คุณ — บริษัทแต่ละแห่งใช้สิทธิ์ภายใต้ Plan นี้ · ตัวเลขด้านท้ายแถวคือยอดใช้งานของบริษัทนั้นในเดือนนี้</div>
             ${attached.length === 0
               ? '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:13px">ยังไม่ได้ผูกบริษัทใดเข้ามา</div>'
               : attached.map(c => `
                 <div class="ap-co-row">
-                  <div>
-                    <span class="name">${this._esc(c.companyName)}</span>
-                    <span class="pill attached">ใต้ Account Plan</span>
+                  <div style="flex:1;min-width:0">
+                    <div><span class="name">${this._esc(c.companyName)}</span> <span class="pill attached">ใต้ Account Plan</span></div>
+                    <div style="font-size:11px;color:#64748b;margin-top:3px">
+                      📄 ${c.currentMonthDocuments||0} เอกสาร ·
+                      📒 ${c.currentMonthJournalEntries||0} JE ·
+                      📸 ${c.currentMonthOcrPages||0} OCR ·
+                      💾 ${this._fmtBytes(c.currentStorageUsed||0)}
+                    </div>
                   </div>
                   <button class="detach" onclick="Page.detach('${c.companyId}','${this._esc(c.companyName).replace(/'/g,'&apos;')}')">ถอดออก</button>
                 </div>`).join('')}

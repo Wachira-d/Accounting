@@ -21,7 +21,11 @@ namespace Accounting.Controllers;
 public class AccountSubscriptionController : ControllerBase
 {
     private readonly AccountingDbContext _db;
-    public AccountSubscriptionController(AccountingDbContext db) { _db = db; }
+    private readonly Services.Interfaces.ISubscriptionService _subSvc;
+    public AccountSubscriptionController(AccountingDbContext db, Services.Interfaces.ISubscriptionService subSvc)
+    {
+        _db = db; _subSvc = subSvc;
+    }
 
     public record AccountSubDto(
         Guid Id, Guid OwnerUserId, Guid PlanTemplateId, string PlanName,
@@ -65,21 +69,39 @@ public class AccountSubscriptionController : ControllerBase
         var attached = await _db.Subscriptions
             .Where(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted)
             .Include(s => s.Company)
-            .Select(s => new { s.CompanyId, CompanyName = s.Company.Name, s.Status })
+            .Select(s => new
+            {
+                s.CompanyId, CompanyName = s.Company.Name, s.Status,
+                // Per-company breakdown for the "X used in Co A · Y used in
+                // Co B" gauge — sum of these = the aggregate displayed below.
+                s.CurrentMonthDocuments, s.CurrentMonthJournalEntries,
+                s.CurrentStorageUsed, s.CurrentMonthOcrPages,
+            })
             .ToListAsync();
 
-        var dto = new AccountSubDto(acct.Id, acct.OwnerUserId, acct.PlanTemplateId, acct.PlanTemplate.PlanName,
+        // Owner-of-but-not-yet-attached so the UI can prompt "ผูกบริษัท X ?"
+        var ownedNotAttached = await (from cu in _db.CompanyUsers
+                                      join s in _db.Subscriptions on cu.CompanyId equals s.CompanyId
+                                      where cu.UserId == userId && cu.Role == UserRole.Owner && !cu.IsDeleted
+                                          && s.AccountSubscriptionId == null
+                                      select new { Id = cu.Company.Id, Name = cu.Company.Name })
+                                     .ToListAsync();
+
+        var dto = new AccountSubDto(acct.Id, acct.OwnerUserId, acct.PlanTemplateId, acct.PlanTemplate.Name,
             acct.Status, acct.StartDate, acct.EndDate, acct.MaxCompanies, usedCount,
             acct.MaxUsersPerCompany, acct.MaxDocumentsPerMonth, acct.MaxJournalEntriesPerMonth,
             acct.MaxStorageBytes, acct.MaxOcrPagesPerMonth,
             (long)acct.EnabledFeatures, acct.MonthlyPrice, acct.AnnualPrice,
             acct.BillingCycle, acct.GracePeriodDays);
+        var agg = await _subSvc.GetAggregateUsageAsync(acct.Id);
 
         return Ok(new ApiResponse<object>(true, new
         {
             hasAccountPlan = true,
             plan = dto,
             attachedCompanies = attached,
+            ownedCompanies = ownedNotAttached,
+            usage = agg,
         }));
     }
 

@@ -516,7 +516,9 @@ public class SubscriptionService : ISubscriptionService
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return false;
 
-        // Reset monthly usage if needed
+        // Reset per-company monthly usage when the month rolls. Per-company
+        // counters stay so the UI can show "Company X used 230 / 1,000" —
+        // the AGGREGATE is what we enforce against when on an Account Plan.
         if (DateTime.UtcNow >= sub.UsageResetDate)
         {
             sub.CurrentMonthDocuments = 0;
@@ -525,6 +527,24 @@ public class SubscriptionService : ISubscriptionService
             await _db.SaveChangesAsync();
         }
 
+        // Account Plan path — aggregate across every Company under the same
+        // AccountSubscription. The accountant case ("1 Pro plan covers 10
+        // client books") needs total docs across all 10 to stay under the
+        // plan limit, not 10× the limit.
+        if (sub.AccountSubscriptionId.HasValue)
+        {
+            var agg = await GetAggregateUsageAsync(sub.AccountSubscriptionId.Value);
+            if (agg == null) return false;
+            return limitType switch
+            {
+                "document" => agg.Documents < agg.MaxDocuments,
+                "journal" => agg.JournalEntries < agg.MaxJournalEntries,
+                "storage" => agg.StorageBytes < agg.MaxStorageBytes,
+                _ => true
+            };
+        }
+
+        // Per-company plan path — original behavior.
         return limitType switch
         {
             "document" => sub.CurrentMonthDocuments < sub.MaxDocumentsPerMonth,
@@ -532,6 +552,45 @@ public class SubscriptionService : ISubscriptionService
             "storage" => sub.CurrentStorageUsed < sub.MaxStorageBytes,
             _ => true
         };
+    }
+
+    public record AggregateUsage(
+        int Documents, int MaxDocuments,
+        int JournalEntries, int MaxJournalEntries,
+        long StorageBytes, long MaxStorageBytes,
+        int OcrPages, int MaxOcrPages,
+        int CompaniesUsed, int MaxCompanies);
+
+    /// <summary>Sum per-month counters across every Company under an
+    /// AccountSubscription. Drives the aggregate quota check + the usage
+    /// gauge on /account-subscription. Null when the account row is gone.</summary>
+    public async Task<AggregateUsage?> GetAggregateUsageAsync(Guid accountSubscriptionId)
+    {
+        var acct = await _db.AccountSubscriptions.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == accountSubscriptionId && !a.IsDeleted);
+        if (acct == null) return null;
+
+        var subs = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.AccountSubscriptionId == accountSubscriptionId && !s.IsDeleted)
+            .Select(s => new {
+                s.CurrentMonthDocuments,
+                s.CurrentMonthJournalEntries,
+                s.CurrentStorageUsed,
+                s.CurrentMonthOcrPages,
+            })
+            .ToListAsync();
+
+        return new AggregateUsage(
+            Documents: subs.Sum(s => s.CurrentMonthDocuments),
+            MaxDocuments: acct.MaxDocumentsPerMonth,
+            JournalEntries: subs.Sum(s => s.CurrentMonthJournalEntries),
+            MaxJournalEntries: acct.MaxJournalEntriesPerMonth,
+            StorageBytes: subs.Sum(s => s.CurrentStorageUsed),
+            MaxStorageBytes: acct.MaxStorageBytes,
+            OcrPages: subs.Sum(s => s.CurrentMonthOcrPages),
+            MaxOcrPages: acct.MaxOcrPagesPerMonth,
+            CompaniesUsed: subs.Count,
+            MaxCompanies: acct.MaxCompanies);
     }
 
     public async Task IncrementUsageAsync(Guid companyId, string usageType)

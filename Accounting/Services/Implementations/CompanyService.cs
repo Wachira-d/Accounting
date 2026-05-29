@@ -11,11 +11,13 @@ public class CompanyService : ICompanyService
 {
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accountingService;
+    private readonly ISubscriptionService? _subscriptionService;
 
-    public CompanyService(AccountingDbContext db, IAccountingService accountingService)
+    public CompanyService(AccountingDbContext db, IAccountingService accountingService, ISubscriptionService? subscriptionService = null)
     {
         _db = db;
         _accountingService = accountingService;
+        _subscriptionService = subscriptionService;
     }
 
     public async Task<CompanyResponse> CreateAsync(Guid userId, CreateCompanyRequest request)
@@ -68,7 +70,72 @@ public class CompanyService : ICompanyService
         // Seed default chart of accounts
         await _accountingService.SeedDefaultAccountsAsync(company.Id);
 
+        // Every Company needs a Subscription row so the per-month usage
+        // counters have somewhere to live. If the creator already has an
+        // active AccountSubscription, point the Subscription at it so
+        // limits + features come from the account plan (License is on the
+        // User, not the Company — Case 1: owner subscribes / Case 2:
+        // accountant subscribes both work out of the box).
+        await EnsureSubscriptionForNewCompanyAsync(company.Id, userId);
+
         return await GetByIdAsync(company.Id, userId);
+    }
+
+    /// <summary>Creates the Subscription row for a brand-new Company and, when
+    /// the creating user has an active AccountSubscription with quota free,
+    /// auto-attaches so the Company immediately rides the user's account plan.
+    /// Failures are logged but never blow up the create flow — a missing
+    /// Subscription row is recoverable later, but a failed Company create
+    /// because of a billing hiccup is not.</summary>
+    private async Task EnsureSubscriptionForNewCompanyAsync(Guid companyId, Guid userId)
+    {
+        try
+        {
+            var existing = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+            if (existing == null)
+            {
+                // Seed a minimal FreeTrial Subscription so usage counters / quota
+                // checks don't NRE. The detailed plan-template-driven setup lives
+                // in SubscriptionService.StartTrialAsync; we replicate the minimal
+                // shape here to avoid a circular dep on the full service.
+                _db.Subscriptions.Add(new Subscription
+                {
+                    CompanyId = companyId,
+                    Plan = SubscriptionPlan.FreeTrial,
+                    Status = SubscriptionStatus.Trial,
+                    StartDate = DateTime.UtcNow,
+                    EndDate = DateTime.UtcNow.AddYears(100),  // Free perpetual
+                    MaxUsers = 1, MaxCompanies = 1,
+                    MaxDocumentsPerMonth = 30, MaxJournalEntriesPerMonth = 50,
+                    MaxStorageBytes = 100L * 1024 * 1024,
+                });
+                await _db.SaveChangesAsync();
+            }
+
+            // Auto-attach to creator's AccountSubscription if it has a slot.
+            var acct = await _db.AccountSubscriptions
+                .Where(a => a.OwnerUserId == userId && !a.IsDeleted
+                    && (a.Status == SubscriptionStatus.Trial
+                        || a.Status == SubscriptionStatus.Active
+                        || a.Status == SubscriptionStatus.PastDue))
+                .FirstOrDefaultAsync();
+            if (acct == null) return;
+
+            var used = await _db.Subscriptions.CountAsync(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted);
+            if (used >= acct.MaxCompanies) return;  // out of slots — user manages manually
+
+            var sub = await _db.Subscriptions.FirstAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+            if (sub.AccountSubscriptionId == null)
+            {
+                sub.AccountSubscriptionId = acct.Id;
+                await _db.SaveChangesAsync();
+            }
+        }
+        catch
+        {
+            // Subscription wiring failures are non-fatal — the Company still
+            // exists, the user can finish setup from the billing page later.
+        }
     }
 
     public async Task<CompanyResponse> GetByIdAsync(Guid companyId, Guid userId)

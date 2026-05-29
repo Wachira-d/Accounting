@@ -38,10 +38,18 @@ public class AccountSubscription : BaseEntity
     /// at create time; admin can override (e.g. enterprise deal).</summary>
     public int MaxCompanies { get; set; } = 1;
 
-    /// <summary>Per-Company limits exposed to whichever Company is currently
-    /// being accessed under this account. Stored as a copy so a plan change
-    /// (admin tweak / template version bump) takes effect immediately.</summary>
+    /// <summary>Users PER COMPANY — each Company under this plan can have up
+    /// to this many CompanyUser rows. Per-company because team members
+    /// typically only belong to one of the accountant's clients, not all.</summary>
     public int MaxUsersPerCompany { get; set; } = 1;
+
+    /// <summary>AGGREGATE limits — counted ACROSS ALL Companies under the
+    /// account, summed up to one total per month. Examples:
+    ///   • Accountant Pro Plan = 1,000 docs/mo means total across 10 client
+    ///     books, not 1,000 per book.
+    ///   • One business owner with 3 companies = same — totals roll up.
+    /// This is the SaaS model customers expect; per-company quotas confuse
+    /// people ("why does company B count against company A's quota?").</summary>
     public int MaxDocumentsPerMonth { get; set; } = 30;
     public int MaxJournalEntriesPerMonth { get; set; } = 50;
     public long MaxStorageBytes { get; set; } = 100 * 1024 * 1024;
