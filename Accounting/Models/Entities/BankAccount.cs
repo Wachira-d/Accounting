@@ -481,3 +481,32 @@ public class ConsignmentRecord : TenantEntity
     public DateTime? ReturnedOrSettledAt { get; set; }
     public string? Notes { get; set; }
 }
+
+/// <summary>
+/// Production order — drives the backflush workflow:
+///   1. PlannedQty units of ParentProduct ordered.
+///   2. System checks BOM + on-hand component stock; flags if any
+///      component would go negative.
+///   3. On completion: consume components × PlannedQty per the BOM
+///      (outbound stock movements), produce CompletedQty parents at
+///      the cumulative-component-cost (inbound to parent at WAC).
+///   4. JE: Debit Finished Goods, Credit Raw Materials.
+/// </summary>
+public class ProductionOrder : TenantEntity
+{
+    public string OrderNumber { get; set; } = null!;
+    public Guid ParentProductId { get; set; }
+    public Product ParentProduct { get; set; } = null!;
+    public Guid BomId { get; set; }
+    public BillOfMaterials Bom { get; set; } = null!;
+    public decimal PlannedQty { get; set; }
+    public decimal CompletedQty { get; set; }
+    public DateTime PlannedStartAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    /// <summary>"Planned" → "Released" → "Completed" → "Closed" |
+    /// "Cancelled".</summary>
+    public string Status { get; set; } = "Planned";
+    public decimal CumulativeComponentCost { get; set; }   // total cost backflushed
+    public Guid? JournalEntryId { get; set; }              // FG / RM posting
+    public string? Notes { get; set; }
+}

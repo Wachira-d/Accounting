@@ -158,6 +158,11 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompet
     Accounting.Services.Implementations.Migration.FlowAccountContactsAdapter>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportCoordinator,
     Accounting.Services.Implementations.Migration.CompetitorImportCoordinator>();
+// Production orders (BOM backflush) + Consignment movement service.
+builder.Services.AddScoped<Accounting.Services.Implementations.Production.IProductionOrderService,
+    Accounting.Services.Implementations.Production.ProductionOrderService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Consignment.IConsignmentService,
+    Accounting.Services.Implementations.Consignment.ConsignmentService>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();

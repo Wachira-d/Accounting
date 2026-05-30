@@ -1012,6 +1012,29 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_VendorPortalTokens_Hash" ON "VendorPortalTokens" ("TokenHash") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_VendorPortalTokens_Contact" ON "VendorPortalTokens" ("CompanyId", "ContactId") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "ProductionOrders" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "OrderNumber" varchar(50) NOT NULL,
+                "ParentProductId" uuid NOT NULL,
+                "BomId" uuid NOT NULL,
+                "PlannedQty" decimal(18,4) NOT NULL,
+                "CompletedQty" decimal(18,4) NOT NULL DEFAULT 0,
+                "PlannedStartAt" timestamp NOT NULL,
+                "CompletedAt" timestamp NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'Planned',
+                "CumulativeComponentCost" decimal(18,4) NOT NULL DEFAULT 0,
+                "JournalEntryId" uuid NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ProductionOrders" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ProductionOrders_Company_Status" ON "ProductionOrders" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
 
             // ===== TaxReport e-Filing ACK lifecycle =====
             """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAckNumber" varchar(50) NULL;""",
