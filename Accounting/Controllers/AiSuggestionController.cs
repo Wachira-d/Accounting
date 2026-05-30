@@ -332,28 +332,35 @@ public class AiSuggestionController : ControllerBase
         if (src.Lines.Count == 0)
             return Ok(new ApiResponse<object>(true, new { lines = Array.Empty<object>() }));
 
-        // Fan out one AI call per line, in parallel, with overall 12s
-        // budget so a 10-line invoice doesn't hang the wizard. Each
-        // call independently falls back to local on failure.
-        using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
-        var tasks = src.Lines.Select(async ln =>
+        // Single BULK AI call covering every line — AI sees cross-line
+        // patterns (cluster detection, odd-line-out) the previous
+        // per-line fan-out couldn't. Cost drops from N× to 1×; accuracy
+        // improves on multi-category invoices.
+        using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var bulkLines = src.Lines.Select(l => (
+            LineId: l.Id,
+            Description: l.Description ?? "",
+            Amount: l.Amount,
+            CurrentAccountCode: (string?)null)).ToList();
+        var bulk = await _docAi.SuggestAllPaymentVoucherAccountingAsync(
+            companyId, req.SourceInvoiceId,
+            src.ContactName, src.ContactTaxId, vendorIndustry: null,
+            bulkLines, src.Currency ?? "THB", aiCts.Token);
+
+        var results = src.Lines.Select(ln => new
         {
-            var r = await _docAi.SuggestPaymentVoucherAccountingAsync(
-                companyId, req.SourceInvoiceId,
-                src.ContactName, src.ContactTaxId, vendorIndustry: null,
-                ln.Description ?? "", ln.Amount, src.Currency ?? "THB",
-                localBestAccountCode: null, localConfidence: null,
-                aiCts.Token);
-            return new
-            {
-                lineId = ln.Id,
-                description = ln.Description,
-                amount = ln.Amount,
-                ai = ToDto(r),
-            };
+            lineId = ln.Id,
+            description = ln.Description,
+            amount = ln.Amount,
+            ai = ToDto(bulk.ByLineId.TryGetValue(ln.Id, out var s) ? s : null),
         }).ToList();
-        var results = await Task.WhenAll(tasks);
-        return Ok(new ApiResponse<object>(true, new { lines = results }));
+        return Ok(new ApiResponse<object>(true, new
+        {
+            lines = results,
+            crossLineObservations = bulk.CrossLineObservations,
+            warnings = bulk.Warnings,
+            usedAi = bulk.UsedAi,
+        }));
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -449,16 +456,27 @@ public class AiSuggestionController : ControllerBase
         catch { return Array.Empty<string>(); }
     }
 
-    private static object ToDto(DocumentAiSuggestion r) => new
+    private static object ToDto(DocumentAiSuggestion? r)
     {
-        primary = r.Answer,
-        confidence = r.Confidence,
-        alternatives = r.Alternatives,
-        risks = r.Risks,
-        complianceFlags = r.ComplianceFlags,
-        reasoning = r.Reasoning,
-        suggestedActions = r.SuggestedActions,
-        feedbackId = r.FeedbackId,
-        usedAi = r.UsedAi,
-    };
+        r ??= new DocumentAiSuggestion(
+            Answer: null, Confidence: null,
+            Alternatives: Array.Empty<string>(),
+            Risks: Array.Empty<string>(),
+            ComplianceFlags: Array.Empty<string>(),
+            Reasoning: null,
+            SuggestedActions: Array.Empty<string>(),
+            UsedAi: false, FeedbackId: null);
+        return new
+        {
+            primary = r.Answer,
+            confidence = r.Confidence,
+            alternatives = r.Alternatives,
+            risks = r.Risks,
+            complianceFlags = r.ComplianceFlags,
+            reasoning = r.Reasoning,
+            suggestedActions = r.SuggestedActions,
+            feedbackId = r.FeedbackId,
+            usedAi = r.UsedAi,
+        };
+    }
 }

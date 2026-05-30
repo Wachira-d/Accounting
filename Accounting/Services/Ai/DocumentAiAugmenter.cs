@@ -54,7 +54,40 @@ public interface IDocumentAiAugmenter
         string lineDescription, decimal amount, string currency,
         string? localBestAccountCode, decimal? localConfidence,
         CancellationToken ct = default);
+
+    /// <summary>Bulk variant — one AI call covers every line of the PV.
+    /// AI sees the full source invoice + every line + cross-line
+    /// patterns (cluster detection, odd-line-out) so accuracy beats the
+    /// per-line fan-out AND cost drops to 1× regardless of line count.
+    /// Returns one DocumentAiSuggestion per input lineId.</summary>
+    Task<BulkPvAccountingResult> SuggestAllPaymentVoucherAccountingAsync(
+        Guid companyId, Guid sourceInvoiceId,
+        string? vendorName, string? vendorTaxId, string? vendorIndustry,
+        IReadOnlyList<(Guid LineId, string Description, decimal Amount, string? CurrentAccountCode)> lines,
+        string currency,
+        CancellationToken ct = default);
+
+    /// <summary>Bulk variant for ApprovalWarningFix — one call for the
+    /// whole warning set so AI can detect "warning 1 and warning 2 have
+    /// the same root cause" patterns the per-warning loop can't see.</summary>
+    Task<BulkApprovalWarningFixResult> SuggestApprovalWarningFixesBulkAsync(
+        Guid companyId, Guid documentId,
+        IReadOnlyList<string> warnings,
+        object documentSnapshot, object? vendorHistory,
+        CancellationToken ct = default);
 }
+
+public sealed record BulkPvAccountingResult(
+    IReadOnlyDictionary<Guid, DocumentAiSuggestion> ByLineId,
+    IReadOnlyList<string> CrossLineObservations,
+    IReadOnlyList<string> Warnings,
+    bool UsedAi);
+
+public sealed record BulkApprovalWarningFixResult(
+    IReadOnlyList<DocumentAiSuggestion> Hints,    // index-aligned with input warnings
+    string? RootCause,                            // AI-detected common root cause across warnings
+    IReadOnlyList<string> Warnings,
+    bool UsedAi);
 
 public sealed record DocumentAiSuggestion(
     string? Answer,
@@ -230,6 +263,259 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             _logger.LogWarning(ex, "PV accounting augmenter failed");
             return Fallback(localBestAccountCode, localConfidence);
         }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Bulk: PV accounting (every line in one call)
+    // ────────────────────────────────────────────────────────────────
+    public async Task<BulkPvAccountingResult> SuggestAllPaymentVoucherAccountingAsync(
+        Guid companyId, Guid sourceInvoiceId,
+        string? vendorName, string? vendorTaxId, string? vendorIndustry,
+        IReadOnlyList<(Guid LineId, string Description, decimal Amount, string? CurrentAccountCode)> lines,
+        string currency,
+        CancellationToken ct = default)
+    {
+        if (lines.Count == 0)
+            return new BulkPvAccountingResult(
+                new Dictionary<Guid, DocumentAiSuggestion>(),
+                Array.Empty<string>(), Array.Empty<string>(), false);
+
+        try
+        {
+            var candidates = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive)
+                .OrderBy(a => a.AccountCode).Take(80)
+                .Select(a => new BulkPvAccountingPrompt.AccountCandidate(
+                    a.AccountCode, a.AccountName, a.AccountType.ToString()))
+                .ToListAsync(ct);
+
+            var vendorKey = !string.IsNullOrEmpty(vendorTaxId)
+                ? vendorTaxId
+                : (vendorName ?? "").Trim().ToLowerInvariant();
+            var since = DateTime.UtcNow.AddMonths(-24);
+            var history = !string.IsNullOrEmpty(vendorKey)
+                ? await _db.OcrCategoryMappings.AsNoTracking()
+                    .Where(m => m.CompanyId == companyId && !m.IsDeleted
+                                && m.VendorKey == vendorKey && m.LastUsedAt > since)
+                    .OrderByDescending(m => m.TimesUsed).Take(10)
+                    .Select(m => new BulkPvAccountingPrompt.VendorHistoricalAccount(
+                        m.AccountCode, m.AccountName ?? "", m.TimesUsed))
+                    .ToListAsync(ct)
+                : new List<BulkPvAccountingPrompt.VendorHistoricalAccount>();
+
+            var src = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == sourceInvoiceId && d.CompanyId == companyId)
+                .Select(d => new BulkPvAccountingPrompt.SourceInvoiceContext(
+                    d.DocumentNumber, d.DocumentType.ToString(),
+                    d.TotalAmount, d.VatAmount, d.WithholdingTaxAmount,
+                    d.BalanceDue))
+                .FirstOrDefaultAsync(ct);
+            if (src == null)
+            {
+                _logger.LogWarning("Bulk PV: source invoice not found {Id}", sourceInvoiceId);
+                src = new BulkPvAccountingPrompt.SourceInvoiceContext(
+                    "?", "?", lines.Sum(l => l.Amount), null, null, 0m);
+            }
+
+            decimal? avg6 = null;
+            if (!string.IsNullOrEmpty(vendorKey))
+            {
+                var since6 = DateTime.UtcNow.AddMonths(-6);
+                var amounts = await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                                && d.DocumentDate > since6
+                                && d.Contact.TaxId == vendorTaxId)
+                    .Select(d => d.TotalAmount)
+                    .ToListAsync(ct);
+                if (amounts.Count > 0) avg6 = amounts.Average();
+            }
+            var vendor = new BulkPvAccountingPrompt.VendorContext(
+                vendorName, vendorTaxId, null, vendorIndustry, avg6);
+
+            var lineInputs = lines.Select(l => new BulkPvAccountingPrompt.LineInput(
+                l.LineId.ToString(), l.Description, l.Amount, l.CurrentAccountCode)).ToList();
+
+            var req = BulkPvAccountingPrompt.Build(companyId, sourceInvoiceId,
+                vendor, src, lineInputs, candidates, history, currency);
+            var resp = await _orchestrator.AskAsync(req, ct);
+
+            return ParseBulkPvResponse(resp, lines);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bulk PV accounting augmenter failed");
+            return new BulkPvAccountingResult(
+                lines.ToDictionary(l => l.LineId, _ => Fallback(null, null)),
+                Array.Empty<string>(),
+                new[] { $"Bulk PV exception: {ex.Message}" },
+                UsedAi: false);
+        }
+    }
+
+    /// <summary>Parse the bulk PV response. Defensive — AI may omit a
+    /// line; we fall back to local for any missing lineId and record
+    /// a warning. Each line entry also writes a per-line feedback row
+    /// via the orchestrator so GlAccountDistillationModel still learns
+    /// from each prediction.</summary>
+    private BulkPvAccountingResult ParseBulkPvResponse(AiResponse resp,
+        IReadOnlyList<(Guid LineId, string Description, decimal Amount, string? CurrentAccountCode)> lines)
+    {
+        var byId = new Dictionary<Guid, DocumentAiSuggestion>();
+        var observations = new List<string>();
+        var warnings = new List<string>();
+        var raw = resp.RawResponseJson ?? resp.PrimaryAnswer;
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            try
+            {
+                var json = raw.Trim();
+                if (json.StartsWith("```"))
+                {
+                    var nl = json.IndexOf('\n');
+                    if (nl > 0) json = json[(nl + 1)..];
+                    if (json.EndsWith("```")) json = json[..^3];
+                    json = json.Trim();
+                }
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("lines", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var el in arr.EnumerateArray())
+                    {
+                        if (!el.TryGetProperty("lineId", out var idEl)) continue;
+                        if (!Guid.TryParse(idEl.GetString(), out var lid)) continue;
+                        var acc = el.TryGetProperty("accountCode", out var aEl) ? aEl.GetString() : null;
+                        var conf = el.TryGetProperty("confidence", out var cEl) && cEl.TryGetDecimal(out var c) ? c : 0.5m;
+                        var alts = new List<string>();
+                        if (el.TryGetProperty("alternatives", out var altEl) && altEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            foreach (var a in altEl.EnumerateArray()) if (a.GetString() is { } s) alts.Add(s);
+                        var reasoning = el.TryGetProperty("reasoning", out var rEl) ? rEl.GetString() : null;
+                        byId[lid] = new DocumentAiSuggestion(
+                            Answer: acc, Confidence: conf, Alternatives: alts,
+                            Risks: Array.Empty<string>(),
+                            ComplianceFlags: Array.Empty<string>(),
+                            Reasoning: reasoning,
+                            SuggestedActions: Array.Empty<string>(),
+                            UsedAi: resp.UsedAi, FeedbackId: resp.FeedbackId);
+                    }
+                }
+                if (root.TryGetProperty("cross_line_observations", out var obsEl)
+                    && obsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var o in obsEl.EnumerateArray()) if (o.GetString() is { } s) observations.Add(s);
+                if (root.TryGetProperty("warnings", out var wEl)
+                    && wEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var w in wEl.EnumerateArray()) if (w.GetString() is { } s) warnings.Add(s);
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "Bulk PV parse failed; falling back to local for all lines");
+                warnings.Add("AI ตอบกลับ JSON ไม่ valid — ใช้ local สำหรับทุกบรรทัด");
+            }
+        }
+        // Fill missing lines from local fallback.
+        foreach (var l in lines)
+        {
+            if (byId.ContainsKey(l.LineId)) continue;
+            byId[l.LineId] = Fallback(l.CurrentAccountCode, null);
+            warnings.Add($"AI ไม่ตอบบรรทัด {l.LineId.ToString()[..8]}… — ใช้ local");
+        }
+        return new BulkPvAccountingResult(byId, observations, warnings, resp.UsedAi);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Bulk: approval warning fixes (all warnings in one call)
+    // ────────────────────────────────────────────────────────────────
+    public async Task<BulkApprovalWarningFixResult> SuggestApprovalWarningFixesBulkAsync(
+        Guid companyId, Guid documentId,
+        IReadOnlyList<string> warnings,
+        object documentSnapshot, object? vendorHistory,
+        CancellationToken ct = default)
+    {
+        if (warnings.Count == 0)
+            return new BulkApprovalWarningFixResult(
+                Array.Empty<DocumentAiSuggestion>(), null, Array.Empty<string>(), false);
+        if (warnings.Count == 1)
+        {
+            // Single warning — no bulk advantage; route through existing path.
+            var single = await SuggestApprovalWarningFixAsync(
+                companyId, documentId, warnings[0], documentSnapshot, vendorHistory, ct);
+            return new BulkApprovalWarningFixResult(
+                new[] { single }, null, Array.Empty<string>(), single.UsedAi);
+        }
+
+        try
+        {
+            var req = BulkApprovalWarningFixPrompt.Build(
+                companyId, documentId, warnings, documentSnapshot, vendorHistory);
+            var resp = await _orchestrator.AskAsync(req, ct);
+            return ParseBulkApprovalResponse(resp, warnings);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bulk approval warning augmenter failed");
+            return new BulkApprovalWarningFixResult(
+                warnings.Select(_ => Fallback("Acknowledge", 0.50m)).ToList(),
+                null,
+                new[] { $"Bulk exception: {ex.Message}" },
+                UsedAi: false);
+        }
+    }
+
+    private BulkApprovalWarningFixResult ParseBulkApprovalResponse(AiResponse resp,
+        IReadOnlyList<string> warnings)
+    {
+        var byIdx = new Dictionary<int, DocumentAiSuggestion>();
+        string? rootCause = null;
+        var parseWarnings = new List<string>();
+        var raw = resp.RawResponseJson ?? resp.PrimaryAnswer;
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            try
+            {
+                var json = raw.Trim();
+                if (json.StartsWith("```"))
+                {
+                    var nl = json.IndexOf('\n');
+                    if (nl > 0) json = json[(nl + 1)..];
+                    if (json.EndsWith("```")) json = json[..^3];
+                    json = json.Trim();
+                }
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("root_cause", out var rcEl)) rootCause = rcEl.GetString();
+                if (root.TryGetProperty("fixes", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var el in arr.EnumerateArray())
+                    {
+                        if (!el.TryGetProperty("warningIndex", out var iEl)) continue;
+                        if (!iEl.TryGetInt32(out var idx) || idx < 0 || idx >= warnings.Count) continue;
+                        var primary = el.TryGetProperty("primary", out var pEl) ? pEl.GetString() : null;
+                        var conf = el.TryGetProperty("confidence", out var cEl) && cEl.TryGetDecimal(out var c) ? c : 0.5m;
+                        var reasoning = el.TryGetProperty("reasoning", out var rEl) ? rEl.GetString() : null;
+                        var actions = new List<string>();
+                        if (el.TryGetProperty("suggestedActions", out var sEl) && sEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            foreach (var a in sEl.EnumerateArray()) if (a.GetString() is { } s) actions.Add(s);
+                        byIdx[idx] = new DocumentAiSuggestion(
+                            Answer: primary ?? "Acknowledge", Confidence: conf,
+                            Alternatives: Array.Empty<string>(),
+                            Risks: Array.Empty<string>(),
+                            ComplianceFlags: Array.Empty<string>(),
+                            Reasoning: reasoning,
+                            SuggestedActions: actions,
+                            UsedAi: resp.UsedAi, FeedbackId: resp.FeedbackId);
+                    }
+                }
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "Bulk approval parse failed");
+                parseWarnings.Add("AI ตอบกลับ JSON ไม่ valid — ใช้ local");
+            }
+        }
+        var hints = new List<DocumentAiSuggestion>(warnings.Count);
+        for (int i = 0; i < warnings.Count; i++)
+            hints.Add(byIdx.TryGetValue(i, out var h) ? h : Fallback("Acknowledge", 0.50m));
+        return new BulkApprovalWarningFixResult(hints, rootCause, parseWarnings, resp.UsedAi);
     }
 
     private static DocumentAiSuggestion Convert(AiResponse resp) => new(

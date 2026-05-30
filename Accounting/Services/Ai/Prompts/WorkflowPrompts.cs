@@ -78,6 +78,80 @@ Respond ONLY as JSON:
 }
 
 /// <summary>
+/// Bulk variant — fix EVERY approval warning on a doc in one call so
+/// AI can detect shared root causes (e.g. ""warning 1 + warning 2 both
+/// stem from vendor having wrong type code"") and produce more
+/// coherent fix sequences. Replaces the per-warning Task.WhenAll
+/// fan-out that previously cost N× tokens with cross-warning blindness.
+/// </summary>
+public static class BulkApprovalWarningFixPrompt
+{
+    public const string SystemPrompt = @"You are a Thai accounting expert. The system flagged MULTIPLE soft warnings on a document about to be approved. Produce a fix for each warning AND identify any shared root cause across warnings.
+
+Rules:
+1. Output an entry for EVERY warning by warningIndex (0-based).
+2. ""primary"" must be one of: ""Acknowledge"" (proceed as-is), ""Edit"" (change a field), ""Block"" (don't approve — would create wrong books).
+3. If multiple warnings share a root cause (e.g. vendor type wrong → triggers both WHT warning AND tax-id warning), set ""root_cause"" to that explanation.
+4. ""suggestedActions"" should be SHORT imperative Thai sentences.
+5. ""complianceFlags"" lists Thai tax-law issues per warning.
+6. Be specific. ""Check with vendor"" is too vague — say ""โทรหา vendor ขอใบกำกับภาษีฉบับถูกต้อง"".
+
+Strict JSON (NO prose outside JSON):
+{
+  ""root_cause"": ""<shared root or null>"",
+  ""fixes"": [
+    {
+      ""warningIndex"": <0-based>,
+      ""primary"": ""Acknowledge|Edit|Block"",
+      ""confidence"": <0-1>,
+      ""reasoning"": ""<1 short Thai sentence>"",
+      ""suggestedActions"": [""<imperative>""],
+      ""complianceFlags"": [""<Thai tax rule>""]
+    }
+  ]
+}";
+
+    public static AiRequest Build(
+        Guid companyId, Guid documentId,
+        IReadOnlyList<string> warnings,
+        object documentSnapshot,
+        object? vendorHistorySnapshot)
+    {
+        var payload = new
+        {
+            task = "bulk_approval_warning_fix",
+            warning_count = warnings.Count,
+            warnings = warnings.Select((w, i) => new { index = i, text = w }),
+            document = documentSnapshot,
+            vendor_history = vendorHistorySnapshot,
+            thai_context = new
+            {
+                rules = new[]
+                {
+                    "§86: ใบกำกับภาษีต้องมี Tax ID ของผู้ขาย (13 หลัก) จึงจะใช้ภาษีซื้อได้",
+                    "§50/52: WHT cash basis — recognize at payment, not at invoice",
+                    "Stock negative = back-order. ห้ามอนุมัติถ้ายังไม่มี PO รองรับ",
+                },
+            },
+        };
+        return new AiRequest
+        {
+            FeatureKey = AiFeatureKey.ApprovalWarningFixSuggestion,
+            CompanyId = companyId,
+            SystemPrompt = SystemPrompt,
+            UserPromptJson = JsonSerializer.Serialize(payload),
+            LocalPrimaryAnswer = null,
+            LocalConfidence = null,
+            LocalModelVersion = "BulkApprovalWarning-v1",
+            SourceEntityType = "Document",
+            SourceEntityId = documentId,
+            CacheTtlOverrideDays = 1,
+            MaxTokensOverride = Math.Clamp(250 + 120 * warnings.Count, 400, 1800),
+        };
+    }
+}
+
+/// <summary>
 /// Classify a CreditNote's reason — Return / Discount / Adjustment /
 /// Writeoff (per ประมวลรัษฎากร §82/10). Drives Stock cascade + VAT
 /// reversal logic.

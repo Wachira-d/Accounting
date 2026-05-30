@@ -247,6 +247,8 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
     Accounting.Services.Ai.Distillation.DuplicateDocumentDistillationModel>();
 builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
     Accounting.Services.Ai.Distillation.AnomalyExplanationDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.ApprovalWarningDistillationModel>();
 // Risk scoring & smart approval routing — surfaces decisions the
 // admin/AR/AP teams use directly + feeds the corresponding AI narrative
 // features (AgingExplanation, ApprovalWarningFixSuggestion).

@@ -615,12 +615,13 @@ public class DocumentService : IDocumentService
                         ContactTaxId = doc.Contact?.TaxId,
                         LineCount = doc.Lines?.Count ?? 0,
                     };
-                    var tasks = warnings
-                        .Select(w => _aiAugmenter.SuggestApprovalWarningFixAsync(
-                            companyId, doc.Id, w, snapshot, null, aiCts.Token))
-                        .ToList();
-                    var results = await Task.WhenAll(tasks);
-                    hints = results.Select(r => new DocumentApprovalAiHint(
+                    // Single BULK call covering every warning — AI can
+                    // see "warning 1 + warning 2 share a root cause"
+                    // patterns the previous per-warning fan-out missed.
+                    // Cost drops from N× to 1×.
+                    var bulk = await _aiAugmenter.SuggestApprovalWarningFixesBulkAsync(
+                        companyId, doc.Id, warnings, snapshot, null, aiCts.Token);
+                    hints = bulk.Hints.Select(r => new DocumentApprovalAiHint(
                         Primary: r.Answer ?? "Acknowledge",
                         Confidence: r.Confidence ?? 0.5m,
                         Reasoning: r.Reasoning,
