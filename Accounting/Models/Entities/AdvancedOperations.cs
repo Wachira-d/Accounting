@@ -37,6 +37,33 @@ public class Project : TenantEntity
     // Dimension link
     public Guid? DimensionId { get; set; }
 
+    // ===== External system linkage =====
+    // When a partner system (Jira, Asana, Microsoft Project, etc.)
+    // creates / updates a project via our API, it can pass its own
+    // identifier in ExternalId so subsequent webhook callbacks +
+    // GET-by-external-id lookups don't require storing OUR GUID.
+    // ExternalSystem distinguishes which partner owns the ID (avoids
+    // collisions when one company integrates with multiple systems).
+
+    /// <summary>Partner-system identifier — opaque to us, indexed
+    /// per-company for fast lookup.</summary>
+    public string? ExternalId { get; set; }
+
+    /// <summary>Partner system name — "Jira", "Asana",
+    /// "MS-Project", "Monday", etc. Combined with ExternalId for
+    /// the unique key.</summary>
+    public string? ExternalSystem { get; set; }
+
+    /// <summary>Last time the external system pushed a sync update
+    /// for this project. Drives the "🔁 synced X mins ago" badge
+    /// in the project list.</summary>
+    public DateTime? LastSyncedAt { get; set; }
+
+    /// <summary>Free-form external URL (e.g. Jira ticket link) so
+    /// users can deep-link from our project page to the partner's
+    /// canonical view.</summary>
+    public string? ExternalUrl { get; set; }
+
     public ICollection<ProjectTask> Tasks { get; set; } = new List<ProjectTask>();
     public ICollection<ProjectCostEntry> CostEntries { get; set; } = new List<ProjectCostEntry>();
     public ICollection<RevenueContract> RevenueContracts { get; set; } = new List<RevenueContract>();

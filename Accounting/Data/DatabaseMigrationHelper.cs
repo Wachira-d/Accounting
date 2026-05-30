@@ -3626,6 +3626,13 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiRisksJson" text NULL;""",
             """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiFeedbackId" uuid NULL;""",
             """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiExplainedAt" timestamp NULL;""",
+
+            // ===== Project external sync (partner system linkage) =====
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(50) NULL;""",
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "LastSyncedAt" timestamp NULL;""",
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "ExternalUrl" text NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Projects_External" ON "Projects" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

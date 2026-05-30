@@ -38,6 +38,55 @@ public class ProjectController : ControllerBase
     public async Task<ActionResult<ApiResponse<ProjectResponse>>> Complete(Guid companyId, Guid projectId)
         => Ok(new ApiResponse<ProjectResponse>(true, await _service.CompleteAsync(companyId, projectId)));
 
+    public sealed record ChangeStatusRequest(string Status, string? Reason);
+
+    /// <summary>Generic status transition — Active | OnHold | Completed
+    /// | Cancelled. Replaces the limited /complete endpoint with a
+    /// uniform surface so partner systems can drive the full lifecycle
+    /// from one call.</summary>
+    [HttpPost("{projectId:guid}/status")]
+    public async Task<ActionResult<ApiResponse<ProjectResponse>>> ChangeStatus(
+        Guid companyId, Guid projectId, [FromBody] ChangeStatusRequest req)
+    {
+        var allowed = new[] { "Active", "OnHold", "Completed", "Cancelled" };
+        if (!allowed.Contains(req.Status))
+            return BadRequest(new ApiResponse<object>(false, null,
+                $"Status ต้องเป็น Active | OnHold | Completed | Cancelled (received: {req.Status})"));
+        var result = await _service.ChangeStatusAsync(companyId, projectId, req.Status, req.Reason);
+        return Ok(new ApiResponse<ProjectResponse>(true, result, $"สถานะโปรเจคเปลี่ยนเป็น {req.Status}"));
+    }
+
+    public sealed record SyncRequest(string ExternalSystem, string ExternalId,
+        string? ExternalUrl, DateTime? LastSyncedAt);
+
+    /// <summary>Attach / update the partner-system identity on a
+    /// project. Idempotent — repeated calls with the same
+    /// (ExternalSystem, ExternalId) on the SAME project succeed
+    /// and bump LastSyncedAt. Used by partner ERPs to mark a
+    /// project as "this is our internal job XYZ" so subsequent
+    /// webhook callbacks + lookups can resolve back without our GUID.</summary>
+    [HttpPost("{projectId:guid}/external-link")]
+    public async Task<ActionResult<ApiResponse<ProjectResponse>>> AttachExternal(
+        Guid companyId, Guid projectId, [FromBody] SyncRequest req)
+    {
+        var result = await _service.AttachExternalAsync(companyId, projectId,
+            req.ExternalSystem, req.ExternalId, req.ExternalUrl, req.LastSyncedAt);
+        return Ok(new ApiResponse<ProjectResponse>(true, result, "ผูก external id แล้ว"));
+    }
+
+    /// <summary>Lookup by the partner's identifier. Lets the partner
+    /// system fetch the project they previously created without
+    /// having to store our GUID — they just remember their own ID.</summary>
+    [HttpGet("by-external/{externalSystem}/{externalId}")]
+    public async Task<ActionResult<ApiResponse<ProjectResponse>>> GetByExternal(
+        Guid companyId, string externalSystem, string externalId)
+    {
+        var result = await _service.GetByExternalAsync(companyId, externalSystem, externalId);
+        if (result == null) return NotFound(new ApiResponse<object>(false, null,
+            $"ไม่พบโปรเจคที่มี {externalSystem}/{externalId}"));
+        return Ok(new ApiResponse<ProjectResponse>(true, result));
+    }
+
     [HttpDelete("{projectId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid projectId)
     {

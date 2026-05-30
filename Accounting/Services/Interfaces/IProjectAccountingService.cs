@@ -11,6 +11,22 @@ public interface IProjectAccountingService
     Task<List<ProjectResponse>> GetActiveListAsync(Guid companyId);
     Task<ProjectResponse> UpdateAsync(Guid companyId, Guid projectId, UpdateProjectRequest request);
     Task<ProjectResponse> CompleteAsync(Guid companyId, Guid projectId);
+
+    /// <summary>Generic status transition — partner systems can drive
+    /// the full Active | OnHold | Completed | Cancelled lifecycle
+    /// through one endpoint instead of the limited /complete.</summary>
+    Task<ProjectResponse> ChangeStatusAsync(Guid companyId, Guid projectId, string status, string? reason);
+
+    /// <summary>Attach the partner-system identity. Idempotent on
+    /// (companyId, externalSystem, externalId).</summary>
+    Task<ProjectResponse> AttachExternalAsync(Guid companyId, Guid projectId,
+        string externalSystem, string externalId, string? externalUrl, DateTime? lastSyncedAt);
+
+    /// <summary>Reverse-lookup by partner identity. Returns null
+    /// (controller maps to 404) when no project carries that
+    /// (externalSystem, externalId) combination in this company.</summary>
+    Task<ProjectResponse?> GetByExternalAsync(Guid companyId, string externalSystem, string externalId);
+
     Task DeleteAsync(Guid companyId, Guid projectId);
 
     // Tasks

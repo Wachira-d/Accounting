@@ -23,6 +23,19 @@ public class ProjectAccountingService : IProjectAccountingService
         if (existing)
             throw new InvalidOperationException($"รหัสโครงการ {request.Code} ซ้ำ");
 
+        // Idempotency on partner-system identity: if the same
+        // (externalSystem, externalId) already exists, return that
+        // project instead of failing — partner retries on flaky
+        // network should be safe.
+        if (!string.IsNullOrEmpty(request.ExternalSystem) && !string.IsNullOrEmpty(request.ExternalId))
+        {
+            var existingByExt = await _db.Projects.FirstOrDefaultAsync(p =>
+                p.CompanyId == companyId && !p.IsDeleted
+                && p.ExternalSystem == request.ExternalSystem
+                && p.ExternalId == request.ExternalId);
+            if (existingByExt != null) return MapToResponse(existingByExt);
+        }
+
         string? customerName = null;
         if (request.ContactId.HasValue)
         {
@@ -47,7 +60,11 @@ public class ProjectAccountingService : IProjectAccountingService
             BillingMethod = request.BillingMethod,
             RevenueRecognitionMethod = request.RevenueRecognitionMethod,
             DimensionId = request.DimensionId,
-            Status = "Active"
+            Status = "Active",
+            ExternalId = request.ExternalId,
+            ExternalSystem = request.ExternalSystem,
+            ExternalUrl = request.ExternalUrl,
+            LastSyncedAt = (request.ExternalSystem != null) ? DateTime.UtcNow : null,
         };
 
         _db.Projects.Add(project);
@@ -121,6 +138,76 @@ public class ProjectAccountingService : IProjectAccountingService
 
         await _db.SaveChangesAsync();
         return MapToResponse(project);
+    }
+
+    public async Task<ProjectResponse> ChangeStatusAsync(Guid companyId, Guid projectId,
+        string status, string? reason)
+    {
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบโครงการ");
+
+        // Closing transitions (Completed | Cancelled) stamp ActualEndDate
+        // so reporting can age-filter retired projects.
+        project.Status = status;
+        if (status == "Completed")
+        {
+            project.CompletionPercent = 100;
+            project.ActualEndDate ??= DateTime.UtcNow;
+        }
+        else if (status == "Cancelled")
+        {
+            project.ActualEndDate ??= DateTime.UtcNow;
+        }
+        else if (status == "Active" || status == "OnHold")
+        {
+            // Re-opening a previously-closed project clears the actual
+            // end date so the timeline reflects current state.
+            if (status == "Active" && project.ActualEndDate.HasValue)
+                project.ActualEndDate = null;
+        }
+        if (!string.IsNullOrWhiteSpace(reason))
+            project.Description = (project.Description ?? "") + $"\n[{DateTime.UtcNow:yyyy-MM-dd}] Status → {status}: {reason}";
+        await _db.SaveChangesAsync();
+        return MapToResponse(project);
+    }
+
+    public async Task<ProjectResponse> AttachExternalAsync(Guid companyId, Guid projectId,
+        string externalSystem, string externalId, string? externalUrl, DateTime? lastSyncedAt)
+    {
+        if (string.IsNullOrWhiteSpace(externalSystem) || string.IsNullOrWhiteSpace(externalId))
+            throw new ArgumentException("ExternalSystem + ExternalId required.");
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบโครงการ");
+
+        // Guard against accidentally over-writing another project's
+        // existing external link: if (system,id) already points to a
+        // DIFFERENT project, reject — partner must explicitly detach.
+        var clash = await _db.Projects.AnyAsync(p =>
+            p.CompanyId == companyId && !p.IsDeleted
+            && p.Id != projectId
+            && p.ExternalSystem == externalSystem
+            && p.ExternalId == externalId);
+        if (clash) throw new InvalidOperationException(
+            $"(System={externalSystem}, Id={externalId}) ถูกใช้กับโปรเจคอื่นแล้ว — detach ก่อน");
+
+        project.ExternalSystem = externalSystem;
+        project.ExternalId = externalId;
+        project.ExternalUrl = externalUrl;
+        project.LastSyncedAt = lastSyncedAt ?? DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return MapToResponse(project);
+    }
+
+    public async Task<ProjectResponse?> GetByExternalAsync(Guid companyId,
+        string externalSystem, string externalId)
+    {
+        var project = await _db.Projects.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.CompanyId == companyId && !p.IsDeleted
+                && p.ExternalSystem == externalSystem
+                && p.ExternalId == externalId);
+        return project == null ? null : MapToResponse(project);
     }
 
     public async Task DeleteAsync(Guid companyId, Guid projectId)
@@ -406,7 +493,8 @@ public class ProjectAccountingService : IProjectAccountingService
         p.Id, p.Code, p.Name, p.Description, p.CustomerName,
         p.StartDate, p.EndDate, p.Status,
         p.BudgetAmount, p.ContractAmount, p.ActualCost, p.ActualRevenue,
-        p.CompletionPercent, p.BillingMethod, p.CreatedAt);
+        p.CompletionPercent, p.BillingMethod, p.CreatedAt,
+        p.ExternalId, p.ExternalSystem, p.ExternalUrl, p.LastSyncedAt);
 
     private static ProjectTaskResponse MapTaskToResponse(ProjectTask t) => new(
         t.Id, t.ProjectId, t.Name, t.Description,

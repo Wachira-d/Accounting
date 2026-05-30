@@ -6,12 +6,19 @@ public record CreateProjectRequest(
     DateTime StartDate, DateTime? EndDate,
     decimal BudgetAmount, decimal ContractAmount,
     string BillingMethod, string RevenueRecognitionMethod,
-    Guid? DimensionId);
+    Guid? DimensionId,
+    // External-system linkage at creation time — partner can both
+    // create + claim the external id in one POST instead of needing
+    // a follow-up /external-link call.
+    string? ExternalId = null,
+    string? ExternalSystem = null,
+    string? ExternalUrl = null);
 
 public record UpdateProjectRequest(
     string? Name, string? Description, DateTime? EndDate,
     decimal? BudgetAmount, decimal? ContractAmount,
-    decimal? CompletionPercent, string? Status);
+    decimal? CompletionPercent, string? Status,
+    string? ExternalUrl = null);
 
 public record ProjectResponse(
     Guid Id, string Code, string Name, string? Description,
@@ -19,7 +26,11 @@ public record ProjectResponse(
     string Status, decimal BudgetAmount, decimal ContractAmount,
     decimal ActualCost, decimal ActualRevenue,
     decimal CompletionPercent, string BillingMethod,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? ExternalId = null,
+    string? ExternalSystem = null,
+    string? ExternalUrl = null,
+    DateTime? LastSyncedAt = null);
 
 public record CreateProjectTaskRequest(
     string Name, string? Description, Guid? ParentTaskId,
