@@ -107,6 +107,14 @@ builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 
 // New modules
 builder.Services.AddScoped<IProductService, ProductService>();
+// Per-SKU demand forecast + reorder recommendation (Croston). Cheap
+// enough to run on demand from the stock UI.
+builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInventoryReorderForecastService,
+    Accounting.Services.Implementations.Inventory.InventoryReorderForecastService>();
+// Local rule-based pre-checker for Thai tax filings — runs before
+// DeepSeek narrative so DeepSeek only has to explain, not verify.
+builder.Services.AddScoped<Accounting.Services.Implementations.Tax.ITaxComplianceChecker,
+    Accounting.Services.Implementations.Tax.TaxComplianceChecker>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();

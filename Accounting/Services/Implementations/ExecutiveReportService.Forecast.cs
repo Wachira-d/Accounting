@@ -152,7 +152,29 @@ public partial class ExecutiveReportService
                 Math.Round(blended, 1), items));
         }
 
-        return new CashFlowForecastResponse(asOf, R2(openingCash), R2(balance), days, weeks);
+        // ── Scenario engine — best/expected/worst per week ───────────
+        // Builds confidence bands from the Holt-Winters MAPE values so
+        // the UI can show "worst-case cash low point" without a second
+        // model. Asymmetric (downside larger than upside) because
+        // collection delays hurt cash flow more often than payment
+        // delays help it.
+        var scenarioInput = weeks.Select(w => (
+            w.WeekNumber, w.WeekStart, w.WeekEnd,
+            w.OpeningBalance, w.ExpectedInflows, w.ExpectedOutflows)).ToList();
+        var report = CashFlowScenarioEngine.Build(scenarioInput,
+            inflowFc.MeanAbsolutePercentError,
+            outflowFc.MeanAbsolutePercentError,
+            collectionDelayDays: 14);
+        var scenarios = new CashFlowScenarioSummary(
+            OverallRisk: report.OverallRisk,
+            MinClosingBalance: report.MinClosingBalance,
+            MinClosingDate: report.MinClosingDate,
+            MaxClosingBalance: report.MaxClosingBalance,
+            KeyRiskFactors: report.KeyRiskFactors.ToList(),
+            Weeks: report.Weeks.Select(w => new CashFlowScenarioWeek(
+                w.WeekNumber, w.Best, w.Expected, w.Worst, w.RiskIndex)).ToList());
+
+        return new CashFlowForecastResponse(asOf, R2(openingCash), R2(balance), days, weeks, scenarios);
     }
 
     /// <summary>Aggregate payment events into weekly totals aligned to

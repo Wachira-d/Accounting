@@ -1147,6 +1147,11 @@ public enum AiFeatureKey
     /// tracked separately.</summary>
     DocumentConversionSuggestion = 23,
 
+    /// <summary>Per-SKU demand forecast + reorder point recommendation.
+    /// Local: Croston / Holt-Winters per product. AI: narrative
+    /// + scenario suggestions.</summary>
+    ReorderForecast = 24,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

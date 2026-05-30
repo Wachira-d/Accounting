@@ -169,4 +169,19 @@ public class TaxController : ControllerBase
         var bytes = System.Text.Encoding.UTF8.GetBytes(export.FileContent);
         return File(bytes, "text/plain; charset=utf-8", fileName);
     }
+
+    /// <summary>Local rule-based pre-check before e-Filing submission.
+    /// Returns mechanical errors (RD-rejected fields), warnings
+    /// (likely-wrong values), and infos (observations). The UI uses
+    /// CanSubmit=false to block the "ยื่นแบบ" button until errors
+    /// are resolved. Cost: zero — pure local rules.</summary>
+    [HttpGet("{reportId:guid}/precheck")]
+    public async Task<ActionResult<ApiResponse<Services.Implementations.Tax.TaxComplianceReport>>> PreCheck(
+        Guid companyId, Guid reportId,
+        [FromServices] Services.Implementations.Tax.ITaxComplianceChecker checker,
+        CancellationToken ct)
+    {
+        var report = await checker.CheckAsync(reportId, ct);
+        return Ok(new ApiResponse<Services.Implementations.Tax.TaxComplianceReport>(true, report));
+    }
 }

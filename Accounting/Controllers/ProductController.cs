@@ -309,4 +309,21 @@ public class ProductController : ControllerBase
         var result = await _productService.GetSuppliesBalanceAsync(companyId, category);
         return Ok(new ApiResponse<SuppliesBalanceReport>(true, result));
     }
+
+    /// <summary>Per-SKU demand forecast + reorder recommendation
+    /// (Croston). Returns critical/warning/ok bucketed list sorted by
+    /// urgency — UI shows "X will run out in N days, suggested order Y".
+    /// Lead time default 7 days; service level default 95% (z=1.645).</summary>
+    [HttpGet("reorder-forecast")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<Services.Implementations.Inventory.ReorderForecastRow>>>> GetReorderForecast(
+        Guid companyId,
+        [FromServices] Services.Implementations.Inventory.IInventoryReorderForecastService svc,
+        [FromQuery] int historyDays = 90,
+        [FromQuery] int leadTimeDays = 7,
+        [FromQuery] decimal serviceLevelZ = 1.645m,
+        CancellationToken ct = default)
+    {
+        var rows = await svc.ForecastAsync(companyId, historyDays, leadTimeDays, serviceLevelZ, ct);
+        return Ok(new ApiResponse<IReadOnlyList<Services.Implementations.Inventory.ReorderForecastRow>>(true, rows));
+    }
 }

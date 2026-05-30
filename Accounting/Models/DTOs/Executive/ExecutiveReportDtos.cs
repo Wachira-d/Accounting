@@ -194,7 +194,23 @@ public record CashFlowForecastResponse(
     decimal OpeningCash,
     decimal ProjectedClosingCash,
     int Days,                        // 30 / 60 / 90
-    List<CashFlowForecastWeek> Weeks);
+    List<CashFlowForecastWeek> Weeks,
+    CashFlowScenarioSummary? Scenarios = null);
+
+public record CashFlowScenarioSummary(
+    string OverallRisk,              // "Low" | "Moderate" | "High" | "Critical"
+    decimal MinClosingBalance,
+    DateTime? MinClosingDate,
+    decimal MaxClosingBalance,
+    List<string> KeyRiskFactors,
+    List<CashFlowScenarioWeek> Weeks);
+
+public record CashFlowScenarioWeek(
+    int WeekNumber,
+    decimal Best,
+    decimal Expected,
+    decimal Worst,
+    decimal RiskIndex);
 
 public record CashFlowForecastWeek(
     int WeekNumber,
