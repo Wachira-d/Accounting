@@ -140,6 +140,30 @@
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
+
+          <!-- Supplier-side tax-invoice metadata — only relevant on PI/CertInLieu/PV
+               where the partner issues the source invoice. JS toggles `.supplier-invoice-only`
+               based on docType (see togglePurchaseFields below). -->
+          <div class="form-row supplier-invoice-only" style="display:none">
+            <div class="form-group">
+              <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (ไม่ใช่เลขที่เอกสารของเรา) — ใช้กระทบกับ statement ของผู้ขายและเป็นหลักฐานเคลม VAT ในสรรพากร">เลขใบกำกับของผู้ขาย</label>
+              <input type="text" class="form-input" id="fSupplierInvoiceNumber" placeholder="เช่น INV-2026-0042">
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
+              <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
+            </div>
+          </div>
+          <div class="form-row supplier-invoice-only" style="display:none">
+            <div class="form-group">
+              <label class="form-label" data-help="จำนวนวันเครดิตที่ตกลง — ถ้ากรอกแต่ไม่ใส่ 'วันครบกำหนด' ระบบจะคำนวณให้อัตโนมัติ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
+              <input type="number" class="form-input" id="fCreditDays" min="0" max="365" placeholder="เช่น 30">
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-help="ข้อความบรรยายเทอมจ่าย ใช้พิมพ์บนเอกสาร เช่น Net 30 / 2/10 Net 30 / EOM+15">เทอมจ่าย (label)</label>
+              <input type="text" class="form-input" id="fPaymentTerms" placeholder="เช่น Net 30">
+            </div>
+          </div>
           <div class="form-row advanced-only">
             <div class="form-group">
               <label class="form-label" data-help="ใช้เมื่อต้องการให้รายงานแยกตามโครงการ/งาน เช่น 'รีโนเวทห้องประชุม' ระบบจะสรุปรายรับ-รายจ่ายต่อโครงการให้อัตโนมัติ">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
@@ -793,6 +817,13 @@
         const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
         const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
         if (ecField) ecField.style.display = expenseTypes.includes(docType) ? '' : 'none';
+        // Supplier-side tax invoice metadata — only PI / Expense / CertInLieu
+        // (where partner issues source invoice). Hidden on PO / PR / PV
+        // since those don't carry a supplier's tax invoice number.
+        const supplierIssuedTypes = ['PurchaseInvoice', 'Expense', 'CertificateInLieu'];
+        document.querySelectorAll('.supplier-invoice-only').forEach(el => {
+          el.style.display = supplierIssuedTypes.includes(docType) ? '' : 'none';
+        });
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
@@ -1204,6 +1235,8 @@
         sel.value = isExpense ? 'PurchaseRequisition' : 'Quotation';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDueDate').value = '';
+        ['fSupplierInvoiceNumber','fSupplierTaxInvoiceDate','fCreditDays','fPaymentTerms']
+          .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
         // Reset "ลูกค้าจ่ายเงินแล้ว" shortcut — a stale checked state from
@@ -1266,6 +1299,14 @@
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
           document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
+          const fSin = document.getElementById('fSupplierInvoiceNumber');
+          if (fSin) fSin.value = d.supplierInvoiceNumber || '';
+          const fStd = document.getElementById('fSupplierTaxInvoiceDate');
+          if (fStd) fStd.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+          const fCd = document.getElementById('fCreditDays');
+          if (fCd) fCd.value = d.creditDays ?? '';
+          const fPt = document.getElementById('fPaymentTerms');
+          if (fPt) fPt.value = d.paymentTerms || '';
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
           document.getElementById('fCustomAppendix').value = d.customAppendix || '';
@@ -1393,6 +1434,10 @@
           witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
           creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
+          supplierInvoiceNumber: document.getElementById('fSupplierInvoiceNumber')?.value.trim() || null,
+          supplierTaxInvoiceDate: document.getElementById('fSupplierTaxInvoiceDate')?.value || null,
+          creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
+          paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
         };
         try {
           let savedDocId = this.editingId;
@@ -1601,6 +1646,9 @@
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${d.contact.name}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
+              ${d.supplierInvoiceNumber ? `<div><div class="text-xs text-gray-500">เลขใบกำกับผู้ขาย</div><div class="font-medium">${this.escapeHtml(d.supplierInvoiceNumber)}</div></div>` : ''}
+              ${d.supplierTaxInvoiceDate ? `<div><div class="text-xs text-gray-500">วันที่ใบกำกับผู้ขาย</div><div>${Layout.date(d.supplierTaxInvoiceDate)}</div></div>` : ''}
+              ${d.paymentTerms || d.creditDays ? `<div><div class="text-xs text-gray-500">เทอมจ่าย</div><div>${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ' (' + d.creditDays + ' วัน)' : ''}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
               ${d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : ''}
               ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}

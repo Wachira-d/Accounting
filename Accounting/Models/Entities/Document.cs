@@ -13,6 +13,29 @@ public class Document : TenantEntity
     public DateTime DocumentDate { get; set; }
     public DateTime? DueDate { get; set; }
 
+    // Counterparty-side tax-invoice metadata. Required for PurchaseInvoice
+    // (and any other doc where the counterparty issues their own tax
+    // invoice we then book). SupplierInvoiceNumber is the partner's own
+    // running number — distinct from our internal DocumentNumber and
+    // needed for VAT-audit reconciliation against the supplier's
+    // statement. SupplierTaxInvoiceDate is the date on the partner's
+    // tax invoice; it controls which VAT period the input VAT is
+    // claimed in (per Revenue Code §82/4 it may differ from our
+    // DocumentDate when we book the bill late).
+    public string? SupplierInvoiceNumber { get; set; }
+    public DateTime? SupplierTaxInvoiceDate { get; set; }
+
+    /// <summary>Credit term in days from the document date — used to
+    /// auto-fill DueDate when not explicit, and to roll DSO / DPO
+    /// reports. Defaulted from Contact.PaymentTermDays on create when
+    /// the caller doesn't override.</summary>
+    public int? CreditDays { get; set; }
+
+    /// <summary>Free-text payment terms label (e.g. "Net 30", "2/10
+    /// Net 30", "EOM+15") — for human readability on printed
+    /// documents. Independent of CreditDays which drives auto math.</summary>
+    public string? PaymentTerms { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;

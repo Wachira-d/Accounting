@@ -40,7 +40,18 @@ public record CreateDocumentRequest(
     SensitivityKind Sensitivity = SensitivityKind.None,
     // CreditNote reason — required when DocumentType=CreditNote. Determines
     // whether stock restocks (Return only) vs pure financial adjustment.
-    CreditNoteReason? CreditNoteReason = null);
+    CreditNoteReason? CreditNoteReason = null,
+    // ===== Supplier-side tax invoice metadata (PurchaseInvoice / supplier-issued docs) =====
+    // SupplierInvoiceNumber = partner's own running number (distinct from
+    // our DocumentNumber) — needed for VAT-audit reconciliation against
+    // the supplier statement. SupplierTaxInvoiceDate = the date on the
+    // partner's tax invoice; controls the VAT claim period (Revenue
+    // Code §82/4) when we book a bill late. CreditDays / PaymentTerms
+    // capture the agreed payment window for DSO/DPO + DueDate auto-fill.
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    int? CreditDays = null,
+    string? PaymentTerms = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -83,7 +94,11 @@ public record UpdateDocumentRequest(
     string? CertifierPosition = null,
     string? WitnessName = null,
     string? WitnessPosition = null,
-    DateTime? PaymentDate = null);
+    DateTime? PaymentDate = null,
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    int? CreditDays = null,
+    string? PaymentTerms = null);
 
 public record DocumentResponse(
     Guid Id,
@@ -155,7 +170,12 @@ public record DocumentResponse(
     // CreditNote reason — set when DocumentType=CreditNote so the UI can
     // display "ลดราคา" / "คืนสินค้า" etc. Drives whether ApplyStockMovements
     // restocks on approval (only Return does).
-    CreditNoteReason? CreditNoteReason = null);
+    CreditNoteReason? CreditNoteReason = null,
+    // Supplier-side tax invoice metadata for PurchaseInvoice rows.
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    int? CreditDays = null,
+    string? PaymentTerms = null);
 
 public record DocumentLineResponse(
     Guid Id,

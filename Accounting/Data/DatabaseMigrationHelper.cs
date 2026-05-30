@@ -3652,6 +3652,16 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "ApprovalRules" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_ApprovalRules_Project" ON "ApprovalRules" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
 
+            // Document gains supplier-side tax invoice metadata for
+            // PurchaseInvoice + credit-term fields. Indexed by
+            // (CompanyId, SupplierInvoiceNumber) so partner-statement
+            // reconciliation can find a row in one hop.
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SupplierInvoiceNumber" varchar(100) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SupplierTaxInvoiceDate" timestamp NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CreditDays" integer NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentTerms" varchar(100) NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Supplier_Invoice" ON "Documents" ("CompanyId", "SupplierInvoiceNumber") WHERE "SupplierInvoiceNumber" IS NOT NULL AND "IsDeleted" = false;""",
+
             // Employee EmployeeCode uniqueness is now scoped to active
             // (non-soft-deleted) rows so partners can recreate / restore
             // an employee code after deletion. Drop the legacy unique

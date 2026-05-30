@@ -280,8 +280,21 @@ public class DocumentService : IDocumentService
                 CreditNoteReason = request.DocumentType == DocumentType.CreditNote
                     ? request.CreditNoteReason
                     : null,
+                // Counterparty tax-invoice metadata — only meaningful for
+                // supplier-issued doc types (PurchaseInvoice, CertificateInLieu).
+                // Stored unconditionally though so partner sync can round-trip.
+                SupplierInvoiceNumber = request.SupplierInvoiceNumber,
+                SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate,
+                CreditDays = request.CreditDays,
+                PaymentTerms = request.PaymentTerms,
                 CreatedBy = createdBy
             };
+
+            // Auto-fill DueDate from CreditDays when caller didn't provide one
+            // explicitly. Keeps DSO/DPO reports working even when the partner
+            // API only sends credit terms.
+            if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value > 0)
+                doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
 
             // Auto-link Revenue Contract via Project when not explicitly provided.
             // If document is tagged to a project that has exactly one active
@@ -552,6 +565,10 @@ public class DocumentService : IDocumentService
         if (request.CustomTermsAndConditions != null) doc.CustomTermsAndConditions = request.CustomTermsAndConditions;
         if (request.RevenueContractId.HasValue) doc.RevenueContractId = request.RevenueContractId.Value;
         if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
+        if (request.SupplierInvoiceNumber != null) doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
+        if (request.SupplierTaxInvoiceDate.HasValue) doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
+        if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
+        if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -3693,7 +3710,11 @@ public class DocumentService : IDocumentService
         Currency: d.Currency,
         ExchangeRate: d.ExchangeRate,
         Sensitivity: d.Sensitivity,
-        CreditNoteReason: d.CreditNoteReason);
+        CreditNoteReason: d.CreditNoteReason,
+        SupplierInvoiceNumber: d.SupplierInvoiceNumber,
+        SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
+        CreditDays: d.CreditDays,
+        PaymentTerms: d.PaymentTerms);
 
     /// <summary>Build the redacted stub returned to API consumers who lack
     /// permission to see a sensitive record. Keeps the Id, DocumentNumber, and
