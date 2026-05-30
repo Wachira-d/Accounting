@@ -175,9 +175,46 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                     .ToListAsync(ct)
                 : new List<GlAccountPrompt.VendorHistoricalAccount>();
 
+            // Source-invoice context — the user is paying ONE line of a
+            // larger invoice. AI's job gets much easier when it can see
+            // the OTHER lines (was the invoice mostly rent + a small
+            // service fee? → service fee is probably 5306 not 5102), the
+            // total + balance due (partial payment?), and whether WHT
+            // was already withheld upstream (so we don't double-debit).
+            var sourceContext = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == sourceInvoiceId)
+                .Select(d => new
+                {
+                    d.DocumentNumber,
+                    d.DocumentType,
+                    d.TotalAmount,
+                    d.BalanceDue,
+                    d.WithholdingTaxAmount,
+                    d.VatAmount,
+                    OtherLines = d.Lines
+                        .Where(l => !l.IsDeleted)
+                        .Select(l => new {
+                            l.Description, l.Amount, AccountCode = l.Account != null ? l.Account.AccountCode : null,
+                        }).Take(6).ToList(),
+                })
+                .FirstOrDefaultAsync(ct);
+
+            var enrichedDescription = sourceContext == null ? lineDescription
+                : $"{lineDescription}\nSource invoice: {sourceContext.DocumentNumber} " +
+                  $"(total {sourceContext.TotalAmount:N2}, balance {sourceContext.BalanceDue:N2}" +
+                  (sourceContext.WithholdingTaxAmount > 0
+                      ? $", WHT already {sourceContext.WithholdingTaxAmount:N2})"
+                      : ")") +
+                  (sourceContext.OtherLines.Count > 1
+                      ? "\nSibling lines: " + string.Join("; ",
+                          sourceContext.OtherLines.Take(5).Select(l =>
+                              $"{l.Description} {l.Amount:N0}" +
+                              (l.AccountCode != null ? $" → {l.AccountCode}" : "")))
+                      : "");
+
             var req = GlAccountPrompt.Build(
                 companyId, vendorName, vendorTaxId, vendorIndustry,
-                lineDescription, amount, currency,
+                enrichedDescription, amount, currency,
                 candidates, history,
                 localBestAccountCode, localConfidence,
                 featureKey: AiFeatureKey.PaymentVoucherAccountingSuggestion,

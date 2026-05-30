@@ -247,11 +247,26 @@ Respond ONLY as JSON:
   ""suggested_actions"": [""<rate_percent: 1|2|3|5|10>""]
 }";
 
+    public sealed record VendorWhtHistory(
+        string IncomeCode,
+        decimal Rate,
+        int TimesUsed,
+        decimal AvgAmount,
+        DateTime LastUsedAt);
+
     public static AiRequest Build(
         Guid companyId, Guid? documentId,
         string? vendorName, string? vendorTaxId, string? vendorType,
         string lineDescription, decimal amount,
-        string? localGuess, decimal? localConfidence)
+        string? localGuess, decimal? localConfidence,
+        // New optional context — when the orchestrator has past PND.3/53
+        // entries for this vendor, AI gets a "what did this vendor get
+        // taxed at last time + most recent month" anchor that resolves
+        // most ambiguity between 40(8) vs 40(5) vs 40(2).
+        IReadOnlyList<VendorWhtHistory>? vendorWhtHistory = null,
+        string? vendorIndustry = null,
+        decimal? vendorAvg6Months = null,
+        decimal? wht3ThresholdReached = null)
     {
         var payload = new
         {
@@ -260,9 +275,31 @@ Respond ONLY as JSON:
             {
                 name = vendorName,
                 tax_id = vendorTaxId,
-                type = vendorType,   // "JuristicPerson" | "Personal" | null
+                type = vendorType,                  // "JuristicPerson" | "Personal" | null
+                industry = vendorIndustry,
+                avg_amount_6mo = vendorAvg6Months,  // baseline for "is this contract scale unusual?"
             },
-            line = new { description = lineDescription, amount },
+            // Vendor-specific WHT history is the highest-leverage signal —
+            // a vendor we've taxed at 40(8) 3% 12 months running is far
+            // more likely to be the same again than a fresh inference.
+            vendor_wht_history = vendorWhtHistory?.Select(h => new
+            {
+                income_code = h.IncomeCode,
+                rate_percent = h.Rate * 100,
+                times_used = h.TimesUsed,
+                avg_amount = h.AvgAmount,
+                last_used = h.LastUsedAt.ToString("yyyy-MM-dd"),
+            }),
+            line = new
+            {
+                description = lineDescription,
+                amount,
+                // Threshold flags for the §3 / §2 rules. The 1000-baht
+                // cumulative-per-year threshold is the most common
+                // mistake; surface it upfront.
+                under_1000_threshold = amount < 1000m,
+                wht3_year_to_date = wht3ThresholdReached,
+            },
             local_model = new { pick = localGuess, confidence = localConfidence },
         };
         return new AiRequest
@@ -273,11 +310,11 @@ Respond ONLY as JSON:
             UserPromptJson = JsonSerializer.Serialize(payload),
             LocalPrimaryAnswer = localGuess,
             LocalConfidence = localConfidence,
-            LocalModelVersion = "WhtHeuristic-v1",
+            LocalModelVersion = "WhtHeuristic-v2",
             SourceEntityType = "Document",
             SourceEntityId = documentId,
             CacheTtlOverrideDays = 30,
-            MaxTokensOverride = 200,
+            MaxTokensOverride = 280,
         };
     }
 }
