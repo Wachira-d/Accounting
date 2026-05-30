@@ -1152,6 +1152,16 @@ public enum AiFeatureKey
     /// + scenario suggestions.</summary>
     ReorderForecast = 24,
 
+    /// <summary>Whole-month bank reconciliation in ONE call. Bundles
+    /// every unmatched bank txn + every open AR/AP/JE/Payment + the
+    /// company + bank-account context and asks AI to produce a complete
+    /// match plan, surface unmatched lines with explicit "missing data"
+    /// reasons, and detect cross-line patterns (split payments, lumped
+    /// settlements) the per-txn flow misses. Distinct from
+    /// BankStatementMatch because the input shape + output shape are
+    /// batch-orientated; accuracy tracked separately.</summary>
+    BulkBankStatementMatch = 25,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

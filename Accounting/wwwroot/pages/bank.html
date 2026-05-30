@@ -113,7 +113,10 @@
           <h3 class="card-title">AI กระทบยอดอัตโนมัติ</h3>
           <div class="flex gap-2">
             <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่พื้นฐาน</button>
-            <button class="btn btn-sm btn-primary" onclick="Page.runAiMatch()" id="btnAiMatch" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">AI วิเคราะห์และจับคู่</button>
+            <button class="btn btn-sm btn-primary" onclick="Page.runAiMatch()" id="btnAiMatch" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">AI จับคู่ (heuristic)</button>
+            <button class="btn btn-sm btn-primary" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
+              title="โยน bank txn + เอกสารเปิด + JE + บริบทบริษัททั้งหมดให้ DeepSeek match พร้อมกัน — รายงานข้อมูลที่ขาดด้วย"
+              style="background:linear-gradient(135deg,#ec4899,#f43f5e)">🧠 AI match ทั้งเดือน (ปุ่มเดียว)</button>
           </div>
         </div>
         <div id="aiMatchStatus" style="padding:0 16px 12px;display:none">
@@ -985,6 +988,165 @@
           Layout.toast(e.message, 'error');
         }
       },
+      // === BULK AI MATCH (entire month in one DeepSeek call) ===
+      async runBulkAiMatch() {
+        if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        // Default to the current month — user can later refine in the modal.
+        const today = new Date();
+        const from = new Date(today.getFullYear(), today.getMonth(), 1);
+        const to = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        const fromStr = Layout.toDateInput(from);
+        const toStr = Layout.toDateInput(to);
+        const btn = document.getElementById('btnBulkAi');
+        btn.disabled = true; btn.textContent = '🧠 AI กำลังคิด ทั้งเดือน...';
+        try {
+          const accId = this.selectedAccount.id;
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match?fromDate=${fromStr}&toDate=${toStr}`, {});
+          this.bulkPlan = r.data;
+          btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
+          this.renderBulkPlan(r.data, r.message);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
+          Layout.toast(e.message, 'error');
+        }
+      },
+
+      renderBulkPlan(plan, message) {
+        let modal = document.getElementById('bulkAiPlanModal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'bulkAiPlanModal';
+          modal.className = 'modal-overlay';
+          modal.innerHTML = `<div class="modal" style="max-width:960px;width:95%;max-height:88vh;overflow:auto"><div id="bulkPlanBody"></div></div>`;
+          document.body.appendChild(modal);
+        }
+        const esc = s => (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const fmtAmt = n => (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const statusColor = plan.status === 'Success' ? '#16a34a'
+          : plan.status === 'Truncated' ? '#d97706'
+          : plan.status === 'AiUnavailable' ? '#dc2626' : '#64748b';
+        const warningsBlock = (plan.warnings || []).length === 0 ? '' : `
+          <div style="background:#fef3c7;border-left:4px solid #d97706;border-radius:6px;padding:10px 14px;margin:12px 0">
+            <div style="font-weight:600;color:#92400e;margin-bottom:4px">⚠️ คำเตือน</div>
+            <ul style="margin:0;padding-left:18px;font-size:12px;color:#92400e">
+              ${plan.warnings.map(w => `<li>${esc(w)}</li>`).join('')}
+            </ul>
+          </div>`;
+        const missingBlock = (plan.missingData || []).length === 0 ? '' : `
+          <div style="background:#fee2e2;border-left:4px solid #dc2626;border-radius:6px;padding:10px 14px;margin:12px 0">
+            <div style="font-weight:600;color:#dc2626;margin-bottom:6px">🔍 ข้อมูลที่ขาด — ${plan.missingData.length} รายการ</div>
+            <table style="width:100%;font-size:12px">
+              <thead><tr style="color:#dc2626"><th style="text-align:left">Bank txn</th><th style="text-align:left">ประเภทที่ขาด</th><th style="text-align:left">รายละเอียด</th></tr></thead>
+              <tbody>${plan.missingData.map(m => `<tr>
+                <td style="font-family:monospace">${esc(m.bankTxnId.slice(0,8))}…</td>
+                <td>${esc(m.missingType)}</td>
+                <td>${esc(m.hint)}</td>
+              </tr>`).join('')}</tbody>
+            </table>
+            <div style="font-size:11px;color:#7f1d1d;margin-top:6px">💡 สร้างเอกสารที่ขาดก่อน แล้วยิง AI อีกครั้ง — รายการที่เคยขาดจะ match ได้</div>
+          </div>`;
+        const matchRows = (plan.matches || []).map((m, idx) => {
+          const conf = (m.confidence * 100).toFixed(0);
+          const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
+          const cands = (m.candidates || []).map(c => `${c.candidateType}:${c.candidateId.slice(0,8)}… (${fmtAmt(c.amount)})`).join(' + ');
+          return `<tr>
+            <td><input type="checkbox" checked data-bulkidx="${idx}" class="bulkMatchCheck"></td>
+            <td style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</td>
+            <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
+            <td style="font-size:12px">${esc(cands)}</td>
+            <td style="text-align:right;color:${confColor};font-weight:600">${conf}%</td>
+            <td style="font-size:11px;color:#475569">${esc(m.reasoning || '')}</td>
+          </tr>`;
+        }).join('');
+        const unmatchedRows = (plan.unmatched || []).map(u => `<tr>
+          <td style="font-family:monospace;font-size:11px">${esc(u.bankTxnId.slice(0,8))}…</td>
+          <td style="font-size:12px">${esc(u.reason)}</td>
+          <td style="font-size:12px;color:#1d4ed8">${esc(u.suggestedAction || '—')}</td>
+        </tr>`).join('');
+        document.getElementById('bulkPlanBody').innerHTML = `
+          <h3 style="margin:0 0 4px">🧠 AI match ทั้งเดือน — ผลการวิเคราะห์</h3>
+          <p style="font-size:13px;color:#64748b;margin:0 0 12px">${esc(message || '')}</p>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            <span style="background:${statusColor};color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600">${plan.status}</span>
+            <span style="font-size:13px;color:#475569">Bank txn พิจารณา: <b>${plan.bankTxnsConsidered}</b></span>
+            <span style="font-size:13px;color:#475569">ผู้สมัคร: <b>${plan.candidatesConsidered}</b></span>
+            <span style="font-size:13px;color:#16a34a">Match: <b>${(plan.matches||[]).length}</b></span>
+            <span style="font-size:13px;color:#d97706">Unmatched: <b>${(plan.unmatched||[]).length}</b></span>
+            <span style="font-size:13px;color:#dc2626">Missing data: <b>${(plan.missingData||[]).length}</b></span>
+          </div>
+          ${plan.reasoning ? `<div style="background:#f8fafc;padding:10px 14px;border-radius:6px;font-size:13px;color:#475569;margin-bottom:12px">💭 ${esc(plan.reasoning)}</div>` : ''}
+          ${warningsBlock}
+          ${missingBlock}
+          ${(plan.matches||[]).length === 0 ? '' : `
+          <h4 style="margin:18px 0 6px">✅ Match ที่เสนอ (เลือกที่ต้องการแล้วกดยืนยัน)</h4>
+          <div style="overflow:auto;max-height:380px;border:1px solid #e2e8f0;border-radius:8px">
+            <table style="width:100%;font-size:12px">
+              <thead style="position:sticky;top:0;background:#f1f5f9">
+                <tr><th></th><th>Bank</th><th>Type</th><th>Candidates</th><th style="text-align:right">Conf</th><th>Reasoning</th></tr>
+              </thead>
+              <tbody>${matchRows}</tbody>
+            </table>
+          </div>`}
+          ${(plan.unmatched||[]).length === 0 ? '' : `
+          <h4 style="margin:18px 0 6px">⚠️ Bank txn ที่ AI ไม่สามารถ match ได้</h4>
+          <table style="width:100%;font-size:12px;border:1px solid #e2e8f0;border-radius:8px;border-collapse:collapse">
+            <thead style="background:#f1f5f9"><tr><th>Bank</th><th>เหตุผล</th><th>คำแนะนำ</th></tr></thead>
+            <tbody>${unmatchedRows}</tbody>
+          </table>`}
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('bulkAiPlanModal')">ปิด</button>
+            ${(plan.matches||[]).length === 0 ? '' :
+              `<button class="btn btn-primary" onclick="Page.applyBulkPlan()">ยืนยัน match ที่เลือก</button>`}
+          </div>`;
+        Layout.openModal('bulkAiPlanModal');
+      },
+
+      async applyBulkPlan() {
+        if (!this.bulkPlan) return;
+        const checks = Array.from(document.querySelectorAll('.bulkMatchCheck:checked'));
+        if (checks.length === 0) { Layout.toast('เลือกอย่างน้อย 1 รายการ', 'error'); return; }
+        const matches = checks.map(el => this.bulkPlan.matches[+el.dataset.bulkidx]);
+        const api = Layout.api(); if (!api) return;
+        // Translate the AI plan into the existing BatchReconcileRequest
+        // contract (MatchType: "Payment" | "JournalEntry" | "Multiple")
+        // so we route through the same audited apply path.
+        const skipped = [];
+        const items = matches.flatMap(m => {
+          const payIds = m.candidates.filter(c => c.candidateType === 'Payment').map(c => c.candidateId);
+          const jeIds  = m.candidates.filter(c => c.candidateType === 'JournalEntry').map(c => c.candidateId);
+          const allIds = [...payIds, ...jeIds];
+          if (allIds.length === 0) {
+            skipped.push(m.bankTxnId); return [];
+          }
+          if (allIds.length === 1 && payIds.length === 1) {
+            return [{ bankTransactionId: m.bankTxnId, matchType: 'Payment',
+                      matchedPaymentId: payIds[0], matchedJournalEntryId: null, matchedEntryIds: null }];
+          }
+          if (allIds.length === 1 && jeIds.length === 1) {
+            return [{ bankTransactionId: m.bankTxnId, matchType: 'JournalEntry',
+                      matchedPaymentId: null, matchedJournalEntryId: jeIds[0], matchedEntryIds: null }];
+          }
+          // Multiple (M:1 split) — server stores all IDs as JSON.
+          return [{ bankTransactionId: m.bankTxnId, matchType: 'Multiple',
+                    matchedPaymentId: null, matchedJournalEntryId: null, matchedEntryIds: allIds }];
+        });
+        if (items.length === 0) {
+          Layout.toast('ไม่มีรายการ match ที่ทำได้ (อาจต้องสร้าง Payment ก่อน)', 'error');
+          return;
+        }
+        try {
+          await api.batchReconcile({ items });
+          let msg = `ยืนยัน match แล้ว ${items.length} รายการ`;
+          if (skipped.length > 0) msg += ` (ข้าม ${skipped.length} รายการที่ไม่มี Payment/JE)`;
+          Layout.toast(msg);
+          Layout.closeModal('bulkAiPlanModal');
+          await this.loadTransactions();
+          await this.loadReconciliationSummary();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       renderAiSuggestions() {
         const r = this.aiResult;
         if (!r || !r.suggestions?.length) {

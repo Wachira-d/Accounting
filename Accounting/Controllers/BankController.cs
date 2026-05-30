@@ -103,6 +103,39 @@ public class BankController : ControllerBase
             $"AI วิเคราะห์เสร็จ: พบ {result.SuggestionsFound} คู่ที่แนะนำ"));
     }
 
+    /// <summary>One-shot bulk reconciliation — bundles a whole month
+    /// of unmatched bank txns + every open AR/AP/JE/Payment + company
+    /// context into a single AI call. Returns a complete match plan
+    /// (1:1, M:1, 1:M), unmatched list with reasons, and "missing
+    /// data" hints for memos that cite non-existent doc numbers.
+    ///
+    /// One button → one decision per line — user accepts, rejects, or
+    /// edits each proposed match in the UI; bulk-confirmed matches are
+    /// then applied via /batch-reconcile so the existing atomic write
+    /// path stays the single source of truth.</summary>
+    [HttpPost("accounts/{accountId:guid}/bulk-ai-match")]
+    public async Task<ActionResult<ApiResponse<Services.Implementations.Bank.BulkAiMatchPlan>>> BulkAiMatch(
+        Guid companyId, Guid accountId,
+        [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromServices] Services.Implementations.Bank.IBulkBankAiMatchService bulk,
+        CancellationToken ct)
+    {
+        if (toDate < fromDate)
+            return BadRequest(new ApiResponse<object>(false, null, "toDate ต้องอยู่หลัง fromDate"));
+        if ((toDate - fromDate).TotalDays > 92)
+            return BadRequest(new ApiResponse<object>(false, null, "ช่วงเวลาเกิน 92 วัน — กรุณาแบ่งเป็นช่วงสั้นกว่า"));
+
+        var plan = await bulk.ProposeAsync(companyId, accountId, fromDate, toDate, ct);
+        var msg = plan.Status switch
+        {
+            "Success" => $"AI เสนอ match {plan.Matches.Count} รายการ, ไม่ตรง {plan.Unmatched.Count}, ขาดข้อมูล {plan.MissingData.Count}",
+            "Truncated" => $"ข้อมูลเยอะ — ส่งให้ AI แค่บางส่วน. AI เสนอ match {plan.Matches.Count} รายการ",
+            "AiUnavailable" => "AI ใช้งานไม่ได้ — กรุณา match ด้วยมือ",
+            _ => plan.Warnings.FirstOrDefault() ?? "ไม่มีข้อมูลให้ match",
+        };
+        return Ok(new ApiResponse<Services.Implementations.Bank.BulkAiMatchPlan>(true, plan, msg));
+    }
+
     [HttpGet("accounts/{accountId:guid}/reconciliation-summary")]
     public async Task<ActionResult<ApiResponse<ReconciliationSummaryDto>>> GetReconciliationSummary(
         Guid companyId, Guid accountId)

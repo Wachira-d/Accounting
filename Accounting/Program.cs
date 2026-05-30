@@ -256,6 +256,10 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Risk.IVendorRiskS
     Accounting.Services.Implementations.Risk.VendorRiskScoringService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Risk.ISmartApprovalRoutingService,
     Accounting.Services.Implementations.Risk.SmartApprovalRoutingService>();
+// One-shot whole-month bank reconciliation — bundles bank txns + open
+// docs/JEs/payments + company context into a single DeepSeek call.
+builder.Services.AddScoped<Accounting.Services.Implementations.Bank.IBulkBankAiMatchService,
+    Accounting.Services.Implementations.Bank.BulkBankAiMatchService>();
 // Sentence-embedding service for Thai short text (vendor names, line
 // descriptions). Try ONNX MiniLM first — if the LFS-tracked model file
 // is present and loadable, register it; otherwise transparently fall
