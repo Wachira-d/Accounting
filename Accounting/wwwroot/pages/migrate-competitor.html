@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>นำเข้าจาก Express/PEAK/FlowAccount — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">นำเข้าจาก Express / PEAK / FlowAccount</h2>
+        <p class="page-subtitle">Sniff รูปแบบไฟล์ + preview + dry-run ก่อน commit — รองรับ contacts; entities อื่นเพิ่มได้ใน framework</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>1. อัปโหลด + Preview</h3>
+      <div style="margin-top:14px">
+        <input type="file" id="fileInput" accept=".csv,.tsv,.txt" class="form-input">
+      </div>
+      <div style="margin-top:14px">
+        <button class="btn btn-secondary" onclick="Page.preview()">Preview ก่อน</button>
+        <button class="btn btn-warning" onclick="Page.import(true)" style="margin-left:8px">Dry-run import</button>
+        <button class="btn btn-primary" onclick="Page.import(false)" style="margin-left:8px">Commit import</button>
+      </div>
+      <div id="result" style="margin-top:18px"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>รองรับรูปแบบ</h3>
+      <ul style="font-size:13px;line-height:1.8">
+        <li><b>Express</b> — TSV/CSV หัวคอลัมน์ภาษาไทย: รหัสลูกค้า · ชื่อ · เลขประจำตัวผู้เสียภาษี · ที่อยู่</li>
+        <li><b>PEAK</b> — CSV หัวคอลัมน์ camelCase: contactCode · contactName · taxNumber · address</li>
+        <li><b>FlowAccount</b> — CSV หัวคอลัมน์ผสม: name (TH) · name (EN) · tax id · phone</li>
+      </ul>
+      <div style="font-size:12px;color:#64748b;margin-top:10px">💡 ระบบจะ skip contact ที่มี taxId ซ้ำกับ DB เดิม (idempotent)</div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('migrate-competitor')) return;
+        Layout.setTitle('ย้ายจาก Express/PEAK/FlowAccount');
+      },
+      _esc(s) { return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      async preview() {
+        const f = document.getElementById('fileInput').files[0];
+        if (!f) { Layout.toast('เลือกไฟล์ก่อน', 'error'); return; }
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        const fd = new FormData(); fd.append('file', f);
+        try {
+          const r = await fetch(`/api/companies/${cid}/migration/preview`,
+            { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const d = j.data;
+          document.getElementById('result').innerHTML = `
+            <div class="card" style="background:#f0f9ff;border:1px solid #bae6fd">
+              <h3 style="margin:0 0 10px">Preview: ${d.sourceSystem} (${d.entityKind}) · ${d.totalRows} แถว</h3>
+              <div style="overflow:auto">
+                <table class="data-table" style="font-size:11px">
+                  <thead><tr>${d.columns.map(c => `<th>${this._esc(c)}</th>`).join('')}</tr></thead>
+                  <tbody>${d.sampleRows.slice(0,20).map(r => `<tr>${d.columns.map(c => `<td>${this._esc(r[c] || '')}</td>`).join('')}</tr>`).join('')}</tbody>
+                </table>
+              </div>
+            </div>`;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async import(dryRun) {
+        const f = document.getElementById('fileInput').files[0];
+        if (!f) { Layout.toast('เลือกไฟล์ก่อน', 'error'); return; }
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        const fd = new FormData();
+        fd.append('file', f); fd.append('dryRun', dryRun);
+        fd.append('skipDuplicates', 'true'); fd.append('sourceTag', 'manual-ui');
+        try {
+          const r = await fetch(`/api/companies/${cid}/migration/import`,
+            { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const d = j.data;
+          document.getElementById('result').innerHTML = `
+            <div class="card" style="background:${dryRun ? '#fef3c7' : '#dcfce7'};border:1px solid ${dryRun ? '#fcd34d' : '#86efac'}">
+              <h3 style="margin:0 0 10px">${dryRun ? '🧪 Dry-run' : '✅ Commit'}: ${d.sourceSystem}</h3>
+              <div>นำเข้า ${d.rowsImported}/${d.rowsRead} · ข้าม ${d.rowsSkipped} · ผิดพลาด ${d.rowsFailed}</div>
+              ${d.errors?.length ? `<details style="margin-top:10px"><summary>Errors (${d.errors.length})</summary><pre style="background:#fff;padding:10px;border-radius:6px;max-height:200px;overflow:auto">${this._esc(d.errors.join('\n'))}</pre></details>` : ''}
+            </div>`;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

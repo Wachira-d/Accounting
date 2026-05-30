@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>งานผลิต & BOM — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">งานผลิต (Production Orders) & BOM</h2>
+        <p class="page-subtitle">Bill of Materials → production order → backflush components at WAC → produce finished goods</p>
+      </div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงานผลิต</button>
+    </div>
+
+    <div class="card">
+      <h3>รายการงานผลิต</h3>
+      <div class="table-container" style="margin-top:12px">
+        <table class="data-table">
+          <thead><tr><th>เลขที่</th><th>แผน</th><th>ผลิตเสร็จ</th><th>ต้นทุนรวม</th><th>สถานะ</th><th>การจัดการ</th></tr></thead>
+          <tbody id="ordersBody"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">โหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="createModal" class="modal-overlay" style="display:none">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">สร้างงานผลิต</h3>
+        <label>เลขที่งาน</label><input id="orderNumber" class="form-input" placeholder="PROD-2025-001">
+        <label>BOM Id</label><input id="bomId" class="form-input" placeholder="bom guid">
+        <label>จำนวนวางแผน</label><input id="plannedQty" type="number" class="form-input">
+        <label>วันที่เริ่ม</label><input id="plannedStart" type="date" class="form-input">
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeCreate()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.create()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('production')) return;
+        Layout.setTitle('งานผลิต');
+        document.getElementById('plannedStart').value = new Date().toISOString().slice(0,10);
+        await this.load();
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2 }); },
+      async load() {
+        const tbody = document.getElementById('ordersBody');
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/mfg/production-orders`);
+          const rows = r.data || [];
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">ยังไม่มีงานผลิต</td></tr>'; return;
+          }
+          tbody.innerHTML = rows.map(o => `<tr>
+            <td>${o.orderNumber}</td><td>${this._fmt(o.plannedQty)}</td>
+            <td>${this._fmt(o.completedQty)}</td>
+            <td style="text-align:right">${this._fmt(o.cumulativeComponentCost)}</td>
+            <td>${o.status}</td>
+            <td>${o.status === 'Planned' ? `<button class="btn btn-sm btn-warning" onclick="Page.checkShortage('${o.id}')">เช็ค shortage</button> <button class="btn btn-sm btn-success" onclick="Page.release('${o.id}')">ปล่อยผลิต</button>` : o.status === 'Released' ? `<button class="btn btn-sm btn-success" onclick="Page.complete('${o.id}', ${o.plannedQty})">บันทึกผลิตเสร็จ</button>` : '-'}</td>
+          </tr>`).join('');
+        } catch (e) { tbody.innerHTML = `<tr><td colspan="6" style="color:#dc2626;text-align:center">${e.message}</td></tr>`; }
+      },
+      openCreate() { document.getElementById('createModal').style.display = 'flex'; },
+      closeCreate() { document.getElementById('createModal').style.display = 'none'; },
+      async create() {
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/companies/${cid}/mfg/production-orders`, {
+            orderNumber: document.getElementById('orderNumber').value,
+            bomId: document.getElementById('bomId').value,
+            plannedQty: +document.getElementById('plannedQty').value,
+            plannedStartAt: document.getElementById('plannedStart').value,
+            notes: null,
+          });
+          this.closeCreate();
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async checkShortage(id) {
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.get(`/api/companies/${cid}/mfg/production-orders/${id}/shortages`);
+          const s = r.data.shortages || [];
+          if (s.length === 0) { Layout.toast('วัตถุดิบครบ พร้อมผลิต'); return; }
+          alert(`ขาด component:\n${s.map(x => `${x.productName}: ขาด ${x.shortage}`).join('\n')}`);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async release(id) {
+        const cid = Layout.getCompanyId();
+        try { await API.post(`/api/companies/${cid}/mfg/production-orders/${id}/release`, {}); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async complete(id, planned) {
+        const qty = +(prompt('จำนวนที่ผลิตเสร็จ', planned) || 0);
+        if (!qty) return;
+        const cid = Layout.getCompanyId();
+        try {
+          await API.post(`/api/companies/${cid}/mfg/production-orders/${id}/complete`,
+            { completedQty: qty, completedAt: new Date().toISOString() });
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

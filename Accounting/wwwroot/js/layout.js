@@ -634,13 +634,15 @@ const Layout = {
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition',
       description: 'ASC 606 / TFRS 15 — รับรู้รายได้ตาม performance obligation' },
 
-    { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'บันทึกการซื้อ ค่าใช้จ่าย ใบสำคัญจ่าย ชำระเงิน' },
+    { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'PR → PO → GRN → ใบกำกับ → ชำระ — full procurement chain' },
     { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine', _i18nKey: 'nav.purchases',
-      description: 'ใบสั่งซื้อ · ใบรับสินค้า · ใบกำกับภาษีซื้อ' },
+      description: 'PR → PO → ใบรับสินค้า (GRN) → ใบกำกับภาษีซื้อ — partial fulfilment support' },
     { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense', feature: 'DocumentEngine', _i18nKey: 'nav.expenseDocs',
       description: 'ใบสำคัญจ่าย · ใบเสร็จรับเงินจากผู้ขาย · ใบลดหนี้/เพิ่มหนี้ฝั่งซื้อ' },
     { id: 'payments', label: 'ชำระเงิน / รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine', _i18nKey: 'nav.payments',
-      description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว' },
+      description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว · cheque payment' },
+    { id: 'cheques', label: 'จัดการเช็ค', icon: '✍️', href: '/pages/cheques.html', feature: 'DocumentEngine',
+      description: 'เปิดเล่มเช็ค · ออกเช็ค · บันทึกเช็คคืน · ติดตามเช็คคงค้าง — Issued / Cleared / Bounced / Voided' },
 
     // ───── 👥 พนักงาน (Self-Service) ─────
     // Self-service flows the EMPLOYEE initiates (not the accountant).
@@ -656,6 +658,8 @@ const Layout = {
       description: '§65 ทวิ — กรณี vendor ออกใบเสร็จไม่ได้ (ตลาดสด · taxi · ใบเสร็จหาย) → อนุมัติแล้วระบบสร้างใบรับรองแทนใบเสร็จให้อัตโนมัติ' },
     { id: 'leave-my', label: 'ขอลา / ดูสิทธิ์ลา', icon: '🏖️', href: '/pages/leave.html', feature: 'Payroll',
       description: 'ดูโควต้าลาคงเหลือ · ขอลาใหม่ · ดูประวัติของฉัน · รองรับครึ่งวัน' },
+    { id: 'mobile-expense', label: 'เบิกค่าใช้จ่าย (มือถือ)', icon: '📱', href: '/mobile-expense.html', feature: 'ExpenseManagement',
+      description: 'หน้าเบิกค่าใช้จ่ายแบบ mobile — ถ่ายรูปใบเสร็จ + กรอกยอด + ส่งจากภาคสนาม' },
     // quick-expense was removed 2026 — bypassed VAT controls, vendor
     // linkage, approval workflow; created data that failed audit. All
     // field expenses now go through expense.html (มี/ไม่มี ใบเสร็จ)
@@ -683,6 +687,10 @@ const Layout = {
       description: 'Stock card · Aging stock · Movement · Valuation' },
     { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹', href: '/pages/supplies.html', feature: 'Inventory', _i18nKey: 'nav.supplies',
       description: 'ของใช้ในออฟฟิศ — เบิกตามต้องการ ไม่ตัดสต็อกขาย' },
+    { id: 'production', label: 'งานผลิต & BOM', icon: '🏭', href: '/pages/production.html', feature: 'Inventory',
+      description: 'Bill of Materials · production order · backflush components → finished goods at WAC' },
+    { id: 'consignment', label: 'สินค้าฝากขาย / รับฝาก', icon: '📦', href: '/pages/consignment.html', feature: 'Inventory',
+      description: 'Inbound (ของ vendor วางที่เรา จ่ายเมื่อใช้) · Outbound (ของเราอยู่ที่ลูกค้า รับรู้รายได้เมื่อขาย)' },
 
     { section: 'การเงิน / ธนาคาร', icon: '🏦', description: 'บัญชีธนาคาร กระทบยอด สินเชื่อ สกุลเงินต่างประเทศ' },
     { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html', feature: 'BankReconciliation', _i18nKey: 'nav.bank',
@@ -690,7 +698,9 @@ const Layout = {
     { id: 'loans', label: 'สินเชื่อ / เงินกู้', icon: '💰', href: '/pages/loans.html', feature: 'LoanManagement', _i18nKey: 'nav.loans',
       description: 'จัดการเงินกู้ — ผ่อนต้น+ดอกเบี้ย · ตารางผ่อน · สรุปดอกจ่าย' },
     { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html', feature: 'MultiCurrency', _i18nKey: 'nav.multiCurrency',
-      description: 'อัตราแลกเปลี่ยน · กำไร/ขาดทุนจากอัตราแลกเปลี่ยน · revaluation' },
+      description: 'อัตราแลกเปลี่ยน · กำไร/ขาดทุนจากอัตราแลกเปลี่ยน · period-end revaluation' },
+    { id: 'petty-cash', label: 'เงินสดย่อย', icon: '🪙', href: '/pages/petty-cash.html', feature: 'BasicAccounting',
+      description: 'เปิดเงินสดย่อยตามคน · disbursement · top-up · ตรวจนับ — imprest system' },
 
     { section: 'บัญชี', icon: '📚', description: 'ผังบัญชี สมุดรายวัน บัญชีแยกประเภท งวด สินทรัพย์ ปิดสิ้นปี' },
     { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html', feature: 'BasicAccounting', _i18nKey: 'nav.accounts',
@@ -718,7 +728,9 @@ const Layout = {
     { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html', feature: 'EtaxInvoice', _i18nKey: 'nav.etax',
       description: 'ใบกำกับภาษีอิเล็กทรอนิกส์ — PDF/A-3 + XML ฝัง · ส่งกรมสรรพากร' },
     { id: 'tax-export', label: 'Export ยื่นภาษี / SSO', icon: '📤', href: '/pages/tax-export.html', feature: 'TaxManagement', _i18nKey: 'nav.taxExport',
-      description: 'ไฟล์ TXT ตามรูปแบบกรมสรรพากร + ประกันสังคม' },
+      description: 'ไฟล์ TXT ตามรูปแบบกรมสรรพากร + ประกันสังคม · ภงด.91 รายปี · RD ACK tracking' },
+    { id: 'stamp-duty', label: 'อากรแสตมป์', icon: '🏷️', href: '/pages/stamp-duty.html', feature: 'TaxManagement',
+      description: 'ตามประมวลรัษฎากร §103-105 — สัญญาเช่า · กู้ยืม · รับเหมา · มอบอำนาจ · เช็คต่างประเทศ' },
 
     { section: 'HR / เงินเดือน', icon: '👤', description: 'โครงสร้างองค์กร · เงินเดือน · ลา · เงินทดรอง · คอมมิชชัน' },
     { id: 'organization', label: 'โครงสร้างองค์กร', icon: '🏢', href: '/pages/organization.html', feature: 'Payroll', _i18nKey: 'nav.organization',
@@ -762,7 +774,7 @@ const Layout = {
     { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html', feature: 'Consolidation', _i18nKey: 'nav.consolidation',
       description: 'รวมงบทุกบริษัทในเครือ · FX translation · NCI · elimination entries' },
 
-    { section: 'ออนไลน์ & เครื่องมือ', icon: '🌐', description: 'เว็บไซต์ลูกค้า · Portal · AI · OCR สแกน · นำเข้า/ส่งออก' },
+    { section: 'ขายออนไลน์ & ลูกค้า', icon: '🌐', description: 'เว็บไซต์ · e-commerce · booking · sales funnel · ลูกค้า/vendor portal' },
     { id: 'cms-sites', label: 'เว็บไซต์ของฉัน (CMS)', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
       description: 'สร้างเว็บไซต์ multi-site · e-commerce · booking · เชื่อม ERP อัตโนมัติ' },
     { id: 'cms-orders', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders',
@@ -773,14 +785,24 @@ const Layout = {
       description: 'RFQ · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ขอใบเสนอราคา — sales funnel ครบ' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
       description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
+    { id: 'vendor-portal-admin', label: 'Vendor Portal — ออก token', icon: '🤝', href: '/pages/vendor-portal-admin.html', feature: 'MultiUser',
+      description: 'AP ออก magic-link ให้ vendor เข้าดู PO + invoice + status + อัปโหลด invoice ใหม่ — ไม่ต้องมี user' },
+
+    { section: 'AI & เครื่องมือเอกสาร', icon: '🤖', description: 'AI augmentation · OCR · scan · learn from feedback' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools',
-      description: 'auto-categorize · ตรวจจับ anomaly · พยากรณ์ cash flow · vendor learning' },
+      description: 'auto-categorize · anomaly · cash-flow forecast · vendor canon · GL suggestion' },
     { id: 'document-scan', label: 'สแกนเอกสาร (OCR)', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan',
       description: 'สแกนใบเสร็จ-ใบกำกับด้วยกล้อง · Azure DI + Tesseract · RD compliance check' },
+
+    { section: 'นำเข้า/ส่งออก · แจ้งเตือน · PDPA', icon: '📥', description: 'Import · export · notification · ความเป็นส่วนตัว' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
+    { id: 'migrate-competitor', label: 'ย้ายจาก Express/PEAK/FlowAccount', icon: '🔁', href: '/pages/migrate-competitor.html', feature: 'BulkImport',
+      description: 'sniff รูปแบบไฟล์ + preview + dry-run import — ลูกค้าจากระบบบัญชีอื่นย้ายมาง่าย' },
     { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications',
       description: 'Matrix ตั้งค่าแจ้งเตือนต่อ event/role · System · Email · LINE · per-user preferences' },
+    { id: 'pdpa', label: 'PDPA — สิทธิ์เจ้าของข้อมูล', icon: '🛡️', href: '/pages/pdpa.html', adminOnly: true,
+      description: 'พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล §32 — รับคำขอ Access/Erasure/Rectification + ติดตาม DPO + erasure impact' },
 
     { section: 'ตั้งค่า & ผู้ใช้', icon: '⚙️', description: 'ผู้ใช้ · role · ตั้งค่าบริษัท · workflow อนุมัติ · ลายเซ็น' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings',
