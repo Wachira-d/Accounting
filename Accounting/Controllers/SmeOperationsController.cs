@@ -38,7 +38,8 @@ public class SmeOperationsController : ControllerBase
         Ok(new ApiResponse<IReadOnlyList<PettyCashFund>>(true, await svc.ListAsync(companyId, ct)));
 
     public sealed record DisburseRequest(decimal Amount, string Description,
-        Guid? ExpenseAccountId, string? ReceiptReference, DateTime TxnDate);
+        Guid? ExpenseAccountId, string? ReceiptReference, DateTime TxnDate,
+        Guid? ProjectId = null);
 
     [HttpPost("petty-cash/funds/{fundId:guid}/disburse")]
     public async Task<ActionResult<ApiResponse<PettyCashTransaction>>> Disburse(
@@ -48,7 +49,7 @@ public class SmeOperationsController : ControllerBase
         try
         {
             var t = await svc.DisburseAsync(companyId, fundId, req.Amount, req.Description,
-                req.ExpenseAccountId, req.ReceiptReference, req.TxnDate, ct);
+                req.ExpenseAccountId, req.ReceiptReference, req.TxnDate, req.ProjectId, ct);
             return Ok(new ApiResponse<PettyCashTransaction>(true, t, $"จ่ายเงินสดย่อย {req.Amount:N2}"));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }

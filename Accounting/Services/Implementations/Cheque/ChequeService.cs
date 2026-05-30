@@ -28,11 +28,12 @@ public interface IChequeService
 
     Task<Cheque> IssueOutboundAsync(Guid companyId, Guid chequeBookId,
         Guid? contactId, DateTime chequeDate, decimal amount, Guid? paymentId,
-        string? notes, CancellationToken ct = default);
+        string? notes, Guid? projectId = null, CancellationToken ct = default);
 
     Task<Cheque> RecordInboundAsync(Guid companyId, Guid? contactId,
         long chequeNumber, string issuingBank, DateTime chequeDate,
-        decimal amount, Guid? paymentId, string? notes, CancellationToken ct = default);
+        decimal amount, Guid? paymentId, string? notes,
+        Guid? projectId = null, CancellationToken ct = default);
 
     Task<Cheque> MarkClearedAsync(Guid companyId, Guid chequeId,
         DateTime clearedAt, CancellationToken ct = default);
@@ -77,7 +78,7 @@ public class ChequeService : IChequeService
 
     public async Task<Cheque> IssueOutboundAsync(Guid companyId, Guid chequeBookId,
         Guid? contactId, DateTime chequeDate, decimal amount, Guid? paymentId,
-        string? notes, CancellationToken ct = default)
+        string? notes, Guid? projectId = null, CancellationToken ct = default)
     {
         if (amount <= 0) throw new ArgumentException("Amount must be positive.");
         // Take the book under tracking so NextNumber updates atomically.
@@ -99,6 +100,7 @@ public class ChequeService : IChequeService
             Status = ChequeStatus.Issued,
             IsInbound = false,
             Notes = notes,
+            ProjectId = projectId,
         };
         _db.Cheques.Add(cheque);
         book.NextNumber++;
@@ -110,7 +112,8 @@ public class ChequeService : IChequeService
 
     public async Task<Cheque> RecordInboundAsync(Guid companyId, Guid? contactId,
         long chequeNumber, string issuingBank, DateTime chequeDate,
-        decimal amount, Guid? paymentId, string? notes, CancellationToken ct = default)
+        decimal amount, Guid? paymentId, string? notes,
+        Guid? projectId = null, CancellationToken ct = default)
     {
         if (amount <= 0) throw new ArgumentException("Amount must be positive.");
         var cheque = new Cheque
@@ -126,6 +129,7 @@ public class ChequeService : IChequeService
             Status = ChequeStatus.DepositedPending,
             IsInbound = true,
             Notes = notes,
+            ProjectId = projectId,
         };
         _db.Cheques.Add(cheque);
         await _db.SaveChangesAsync(ct);

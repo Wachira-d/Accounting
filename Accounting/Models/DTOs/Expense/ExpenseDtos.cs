@@ -15,7 +15,11 @@ public record CreateExpenseClaimRequest(
     bool NoReceipt = false,
     string? NoReceiptReason = null,
     string? WitnessName = null,
-    string? WitnessPosition = null);
+    string? WitnessPosition = null,
+    /// <summary>Project this claim was incurred against. Flows to the
+    /// auto-generated PaymentVoucher's Document.ProjectId on approve
+    /// so the cost lands in the right project's P&amp;L.</summary>
+    Guid? ProjectId = null);
 
 public record ExpenseClaimLineRequest(
     string Description,
@@ -27,7 +31,11 @@ public record ExpenseClaimLineRequest(
     decimal NetAmount,
     Guid? AccountId,
     string? Category,
-    string? Reference);
+    string? Reference,
+    /// <summary>Per-line project override. Null = inherit claim
+    /// header's ProjectId. Used when a single trip's lines split
+    /// across multiple projects.</summary>
+    Guid? ProjectId = null);
 
 public record UpdateExpenseClaimRequest(
     string? Title,

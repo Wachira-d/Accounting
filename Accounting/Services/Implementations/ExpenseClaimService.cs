@@ -88,6 +88,7 @@ public class ExpenseClaimService : IExpenseClaimService
             NoReceiptReason = request.NoReceiptReason,
             WitnessName = request.WitnessName,
             WitnessPosition = request.WitnessPosition,
+            ProjectId = request.ProjectId,
         };
 
         var order = 1;
@@ -105,7 +106,8 @@ public class ExpenseClaimService : IExpenseClaimService
                 NetAmount = line.NetAmount,
                 AccountId = line.AccountId,
                 Category = line.Category,
-                Reference = line.Reference
+                Reference = line.Reference,
+                ProjectId = line.ProjectId,
             });
         }
 
@@ -352,7 +354,8 @@ public class ExpenseClaimService : IExpenseClaimService
         var docLines = claim.Lines.OrderBy(l => l.LineOrder).Select(l =>
             new DocumentLineRequest(
                 l.Description, 1m, null, l.Amount, 0m,
-                l.VatRate, l.WithholdingTaxRate, l.AccountId)).ToList();
+                l.VatRate, l.WithholdingTaxRate, l.AccountId,
+                ProjectId: l.ProjectId ?? claim.ProjectId)).ToList();
 
         var approverName = approver != null
             ? (approver.FullName ?? approver.Email ?? "(ผู้อนุมัติ)")
@@ -365,7 +368,8 @@ public class ExpenseClaimService : IExpenseClaimService
             contactId,
             claim.ClaimNumber,            // reference back to the claim
             $"ใบรับรองแทนใบเสร็จ — {claim.Title} (จากใบเบิก {claim.ClaimNumber})",
-            docLines);
+            docLines,
+            ProjectId: claim.ProjectId);
 
         var doc = await _documentService.CreateDocumentAsync(
             companyId, createReq, "system:expense-claim:no-receipt");
@@ -442,7 +446,8 @@ public class ExpenseClaimService : IExpenseClaimService
             var docLines = claim.Lines.OrderBy(l => l.LineOrder).Select(l =>
                 new DocumentLineRequest(
                     l.Description, 1m, null, l.Amount, 0m,
-                    l.VatRate, l.WithholdingTaxRate, l.AccountId)).ToList();
+                    l.VatRate, l.WithholdingTaxRate, l.AccountId,
+                    ProjectId: l.ProjectId ?? claim.ProjectId)).ToList();
 
             var createReq = new CreateDocumentRequest(
                 DocumentType.PaymentVoucher,
@@ -451,7 +456,8 @@ public class ExpenseClaimService : IExpenseClaimService
                 contactId,
                 claim.ClaimNumber,
                 $"เบิกค่าใช้จ่ายพนักงาน — {claim.Title}",
-                docLines);
+                docLines,
+                ProjectId: claim.ProjectId);
 
             var doc = await _documentService.CreateDocumentAsync(companyId, createReq, "system:expense-claim");
             await _documentService.ApproveDocumentAsync(companyId, doc.Id, "system:expense-claim");

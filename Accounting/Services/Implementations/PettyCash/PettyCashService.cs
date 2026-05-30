@@ -22,7 +22,8 @@ public interface IPettyCashService
 
     Task<PettyCashTransaction> DisburseAsync(Guid companyId, Guid fundId,
         decimal amount, string description, Guid? expenseAccountId,
-        string? receiptRef, DateTime txnDate, CancellationToken ct = default);
+        string? receiptRef, DateTime txnDate, Guid? projectId = null,
+        CancellationToken ct = default);
 
     Task<PettyCashTransaction> ReplenishAsync(Guid companyId, Guid fundId,
         decimal amount, string? notes, DateTime txnDate, CancellationToken ct = default);
@@ -60,7 +61,8 @@ public class PettyCashService : IPettyCashService
 
     public async Task<PettyCashTransaction> DisburseAsync(Guid companyId, Guid fundId,
         decimal amount, string description, Guid? expenseAccountId,
-        string? receiptRef, DateTime txnDate, CancellationToken ct = default)
+        string? receiptRef, DateTime txnDate, Guid? projectId = null,
+        CancellationToken ct = default)
     {
         if (amount <= 0) throw new ArgumentException("Amount must be positive.");
         var fund = await _db.PettyCashFunds.FirstOrDefaultAsync(
@@ -80,6 +82,7 @@ public class PettyCashService : IPettyCashService
             Description = description,
             ExpenseAccountId = expenseAccountId,
             ReceiptReference = receiptRef,
+            ProjectId = projectId,
         };
         _db.PettyCashTransactions.Add(txn);
         await _db.SaveChangesAsync(ct);

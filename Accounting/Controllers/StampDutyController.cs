@@ -33,7 +33,8 @@ public class StampDutyController : ControllerBase
 
     public sealed record CreateRequest(string Reference, Guid? ContactId,
         int RdScheduleNumber, string InstrumentType, decimal InstrumentValue,
-        DateTime InstrumentDate, int? LeaseYears, string PaymentMethod);
+        DateTime InstrumentDate, int? LeaseYears, string PaymentMethod,
+        Guid? ProjectId = null);
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<StampDutyRecord>>> Create(
@@ -41,7 +42,7 @@ public class StampDutyController : ControllerBase
     {
         var rec = await _svc.CreateAsync(companyId, req.Reference, req.ContactId,
             req.RdScheduleNumber, req.InstrumentType, req.InstrumentValue,
-            req.InstrumentDate, req.LeaseYears, req.PaymentMethod, ct);
+            req.InstrumentDate, req.LeaseYears, req.PaymentMethod, req.ProjectId, ct);
         return Ok(new ApiResponse<StampDutyRecord>(true, rec,
             $"บันทึกอากรแสตมป์ {rec.DutyAmount:N0} บาท"));
     }

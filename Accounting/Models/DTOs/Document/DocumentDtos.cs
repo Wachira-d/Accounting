@@ -397,7 +397,13 @@ public record CreatePaymentRequest(
     /// (e.g. they withhold the full amount on the first installment).
     /// Cumulative WHT across all payments must not exceed the source's
     /// WithholdingTaxAmount.</summary>
-    decimal? WithholdingTaxAmount = null);
+    decimal? WithholdingTaxAmount = null,
+    /// <summary>Optional — overrides the source document's ProjectId
+    /// for THIS payment. Used when one document is split across
+    /// project payments (advance booked to Project A; final to
+    /// Project B). The auto-posted JE picks this up first; falls
+    /// back to Document.ProjectId.</summary>
+    Guid? ProjectId = null);
 
 public record PaymentResponse(
     Guid Id,

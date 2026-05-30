@@ -27,7 +27,8 @@ public interface IStampDutyService
     Task<StampDutyRecord> CreateAsync(Guid companyId, string reference,
         Guid? contactId, int rdScheduleNumber, string instrumentType,
         decimal instrumentValue, DateTime instrumentDate,
-        int? leaseYears, string paymentMethod, CancellationToken ct = default);
+        int? leaseYears, string paymentMethod,
+        Guid? projectId = null, CancellationToken ct = default);
 
     Task<StampDutyRecord> MarkPaidAsync(Guid companyId, Guid recordId,
         string rdReceiptNumber, DateTime paidAt, CancellationToken ct = default);
@@ -68,7 +69,8 @@ public class StampDutyService : IStampDutyService
     public async Task<StampDutyRecord> CreateAsync(Guid companyId, string reference,
         Guid? contactId, int rdScheduleNumber, string instrumentType,
         decimal instrumentValue, DateTime instrumentDate,
-        int? leaseYears, string paymentMethod, CancellationToken ct = default)
+        int? leaseYears, string paymentMethod,
+        Guid? projectId = null, CancellationToken ct = default)
     {
         var duty = Compute(rdScheduleNumber, instrumentValue, leaseYears);
         var record = new StampDutyRecord
@@ -82,6 +84,7 @@ public class StampDutyService : IStampDutyService
             DutyAmount = duty,
             InstrumentDate = instrumentDate,
             PaymentMethod = paymentMethod,
+            ProjectId = projectId,
         };
         _db.StampDutyRecords.Add(record);
         await _db.SaveChangesAsync(ct);

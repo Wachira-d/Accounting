@@ -33,7 +33,8 @@ public class ChequeController : ControllerBase
     }
 
     public sealed record IssueOutboundRequest(Guid ChequeBookId, Guid? ContactId,
-        DateTime ChequeDate, decimal Amount, Guid? PaymentId, string? Notes);
+        DateTime ChequeDate, decimal Amount, Guid? PaymentId, string? Notes,
+        Guid? ProjectId = null);
 
     [HttpPost("outbound")]
     public async Task<ActionResult<ApiResponse<Cheque>>> IssueOutbound(
@@ -42,7 +43,7 @@ public class ChequeController : ControllerBase
         try
         {
             var c = await _svc.IssueOutboundAsync(companyId, req.ChequeBookId,
-                req.ContactId, req.ChequeDate, req.Amount, req.PaymentId, req.Notes, ct);
+                req.ContactId, req.ChequeDate, req.Amount, req.PaymentId, req.Notes, req.ProjectId, ct);
             return Ok(new ApiResponse<Cheque>(true, c,
                 $"ออกเช็คเลขที่ {c.ChequeNumber} จำนวน {c.Amount:N2} บาท"));
         }
@@ -51,7 +52,8 @@ public class ChequeController : ControllerBase
     }
 
     public sealed record RecordInboundRequest(Guid? ContactId, long ChequeNumber,
-        string IssuingBank, DateTime ChequeDate, decimal Amount, Guid? PaymentId, string? Notes);
+        string IssuingBank, DateTime ChequeDate, decimal Amount, Guid? PaymentId, string? Notes,
+        Guid? ProjectId = null);
 
     [HttpPost("inbound")]
     public async Task<ActionResult<ApiResponse<Cheque>>> RecordInbound(
@@ -60,7 +62,7 @@ public class ChequeController : ControllerBase
         try
         {
             var c = await _svc.RecordInboundAsync(companyId, req.ContactId, req.ChequeNumber,
-                req.IssuingBank, req.ChequeDate, req.Amount, req.PaymentId, req.Notes, ct);
+                req.IssuingBank, req.ChequeDate, req.Amount, req.PaymentId, req.Notes, req.ProjectId, ct);
             return Ok(new ApiResponse<Cheque>(true, c, "บันทึกเช็ครับจากลูกค้า"));
         }
         catch (ArgumentException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }

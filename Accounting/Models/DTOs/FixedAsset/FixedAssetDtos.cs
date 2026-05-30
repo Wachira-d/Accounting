@@ -28,7 +28,11 @@ public record CreateFixedAssetRequest(
     int? LeaseTermMonths = null,
     string? LessorName = null,
     decimal? MonthlyLeasePayment = null,
-    Guid? LeaseLiabilityAccountId = null);
+    Guid? LeaseLiabilityAccountId = null,
+    /// <summary>Optional project the asset was acquired for. Periodic
+    /// depreciation JEs will inherit this so depreciation cost lands
+    /// in the right project's P&amp;L automatically.</summary>
+    Guid? ProjectId = null);
 
 public record UpdateFixedAssetRequest(
     string? Name,
