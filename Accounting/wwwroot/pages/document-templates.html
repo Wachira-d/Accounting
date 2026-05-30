@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เทมเพลตเอกสาร — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .editor-grid { display:grid; grid-template-columns:380px 1fr; gap:18px; align-items:start; }
+    .editor-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; max-height:calc(100vh - 200px); overflow-y:auto; }
+    .editor-section { padding:14px 18px; border-bottom:1px solid #f1f5f9; }
+    .editor-section h4 { margin:0 0 12px; font-size:13px; color:#1e293b; display:flex; align-items:center; gap:6px; }
+    .editor-section h4 .toggle { margin-left:auto; }
+    .editor-section.collapsed > .body { display:none; }
+    .editor-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+    .editor-row.single { grid-template-columns:1fr; }
+    .editor-row label { display:block; font-size:11px; color:#64748b; margin-bottom:3px; }
+    .editor-row input, .editor-row select, .editor-row textarea {
+      width:100%; padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; font:inherit; font-size:13px;
+    }
+    .editor-row input[type="color"] { padding:0; height:36px; cursor:pointer; }
+    .check-row { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px; color:#334155; }
+    .preview-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; min-height:600px; }
+    .preview-card iframe { width:100%; height:1100px; border:none; display:block; }
+    .preview-toolbar { background:#f1f5f9; padding:10px 14px; border-bottom:1px solid #e2e8f0; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .preview-toolbar select { padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; font:inherit; font-size:13px; }
+    .preview-toolbar .toolbar-status { margin-left:auto; font-size:12px; color:#64748b; }
+    .save-bar { position:sticky; bottom:0; background:#fff; border-top:1px solid #e2e8f0; padding:12px 18px; display:flex; gap:10px; justify-content:flex-end; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เทมเพลตเอกสาร</h2>
+        <p class="page-subtitle">ปรับ logo · สี · font · header/footer · watermark · ลายเซ็น — preview สด</p>
+      </div>
+      <div>
+        <button class="btn btn-secondary" onclick="Page.openNew()">+ สร้างเทมเพลตใหม่</button>
+      </div>
+    </div>
+
+    <div class="editor-grid">
+      <!-- Left: form editor -->
+      <div class="editor-card">
+        <div class="editor-section">
+          <h4>เทมเพลตปัจจุบัน</h4>
+          <div class="body">
+            <div class="editor-row single">
+              <label>เลือกเทมเพลต</label>
+              <select id="tplSelect" onchange="Page.selectTemplate()"></select>
+            </div>
+            <div class="editor-row">
+              <div><label>ประเภทเอกสาร</label><select id="tplDocType" onchange="Page.markDirty()"></select></div>
+              <div><label>ชื่อเทมเพลต</label><input id="tplName" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row single">
+              <label class="check-row"><input type="checkbox" id="tplIsDefault" onchange="Page.markDirty()"> ตั้งเป็นค่าเริ่มต้นสำหรับประเภทนี้</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>🎨 Font + สี <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row">
+              <div><label>Font</label>
+                <select id="fontFamily" onchange="Page.markDirty()">
+                  <option>THSarabunNew</option><option>Prompt</option><option>NotoSansThai</option><option>Sarabun</option>
+                </select>
+              </div>
+              <div><label>ขนาด body (pt)</label><input id="bodyFontSize" type="number" min="8" max="24" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ขนาด title (pt)</label><input id="titleFontSize" type="number" min="14" max="40" onchange="Page.markDirty()"></div>
+              <div><label>Primary color</label><input id="primaryColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>Accent color</label><input id="accentColor" type="color" onchange="Page.markDirty()"></div>
+              <div><label>Table header bg</label><input id="tableHeaderColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>Table header text</label><input id="tableHeaderTextColor" type="color" onchange="Page.markDirty()"></div>
+              <div><label>Header bg</label><input id="headerBackgroundColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>🖼️ Logo <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showLogo" onchange="Page.markDirty()"> แสดง logo</label>
+            <div class="editor-row">
+              <div><label>ตำแหน่ง</label>
+                <select id="logoPosition" onchange="Page.markDirty()">
+                  <option>Left</option><option>Center</option><option>Right</option>
+                </select>
+              </div>
+              <div><label>กว้าง (mm)</label><input id="logoWidth" type="number" min="10" max="200" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>สูง (mm)</label><input id="logoHeight" type="number" min="10" max="100" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📑 Header (ข้อมูลบริษัท) <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showCompanyName" onchange="Page.markDirty()"> ชื่อบริษัท (TH)</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyNameEn" onchange="Page.markDirty()"> ชื่อบริษัท (EN)</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyAddress" onchange="Page.markDirty()"> ที่อยู่</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyTaxId" onchange="Page.markDirty()"> เลขผู้เสียภาษี</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyPhone" onchange="Page.markDirty()"> โทรศัพท์</label>
+            <label class="check-row"><input type="checkbox" id="showCompanyEmail" onchange="Page.markDirty()"> อีเมล</label>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>👤 ข้อมูลคู่ค้า <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row">
+              <div><label>หัวข้อ (TH)</label><input id="contactSectionTitle" onchange="Page.markDirty()"></div>
+              <div><label>หัวข้อ (EN)</label><input id="contactSectionTitleEn" onchange="Page.markDirty()"></div>
+            </div>
+            <label class="check-row"><input type="checkbox" id="showContactTaxId" onchange="Page.markDirty()"> เลขผู้เสียภาษีของคู่ค้า</label>
+            <label class="check-row"><input type="checkbox" id="showContactBranch" onchange="Page.markDirty()"> สาขา</label>
+            <label class="check-row"><input type="checkbox" id="showContactAddress" onchange="Page.markDirty()"> ที่อยู่</label>
+            <label class="check-row"><input type="checkbox" id="showContactPhone" onchange="Page.markDirty()"> โทรศัพท์</label>
+            <label class="check-row"><input type="checkbox" id="showContactEmail" onchange="Page.markDirty()"> อีเมล</label>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📋 ตารางรายการ <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showLineNumber" onchange="Page.markDirty()"> เลขลำดับ</label>
+            <label class="check-row"><input type="checkbox" id="showItemCode" onchange="Page.markDirty()"> รหัสสินค้า</label>
+            <label class="check-row"><input type="checkbox" id="showUnit" onchange="Page.markDirty()"> หน่วย</label>
+            <label class="check-row"><input type="checkbox" id="showDiscount" onchange="Page.markDirty()"> ส่วนลด</label>
+            <label class="check-row"><input type="checkbox" id="showVatPerLine" onchange="Page.markDirty()"> VAT ต่อรายการ</label>
+            <label class="check-row"><input type="checkbox" id="showWithholdingTax" onchange="Page.markDirty()"> WHT ต่อรายการ</label>
+            <div class="editor-row">
+              <div><label>Border</label>
+                <select id="tableBorderStyle" onchange="Page.markDirty()">
+                  <option>Full</option><option>HeaderOnly</option><option>None</option>
+                </select>
+              </div>
+              <div><label>Striped color</label><input id="tableStripedColor" type="color" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>💰 สรุปยอด <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showSubTotal" onchange="Page.markDirty()"> SubTotal</label>
+            <label class="check-row"><input type="checkbox" id="showDiscountTotal" onchange="Page.markDirty()"> ส่วนลดรวม</label>
+            <label class="check-row"><input type="checkbox" id="showVatSummary" onchange="Page.markDirty()"> VAT รวม</label>
+            <label class="check-row"><input type="checkbox" id="showWithholdingTaxSummary" onchange="Page.markDirty()"> WHT รวม</label>
+            <label class="check-row"><input type="checkbox" id="showAmountInWords" onchange="Page.markDirty()"> จำนวนเงินเป็นตัวอักษร</label>
+            <div class="editor-row single">
+              <label>ภาษาของจำนวนเงินตัวอักษร</label>
+              <select id="amountInWordsLanguage" onchange="Page.markDirty()">
+                <option value="th">ไทย</option><option value="en">อังกฤษ</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>✍️ ลายเซ็น <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showSignature" onchange="Page.markDirty()"> แสดงช่องลงนาม</label>
+            <div class="editor-row">
+              <div><label>จำนวนช่อง</label>
+                <select id="signatureCount" onchange="Page.markDirty()">
+                  <option>1</option><option>2</option><option>3</option>
+                </select>
+              </div>
+              <div><label class="check-row"><input type="checkbox" id="showCompanyStamp" onchange="Page.markDirty()"> ตราประทับ</label></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ช่อง 1 (TH)</label><input id="signatureLabel1" onchange="Page.markDirty()"></div>
+              <div><label>ช่อง 1 (EN)</label><input id="signatureLabel1En" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ช่อง 2 (TH)</label><input id="signatureLabel2" onchange="Page.markDirty()"></div>
+              <div><label>ช่อง 2 (EN)</label><input id="signatureLabel2En" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ช่อง 3 (TH)</label><input id="signatureLabel3" onchange="Page.markDirty()"></div>
+              <div><label>ช่อง 3 (EN)</label><input id="signatureLabel3En" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>💧 Watermark <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <label class="check-row"><input type="checkbox" id="showWatermark" onchange="Page.markDirty()"> แสดง watermark</label>
+            <div class="editor-row">
+              <div><label>ข้อความ</label><input id="watermarkText" placeholder="DRAFT / COPY / สำเนา" onchange="Page.markDirty()"></div>
+              <div><label>Opacity (0-1)</label><input id="watermarkOpacity" type="number" step="0.05" min="0.05" max="0.5" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📞 Footer <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row single">
+              <label>หมายเหตุ (TH)</label><textarea id="footerNotes" rows="2" onchange="Page.markDirty()"></textarea>
+            </div>
+            <div class="editor-row single">
+              <label>หมายเหตุ (EN)</label><textarea id="footerNotesEn" rows="2" onchange="Page.markDirty()"></textarea>
+            </div>
+            <label class="check-row"><input type="checkbox" id="showPaymentTerms" onchange="Page.markDirty()"> แสดง payment terms</label>
+            <label class="check-row"><input type="checkbox" id="showBankDetails" onchange="Page.markDirty()"> แสดงข้อมูลบัญชีธนาคาร</label>
+            <div class="editor-row single">
+              <label>ข้อความบัญชีธนาคาร</label><textarea id="bankDetailsText" rows="3" onchange="Page.markDirty()"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <h4>📐 หน้ากระดาษ <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <div class="editor-row">
+              <div><label>ขนาด</label>
+                <select id="paperSize" onchange="Page.markDirty()">
+                  <option>A4</option><option>Letter</option><option>A5</option>
+                </select>
+              </div>
+              <div><label>แนว</label>
+                <select id="orientation" onchange="Page.markDirty()">
+                  <option>Portrait</option><option>Landscape</option>
+                </select>
+              </div>
+            </div>
+            <div class="editor-row">
+              <div><label>ขอบบน (mm)</label><input id="marginTop" type="number" onchange="Page.markDirty()"></div>
+              <div><label>ขอบล่าง (mm)</label><input id="marginBottom" type="number" onchange="Page.markDirty()"></div>
+            </div>
+            <div class="editor-row">
+              <div><label>ขอบซ้าย (mm)</label><input id="marginLeft" type="number" onchange="Page.markDirty()"></div>
+              <div><label>ขอบขวา (mm)</label><input id="marginRight" type="number" onchange="Page.markDirty()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="save-bar">
+          <button class="btn btn-secondary" onclick="Page.duplicateCurrent()">📋 ทำสำเนา</button>
+          <button class="btn btn-danger" onclick="Page.deleteCurrent()">ลบ</button>
+          <button class="btn btn-primary" onclick="Page.save()" id="saveBtn">บันทึก</button>
+        </div>
+      </div>
+
+      <!-- Right: live preview -->
+      <div class="preview-card">
+        <div class="preview-toolbar">
+          <label style="font-size:12px;color:#64748b">แสดงตัวอย่างกับเอกสารจริง</label>
+          <select id="sampleDoc" onchange="Page.refreshPreview()"></select>
+          <button class="btn btn-sm btn-secondary" onclick="Page.refreshPreview()">รีเฟรช preview</button>
+          <span class="toolbar-status" id="status">— เลือกเทมเพลต —</span>
+        </div>
+        <iframe id="previewFrame" sandbox="allow-same-origin"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      templates: [],
+      sampleDocs: [],
+      current: null,
+      dirty: false,
+      debounceTimer: null,
+
+      async init() {
+        if (!Layout.init('document-templates')) return;
+        Layout.setTitle('เทมเพลตเอกสาร');
+        this._populateDocTypeOptions();
+        await this.loadSampleDocs();
+        await this.loadTemplates();
+      },
+
+      _populateDocTypeOptions() {
+        const types = [
+          ['Quotation', 'ใบเสนอราคา'],
+          ['Invoice', 'ใบแจ้งหนี้'],
+          ['TaxInvoice', 'ใบกำกับภาษี'],
+          ['Receipt', 'ใบเสร็จรับเงิน'],
+          ['DeliveryNote', 'ใบส่งของ'],
+          ['BillingNote', 'ใบวางบิล'],
+          ['DebitNote', 'ใบเพิ่มหนี้'],
+          ['CreditNote', 'ใบลดหนี้'],
+          ['PurchaseOrder', 'ใบสั่งซื้อ'],
+          ['GoodsReceiptNote', 'ใบรับสินค้า'],
+          ['PurchaseInvoice', 'ใบแจ้งหนี้ซื้อ'],
+          ['Expense', 'บันทึกค่าใช้จ่าย'],
+          ['PaymentVoucher', 'ใบสำคัญจ่าย'],
+          ['ReceiptVoucher', 'ใบสำคัญรับ'],
+          ['CertificateInLieu', 'ใบรับรองแทนใบเสร็จ'],
+        ];
+        document.getElementById('tplDocType').innerHTML = types.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+      },
+
+      async loadSampleDocs() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/documents?pageSize=20`);
+          this.sampleDocs = r.data?.items || r.data || [];
+          document.getElementById('sampleDoc').innerHTML = this.sampleDocs.length === 0
+            ? '<option>— ยังไม่มีเอกสาร —</option>'
+            : this.sampleDocs.map(d => `<option value="${d.id}" data-type="${d.documentType}">${d.documentNumber} — ${d.documentType}</option>`).join('');
+        } catch (e) { /* fall through to "no sample" */ }
+      },
+
+      async loadTemplates() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/document-templates`);
+          this.templates = r.data || [];
+          document.getElementById('tplSelect').innerHTML = this.templates.length === 0
+            ? '<option>— ยังไม่มีเทมเพลต —</option>'
+            : this.templates.map(t => `<option value="${t.id}">${t.name} (${t.documentType}${t.isDefault ? ' • ค่าเริ่มต้น' : ''})</option>`).join('');
+          if (this.templates.length > 0) await this.selectTemplate();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async selectTemplate() {
+        const id = document.getElementById('tplSelect').value;
+        const tpl = this.templates.find(t => t.id === id);
+        if (!tpl) return;
+        this.current = tpl;
+        this._fillForm(tpl);
+        this.dirty = false;
+        await this.refreshPreview();
+      },
+
+      _fillForm(t) {
+        const set = (id, val) => { const el = document.getElementById(id); if (el) {
+          if (el.type === 'checkbox') el.checked = !!val;
+          else el.value = val ?? '';
+        } };
+        // text/select fields
+        ['tplName:name','tplDocType:documentType','fontFamily','bodyFontSize','titleFontSize',
+         'primaryColor','accentColor','tableHeaderColor','tableHeaderTextColor','headerBackgroundColor',
+         'logoPosition','logoWidth','logoHeight',
+         'contactSectionTitle','contactSectionTitleEn',
+         'tableBorderStyle','tableStripedColor',
+         'amountInWordsLanguage',
+         'signatureCount','signatureLabel1','signatureLabel1En',
+         'signatureLabel2','signatureLabel2En','signatureLabel3','signatureLabel3En',
+         'watermarkText','watermarkOpacity',
+         'footerNotes','footerNotesEn','bankDetailsText',
+         'paperSize','orientation','marginTop','marginBottom','marginLeft','marginRight',
+        ].forEach(spec => {
+          const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
+          set(id, t[prop]);
+        });
+        // checkbox fields
+        ['tplIsDefault:isDefault',
+         'showLogo','showCompanyName','showCompanyNameEn','showCompanyAddress','showCompanyTaxId',
+         'showCompanyPhone','showCompanyEmail',
+         'showContactTaxId','showContactBranch','showContactAddress','showContactPhone','showContactEmail',
+         'showLineNumber','showItemCode','showUnit','showDiscount','showVatPerLine','showWithholdingTax',
+         'showSubTotal','showDiscountTotal','showVatSummary','showWithholdingTaxSummary','showAmountInWords',
+         'showSignature','showCompanyStamp',
+         'showWatermark','showPaymentTerms','showBankDetails',
+        ].forEach(spec => {
+          const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
+          set(id, t[prop]);
+        });
+      },
+
+      _collectForm() {
+        const get = id => document.getElementById(id).value;
+        const getNum = id => Number(document.getElementById(id).value || 0);
+        const getCheck = id => document.getElementById(id).checked;
+        return {
+          name: get('tplName'),
+          documentType: get('tplDocType'),
+          isDefault: getCheck('tplIsDefault'),
+          isActive: true,
+          fontFamily: get('fontFamily'),
+          bodyFontSize: get('bodyFontSize'),
+          titleFontSize: get('titleFontSize'),
+          primaryColor: get('primaryColor'),
+          accentColor: get('accentColor'),
+          tableHeaderColor: get('tableHeaderColor'),
+          tableHeaderTextColor: get('tableHeaderTextColor'),
+          headerBackgroundColor: get('headerBackgroundColor'),
+          showLogo: getCheck('showLogo'),
+          logoPosition: get('logoPosition'),
+          logoWidth: getNum('logoWidth'),
+          logoHeight: getNum('logoHeight'),
+          showCompanyName: getCheck('showCompanyName'),
+          showCompanyNameEn: getCheck('showCompanyNameEn'),
+          showCompanyAddress: getCheck('showCompanyAddress'),
+          showCompanyTaxId: getCheck('showCompanyTaxId'),
+          showCompanyPhone: getCheck('showCompanyPhone'),
+          showCompanyEmail: getCheck('showCompanyEmail'),
+          contactSectionTitle: get('contactSectionTitle'),
+          contactSectionTitleEn: get('contactSectionTitleEn'),
+          showContactTaxId: getCheck('showContactTaxId'),
+          showContactBranch: getCheck('showContactBranch'),
+          showContactAddress: getCheck('showContactAddress'),
+          showContactPhone: getCheck('showContactPhone'),
+          showContactEmail: getCheck('showContactEmail'),
+          showLineNumber: getCheck('showLineNumber'),
+          showItemCode: getCheck('showItemCode'),
+          showUnit: getCheck('showUnit'),
+          showDiscount: getCheck('showDiscount'),
+          showVatPerLine: getCheck('showVatPerLine'),
+          showWithholdingTax: getCheck('showWithholdingTax'),
+          tableBorderStyle: get('tableBorderStyle'),
+          tableStripedColor: get('tableStripedColor') || null,
+          showSubTotal: getCheck('showSubTotal'),
+          showDiscountTotal: getCheck('showDiscountTotal'),
+          showVatSummary: getCheck('showVatSummary'),
+          showWithholdingTaxSummary: getCheck('showWithholdingTaxSummary'),
+          showAmountInWords: getCheck('showAmountInWords'),
+          amountInWordsLanguage: get('amountInWordsLanguage'),
+          showSignature: getCheck('showSignature'),
+          signatureCount: Number(get('signatureCount')),
+          signatureLabel1: get('signatureLabel1'),
+          signatureLabel1En: get('signatureLabel1En'),
+          signatureLabel2: get('signatureLabel2'),
+          signatureLabel2En: get('signatureLabel2En'),
+          signatureLabel3: get('signatureLabel3'),
+          signatureLabel3En: get('signatureLabel3En'),
+          showCompanyStamp: getCheck('showCompanyStamp'),
+          showWatermark: getCheck('showWatermark'),
+          watermarkText: get('watermarkText') || null,
+          watermarkOpacity: Number(get('watermarkOpacity') || 0.15),
+          footerNotes: get('footerNotes') || null,
+          footerNotesEn: get('footerNotesEn') || null,
+          showPaymentTerms: getCheck('showPaymentTerms'),
+          showBankDetails: getCheck('showBankDetails'),
+          bankDetailsText: get('bankDetailsText') || null,
+          paperSize: get('paperSize'),
+          orientation: get('orientation'),
+          marginTop: getNum('marginTop'),
+          marginBottom: getNum('marginBottom'),
+          marginLeft: getNum('marginLeft'),
+          marginRight: getNum('marginRight'),
+        };
+      },
+
+      markDirty() {
+        this.dirty = true;
+        document.getElementById('status').textContent = '● ยังไม่บันทึก — preview จะรีเฟรชอัตโนมัติ';
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = setTimeout(() => this.refreshPreview(true), 500);
+      },
+
+      toggle(el) {
+        const section = el.closest('.editor-section');
+        section.classList.toggle('collapsed');
+        el.textContent = section.classList.contains('collapsed') ? '▸' : '▾';
+      },
+
+      async refreshPreview(useDraft = false) {
+        if (!this.current) { document.getElementById('status').textContent = '— ยังไม่ได้เลือกเทมเพลต —'; return; }
+        const sel = document.getElementById('sampleDoc');
+        const docId = sel.value;
+        if (!docId || sel.options.length === 0) {
+          document.getElementById('status').textContent = '— ไม่มีเอกสารตัวอย่าง สร้างเอกสารก่อน —';
+          return;
+        }
+        const cid = Layout.getCompanyId();
+        let tplId = this.current.id;
+        if (useDraft && this.dirty) {
+          // Save → preview cycle. To preview unsaved changes, we'd need a
+          // server-side "preview from draft" endpoint. For now, force save
+          // when previewing dirty form is too aggressive; user must click save.
+          document.getElementById('status').textContent = '● preview กำลังโหลด (จากเทมเพลตที่บันทึกล่าสุด)';
+        } else {
+          document.getElementById('status').textContent = '⏳ กำลัง render...';
+        }
+        try {
+          const token = localStorage.getItem('token');
+          const res = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documentId: docId, templateId: tplId,
+              watermarkOverride: null, copyNumber: null, language: null }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const html = await res.text();
+          const frame = document.getElementById('previewFrame');
+          frame.srcdoc = html;
+          document.getElementById('status').textContent = useDraft && this.dirty
+            ? '● preview จากเทมเพลตที่บันทึกแล้ว — กด "บันทึก" เพื่อใช้การแก้ไขล่าสุด'
+            : '✓ preview พร้อม';
+        } catch (e) {
+          document.getElementById('status').textContent = '✗ ' + e.message;
+        }
+      },
+
+      async save() {
+        const btn = document.getElementById('saveBtn');
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+        try {
+          const cid = Layout.getCompanyId();
+          const body = this._collectForm();
+          const r = await API.put(`/api/companies/${cid}/document-templates/${this.current.id}`, body);
+          this.dirty = false;
+          Layout.toast('บันทึกเทมเพลตแล้ว');
+          await this.loadTemplates();
+          await this.refreshPreview();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; btn.textContent = 'บันทึก'; }
+      },
+
+      async openNew() {
+        const name = prompt('ชื่อเทมเพลตใหม่');
+        if (!name) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const body = { name, documentType: 'Invoice', isDefault: false, isActive: true };
+          const r = await API.post(`/api/companies/${cid}/document-templates`, body);
+          await this.loadTemplates();
+          if (r.data?.id) {
+            document.getElementById('tplSelect').value = r.data.id;
+            await this.selectTemplate();
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async duplicateCurrent() {
+        if (!this.current) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/document-templates/${this.current.id}/duplicate`, {});
+          await this.loadTemplates();
+          if (r.data?.id) {
+            document.getElementById('tplSelect').value = r.data.id;
+            await this.selectTemplate();
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteCurrent() {
+        if (!this.current) return;
+        if (!confirm(`ลบเทมเพลต "${this.current.name}"?`)) return;
+        try {
+          const cid = Layout.getCompanyId();
+          await API.del(`/api/companies/${cid}/document-templates/${this.current.id}`);
+          this.current = null;
+          await this.loadTemplates();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

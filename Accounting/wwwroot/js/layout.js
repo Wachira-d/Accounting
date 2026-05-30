@@ -817,6 +817,8 @@ const Layout = {
       description: 'workflow อนุมัติเอกสาร · กำหนดผู้อนุมัติแต่ละขั้น · เงื่อนไขตามจำนวนเงิน' },
     { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.signatures',
       description: 'ลายเซ็นดิจิทัล · ผู้จัดทำ-ผู้อนุมัติ · stamp บน PDF อัตโนมัติ' },
+    { id: 'document-templates', label: 'เทมเพลตเอกสาร PDF', icon: '🎨', href: '/pages/document-templates.html', feature: 'DocumentEngine',
+      description: 'ปรับ logo · สี · font · header · footer · watermark · ลายเซ็น — preview สด · per-document-type' },
 
     { section: 'Developer / API', icon: '🔧', description: 'เชื่อมต่อระบบภายนอก · API key · webhook · TaketTime / external ERP' },
     { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html', feature: 'APIAccess', _i18nKey: 'nav.integrations',
