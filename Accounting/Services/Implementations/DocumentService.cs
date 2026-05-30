@@ -40,7 +40,8 @@ public class DocumentService : IDocumentService
         ITaxService? taxService = null,
         IBotExchangeRateService? fxRates = null,
         ISensitivityService? sensitivity = null,
-        Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null)
+        Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null,
+        IWebhookService? webhooks = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -57,6 +58,19 @@ public class DocumentService : IDocumentService
         _taxService = taxService;
         _fxRates = fxRates;
         _aiAugmenter = aiAugmenter;
+        _webhooks = webhooks;
+    }
+
+    private readonly IWebhookService? _webhooks;
+
+    /// <summary>Fire an outbound webhook. Wrapped in try/catch so a
+    /// slow / failed delivery NEVER blocks the parent API call from
+    /// returning. WebhookService handles retry-with-backoff internally.</summary>
+    private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
+    {
+        if (_webhooks == null) return;
+        try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Webhook {Event} fire-and-forget failed", eventType); }
     }
 
     /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
@@ -291,7 +305,9 @@ public class DocumentService : IDocumentService
 
             await transaction.CommitAsync();
 
-            return await GetDocumentAsync(companyId, doc.Id);
+            var created = await GetDocumentAsync(companyId, doc.Id);
+            await FireWebhookAsync(companyId, "document.created", created);
+            return created;
         }
         catch
         {
@@ -570,7 +586,9 @@ public class DocumentService : IDocumentService
         }
 
         await _db.SaveChangesAsync();
-        return await GetDocumentAsync(companyId, documentId);
+        var updated = await GetDocumentAsync(companyId, documentId);
+        await FireWebhookAsync(companyId, "document.updated", updated);
+        return updated;
     }
 
     public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
@@ -788,7 +806,10 @@ public class DocumentService : IDocumentService
             }
         }
 
-        return await GetDocumentAsync(companyId, documentId);
+        var approved = await GetDocumentAsync(companyId, documentId);
+        await FireWebhookAsync(companyId, "document.status_changed",
+            new { document = approved, from = "Draft", to = approved.Status });
+        return approved;
     }
 
     /// <summary>
@@ -996,6 +1017,17 @@ public class DocumentService : IDocumentService
             }
             catch (Exception ex) { _logger.LogWarning(ex, "DocumentVoided notification failed for {DocId}", documentId); }
         }
+
+        // Webhook — DocumentVoided fires last so partners observe a
+        // fully-settled state (linked payments already reversed, JE
+        // already gone, bank-group already unwound).
+        await FireWebhookAsync(companyId, "document.voided", new
+        {
+            documentId = doc.Id,
+            documentNumber = doc.DocumentNumber,
+            documentType = doc.DocumentType.ToString(),
+            voidedAt = DateTime.UtcNow,
+        });
     }
 
     /// <summary>
@@ -2606,6 +2638,32 @@ public class DocumentService : IDocumentService
                 await _lineNotify.NotifyPaymentReceivedAsync(companyId, doc.DocumentNumber, payment.Amount);
             }
             catch { /* best-effort notification */ }
+
+            // Webhooks — payment.received (always) + document.paid
+            // (when BalanceDue is now zero). Both fire outside the
+            // commit so partners get a settled view + a slow webhook
+            // delivery never blocks the API return.
+            await FireWebhookAsync(companyId, "payment.received", new
+            {
+                paymentId = payment.Id,
+                paymentNumber = payment.PaymentNumber,
+                documentId = payment.DocumentId,
+                documentNumber = doc.DocumentNumber,
+                amount = payment.Amount,
+                method = payment.PaymentMethod.ToString(),
+                paymentDate = payment.PaymentDate,
+            });
+            if (doc.BalanceDue <= 0.01m)
+            {
+                await FireWebhookAsync(companyId, "document.paid", new
+                {
+                    documentId = doc.Id,
+                    documentNumber = doc.DocumentNumber,
+                    documentType = doc.DocumentType.ToString(),
+                    totalAmount = doc.TotalAmount,
+                    paidAt = DateTime.UtcNow,
+                });
+            }
 
             return new PaymentResponse(
                 payment.Id, payment.PaymentNumber, payment.DocumentId,

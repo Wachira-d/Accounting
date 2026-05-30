@@ -11,10 +11,28 @@ namespace Accounting.Services.Implementations;
 public class ProjectAccountingService : IProjectAccountingService
 {
     private readonly AccountingDbContext _db;
+    private readonly IWebhookService? _webhooks;
+    private readonly ILogger<ProjectAccountingService>? _logger;
 
-    public ProjectAccountingService(AccountingDbContext db)
+    public ProjectAccountingService(AccountingDbContext db,
+        IWebhookService? webhooks = null,
+        ILogger<ProjectAccountingService>? logger = null)
     {
         _db = db;
+        _webhooks = webhooks;
+        _logger = logger;
+    }
+
+    /// <summary>Fire an outbound webhook. Wrapped in try/catch so a
+    /// slow / failed delivery NEVER blocks the parent API call from
+    /// returning to the user. WebhookService internally enqueues the
+    /// HTTP calls + handles retry-with-backoff; failures appear in the
+    /// admin webhook-deliveries dashboard.</summary>
+    private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
+    {
+        if (_webhooks == null) return;
+        try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
+        catch (Exception ex) { _logger?.LogWarning(ex, "Webhook {Event} fire-and-forget failed", eventType); }
     }
 
     public async Task<ProjectResponse> CreateAsync(Guid companyId, CreateProjectRequest request)
@@ -69,7 +87,9 @@ public class ProjectAccountingService : IProjectAccountingService
 
         _db.Projects.Add(project);
         await _db.SaveChangesAsync();
-        return MapToResponse(project);
+        var resp = MapToResponse(project);
+        await FireWebhookAsync(companyId, "project.created", resp);
+        return resp;
     }
 
     public async Task<ProjectResponse> GetByIdAsync(Guid companyId, Guid projectId)
@@ -114,6 +134,7 @@ public class ProjectAccountingService : IProjectAccountingService
             .FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบโครงการ");
 
+        var prevStatus = project.Status;
         if (request.Name != null) project.Name = request.Name;
         if (request.Description != null) project.Description = request.Description;
         if (request.EndDate.HasValue) project.EndDate = request.EndDate.Value;
@@ -121,9 +142,15 @@ public class ProjectAccountingService : IProjectAccountingService
         if (request.ContractAmount.HasValue) project.ContractAmount = request.ContractAmount.Value;
         if (request.CompletionPercent.HasValue) project.CompletionPercent = request.CompletionPercent.Value;
         if (request.Status != null) project.Status = request.Status;
+        if (request.ExternalUrl != null) project.ExternalUrl = request.ExternalUrl;
 
         await _db.SaveChangesAsync();
-        return MapToResponse(project);
+        var resp = MapToResponse(project);
+        await FireWebhookAsync(companyId, "project.updated", resp);
+        if (request.Status != null && prevStatus != request.Status)
+            await FireWebhookAsync(companyId, "project.status_changed",
+                new { project = resp, from = prevStatus, to = request.Status });
+        return resp;
     }
 
     public async Task<ProjectResponse> CompleteAsync(Guid companyId, Guid projectId)
@@ -132,12 +159,16 @@ public class ProjectAccountingService : IProjectAccountingService
             .FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบโครงการ");
 
+        var prevStatus = project.Status;
         project.Status = "Completed";
         project.CompletionPercent = 100;
         project.ActualEndDate = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
-        return MapToResponse(project);
+        var resp = MapToResponse(project);
+        await FireWebhookAsync(companyId, "project.status_changed",
+            new { project = resp, from = prevStatus, to = "Completed" });
+        return resp;
     }
 
     public async Task<ProjectResponse> ChangeStatusAsync(Guid companyId, Guid projectId,
@@ -146,6 +177,7 @@ public class ProjectAccountingService : IProjectAccountingService
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบโครงการ");
+        var prevStatusForStatusChange = project.Status;
 
         // Closing transitions (Completed | Cancelled) stamp ActualEndDate
         // so reporting can age-filter retired projects.
@@ -169,7 +201,11 @@ public class ProjectAccountingService : IProjectAccountingService
         if (!string.IsNullOrWhiteSpace(reason))
             project.Description = (project.Description ?? "") + $"\n[{DateTime.UtcNow:yyyy-MM-dd}] Status → {status}: {reason}";
         await _db.SaveChangesAsync();
-        return MapToResponse(project);
+        var resp = MapToResponse(project);
+        if (prevStatusForStatusChange != status)
+            await FireWebhookAsync(companyId, "project.status_changed",
+                new { project = resp, from = prevStatusForStatusChange, to = status, reason });
+        return resp;
     }
 
     public async Task<ProjectResponse> AttachExternalAsync(Guid companyId, Guid projectId,
@@ -234,6 +270,11 @@ public class ProjectAccountingService : IProjectAccountingService
         }
 
         await _db.SaveChangesAsync();
+        await FireWebhookAsync(companyId, "project.deleted", new
+        {
+            id = project.Id, code = project.Code, name = project.Name,
+            externalId = project.ExternalId, externalSystem = project.ExternalSystem,
+        });
     }
 
     public async Task<List<ProjectResponse>> GetActiveListAsync(Guid companyId)

@@ -207,6 +207,18 @@ public class WebhookService : IWebhookService
                 JsonSerializer.Serialize(new { @event = "contact.created", data = new { contactId = Guid.Empty, name = "Sample Co." } })),
             new("journal.posted", "Fired when a journal entry is posted.",
                 JsonSerializer.Serialize(new { @event = "journal.posted", data = new { journalEntryId = Guid.Empty, totalDebit = 10000.00m } })),
+            new("document.paid", "Fired when a document's outstanding balance reaches zero.",
+                JsonSerializer.Serialize(new { @event = "document.paid", data = new { documentId = Guid.Empty, documentNumber = "INV-0001", paidAt = DateTime.UtcNow } })),
+            new("document.status_changed", "Fired on any document status transition (Approve/Reject/Cancel/Pay).",
+                JsonSerializer.Serialize(new { @event = "document.status_changed", data = new { documentId = Guid.Empty, from = "Draft", to = "Approved" } })),
+            new("project.created", "Fired when a new project is created.",
+                JsonSerializer.Serialize(new { @event = "project.created", data = new { id = Guid.Empty, code = "PRJ-001", name = "New Project", externalId = "JIRA-123", externalSystem = "Jira" } })),
+            new("project.updated", "Fired when a project's fields change.",
+                JsonSerializer.Serialize(new { @event = "project.updated", data = new { id = Guid.Empty, code = "PRJ-001" } })),
+            new("project.status_changed", "Fired when a project transitions between Active/OnHold/Completed/Cancelled.",
+                JsonSerializer.Serialize(new { @event = "project.status_changed", data = new { project = new { id = Guid.Empty, code = "PRJ-001" }, from = "Active", to = "OnHold", reason = "Client requested pause" } })),
+            new("project.deleted", "Fired when a project is soft-deleted.",
+                JsonSerializer.Serialize(new { @event = "project.deleted", data = new { id = Guid.Empty, code = "PRJ-001" } })),
             new("webhook.test", "Test event fired when you use the test endpoint.",
                 JsonSerializer.Serialize(new { @event = "webhook.test", data = new { message = "Hello from Accounting!" } }))
         };
