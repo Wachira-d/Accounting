@@ -245,6 +245,17 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
     Accounting.Services.Ai.Distillation.BankMatchDistillationModel>();
 builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
     Accounting.Services.Ai.Distillation.DuplicateDocumentDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.AnomalyExplanationDistillationModel>();
+// Risk scoring & smart approval routing — surfaces decisions the
+// admin/AR/AP teams use directly + feeds the corresponding AI narrative
+// features (AgingExplanation, ApprovalWarningFixSuggestion).
+builder.Services.AddScoped<Accounting.Services.Implementations.Risk.ICustomerPaymentRiskService,
+    Accounting.Services.Implementations.Risk.CustomerPaymentRiskService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Risk.IVendorRiskScoringService,
+    Accounting.Services.Implementations.Risk.VendorRiskScoringService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Risk.ISmartApprovalRoutingService,
+    Accounting.Services.Implementations.Risk.SmartApprovalRoutingService>();
 // Sentence-embedding service for Thai short text (vendor names, line
 // descriptions). Try ONNX MiniLM first — if the LFS-tracked model file
 // is present and loadable, register it; otherwise transparently fall
