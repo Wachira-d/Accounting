@@ -148,6 +148,16 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Search.IQuickSear
 // vendors hit /vendor-portal.html with the token in the URL.
 builder.Services.AddScoped<Accounting.Services.Implementations.Portal.IVendorPortalService,
     Accounting.Services.Implementations.Portal.VendorPortalService>();
+// Competitor migration framework — Express / PEAK / FlowAccount.
+// Each adapter sniffs the file format + maps to canonical Contacts.
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.ExpressContactsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.PeakContactsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.FlowAccountContactsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportCoordinator,
+    Accounting.Services.Implementations.Migration.CompetitorImportCoordinator>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();
