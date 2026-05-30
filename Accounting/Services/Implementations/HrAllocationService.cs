@@ -9,6 +9,7 @@ namespace Accounting.Services.Implementations;
 public interface IEmployeeProjectTimeService
 {
     Task<EmployeeProjectTimeResponse> CreateAsync(Guid companyId, CreateEmployeeProjectTimeRequest req, CancellationToken ct = default);
+    Task<EmployeeProjectTimeResponse> GetAsync(Guid companyId, Guid id, CancellationToken ct = default);
     Task<EmployeeProjectTimeResponse> UpdateAsync(Guid companyId, Guid id, UpdateEmployeeProjectTimeRequest req, CancellationToken ct = default);
     Task DeleteAsync(Guid companyId, Guid id, CancellationToken ct = default);
     Task<PagedResponse<EmployeeProjectTimeResponse>> ListAsync(Guid companyId, Guid? employeeId, Guid? projectId,
@@ -61,6 +62,16 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         _db.EmployeeProjectTimes.Add(row);
         await _db.SaveChangesAsync(ct);
         return await GetResponseAsync(companyId, row.Id, ct);
+    }
+
+    public async Task<EmployeeProjectTimeResponse> GetAsync(Guid companyId, Guid id, CancellationToken ct = default)
+    {
+        var row = await _db.EmployeeProjectTimes
+            .Include(t => t.Employee)
+            .Include(t => t.Project)
+            .FirstOrDefaultAsync(t => t.Id == id && t.CompanyId == companyId && !t.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบรายการเวลาทำงาน");
+        return Map(row);
     }
 
     public async Task<EmployeeProjectTimeResponse> UpdateAsync(Guid companyId, Guid id, UpdateEmployeeProjectTimeRequest req, CancellationToken ct = default)

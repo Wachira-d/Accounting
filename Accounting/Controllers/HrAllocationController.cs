@@ -41,6 +41,14 @@ public class HrAllocationController : ControllerBase
         { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
+    [HttpGet("project-time/{id:guid}")]
+    public async Task<ActionResult<ApiResponse<EmployeeProjectTimeResponse>>> Get(
+        Guid companyId, Guid id, CancellationToken ct)
+    {
+        try { return Ok(new ApiResponse<EmployeeProjectTimeResponse>(true, await _time.GetAsync(companyId, id, ct))); }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
     [HttpPut("project-time/{id:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeProjectTimeResponse>>> Update(
         Guid companyId, Guid id, [FromBody] UpdateEmployeeProjectTimeRequest req, CancellationToken ct)

@@ -212,7 +212,7 @@
               </td>
             </tr>`).join('');
           }
-          const total = r.data?.totalItems || items.length;
+          const total = r.data?.totalCount ?? r.data?.totalItems ?? items.length;
           const totalPages = r.data?.totalPages || 1;
           const sumHrs = items.reduce((s,t) => s + (t.hours || 0), 0);
           document.getElementById('pagination').innerHTML =
@@ -237,11 +237,8 @@
       async openEdit(id) {
         const cid = Layout.getCompanyId();
         try {
-          // Fetch single via list filtered by company (no single-get endpoint; use cached row data instead)
-          const tr = [...document.querySelectorAll('#tbody tr')].find(r => r.outerHTML.includes(id));
-          // Reload from API by filter
-          const r = await API.get(`/api/companies/${cid}/hr/project-time?pageSize=1&from=1900-01-01`);
-          const row = (r.data?.items || []).find(x => x.id === id);
+          const r = await API.get(`/api/companies/${cid}/hr/project-time/${id}`);
+          const row = r.data;
           if (!row) { Layout.toast('ไม่พบรายการ', 'error'); return; }
           document.getElementById('formTitle').textContent = 'แก้ไขรายการเวลา';
           document.getElementById('fId').value = row.id;

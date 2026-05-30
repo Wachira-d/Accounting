@@ -228,7 +228,7 @@
               </tr>`;
             }).join('');
           }
-          const total = r.data?.totalItems || items.length;
+          const total = r.data?.totalCount ?? r.data?.totalItems ?? items.length;
           const totalPages = r.data?.totalPages || 1;
           document.getElementById('pagination').innerHTML =
             `หน้า ${this._page}/${totalPages} · รวม ${total} คน` +

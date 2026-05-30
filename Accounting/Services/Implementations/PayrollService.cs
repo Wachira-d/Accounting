@@ -290,10 +290,16 @@ public class PayrollService : IPayrollService
         // Active. Only mirrored when the User isn't already in a stricter
         // state (Suspended, PendingVerification) which is admin-managed.
         if (request.CostBehavior != null) employee.CostBehavior = request.CostBehavior;
-        if (request.ExternalId != null) employee.ExternalId = request.ExternalId;
-        if (request.ExternalSystem != null) employee.ExternalSystem = request.ExternalSystem;
         if (request.SalaryType != null) employee.SalaryType = request.SalaryType;
-        if (request.CostBehavior != null || request.ExternalId != null) employee.LastSyncedAt = DateTime.UtcNow;
+        // LastSyncedAt only stamps when ExternalId is actually present — a
+        // plain UI edit that re-sends an unchanged costBehavior shouldn't
+        // look like an HRIS sync.
+        if (request.ExternalId != null)
+        {
+            employee.ExternalId = request.ExternalId;
+            employee.LastSyncedAt = DateTime.UtcNow;
+        }
+        if (request.ExternalSystem != null) employee.ExternalSystem = request.ExternalSystem;
         if (request.IsActive.HasValue)
         {
             employee.IsActive = request.IsActive.Value;
@@ -357,7 +363,7 @@ public class PayrollService : IPayrollService
                 try
                 {
                     var dup = await _db.Set<Employee>()
-                        .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == r.EmployeeCode);
+                        .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == r.EmployeeCode && !e.IsDeleted);
                     if (dup)
                     {
                         errors.Add($"{r.EmployeeCode}: รหัสซ้ำ");
