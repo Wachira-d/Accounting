@@ -16,6 +16,7 @@ public class AiOrchestrator : IAiOrchestrator
     private readonly IAiFeedbackRecorder _recorder;
     private readonly IAiPromptSanitizer _sanitizer;
     private readonly IEnumerable<Distillation.ILocalDistillationModel> _distilled;
+    private readonly IAiFeatureRoutingResolver _routing;
     private readonly ILogger<AiOrchestrator> _logger;
 
     public AiOrchestrator(
@@ -24,6 +25,7 @@ public class AiOrchestrator : IAiOrchestrator
         IAiResponseCacheService cache,
         IAiBudgetGuard budget,
         IEnumerable<Distillation.ILocalDistillationModel> distilled,
+        IAiFeatureRoutingResolver routing,
         IAiFeedbackRecorder recorder,
         IAiPromptSanitizer sanitizer,
         ILogger<AiOrchestrator> logger)
@@ -33,32 +35,68 @@ public class AiOrchestrator : IAiOrchestrator
         _cache = cache;
         _budget = budget;
         _distilled = distilled;
+        _routing = routing;
         _recorder = recorder;
         _sanitizer = sanitizer;
         _logger = logger;
     }
 
-    /// <summary>
-    /// Threshold above which the local distilled model "wins" — the
-    /// orchestrator skips DeepSeek entirely and returns the local
-    /// answer. Set high (0.85) so cost savings only kick in when the
-    /// student is genuinely confident. Below this, we still consult
-    /// DeepSeek as the teacher even if local has a guess.
-    /// </summary>
-    private const decimal LocalConfidenceThreshold = 0.85m;
-
-    /// <summary>Sampling rate — when local IS above threshold, we
-    /// still hit DeepSeek 10% of the time so LocalModelHealth stays
-    /// calibrated and drift is detected. Lower this once accuracy
-    /// has plateaued.</summary>
-    private const decimal LocalSamplingRate = 0.10m;
-
-    /// <summary>Shared RNG for the calibration-sample coin-flip. Random
-    /// is not thread-safe pre-.NET 6 but Random.Shared (or a static
-    /// instance accessed under lock) is — we use a static instance and
-    /// NextDouble is called under no contention concerns since concurrent
-    /// reads of independent doubles are tolerable for sampling.</summary>
+    /// <summary>Shared RNG for the per-feature sampling coin-flip.
+    /// Random.Shared is thread-safe for concurrent NextDouble calls
+    /// in .NET 6+.</summary>
     private static readonly Random _sampling = Random.Shared;
+
+    /// <summary>Resolve the per-feature local model + run prediction.
+    /// Returns null when no model is registered, not ready, or threw.
+    /// Caller decides what to DO with the prediction based on routing.</summary>
+    private async Task<Distillation.LocalPrediction?> TryPredictLocalAsync(AiRequest request, CancellationToken ct)
+    {
+        var local = _distilled.FirstOrDefault(m => m.FeatureKey == request.FeatureKey);
+        if (local == null || !local.IsReady) return null;
+        try
+        {
+            return await local.PredictAsync(request.CompanyId, request.UserPromptJson, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Local model PredictAsync threw for {Feature}", request.FeatureKey);
+            return null;
+        }
+    }
+
+    /// <summary>Short-circuit return: record a Skipped feedback row
+    /// (LocalModelAnswer populated for accuracy attribution + admin
+    /// audit) and emit a synthetic AiResponse with UsedAi=false.</summary>
+    private async Task<AiResponse> ReturnLocalAsync(AiRequest request,
+        Distillation.LocalPrediction localPred, string reason, CancellationToken ct)
+    {
+        var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
+            request.CompanyId, request.FeatureKey, "", request.UserPromptJson, null,
+            AiPrimaryAnswer: null, AiConfidence: null,
+            LocalModelAnswer: localPred.PrimaryAnswer,
+            LocalModelConfidence: localPred.Confidence,
+            LocalModelVersion: localPred.ModelVersion,
+            request.SourceEntityType, request.SourceEntityId,
+            AiCallStatus.Skipped, AiProviderType.DeepSeek, ModelVersion: null,
+            LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
+            CacheHitOfFeedbackId: null,
+            ErrorMessage: reason), ct);
+        return new AiResponse
+        {
+            Status = AiCallStatus.Skipped,
+            PrimaryAnswer = localPred.PrimaryAnswer,
+            Confidence = localPred.Confidence,
+            Alternatives = localPred.Alternatives,
+            Risks = Array.Empty<string>(),
+            ComplianceFlags = Array.Empty<string>(),
+            Reasoning = reason,
+            SuggestedActions = Array.Empty<string>(),
+            UsedAi = false,
+            UsedCache = false,
+            FeedbackId = fid,
+            ProviderModel = "local:" + localPred.ModelVersion,
+        };
+    }
 
     public async Task<AiResponse> AskAsync(AiRequest request, CancellationToken ct = default)
     {
@@ -81,67 +119,81 @@ public class AiOrchestrator : IAiOrchestrator
     {
         var settings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
 
-        // ── Step 0: distilled local-model short-circuit ───────────────
-        // Knowledge-distillation routing: if a local model has been
-        // trained from past DeepSeek feedback AND its confidence on
-        // this input exceeds the threshold, return that prediction
-        // and skip DeepSeek entirely (cost saver). We still sample
-        // 10% of confident-local cases through DeepSeek so accuracy
-        // stats stay calibrated + drift gets detected.
-        //
-        // This is the closed loop the user flagged: DeepSeek bootstraps
-        // labels; local model approximates DeepSeek; once accuracy
-        // saturates the system spends nothing on confident calls.
+        // ── Step 0: per-feature routing decision ──────────────────────
+        // Admin policy from AiFeatureRoutingConfigs decides whether to
+        // consult the local distilled model, the provider, or both.
+        // The five modes:
+        //   Disabled     → orchestrator returns local fallback (no call)
+        //   LocalOnly    → student answers; provider never billed
+        //   ProviderOnly → ignore student; always call provider
+        //   Hybrid       → student short-circuits ≥ threshold; sample for drift
+        //   AlwaysTeach  → always call provider, record local head-to-head
+        // ForceProviderCall (admin UI "ขอความเห็น AI" button) overrides
+        // all modes except Disabled.
+        var routing = await _routing.ResolveAsync(request.FeatureKey, ct);
+        var localPred = await TryPredictLocalAsync(request, ct);
+        if (localPred != null)
+        {
+            request = request with
+            {
+                LocalPrimaryAnswer = localPred.PrimaryAnswer,
+                LocalConfidence = localPred.Confidence,
+                LocalModelVersion = localPred.ModelVersion,
+            };
+        }
+
         if (!request.ForceProviderCall && !request.BypassCache)
         {
-            var local = _distilled.FirstOrDefault(m => m.FeatureKey == request.FeatureKey);
-            if (local != null && local.IsReady)
+            switch (routing.Mode)
             {
-                var localPred = await local.PredictAsync(request.CompanyId, request.UserPromptJson, ct);
-                if (localPred != null && localPred.Confidence >= LocalConfidenceThreshold)
+                case AiFeatureRoutingMode.Disabled:
                 {
-                    var sampleThis = _sampling.NextDouble() < (double)LocalSamplingRate;
-                    if (!sampleThis)
-                    {
-                        // Local wins — record a Skipped feedback row for
-                        // accuracy attribution but emit nothing to the
-                        // provider (zero cost).
-                        var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-                            request.CompanyId, request.FeatureKey, "", request.UserPromptJson, null,
-                            AiPrimaryAnswer: null, AiConfidence: null,
-                            LocalModelAnswer: localPred.PrimaryAnswer,
-                            LocalModelConfidence: localPred.Confidence,
-                            LocalModelVersion: localPred.ModelVersion,
-                            request.SourceEntityType, request.SourceEntityId,
-                            AiCallStatus.Skipped, AiProviderType.DeepSeek, ModelVersion: null,
-                            LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
-                            CacheHitOfFeedbackId: null,
-                            ErrorMessage: $"LocalDistilled wins ({localPred.Confidence:P0} >= {LocalConfidenceThreshold:P0})"), ct);
-                        return new AiResponse
-                        {
-                            Status = AiCallStatus.Skipped,
-                            PrimaryAnswer = localPred.PrimaryAnswer,
-                            Confidence = localPred.Confidence,
-                            Alternatives = localPred.Alternatives,
-                            Risks = Array.Empty<string>(),
-                            ComplianceFlags = Array.Empty<string>(),
-                            Reasoning = $"Local distilled model (v{localPred.ModelVersion}, {localPred.SupportingSamples} samples)",
-                            SuggestedActions = Array.Empty<string>(),
-                            UsedAi = false, UsedCache = false,
-                            FeedbackId = fid,
-                            ProviderModel = "local:" + localPred.ModelVersion,
-                        };
-                    }
-                    // sampleThis = true → fall through to DeepSeek for
-                    // calibration. Pass the local prediction along so
-                    // the response can mark agree/disagree explicitly.
-                    request = request with
-                    {
-                        LocalPrimaryAnswer = localPred.PrimaryAnswer,
-                        LocalConfidence = localPred.Confidence,
-                        LocalModelVersion = localPred.ModelVersion,
-                    };
+                    var fid = await RecordSkip(request, AiCallStatus.Skipped,
+                        "Feature disabled by admin routing policy", ct);
+                    return FallbackToLocal(request, AiCallStatus.Skipped, null, fid);
                 }
+
+                case AiFeatureRoutingMode.LocalOnly:
+                    if (localPred != null)
+                        return await ReturnLocalAsync(request, localPred,
+                            $"LocalOnly mode (v{localPred.ModelVersion})", ct);
+                    // No local — degrade gracefully to LocalFallback with skipped status.
+                    var fidLocal = await RecordSkip(request, AiCallStatus.Skipped,
+                        "LocalOnly mode but no local prediction available", ct);
+                    return FallbackToLocal(request, AiCallStatus.Skipped, null, fidLocal);
+
+                case AiFeatureRoutingMode.Hybrid:
+                    if (localPred != null && localPred.Confidence >= routing.LocalConfidenceThreshold)
+                    {
+                        // High-confidence local — sample N% through provider
+                        // for drift calibration; otherwise short-circuit.
+                        if (_sampling.NextDouble() >= (double)routing.ProviderSamplingRate)
+                            return await ReturnLocalAsync(request, localPred,
+                                $"Hybrid: local wins ({localPred.Confidence:P0} >= {routing.LocalConfidenceThreshold:P0})",
+                                ct);
+                        // Falls through to provider call with local attached.
+                    }
+                    break;
+
+                case AiFeatureRoutingMode.AlwaysTeach:
+                    // Always hit provider — but if ProviderSamplingRate is set,
+                    // honour it as a cost dial (e.g. 0.5 = teach on half of calls,
+                    // others short-circuit even if low-confidence). This lets
+                    // admins lower the bill while keeping a steady training stream.
+                    if (routing.ProviderSamplingRate < 1m
+                        && _sampling.NextDouble() >= (double)routing.ProviderSamplingRate
+                        && localPred != null)
+                    {
+                        return await ReturnLocalAsync(request, localPred,
+                            $"AlwaysTeach: budget-sampled to local ({routing.ProviderSamplingRate:P0} sample rate)",
+                            ct);
+                    }
+                    break;
+
+                case AiFeatureRoutingMode.ProviderOnly:
+                    // Fall through to provider call; local prediction stays
+                    // attached to the request so feedback row records both.
+                    break;
             }
         }
 

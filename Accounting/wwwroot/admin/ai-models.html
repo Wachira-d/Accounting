@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>นโยบายโมเดล AI ต่อฟีเจอร์ - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css?v=20260114b">
+  <style>
+    .info-box { background:#eff6ff; border-left:4px solid #3b82f6; padding:12px 16px; border-radius:8px; font-size:13px; color:#1e40af; margin-bottom:16px; }
+    .info-box-warn { background:#fef3c7; border-left-color:#d97706; color:#92400e; }
+    .feature-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:16px; margin-bottom:12px; }
+    .feature-card-head { display:flex; justify-content:space-between; align-items:start; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .feature-card-title { font-weight:700; font-size:15px; color:#1e293b; }
+    .feature-card-sub { font-size:11px; color:#64748b; margin-top:2px; font-family:monospace; }
+    .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:14px; }
+    .stat-pill { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; text-align:center; }
+    .stat-pill .label { font-size:10px; color:#64748b; text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+    .stat-pill .value { font-weight:700; font-size:16px; color:#1e293b; }
+    .stat-pill.good .value { color:#16a34a; }
+    .stat-pill.bad .value { color:#dc2626; }
+    .stat-pill.warn .value { color:#d97706; }
+    .controls-row { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:10px; }
+    .controls-row label { display:block; font-size:11px; font-weight:600; color:#64748b; margin-bottom:3px; text-transform:uppercase; letter-spacing:.4px; }
+    .controls-row select, .controls-row input { width:100%; padding:7px 10px; border:1px solid #d1d5db; border-radius:7px; font-size:13px; font-family:inherit; }
+    .controls-row select:focus, .controls-row input:focus { outline:none; border-color:#6366f1; }
+    .mode-badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; margin-left:8px; }
+    .mode-Disabled { background:#f1f5f9; color:#64748b; }
+    .mode-LocalOnly { background:#dcfce7; color:#15803d; }
+    .mode-ProviderOnly { background:#fef3c7; color:#92400e; }
+    .mode-Hybrid { background:#dbeafe; color:#1e40af; }
+    .mode-AlwaysTeach { background:#fce7f3; color:#9d174d; }
+    .health-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10px; font-weight:700; }
+    .health-Healthy { background:#dcfce7; color:#15803d; }
+    .health-Degraded { background:#fef3c7; color:#92400e; }
+    .health-NeedsRedesign { background:#fee2e2; color:#dc2626; }
+    .health-InsufficientData { background:#f1f5f9; color:#64748b; }
+    .recommendation { background:#fefce8; border-left:3px solid #ca8a04; padding:8px 12px; border-radius:6px; font-size:12px; color:#854d0e; margin-top:10px; }
+    .save-row { display:flex; gap:10px; align-items:center; }
+    .save-row textarea { flex:1; padding:7px 10px; border:1px solid #d1d5db; border-radius:7px; font-size:12px; min-height:36px; resize:vertical; font-family:inherit; }
+    .btn-save { background:linear-gradient(135deg,#6366f1,#4f46e5); color:#fff; border:none; padding:8px 16px; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; white-space:nowrap; }
+    .btn-save:disabled { opacity:.5; cursor:not-allowed; }
+    .btn-save.saved { background:#16a34a; }
+    .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:#475569; margin-bottom:16px; padding:10px 14px; background:#f8fafc; border-radius:8px; }
+    .legend b { color:#1e293b; }
+    .filter-bar { display:flex; gap:10px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
+    .filter-bar select { padding:7px 12px; border:1px solid #d1d5db; border-radius:7px; font-size:13px; font-family:inherit; }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>🧠 นโยบายโมเดล AI ต่อฟีเจอร์</strong> — ตั้งค่าได้ทีละฟีเจอร์ว่าจะให้ local model ตอบ,
+      ยิงไป DeepSeek อย่างเดียว, ผสม (Hybrid), หรือยิงทุกครั้งเพื่อสอน local model (AlwaysTeach)
+      <span style="float:right;font-size:11px;font-family:monospace;color:#64748b">build: ai-models-v1</span>
+    </div>
+
+    <div class="info-box info-box-warn">
+      🎓 <strong>AlwaysTeach mode</strong> = ยิงไป DeepSeek เสมอ + เก็บคำตอบ local เปรียบเทียบในทุก call
+      → corpus โตเร็วแต่จ่ายค่า DeepSeek เต็มจำนวน. ใช้ตอน local accuracy ยังต่ำกว่า 80%.
+      เมื่อแม่นขึ้นแล้วค่อยสลับเป็น Hybrid (สุ่ม 10%) หรือ LocalOnly (ไม่ยิงเลย)
+    </div>
+
+    <div class="legend">
+      <span><b>Disabled</b>: ปิดฟีเจอร์</span>
+      <span><b>LocalOnly</b>: local เท่านั้น (free)</span>
+      <span><b>ProviderOnly</b>: DeepSeek เท่านั้น</span>
+      <span><b>Hybrid</b>: local เมื่อมั่นใจ + สุ่ม DeepSeek ตามสัดส่วน</span>
+      <span><b>AlwaysTeach</b>: DeepSeek เสมอ + สอน local</span>
+    </div>
+
+    <div class="filter-bar">
+      <label style="font-size:12px;color:#475569">กรองตามโหมด:</label>
+      <select id="filterMode" onchange="Page.render()">
+        <option value="">ทุกโหมด</option>
+        <option value="Hybrid">Hybrid (default)</option>
+        <option value="AlwaysTeach">AlwaysTeach</option>
+        <option value="LocalOnly">LocalOnly</option>
+        <option value="ProviderOnly">ProviderOnly</option>
+        <option value="Disabled">Disabled</option>
+      </select>
+      <label style="font-size:12px;color:#475569">กรองตามสถานะ:</label>
+      <select id="filterHealth" onchange="Page.render()">
+        <option value="">ทั้งหมด</option>
+        <option value="Healthy">Healthy</option>
+        <option value="Degraded">Degraded</option>
+        <option value="NeedsRedesign">NeedsRedesign</option>
+        <option value="InsufficientData">InsufficientData</option>
+      </select>
+      <span style="margin-left:auto;font-size:12px;color:#64748b" id="totalCount">—</span>
+    </div>
+
+    <div id="featuresList"></div>
+
+  </div>
+
+  <script src="/admin/admin-layout.js?v=20260114b"></script>
+  <script>
+    const Page = {
+      token: null,
+      data: null,
+
+      async init() {
+        await AdminLayout.init('ai-models');
+        this.token = localStorage.getItem('admin_token');
+        await this.load();
+      },
+
+      async load() {
+        const el = document.getElementById('featuresList');
+        el.innerHTML = '<div style="padding:40px;text-align:center;color:#64748b">กำลังโหลด...</div>';
+        try {
+          const r = await fetch('/api/admin/ai/routing?days=30',
+            { headers: { 'Authorization': `Bearer ${this.token}` } });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'load failed');
+          this.data = j.data;
+          this.render();
+        } catch (e) {
+          el.innerHTML = `<div style="padding:40px;text-align:center;color:#dc2626">${e.message}</div>`;
+        }
+      },
+
+      render() {
+        const el = document.getElementById('featuresList');
+        const filterMode = document.getElementById('filterMode').value;
+        const filterHealth = document.getElementById('filterHealth').value;
+        const rows = (this.data?.features || []).filter(f => {
+          const mode = f.config?.mode || 'Hybrid';
+          const health = f.health?.status || 'InsufficientData';
+          return (!filterMode || mode === filterMode)
+              && (!filterHealth || health === filterHealth);
+        });
+        document.getElementById('totalCount').textContent = `${rows.length} ฟีเจอร์`;
+        if (rows.length === 0) {
+          el.innerHTML = '<div style="padding:40px;text-align:center;color:#64748b">ไม่พบฟีเจอร์ที่ตรงเงื่อนไข</div>';
+          return;
+        }
+        el.innerHTML = rows.map(f => this.renderCard(f)).join('');
+      },
+
+      renderCard(f) {
+        const mode = f.config?.mode || 'Hybrid';
+        const threshold = f.config?.threshold ?? this.data.defaults.threshold;
+        const sampling = f.config?.samplingRate ?? this.data.defaults.samplingRate;
+        const health = f.health?.status || 'InsufficientData';
+        const samples = f.stats?.samples ?? f.health?.samples30d ?? 0;
+        const localAcc = f.stats?.localAccuracy ?? (f.health?.localAccuracy30d ? Math.round(f.health.localAccuracy30d * 100) : 0);
+        const aiAcc = f.stats?.aiAccuracy ?? (f.health?.aiAccuracy30d ? Math.round(f.health.aiAccuracy30d * 100) : 0);
+        const localConf = f.stats?.avgLocalConfidence ?? 0;
+        const aiConf = f.stats?.avgAiConfidence ?? 0;
+        const note = f.config?.note || '';
+        const updatedBy = f.config?.lastModifiedBy || '—';
+        const updatedAt = f.config?.updatedAt ? new Date(f.config.updatedAt).toLocaleString('th-TH') : '—';
+        return `
+        <div class="feature-card" data-feature="${f.feature}">
+          <div class="feature-card-head">
+            <div>
+              <div class="feature-card-title">
+                ${f.feature}
+                <span class="mode-badge mode-${mode}">${mode}</span>
+                <span class="health-badge health-${health}" title="${f.health?.recommendation || ''}">${health}</span>
+              </div>
+              <div class="feature-card-sub">last modified: ${updatedAt} by ${updatedBy}</div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-pill"><div class="label">samples 30d</div><div class="value">${samples.toLocaleString()}</div></div>
+            <div class="stat-pill ${localAcc >= 80 ? 'good' : localAcc >= 60 ? 'warn' : 'bad'}"><div class="label">local acc</div><div class="value">${localAcc}%</div></div>
+            <div class="stat-pill ${aiAcc >= 80 ? 'good' : aiAcc >= 60 ? 'warn' : 'bad'}"><div class="label">AI acc</div><div class="value">${aiAcc}%</div></div>
+            <div class="stat-pill"><div class="label">local conf</div><div class="value">${localConf}%</div></div>
+            <div class="stat-pill"><div class="label">AI conf</div><div class="value">${aiConf}%</div></div>
+          </div>
+          <div class="controls-row">
+            <div>
+              <label>Routing mode</label>
+              <select id="mode-${f.feature}">
+                ${(this.data.modes || []).map(m => `<option value="${m}" ${m === mode ? 'selected' : ''}>${m}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label>Local threshold (0–1)</label>
+              <input type="number" step="0.05" min="0" max="1" value="${threshold}" id="threshold-${f.feature}">
+            </div>
+            <div>
+              <label>Provider sampling (0–1)</label>
+              <input type="number" step="0.05" min="0" max="1" value="${sampling}" id="sampling-${f.feature}">
+            </div>
+            <div style="display:flex;align-items:end">
+              <button class="btn-save" onclick="Page.save('${f.feature}')">บันทึก</button>
+            </div>
+          </div>
+          <div class="save-row">
+            <textarea placeholder="หมายเหตุ admin (ทำไมตั้งโหมดนี้, เป้าหมาย accuracy...)" id="note-${f.feature}">${this.escape(note)}</textarea>
+          </div>
+          ${f.health?.recommendation ? `<div class="recommendation">💡 ${this.escape(f.health.recommendation)}</div>` : ''}
+        </div>`;
+      },
+
+      escape(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
+
+      async save(feature) {
+        const btn = document.querySelector(`[data-feature="${feature}"] .btn-save`);
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+        try {
+          const body = {
+            featureKey: feature,
+            mode: document.getElementById(`mode-${feature}`).value,
+            localConfidenceThreshold: parseFloat(document.getElementById(`threshold-${feature}`).value),
+            providerSamplingRate: parseFloat(document.getElementById(`sampling-${feature}`).value),
+            adminNote: document.getElementById(`note-${feature}`).value || null,
+          };
+          const r = await fetch('/api/admin/ai/routing', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+            body: JSON.stringify(body),
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'save failed');
+          btn.classList.add('saved');
+          btn.textContent = '✓ บันทึกแล้ว';
+          setTimeout(async () => { await this.load(); }, 800);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'บันทึก';
+          alert('บันทึกไม่สำเร็จ: ' + e.message);
+        }
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

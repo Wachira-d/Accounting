@@ -3193,6 +3193,28 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_FeatureKey" ON "LocalModelHealths" ("FeatureKey") WHERE "IsDeleted" = false;""",
 
+            // Per-feature routing policy — admin sets mode + thresholds
+            // per AiFeatureKey. Sparse (rows missing fall back to global
+            // defaults in the orchestrator).
+            """
+            CREATE TABLE IF NOT EXISTS "AiFeatureRoutingConfigs" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "FeatureKey" varchar(100) NOT NULL,
+                "Mode" integer NOT NULL DEFAULT 3,
+                "LocalConfidenceThreshold" decimal(5,4) NULL,
+                "ProviderSamplingRate" decimal(5,4) NULL,
+                "AdminNote" text NULL,
+                "LastModifiedBy" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiFeatureRoutingConfigs" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiFeatureRoutingConfigs_FeatureKey" ON "AiFeatureRoutingConfigs" ("FeatureKey") WHERE "IsDeleted" = false;""",
+
             // Daily usage rollup — drives the admin AI burn widget. One
             // row per (day, provider, feature). Job upserts at end-of-day.
             """

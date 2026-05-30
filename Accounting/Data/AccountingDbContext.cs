@@ -306,6 +306,7 @@ public class AccountingDbContext : DbContext
     public DbSet<AiSuggestionFeedback> AiSuggestionFeedbacks => Set<AiSuggestionFeedback>();
     public DbSet<AiResponseCache> AiResponseCaches => Set<AiResponseCache>();
     public DbSet<LocalModelHealth> LocalModelHealths => Set<LocalModelHealth>();
+    public DbSet<AiFeatureRoutingConfig> AiFeatureRoutingConfigs => Set<AiFeatureRoutingConfig>();
     public DbSet<AiUsageDaily> AiUsageDailies => Set<AiUsageDaily>();
 
     // External Integration
@@ -2279,6 +2280,14 @@ public class AccountingDbContext : DbContext
                 .HasDatabaseName("IX_LocalModelHealths_FeatureKey")
                 .IsUnique();
             e.HasQueryFilter(h => !h.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiFeatureRoutingConfig>(e =>
+        {
+            e.HasIndex(c => c.FeatureKey)
+                .HasDatabaseName("IX_AiFeatureRoutingConfigs_FeatureKey")
+                .IsUnique();
+            e.HasQueryFilter(c => !c.IsDeleted);
         });
 
         modelBuilder.Entity<AiUsageDaily>(e =>

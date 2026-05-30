@@ -21,6 +21,7 @@ const AdminLayout = {
     { id: 'system-email', label: 'อีเมลระบบ (SMTP)', icon: '📧', href: '/admin/system-email.html' },
     { id: 'ocr-config', label: 'ตั้งค่า OCR / Azure DI', icon: '🔍', href: '/admin/ocr-config.html' },
     { id: 'ai-config', label: 'AI Augmentation (DeepSeek)', icon: '🤖', href: '/admin/ai-config.html' },
+    { id: 'ai-models', label: 'นโยบายโมเดล AI ต่อฟีเจอร์', icon: '🧠', href: '/admin/ai-models.html' },
     { section: 'ตรวจสอบระบบ' },
     { id: 'audit-log', label: 'บันทึกกิจกรรม (Audit)', icon: '📜', href: '/admin/audit-log.html' },
     { id: 'error-log', label: 'บันทึกข้อผิดพลาด', icon: '🐞', href: '/admin/error-log.html' },

@@ -1179,3 +1179,38 @@ public enum LocalModelHealthStatus
     /// <summary>Insufficient samples to evaluate.</summary>
     InsufficientData = 4,
 }
+
+/// <summary>
+/// Per-feature routing mode set by admin in /admin/ai-models.html.
+/// Drives AiOrchestrator.AskInternalAsync Step 0 — pick local, pick
+/// provider, or mix them.
+/// </summary>
+public enum AiFeatureRoutingMode
+{
+    /// <summary>Feature off — orchestrator returns the local-fallback
+    /// answer (or a Skipped status if no local was supplied). No
+    /// provider tokens spent, no learning happens.</summary>
+    Disabled = 0,
+
+    /// <summary>Local distilled model answers; provider is never called.
+    /// Use once the student plateaus at user-acceptable accuracy and
+    /// the cost saving outweighs occasional drift.</summary>
+    LocalOnly = 1,
+
+    /// <summary>Always call the provider; ignore any local prediction.
+    /// The default for features without a local student yet, or where
+    /// the admin wants pure-AI behaviour while debugging.</summary>
+    ProviderOnly = 2,
+
+    /// <summary>Default smart routing: local short-circuit when ≥
+    /// threshold; provider sampled at ProviderSamplingRate for drift
+    /// calibration. Cheapest balanced mode.</summary>
+    Hybrid = 3,
+
+    /// <summary>"Teach me" mode — every call hits the provider AND
+    /// the local prediction is recorded head-to-head for training.
+    /// Used to grow the corpus quickly for an immature student.
+    /// Costs as much as ProviderOnly but generates the maximum
+    /// supervision signal per call.</summary>
+    AlwaysTeach = 4,
+}

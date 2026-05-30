@@ -282,6 +282,52 @@ public class LocalModelHealth : BaseEntity
 }
 
 /// <summary>
+/// Per-feature routing policy — admin sets this; AiOrchestrator reads
+/// it on every call. Separate from LocalModelHealth (which is nightly-
+/// recomputed STATS) because this is admin INTENT and lives across
+/// retrains. One row per AiFeatureKey; sparse (rows missing fall back
+/// to the global defaults baked into the orchestrator).
+///
+/// Modes the admin can pick per feature:
+///   • Disabled       → orchestrator returns local fallback, no provider call.
+///   • LocalOnly      → only the distilled student answers; never bill DeepSeek.
+///   • ProviderOnly   → always hit DeepSeek; ignore local student.
+///   • Hybrid         → local short-circuit when ≥ threshold + sample N%.
+///   • AlwaysTeach    → always hit DeepSeek AND record the local prediction
+///                      head-to-head so the feedback corpus grows. Use
+///                      while the model is still maturing — costs full
+///                      provider fees, gains maximum training signal.
+/// </summary>
+public class AiFeatureRoutingConfig : BaseEntity
+{
+    /// <summary>Stringified AiFeatureKey — same value as
+    /// LocalModelHealth.FeatureKey + AiSuggestionFeedback.FeatureKey
+    /// so they join naturally.</summary>
+    public string FeatureKey { get; set; } = "";
+
+    public AiFeatureRoutingMode Mode { get; set; } = AiFeatureRoutingMode.Hybrid;
+
+    /// <summary>Override the orchestrator's global 0.85 threshold. Only
+    /// honoured in Hybrid mode. Null → use global.</summary>
+    public decimal? LocalConfidenceThreshold { get; set; }
+
+    /// <summary>Override the orchestrator's global 0.10 sampling rate.
+    /// In Hybrid mode this is the fraction of confident-local cases
+    /// that still go to DeepSeek for drift calibration. In AlwaysTeach
+    /// mode this is the fraction of cases that hit DeepSeek (others
+    /// short-circuit so you can dial cost). Null → use global.</summary>
+    public decimal? ProviderSamplingRate { get; set; }
+
+    /// <summary>Human-readable note from the admin — why this feature
+    /// is in this mode (e.g. "Teaching until 5k samples", "Local
+    /// performs at 92% — locked to LocalOnly").</summary>
+    public string? AdminNote { get; set; }
+
+    /// <summary>Who last touched this row — surfaced in the audit log.</summary>
+    public string? LastModifiedBy { get; set; }
+}
+
+/// <summary>
 /// Daily rollup feeding the admin "AI burn" widget. Mirrors the
 /// pattern of the Azure DI usage endpoint added in /admin/ocr-config.
 /// </summary>

@@ -27,11 +27,13 @@ public class AiAdminController : ControllerBase
 {
     private readonly AccountingDbContext _db;
     private readonly IEnumerable<IAiProvider> _providers;
+    private readonly IAiFeatureRoutingResolver _routing;
     private readonly ILogger<AiAdminController> _logger;
 
     public AiAdminController(AccountingDbContext db, IEnumerable<IAiProvider> providers,
+        IAiFeatureRoutingResolver routing,
         ILogger<AiAdminController> logger)
-    { _db = db; _providers = providers; _logger = logger; }
+    { _db = db; _providers = providers; _routing = routing; _logger = logger; }
 
     // ────────────────────────────────────────────────────────────────
     //  Provider registry CRUD
@@ -421,5 +423,107 @@ public class AiAdminController : ControllerBase
         if (string.IsNullOrEmpty(key)) return "";
         if (key.Length <= 8) return new string('*', key.Length);
         return new string('*', key.Length - 4) + key[^4..];
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Per-feature routing config — admin sets mode per AiFeatureKey
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>List every AiFeatureKey with its current routing config
+    /// (or "Hybrid + global defaults" when no admin-set row exists), joined
+    /// with the latest LocalModelHealth + 30-day accuracy stats so the
+    /// admin can decide policy from a single screen.</summary>
+    [HttpGet("routing")]
+    public async Task<ActionResult<ApiResponse<object>>> GetRouting([FromQuery] int days = 30)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-Math.Max(7, Math.Min(days, 180)));
+        var configs = (await _routing.ListAllAsync(HttpContext.RequestAborted))
+            .ToDictionary(c => c.FeatureKey);
+        var health = (await _db.LocalModelHealths.AsNoTracking().ToListAsync())
+            .ToDictionary(h => h.FeatureKey);
+        var stats = await _db.AiSuggestionFeedbacks.AsNoTracking()
+            .Where(f => f.CreatedAt >= cutoff && f.UserChosenAt != null)
+            .GroupBy(f => f.FeatureKey)
+            .Select(g => new
+            {
+                feature = g.Key,
+                samples = g.Count(),
+                aiCorrect = g.Count(f => f.UserAcceptedAi == true),
+                localCorrect = g.Count(f => f.LocalModelAnswer != null && f.LocalModelAnswer == f.UserChosenAnswer),
+                avgLocalConf = g.Average(f => f.LocalModelConfidence) ?? 0m,
+                avgAiConf = g.Average(f => f.AiConfidence) ?? 0m,
+            })
+            .ToDictionaryAsync(x => x.feature, x => x);
+
+        var rows = Enum.GetValues<AiFeatureKey>()
+            .Select(k => k.ToString())
+            .Select(key => new
+            {
+                feature = key,
+                config = configs.TryGetValue(key, out var c) ? new
+                {
+                    mode = c.Mode.ToString(),
+                    threshold = c.LocalConfidenceThreshold,
+                    samplingRate = c.ProviderSamplingRate,
+                    note = c.AdminNote,
+                    lastModifiedBy = c.LastModifiedBy,
+                    updatedAt = c.UpdatedAt,
+                } : null,
+                health = health.TryGetValue(key, out var h) ? new
+                {
+                    status = h.Status.ToString(),
+                    samples30d = h.SamplesLast30d,
+                    localAccuracy30d = h.LocalAccuracy30d,
+                    aiAccuracy30d = h.AiAccuracy30d,
+                    agreementRate30d = h.AgreementRate30d,
+                    h.LastEvaluatedAt,
+                    h.Recommendation,
+                } : null,
+                stats = stats.TryGetValue(key, out var s) ? new
+                {
+                    samples = s.samples,
+                    aiAccuracy = s.samples > 0 ? Math.Round(100m * s.aiCorrect / s.samples, 1) : 0m,
+                    localAccuracy = s.samples > 0 ? Math.Round(100m * s.localCorrect / s.samples, 1) : 0m,
+                    avgLocalConfidence = Math.Round(s.avgLocalConf * 100m, 1),
+                    avgAiConfidence = Math.Round(s.avgAiConf * 100m, 1),
+                } : null,
+            });
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            modes = Enum.GetNames<AiFeatureRoutingMode>(),
+            defaults = new { mode = "Hybrid", threshold = 0.85m, samplingRate = 0.10m },
+            features = rows,
+        }));
+    }
+
+    public sealed record SetRoutingRequest(
+        string FeatureKey,
+        string Mode,
+        decimal? LocalConfidenceThreshold,
+        decimal? ProviderSamplingRate,
+        string? AdminNote);
+
+    /// <summary>Upsert one feature's routing policy. Cache invalidates
+    /// immediately so the next AI call honours the new policy.</summary>
+    [HttpPut("routing")]
+    public async Task<ActionResult<ApiResponse<object>>> SetRouting([FromBody] SetRoutingRequest req)
+    {
+        if (!Enum.TryParse<AiFeatureKey>(req.FeatureKey, out var feature))
+            return BadRequest(new ApiResponse<object>(false, null, $"Unknown FeatureKey: {req.FeatureKey}"));
+        if (!Enum.TryParse<AiFeatureRoutingMode>(req.Mode, out var mode))
+            return BadRequest(new ApiResponse<object>(false, null, $"Unknown Mode: {req.Mode}"));
+
+        try
+        {
+            await _routing.SetAsync(feature, mode,
+                req.LocalConfidenceThreshold, req.ProviderSamplingRate,
+                req.AdminNote, User?.Identity?.Name, HttpContext.RequestAborted);
+            return Ok(new ApiResponse<object>(true, new { saved = true }));
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
+        }
     }
 }

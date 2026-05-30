@@ -215,6 +215,11 @@ builder.Services.AddScoped<Accounting.Services.Ai.IAiPromptSanitizer, Accounting
 builder.Services.AddScoped<Accounting.Services.Ai.IAiResponseCacheService, Accounting.Services.Ai.AiResponseCacheService>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiBudgetGuard, Accounting.Services.Ai.AiBudgetGuard>();
 builder.Services.AddScoped<Accounting.Services.Ai.IAiFeedbackRecorder, Accounting.Services.Ai.AiFeedbackRecorder>();
+// Per-feature routing policy — SINGLETON so the 1-minute cache survives
+// across HTTP requests. The orchestrator consults this on every AI call
+// to decide local vs provider; the admin UI writes through it.
+builder.Services.AddSingleton<Accounting.Services.Ai.IAiFeatureRoutingResolver,
+    Accounting.Services.Ai.AiFeatureRoutingResolver>();
 // Knowledge-distillation local student models — SINGLETON because each
 // holds an in-memory (CompanyId, key) → ranked candidates dictionary
 // that the nightly AiFeedbackTrainingJob rebuilds from feedback rows.
