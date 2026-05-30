@@ -216,6 +216,7 @@ public class FixedAssetService : IFixedAssetService
         if (request.AssetAccountId.HasValue) asset.AssetAccountId = request.AssetAccountId;
         if (request.DepreciationExpenseAccountId.HasValue) asset.DepreciationExpenseAccountId = request.DepreciationExpenseAccountId;
         if (request.AccumulatedDepreciationAccountId.HasValue) asset.AccumulatedDepreciationAccountId = request.AccumulatedDepreciationAccountId;
+        if (request.ProjectId.HasValue) asset.ProjectId = request.ProjectId;
 
         await _db.SaveChangesAsync();
         return MapToResponse(asset);
@@ -880,5 +881,6 @@ public class FixedAssetService : IFixedAssetService
             a.DisposalDate, a.DisposalAmount, a.CreatedAt,
             a.AssetAccountId, a.DepreciationExpenseAccountId,
             a.AccumulatedDepreciationAccountId,
-            a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment);
+            a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment,
+            a.ProjectId);
 }

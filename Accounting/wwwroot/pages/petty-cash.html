@@ -32,6 +32,26 @@
         </div>
       </div>
     </div>
+
+    <div id="disburseModal" class="modal-overlay" style="display:none">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">เบิกเงินสดย่อย</h3>
+        <label>จำนวนเงิน</label>
+        <input id="dAmount" type="number" step="0.01" min="0" class="form-input">
+        <label>คำอธิบาย</label>
+        <input id="dDesc" class="form-input">
+        <label>เลขที่ใบเสร็จ (optional)</label>
+        <input id="dReceipt" class="form-input">
+        <label>บัญชีค่าใช้จ่าย (ใส่เพื่อโพสต์ JE อัตโนมัติ)</label>
+        <select id="dExpense" class="form-input"><option value="">— ไม่โพสต์ JE —</option></select>
+        <label>โครงการ (optional)</label>
+        <select id="dProject" class="form-input"><option value="">— ไม่ระบุ —</option></select>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeDisburse()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitDisburse()">บันทึก</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -40,10 +60,37 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
+      _activeFundId: null,
       async init() {
         if (!Layout.init('petty-cash')) return;
         Layout.setTitle('เงินสดย่อย');
+        await this.loadProjects();
+        await this.loadExpenseAccounts();
         await this.load();
+      },
+      async loadExpenseAccounts() {
+        try {
+          const api = Layout.api(); if (!api) return;
+          const res = await api.getAccounts('?pageSize=1000');
+          const list = res.data?.items || res.data || [];
+          const expenses = list.filter(a => a.accountType === 'Expense' && a.isActive !== false);
+          const opts = expenses.map(a =>
+            `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+          document.getElementById('dExpense').innerHTML =
+            '<option value="">— ไม่โพสต์ JE —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const sel = document.getElementById('dProject');
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
+        } catch (e) { /* ignore */ }
       },
       _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
       async load() {
@@ -88,14 +135,29 @@
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      async disburse(fundId) {
-        const amount = +(prompt('จำนวนเบิก') || 0);
-        const desc = prompt('คำอธิบาย');
-        if (!amount || !desc) return;
+      disburse(fundId) {
+        this._activeFundId = fundId;
+        document.getElementById('dAmount').value = '';
+        document.getElementById('dDesc').value = '';
+        document.getElementById('dReceipt').value = '';
+        document.getElementById('dExpense').value = '';
+        document.getElementById('dProject').value = '';
+        document.getElementById('disburseModal').style.display = 'flex';
+      },
+      closeDisburse() { document.getElementById('disburseModal').style.display = 'none'; },
+      async submitDisburse() {
+        const amount = +document.getElementById('dAmount').value;
+        const desc = document.getElementById('dDesc').value.trim();
+        const receipt = document.getElementById('dReceipt').value.trim() || null;
+        const projectId = document.getElementById('dProject').value || null;
+        const expenseAccountId = document.getElementById('dExpense').value || null;
+        if (!amount || !desc) { Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return; }
         try {
           const cid = Layout.getCompanyId();
-          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${fundId}/disburse`,
-            { amount, description: desc, expenseAccountId: null, receiptReference: null, txnDate: new Date().toISOString() });
+          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/disburse`,
+            { amount, description: desc, expenseAccountId, receiptReference: receipt,
+              txnDate: new Date().toISOString(), projectId });
+          this.closeDisburse();
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

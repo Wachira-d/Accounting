@@ -42,7 +42,8 @@ public record UpdateFixedAssetRequest(
     string? SerialNumber,
     Guid? AssetAccountId,
     Guid? DepreciationExpenseAccountId,
-    Guid? AccumulatedDepreciationAccountId);
+    Guid? AccumulatedDepreciationAccountId,
+    Guid? ProjectId = null);
 
 public record FixedAssetResponse(
     Guid Id,
@@ -69,7 +70,8 @@ public record FixedAssetResponse(
     AssetType AssetType = AssetType.Tangible,
     int? LeaseTermMonths = null,
     string? LessorName = null,
-    decimal? MonthlyLeasePayment = null);
+    decimal? MonthlyLeasePayment = null,
+    Guid? ProjectId = null);
 
 public record DepreciationResponse(
     Guid Id,

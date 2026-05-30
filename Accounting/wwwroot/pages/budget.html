@@ -39,6 +39,13 @@
             <div class="form-group"><label class="form-label">ชื่องบประมาณ *</label><input type="text" class="form-input" id="fName"></div>
             <div class="form-group"><label class="form-label">ปีงบประมาณ *</label><input type="number" class="form-input" id="fYear" value="2026"></div>
           </div>
+          <div class="form-row">
+            <div class="form-group" style="grid-column:1/-1">
+              <label class="form-label">โครงการ (optional)</label>
+              <select class="form-select" id="fProject"><option value="">— ไม่ระบุ (งบประมาณรวมของบริษัท) —</option></select>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">📁 ถ้าระบุ การเปรียบเทียบ vs ยอดจริงจะกรองเฉพาะ JE ของโครงการนี้</div>
+            </div>
+          </div>
           <div style="margin-top:16px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
               <label class="form-label" style="margin:0">รายการงบประมาณ</label>
@@ -70,7 +77,20 @@
         if (!Layout.init('budget')) return;
         Layout.setTitle('งบประมาณ');
         await this.loadAccounts();
+        await this.loadProjects();
         await this.load();
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          document.getElementById('fProject').innerHTML =
+            '<option value="">— ไม่ระบุ (งบประมาณรวมของบริษัท) —</option>' + opts;
+        } catch (e) { /* ignore */ }
       },
       async loadAccounts() {
         const api = Layout.api(); if (!api) return;
@@ -150,6 +170,7 @@
         document.getElementById('fId').value = '';
         document.getElementById('fName').value = '';
         document.getElementById('fYear').value = new Date().getFullYear();
+        document.getElementById('fProject').value = '';
         document.getElementById('linesBody').innerHTML = '';
         document.getElementById('fTotal').textContent = '0.00';
         this.addLine();
@@ -164,6 +185,7 @@
           document.getElementById('fId').value = b.id;
           document.getElementById('fName').value = b.name;
           document.getElementById('fYear').value = b.fiscalYear;
+          document.getElementById('fProject').value = b.projectId || '';
           document.getElementById('linesBody').innerHTML = '';
           (b.lines || []).forEach(l => {
             this.addLine();
@@ -186,7 +208,12 @@
             lines.push({ accountId: row.querySelector('[data-f="account"]').value, budgetAmount: amt });
           }
         });
-        const data = { name: document.getElementById('fName').value, fiscalYear: parseInt(document.getElementById('fYear').value), lines };
+        const data = {
+          name: document.getElementById('fName').value,
+          fiscalYear: parseInt(document.getElementById('fYear').value),
+          lines,
+          projectId: document.getElementById('fProject').value || null,
+        };
         try {
           if (id) { await api.updateBudget(id, data); }
           else { await api.createBudget(data); }

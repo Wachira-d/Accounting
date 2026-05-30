@@ -32,7 +32,8 @@ public class ApprovalService : IApprovalService
             Description = request.Description,
             DocumentType = request.DocumentType,
             MinAmount = request.MinAmount,
-            MaxAmount = request.MaxAmount
+            MaxAmount = request.MaxAmount,
+            ProjectId = request.ProjectId
         };
 
         _db.ApprovalRules.Add(rule);
@@ -75,6 +76,7 @@ public class ApprovalService : IApprovalService
         rule.DocumentType = request.DocumentType;
         rule.MinAmount = request.MinAmount;
         rule.MaxAmount = request.MaxAmount;
+        rule.ProjectId = request.ProjectId;
 
         _db.ApprovalSteps.RemoveRange(rule.Steps);
         foreach (var step in request.Steps)
@@ -108,15 +110,80 @@ public class ApprovalService : IApprovalService
     public async Task<ApprovalRequestResponse> SubmitForApprovalAsync(
         Guid companyId, string entityType, Guid entityId, Guid requestedByUserId)
     {
-        // Find the most specific matching rule (by document type and amount range)
+        // Pull the entity's amount + projectId + (for Documents) DocumentType
+        // so rule selection can factor in all three filters. Other entity
+        // types (JournalEntry, Payment, ExpenseClaim) skip docType matching
+        // but still honour amount + project scope.
+        decimal? entityAmount = null;
+        Guid? entityProjectId = null;
+        DocumentType? entityDocType = null;
+
+        if (entityType == "Document")
+        {
+            var doc = await _db.Documents
+                .Where(d => d.Id == entityId && d.CompanyId == companyId)
+                .Select(d => new { d.TotalAmount, d.ProjectId, d.DocumentType })
+                .FirstOrDefaultAsync();
+            if (doc != null)
+            {
+                entityAmount = doc.TotalAmount;
+                entityProjectId = doc.ProjectId;
+                entityDocType = doc.DocumentType;
+            }
+        }
+        else if (entityType == "JournalEntry")
+        {
+            var je = await _db.JournalEntries
+                .Where(j => j.Id == entityId && j.CompanyId == companyId)
+                .Select(j => new { j.TotalDebit, j.ProjectId })
+                .FirstOrDefaultAsync();
+            if (je != null)
+            {
+                entityAmount = je.TotalDebit;
+                entityProjectId = je.ProjectId;
+            }
+        }
+        else if (entityType == "Payment")
+        {
+            var p = await _db.Payments
+                .Where(x => x.Id == entityId && x.CompanyId == companyId)
+                .Select(x => new { x.Amount, x.ProjectId })
+                .FirstOrDefaultAsync();
+            if (p != null)
+            {
+                entityAmount = p.Amount;
+                entityProjectId = p.ProjectId;
+            }
+        }
+        else if (entityType == "ExpenseClaim")
+        {
+            var ec = await _db.ExpenseClaims
+                .Where(x => x.Id == entityId && x.CompanyId == companyId)
+                .Select(x => new { x.TotalAmount, x.ProjectId })
+                .FirstOrDefaultAsync();
+            if (ec != null)
+            {
+                entityAmount = ec.TotalAmount;
+                entityProjectId = ec.ProjectId;
+            }
+        }
+
         var rules = await _db.ApprovalRules
             .Include(r => r.Steps).ThenInclude(s => s.ApproverUser)
             .Where(r => r.CompanyId == companyId && r.IsActive)
-            .OrderByDescending(r => r.MinAmount) // Most specific first
             .ToListAsync();
 
-        var rule = rules.FirstOrDefault(r => r.DocumentType == null ||
-            (entityType == "Document" && r.DocumentType != null))
+        // Score rules by specificity: rules that explicitly match
+        // project + docType + amount range beat catch-all rules.
+        // Highest score wins; ties broken by MinAmount (most specific
+        // tier first).
+        var rule = rules
+            .Select(r => new { Rule = r, Score = ScoreRule(r, entityDocType, entityAmount, entityProjectId) })
+            .Where(x => x.Score >= 0)
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Rule.MinAmount ?? 0)
+            .Select(x => x.Rule)
+            .FirstOrDefault()
             ?? throw new InvalidOperationException("ไม่พบกฎการอนุมัติที่เหมาะสม");
 
         var request = new ApprovalRequest
@@ -290,6 +357,37 @@ public class ApprovalService : IApprovalService
 
     // ==================== Private Helpers ====================
 
+    // Returns -1 if the rule does NOT match (hard filter violated);
+    // otherwise returns a positive score where bigger = more specific.
+    // - +3 if rule pins a project and it matches
+    // - +2 if rule pins a docType and it matches
+    // - +1 if rule pins an amount range and entity amount falls inside
+    // Catch-all rules (all nullable filters null) score 0 — they only win
+    // when no more-specific rule applies.
+    private static int ScoreRule(ApprovalRule r, DocumentType? entityDocType,
+        decimal? entityAmount, Guid? entityProjectId)
+    {
+        var score = 0;
+        if (r.ProjectId.HasValue)
+        {
+            if (r.ProjectId != entityProjectId) return -1;
+            score += 3;
+        }
+        if (r.DocumentType.HasValue)
+        {
+            if (r.DocumentType != entityDocType) return -1;
+            score += 2;
+        }
+        if (r.MinAmount.HasValue || r.MaxAmount.HasValue)
+        {
+            var amt = entityAmount ?? 0;
+            if (r.MinAmount.HasValue && amt < r.MinAmount.Value) return -1;
+            if (r.MaxAmount.HasValue && amt > r.MaxAmount.Value) return -1;
+            score += 1;
+        }
+        return score;
+    }
+
     private async Task<ApprovalRuleResponse> GetRuleResponseAsync(Guid ruleId)
     {
         var rule = await _db.ApprovalRules
@@ -302,7 +400,8 @@ public class ApprovalService : IApprovalService
         new(rule.Id, rule.Name, rule.Description, rule.DocumentType,
             rule.MinAmount, rule.MaxAmount, rule.IsActive,
             rule.Steps.OrderBy(s => s.StepOrder).Select(s =>
-                new ApprovalStepResponse(s.StepOrder, s.ApproverUserId, s.ApproverUser?.FullName ?? "", s.IsRequired)).ToList());
+                new ApprovalStepResponse(s.StepOrder, s.ApproverUserId, s.ApproverUser?.FullName ?? "", s.IsRequired)).ToList(),
+            rule.ProjectId);
 
     private static ApprovalRequestResponse MapRequestToResponse(ApprovalRequest r) =>
         new(r.Id, r.EntityType, r.EntityId, r.RequestedByUser?.FullName ?? "",

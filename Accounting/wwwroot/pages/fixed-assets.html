@@ -141,6 +141,13 @@
                 <select class="form-select" id="fCreditAcct"><option value="">-- เลือกบัญชี --</option></select></div>
               <div class="form-group"></div>
             </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">โครงการ (optional)</label>
+                <select class="form-select" id="fProject"><option value="">— ไม่ระบุ —</option></select>
+                <div style="font-size:11px;color:#64748b;margin-top:4px">📁 ถ้าระบุ JE ค่าเสื่อมรายเดือนจะตามไปกับโครงการนี้</div>
+              </div>
+              <div class="form-group"></div>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -274,7 +281,7 @@
       async init() {
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('ทะเบียนสินทรัพย์');
-        await Promise.all([this.load(), this.loadAccounts()]);
+        await Promise.all([this.load(), this.loadAccounts(), this.loadProjects()]);
         // Deep-link from the OCR import-result table — ?id={assetId}
         // auto-opens the detail modal.
         const deepId = new URLSearchParams(location.search).get('id');
@@ -288,6 +295,18 @@
           this._accounts = list.filter(a => a.isActive !== false);
           this._fillAccountSelects();
         } catch (e) { console.warn('โหลดผังบัญชีไม่สำเร็จ', e); }
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          const el = document.getElementById('fProject');
+          if (el) el.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
+        } catch (e) { /* ignore */ }
       },
       _fillAccountSelects() {
         const opts = '<option value="">-- เลือกบัญชี --</option>' +
@@ -386,6 +405,7 @@
         document.getElementById('fMethod').value = 'StraightLine';
         document.getElementById('fSerial').value = '';
         for (const id of ['fAssetAcct', 'fDepExpAcct', 'fAccumAcct', 'fCreditAcct']) document.getElementById(id).value = '';
+        document.getElementById('fProject').value = '';
         document.getElementById('fPostAcq').checked = false;
         this.toggleAcqRow();
         Layout.openModal('formModal');
@@ -414,6 +434,7 @@
           document.getElementById('fAssetAcct').value = a.assetAccountId || '';
           document.getElementById('fDepExpAcct').value = a.depreciationExpenseAccountId || '';
           document.getElementById('fAccumAcct').value = a.accumulatedDepreciationAccountId || '';
+          document.getElementById('fProject').value = a.projectId || '';
           // Acquisition entry only applies at registration time.
           document.getElementById('fPostAcq').checked = false;
           document.getElementById('fCreditAcct').value = '';
@@ -451,6 +472,7 @@
           monthlyLeasePayment: parseFloat(document.getElementById('fLeasePmt').value) || null,
           postAcquisitionJournalEntry: postAcq,
           creditAccountId: creditAcct,
+          projectId: document.getElementById('fProject').value || null,
         };
         try {
           if (id) { await api.updateAsset(id, data); } else { await api.createAsset(data); }

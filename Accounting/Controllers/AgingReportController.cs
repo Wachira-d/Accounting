@@ -20,17 +20,17 @@ public class AgingReportController : ControllerBase
 
     [HttpGet("receivables")]
     public async Task<ActionResult<ApiResponse<AgingReportResponse>>> GetReceivableAging(
-        Guid companyId, [FromQuery] DateTime? asOfDate, [FromQuery] Guid? contactId)
+        Guid companyId, [FromQuery] DateTime? asOfDate, [FromQuery] Guid? contactId, [FromQuery] Guid? projectId)
     {
-        var result = await _agingService.GetReceivableAgingAsync(companyId, new AgingReportRequest(asOfDate, contactId));
+        var result = await _agingService.GetReceivableAgingAsync(companyId, new AgingReportRequest(asOfDate, contactId, null, projectId));
         return Ok(new ApiResponse<AgingReportResponse>(true, result));
     }
 
     [HttpGet("payables")]
     public async Task<ActionResult<ApiResponse<AgingReportResponse>>> GetPayableAging(
-        Guid companyId, [FromQuery] DateTime? asOfDate, [FromQuery] Guid? contactId)
+        Guid companyId, [FromQuery] DateTime? asOfDate, [FromQuery] Guid? contactId, [FromQuery] Guid? projectId)
     {
-        var result = await _agingService.GetPayableAgingAsync(companyId, new AgingReportRequest(asOfDate, contactId));
+        var result = await _agingService.GetPayableAgingAsync(companyId, new AgingReportRequest(asOfDate, contactId, null, projectId));
         return Ok(new ApiResponse<AgingReportResponse>(true, result));
     }
 

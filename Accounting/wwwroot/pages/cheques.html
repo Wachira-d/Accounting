@@ -70,6 +70,7 @@
         <div><label>ผู้รับ (Contact)</label><input id="issueContact" placeholder="contact id" class="form-input"></div>
         <div><label>วันที่</label><input id="issueDate" type="date" class="form-input"></div>
         <div><label>จำนวนเงิน</label><input id="issueAmount" type="number" step="0.01" min="0" class="form-input"></div>
+        <div><label>โครงการ (optional)</label><select id="issueProject" class="form-input"><option value="">— ไม่ระบุ —</option></select></div>
         <div style="grid-column:1/-1"><label>หมายเหตุ</label><textarea id="issueNotes" rows="2" class="form-input"></textarea></div>
       </div>
       <div style="padding:0 18px 18px">
@@ -90,7 +91,21 @@
         document.getElementById('issueDate').value = Layout.toDateInput(new Date());
         await this.loadBanks();
         await this.loadBooks();
+        await this.loadProjects();
         await this.loadOutstanding();
+      },
+
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const sel = document.getElementById('issueProject');
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
+        } catch (e) { /* ignore */ }
       },
 
       switchTab(t) {
@@ -146,6 +161,7 @@
           amount: +document.getElementById('issueAmount').value,
           paymentId: null,
           notes: document.getElementById('issueNotes').value,
+          projectId: document.getElementById('issueProject').value || null,
         };
         try {
           const r = await API.post(`/api/companies/${cid}/cheques/outbound`, body);
