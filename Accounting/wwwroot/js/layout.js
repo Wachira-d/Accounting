@@ -741,6 +741,8 @@ const Layout = {
       description: 'งบทดลอง · งบดุล · งบกำไรขาดทุน · กระแสเงินสด · งบแสดงการเปลี่ยนแปลงส่วนของเจ้าของ' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html', feature: 'BudgetManagement', _i18nKey: 'nav.budget',
       description: 'ตั้งงบประมาณรายเดือน · เปรียบเทียบ actual vs budget · variance' },
+    { id: 'risk', label: 'ความเสี่ยงลูกค้า / ผู้ขาย', icon: '🎯', href: '/pages/risk.html', feature: 'AdvancedReporting',
+      description: 'คะแนนความเสี่ยงผู้ติดต่อ — ลูกค้าจ่ายช้า · vendor void สูง · price volatility' },
     { id: 'aging', label: 'อายุลูกหนี้ / เจ้าหนี้', icon: '⏳', href: '/pages/aging.html', feature: 'AgingReport', _i18nKey: 'nav.aging',
       description: 'แยกตามอายุ 30/60/90/120 วัน · alert ค้างชำระ · auto-refresh ทุก 6 ชม.' },
     { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',
