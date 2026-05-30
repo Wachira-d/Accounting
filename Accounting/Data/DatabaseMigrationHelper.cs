@@ -783,6 +783,89 @@ public static class DatabaseMigrationHelper
                 ON "BankReconciliationPatterns" ("CompanyId", "BankAccountId", "DescriptionSignature", "AmountBucket");
             """,
 
+            // ===== ChequeBook + Cheque (Thai SME cheque management) =====
+            """
+            CREATE TABLE IF NOT EXISTS "ChequeBooks" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "BankAccountId" uuid NOT NULL,
+                "BookNumber" varchar(50) NOT NULL,
+                "StartChequeNumber" bigint NOT NULL,
+                "EndChequeNumber" bigint NOT NULL,
+                "NextNumber" bigint NOT NULL,
+                "ReceivedFromBankAt" timestamp NOT NULL DEFAULT now(),
+                "ExhaustedAt" timestamp NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ChequeBooks" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ChequeBooks_BankAccount" FOREIGN KEY ("BankAccountId") REFERENCES "BankAccounts"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ChequeBooks_Company_Bank" ON "ChequeBooks" ("CompanyId", "BankAccountId") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "Cheques" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "ChequeBookId" uuid NULL,
+                "ChequeNumber" bigint NOT NULL,
+                "ChequeDate" timestamp NOT NULL,
+                "Amount" decimal(18,2) NOT NULL,
+                "Currency" varchar(3) NOT NULL DEFAULT 'THB',
+                "ContactId" uuid NULL,
+                "IssuingBankName" varchar(100) NULL,
+                "PaymentId" uuid NULL,
+                "Status" integer NOT NULL DEFAULT 0,
+                "ClearedAt" timestamp NULL,
+                "BounceReason" text NULL,
+                "ReplacesChequeId" uuid NULL,
+                "IsInbound" boolean NOT NULL DEFAULT false,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_Cheques" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_Cheques_Book" FOREIGN KEY ("ChequeBookId") REFERENCES "ChequeBooks"("Id"),
+                CONSTRAINT "FK_Cheques_Replaces" FOREIGN KEY ("ReplacesChequeId") REFERENCES "Cheques"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_Cheques_Company_Status" ON "Cheques" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Cheques_Payment" ON "Cheques" ("PaymentId") WHERE "PaymentId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ===== StampDutyRecords (อากรแสตมป์) =====
+            """
+            CREATE TABLE IF NOT EXISTS "StampDutyRecords" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Reference" varchar(100) NOT NULL,
+                "ContactId" uuid NULL,
+                "InstrumentEntityType" varchar(50) NULL,
+                "InstrumentEntityId" uuid NULL,
+                "RdScheduleNumber" integer NOT NULL,
+                "InstrumentType" varchar(50) NOT NULL,
+                "InstrumentValue" decimal(18,2) NOT NULL,
+                "DutyAmount" decimal(18,2) NOT NULL,
+                "InstrumentDate" timestamp NOT NULL,
+                "PaymentMethod" varchar(20) NOT NULL DEFAULT 'ESD',
+                "PaidAt" timestamp NULL,
+                "RdReceiptNumber" varchar(50) NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_StampDutyRecords" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_StampDutyRecords_Company" ON "StampDutyRecords" ("CompanyId", "InstrumentDate") WHERE "IsDeleted" = false;""",
+
+            // ===== Product costing extension =====
+            """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "CostingMethod" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "AverageUnitCost" decimal(18,4) NOT NULL DEFAULT 0;""",
+
             // ============================================================
             // ERP Upgrade — Task 1 (period close + migration), Task 4
             // (VAT deferral + filing lock + e-Filing), Task 5 (OCR audit)

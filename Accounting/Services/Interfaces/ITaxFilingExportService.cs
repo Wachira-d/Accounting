@@ -16,6 +16,12 @@ public interface ITaxFilingExportService
     // ภ.ง.ด.1ก - Annual salary summary
     Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year);
 
+    /// <summary>ภ.ง.ด.91 — Annual personal-income summary per employee.
+    /// Aggregates YTD income + WHT + SSO + PF from every payroll
+    /// month. Used both for company filing AND as input data for
+    /// generating each employee's 50 ทวิ certificate.</summary>
+    Task<TaxFilingExportResult> ExportPnd91Async(Guid companyId, int year);
+
     // ภ.พ.30 - VAT filing
     Task<TaxFilingExportResult> ExportPp30Async(Guid companyId, int year, int month);
 

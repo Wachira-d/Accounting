@@ -68,6 +68,17 @@ public class TaxFilingExportController : ControllerBase
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
+    /// <summary>Export ภ.ง.ด.91 (Annual personal-income summary per
+    /// employee). Aggregates YTD income + WHT + SSO + PF from every
+    /// month's payroll. Sensitive (payroll).</summary>
+    [HttpGet("pnd91")]
+    public async Task<IActionResult> ExportPnd91(Guid companyId, [FromQuery] int year)
+    {
+        var block = await CheckPayrollAsync(companyId); if (block != null) return block;
+        var result = await _exportService.ExportPnd91Async(companyId, year);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
     /// <summary>Export ภ.พ.30 (VAT filing report)</summary>
     [HttpGet("pp30")]
     public async Task<IActionResult> ExportPp30(Guid companyId, [FromQuery] int year, [FromQuery] int month)

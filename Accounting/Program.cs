@@ -115,6 +115,22 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInvent
 // DeepSeek narrative so DeepSeek only has to explain, not verify.
 builder.Services.AddScoped<Accounting.Services.Implementations.Tax.ITaxComplianceChecker,
     Accounting.Services.Implementations.Tax.TaxComplianceChecker>();
+// Inventory costing (Weighted-Average + FIFO + Standard) — called by
+// every stock-IN / stock-OUT path so COGS posts at the correct value.
+builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInventoryCostingService,
+    Accounting.Services.Implementations.Inventory.InventoryCostingService>();
+// 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before
+// the cheque goes out.
+builder.Services.AddScoped<Accounting.Services.Implementations.Procurement.IGrnMatchService,
+    Accounting.Services.Implementations.Procurement.GrnMatchService>();
+// Cheque lifecycle — book ordering, issuance, clearing, bouncing,
+// outstanding-cheque report.
+builder.Services.AddScoped<Accounting.Services.Implementations.Cheque.IChequeService,
+    Accounting.Services.Implementations.Cheque.ChequeService>();
+// Stamp duty (อากรแสตมป์) tracker — schedule-aware computation +
+// payment status tracking.
+builder.Services.AddScoped<Accounting.Services.Implementations.Tax.IStampDutyService,
+    Accounting.Services.Implementations.Tax.StampDutyService>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();

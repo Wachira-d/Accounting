@@ -158,6 +158,55 @@ public enum TaxType
     PersonalIncomeTax91 = 7, // ภงด.91 (ภาษีเงินได้บุคคลธรรมดา)
     WithholdingTax54 = 8, // ภงด.54 (Foreign WHT — บริการต่างประเทศ)
     VatPp36 = 9,          // ภพ.36 (Foreign service VAT)
+    StampDuty = 10,       // อากรแสตมป์ (Code §103-105 ประมวลรัษฎากร)
+}
+
+/// <summary>
+/// Inventory costing method per product. Determines how COGS is
+/// calculated on outbound stock movements + how period-end snapshot
+/// values are computed.
+/// </summary>
+public enum CostingMethod
+{
+    /// <summary>Default for Thai SME — running weighted average
+    /// recomputed on every receipt: newAvg = (oldStock×oldAvg +
+    /// receivedQty×receivedCost) / (oldStock + receivedQty).</summary>
+    WeightedAverage = 0,
+
+    /// <summary>FIFO — oldest stock layer consumed first. Requires
+    /// tracking individual cost layers via StockMovement history.</summary>
+    Fifo = 1,
+
+    /// <summary>Standard cost — uses Product.CostPrice fixed value
+    /// regardless of receipt prices; variances posted separately.</summary>
+    Standard = 2,
+}
+
+/// <summary>
+/// Cheque lifecycle states — Thai SMEs still use cheques heavily for
+/// vendor payments + customer collections. Tracking these states lets
+/// AP/AR teams know which cheques are outstanding and need follow-up.
+/// </summary>
+public enum ChequeStatus
+{
+    /// <summary>Cheque written + handed to payee, not yet cashed.</summary>
+    Issued = 0,
+
+    /// <summary>Cashed at the bank — cleared the account.</summary>
+    Cleared = 1,
+
+    /// <summary>Stop-payment requested OR cheque returned (bounced).
+    /// Need to issue replacement.</summary>
+    Bounced = 2,
+
+    /// <summary>Voided before issuing — torn out of the book or
+    /// admin-cancelled. Used to keep the chequebook number sequence
+    /// honest.</summary>
+    Voided = 3,
+
+    /// <summary>Cheque received from a customer, deposited but not
+    /// yet cleared. Funds in transit.</summary>
+    DepositedPending = 4,
 }
 
 // ==================== Migration Wizard ====================
@@ -226,6 +275,7 @@ public enum DocumentType
     // ===== ฝั่งรายจ่าย (Expense/Purchase) =====
     PurchaseRequisition = 12, // ใบขอซื้อ
     PurchaseOrder = 7,        // ใบสั่งซื้อ
+    GoodsReceiptNote = 16,    // ใบรับสินค้า (GRN) — รับของจริงจาก vendor; 3-way match: PO ↔ GRN ↔ Invoice
     PurchaseInvoice = 8,      // ใบแจ้งหนี้ซื้อ
     Expense = 9,              // ใบบันทึกค่าใช้จ่าย
     PaymentVoucher = 13,      // ใบสำคัญจ่าย

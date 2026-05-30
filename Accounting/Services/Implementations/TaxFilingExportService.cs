@@ -344,4 +344,72 @@ public class TaxFilingExportService : ITaxFilingExportService
         "8" or "40(8)" => "5",  // ค่าบริการ → มาตรา 3 เตรส
         _ => "5" // default to มาตรา 3 เตรส
     };
+
+    // =====================================================================
+    // ภ.ง.ด.91 — Annual personal income tax summary per employee
+    // (ภาษีเงินได้บุคคลธรรมดา — ผู้มีเงินได้จากเงินเดือน)
+    // -----
+    // Sums every PayrollDetail for an employee across the year into a
+    // 50ทวิ-equivalent summary. Output format: pipe-delimited text the
+    // RD e-Filing system accepts (header + one detail row per employee
+    // with YTD income, YTD WHT, SSO contribution, allowances).
+    //
+    // Output usage: each employee receives an annual ใบรับรองหัก ณ ที่จ่าย
+    // (50 ทวิ) before March 31; the company submits ภ.ง.ด.91 summary
+    // to the RD by the same deadline if it has 100+ employees.
+    // =====================================================================
+    public async Task<TaxFilingExportResult> ExportPnd91Async(Guid companyId, int year)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var runs = await _db.PayrollRuns
+            .Include(p => p.Details).ThenInclude(d => d.Employee)
+            .Where(p => p.CompanyId == companyId && p.Year == year
+                        && p.Status != "Draft" && p.Status != "Voided")
+            .ToListAsync();
+        if (runs.Count == 0)
+            throw new InvalidOperationException($"ไม่มี PayrollRun สำหรับปี {year}");
+
+        var sb = new StringBuilder();
+        var thaiYear = year + 543;
+
+        // Aggregate per employee across all months
+        var byEmployee = runs.SelectMany(r => r.Details)
+            .GroupBy(d => d.EmployeeId)
+            .Select(g =>
+            {
+                var emp = g.First().Employee;
+                return new
+                {
+                    Employee = emp,
+                    YtdGross = g.Sum(d => d.GrossIncome),
+                    YtdWht = g.Sum(d => d.WithholdingTax),
+                    YtdSso = g.Sum(d => d.SocialSecurityEmployee),
+                    YtdPf = g.Sum(d => d.ProvidentFundEmployee),
+                    Months = g.Count(),
+                };
+            })
+            .Where(x => x.YtdGross > 0)
+            .OrderBy(x => x.Employee.EmployeeCode)
+            .ToList();
+
+        var totalIncome = byEmployee.Sum(x => x.YtdGross);
+        var totalWht = byEmployee.Sum(x => x.YtdWht);
+
+        // Header: H|TaxId|BranchCode|FormCode|TaxYear(Buddhist)|TotalRecords|TotalIncome|TotalTax
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.91|{thaiYear}|{byEmployee.Count}|{totalIncome:F2}|{totalWht:F2}");
+
+        int seq = 1;
+        foreach (var x in byEmployee)
+        {
+            var emp = x.Employee;
+            // D|Seq|TitleTh|FirstName|LastName|CitizenId|MonthsEmployed|YtdGross|SsoYtd|PfYtd|YtdWht
+            sb.AppendLine($"D|{seq++}|{emp.TitleTh}|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.CitizenId ?? emp.TaxId}|{x.Months}|{x.YtdGross:F2}|{x.YtdSso:F2}|{x.YtdPf:F2}|{x.YtdWht:F2}");
+        }
+
+        var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+        return new TaxFilingExportResult(
+            "PND91", "ภ.ง.ด.91", $"PND91_{year}.txt", "text/plain", bytes,
+            byEmployee.Count, totalIncome, totalWht,
+            $"ภ.ง.ด.91 ประจำปี {year} จำนวน {byEmployee.Count} คน รายได้รวม {totalIncome:N2} บาท ภาษีรวม {totalWht:N2} บาท");
+    }
 }

@@ -95,6 +95,9 @@ public class AccountingDbContext : DbContext
     public DbSet<ReconciliationGroup> ReconciliationGroups => Set<ReconciliationGroup>();
     public DbSet<ReconciliationGroupItem> ReconciliationGroupItems => Set<ReconciliationGroupItem>();
     public DbSet<BankReconciliationPattern> BankReconciliationPatterns => Set<BankReconciliationPattern>();
+    public DbSet<ChequeBook> ChequeBooks => Set<ChequeBook>();
+    public DbSet<Cheque> Cheques => Set<Cheque>();
+    public DbSet<StampDutyRecord> StampDutyRecords => Set<StampDutyRecord>();
 
     // ERP upgrade — Task 1 (periods, year-end, migration) + Task 4 (VAT deferral, e-Filing)
     // + Task 5 (OCR compliance log)
