@@ -181,6 +181,27 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(Guid companyId, Guid scanId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "")));
 
+    public sealed record SetLineProjectRequest(int LineIndex, Guid? ProjectId, string? ProjectName);
+
+    /// <summary>Assign / clear a project on one OCR-extracted line.
+    /// Persists into ExtractedItemsJson so when CreateDocument fires,
+    /// the resulting DocumentLine.ProjectId carries this allocation.
+    /// Lets user split a multi-line invoice across multiple projects
+    /// at review time, before committing the doc.</summary>
+    [HttpPost("{scanId:guid}/line-project")]
+    public async Task<ActionResult<ApiResponse<object>>> SetLineProject(
+        Guid companyId, Guid scanId, [FromBody] SetLineProjectRequest req)
+    {
+        await _service.SetExtractedLineProjectAsync(companyId, scanId,
+            req.LineIndex, req.ProjectId, req.ProjectName);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            lineIndex = req.LineIndex,
+            projectId = req.ProjectId,
+            projectName = req.ProjectName,
+        }, req.ProjectId.HasValue ? "บันทึก project ของบรรทัดแล้ว" : "ยกเลิก project ของบรรทัดแล้ว"));
+    }
+
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> MatchContact(Guid companyId, Guid scanId, Guid contactId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchContactAsync(companyId, scanId, contactId)));

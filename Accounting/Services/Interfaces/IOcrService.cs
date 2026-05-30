@@ -20,6 +20,13 @@ public interface IOcrService
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
+
+    /// <summary>Persist a per-line project assignment into the scan's
+    /// ExtractedItemsJson so CreateDocumentFromScanAsync can flow it
+    /// to DocumentLine.ProjectId.</summary>
+    Task SetExtractedLineProjectAsync(Guid companyId, Guid scanResultId,
+        int lineIndex, Guid? projectId, string? projectName);
+
     Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
     Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false);
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,

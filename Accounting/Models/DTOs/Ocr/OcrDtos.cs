@@ -67,7 +67,13 @@ public record OcrSuggestedAccountsDto(
 
 public record OcrLineItemDto(
     string? Description, decimal? Quantity, decimal? UnitPrice, decimal? Amount,
-    string? SuggestedAccountCode = null);
+    string? SuggestedAccountCode = null,
+    /// <summary>Per-line project charge — populated by the user in
+    /// the OCR review UI before document creation. When set, flows
+    /// to DocumentLine.ProjectId so each line books cost against the
+    /// right project. Null = use document-level project (default).</summary>
+    Guid? ProjectId = null,
+    string? ProjectName = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 

@@ -3065,6 +3065,45 @@ public class OcrService : IOcrService
         return MapToResponse(result);
     }
 
+    public async Task SetExtractedLineProjectAsync(Guid companyId, Guid scanResultId,
+        int lineIndex, Guid? projectId, string? projectName)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+        if (string.IsNullOrEmpty(scan.ExtractedItemsJson))
+            throw new InvalidOperationException("Scan ไม่มีรายการสินค้าใน OCR result.");
+        if (lineIndex < 0)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex));
+
+        // Verify the project exists in this company when assigning.
+        if (projectId.HasValue)
+        {
+            var exists = await _db.Projects.AnyAsync(
+                p => p.Id == projectId.Value && p.CompanyId == companyId && !p.IsDeleted);
+            if (!exists) throw new InvalidOperationException("ไม่พบ project ที่ระบุ");
+        }
+
+        List<OcrExtractedLineItem> items;
+        try
+        {
+            items = System.Text.Json.JsonSerializer
+                .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+        }
+        catch
+        {
+            throw new InvalidOperationException("ExtractedItemsJson เสียหาย — ไม่สามารถ parse");
+        }
+        if (lineIndex >= items.Count)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex), "lineIndex เกินจำนวนรายการที่สแกนได้");
+
+        items[lineIndex].ProjectId = projectId;
+        items[lineIndex].ProjectName = projectName;
+        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
     {
         var result = await _db.Set<OcrScanResult>()
@@ -3156,6 +3195,11 @@ public class OcrService : IOcrService
                     Amount = item.Amount ?? 0,
                     VatRate = scan.ExtractedVatAmount > 0 ? 7 : 0,
                     AccountId = lineAccountId,
+                    // Per-line project allocation from the OCR review UI —
+                    // user picks the project in /pages/ocr-review.html
+                    // before clicking "Create document". When set, this
+                    // line books costs against the right job/project.
+                    ProjectId = item.ProjectId,
                 });
             }
         }
@@ -3236,6 +3280,12 @@ public class OcrService : IOcrService
         if (scan.ScanStatus != "Completed")
             throw new InvalidOperationException("Scan ยังไม่เสร็จ — ไม่สามารถลงทะเบียนสินทรัพย์");
 
+        // Side-effect: if the user assigned a project to this line via
+        // the review UI (POST /line-project), promote it into the scope
+        // so RegisterAssetAsync (and any future per-line writer) can
+        // honour the allocation. Kept inline next to the resolver so
+        // the read+write path stays bookended.
+
         // Resolve the line item from the stored ExtractedItemsJson so we
         // can prefill PurchaseCost / Description when the request omits
         // them. The user may also edit any field via the request body.
@@ -3255,7 +3305,10 @@ public class OcrService : IOcrService
                         el.TryGetProperty("Quantity", out var q) && q.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)q.GetDouble() : null,
                         el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)u.GetDouble() : null,
                         el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)a.GetDouble() : null,
-                        el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null);
+                        el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null,
+                        el.TryGetProperty("ProjectId", out var pid) && pid.ValueKind == System.Text.Json.JsonValueKind.String
+                            && Guid.TryParse(pid.GetString(), out var pg) ? pg : null,
+                        el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null);
                 }
             }
             catch (Exception ex)
@@ -3501,7 +3554,8 @@ public class OcrService : IOcrService
             if (data.Items.Count > 0)
             {
                 items = data.Items.Select(i => new OcrLineItemDto(
-                    i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode)).ToList();
+                    i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
+                    i.ProjectId, i.ProjectName)).ToList();
             }
         }
 
@@ -3533,7 +3587,10 @@ public class OcrService : IOcrService
                     el.TryGetProperty("Quantity", out var q) && q.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)q.GetDouble() : null,
                     el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)u.GetDouble() : null,
                     el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)a.GetDouble() : null,
-                    el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null
+                    el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null,
+                    el.TryGetProperty("ProjectId", out var pid) && pid.ValueKind == System.Text.Json.JsonValueKind.String
+                        && Guid.TryParse(pid.GetString(), out var pg) ? pg : (Guid?)null,
+                    el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null
                 )).ToList();
             }
             catch { }
@@ -3709,4 +3766,9 @@ internal class OcrExtractedLineItem
     public decimal? UnitPrice { get; set; }
     public decimal? Amount { get; set; }
     public string? SuggestedAccountCode { get; set; }
+    /// <summary>Per-line project assignment captured in the review UI.
+    /// Persisted so re-opening the review after a crash preserves the
+    /// user's allocation work + auto-create uses it.</summary>
+    public Guid? ProjectId { get; set; }
+    public string? ProjectName { get; set; }
 }
