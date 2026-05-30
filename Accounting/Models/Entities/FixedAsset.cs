@@ -56,6 +56,11 @@ public class FixedAsset : TenantEntity
     public Guid? AccumulatedDepreciationAccountId { get; set; }
     public ChartOfAccount? AccumulatedDepreciationAccount { get; set; }
 
+    /// <summary>Project the asset was acquired for. Periodic
+    /// depreciation JE inherits this so depreciation cost lands
+    /// in the right project's P&amp;L without manual allocation.</summary>
+    public Guid? ProjectId { get; set; }
+
     public ICollection<AssetDepreciation> Depreciations { get; set; } = new List<AssetDepreciation>();
 }
 

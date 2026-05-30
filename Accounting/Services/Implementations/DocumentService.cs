@@ -73,6 +73,52 @@ public class DocumentService : IDocumentService
         catch (Exception ex) { _logger.LogWarning(ex, "Webhook {Event} fire-and-forget failed", eventType); }
     }
 
+    /// <summary>Auto-populate ProjectCostEntry from an approved
+    /// expense-side document. Cost-bearing types only — Sales-side
+    /// docs feed Project.ActualRevenue separately. Idempotent on
+    /// SourceDocumentLineId (description field tagged "doc-line:GUID")
+    /// so re-running on the same doc doesn't duplicate.</summary>
+    private async Task SyncProjectCostEntriesAsync(Guid companyId, Document doc)
+    {
+        var costTypes = new[] {
+            DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
+        };
+        if (!costTypes.Contains(doc.DocumentType)) return;
+        if (doc.Lines == null || doc.Lines.Count == 0) return;
+        // Walk lines; the line's ProjectId wins over the header's.
+        foreach (var line in doc.Lines)
+        {
+            var projectId = line.ProjectId ?? doc.ProjectId;
+            if (!projectId.HasValue) continue;
+            var marker = $"doc-line:{line.Id}";
+            var exists = await _db.ProjectCostEntries.AnyAsync(c =>
+                c.CompanyId == companyId
+                && c.ProjectId == projectId.Value
+                && c.Description != null && c.Description.Contains(marker));
+            if (exists) continue;
+            _db.ProjectCostEntries.Add(new ProjectCostEntry
+            {
+                CompanyId = companyId,
+                ProjectId = projectId.Value,
+                EntryDate = doc.DocumentDate,
+                CostType = "Material",         // generic; could classify on AccountType later
+                Description = $"{line.Description} [auto from {doc.DocumentNumber} | {marker}]",
+                Quantity = line.Quantity,
+                UnitCost = line.UnitPrice,
+                Amount = line.Amount,
+                DocumentId = doc.Id,
+                IsBillable = false,
+            });
+            // Keep Project.ActualCost in sync so the dashboard
+            // shows the right roll-up without an explicit recompute.
+            var project = await _db.Projects.FirstOrDefaultAsync(p =>
+                p.Id == projectId.Value && p.CompanyId == companyId);
+            if (project != null) project.ActualCost += line.Amount;
+        }
+        await _db.SaveChangesAsync();
+    }
+
     /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
     /// override wins; otherwise auto-fetch the BoT mid-rate at DocumentDate.
     /// Throws if BoT lookup fails — silent fallback to 1 on non-THB would
@@ -807,6 +853,23 @@ public class DocumentService : IDocumentService
         }
 
         var approved = await GetDocumentAsync(companyId, documentId);
+
+        // Auto-feed ProjectCostEntry when an approved EXPENSE-side
+        // document carries a ProjectId. Closes the loop the audit
+        // flagged: ProjectCostEntry was manual-only, so approved cost
+        // documents bypassed the project P&L roll-up. Each ProjectId-
+        // bearing line becomes a ProjectCostEntry row, idempotent on
+        // (DocumentLineId) — re-approving the same doc doesn't
+        // duplicate entries.
+        try
+        {
+            await SyncProjectCostEntriesAsync(companyId, doc);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Project cost entry sync failed for doc {DocId}", documentId);
+        }
+
         await FireWebhookAsync(companyId, "document.status_changed",
             new { document = approved, from = "Draft", to = approved.Status });
         return approved;

@@ -266,6 +266,9 @@ public class Cheque : TenantEntity
 
     public bool IsInbound { get; set; }       // true = received from customer; false = issued by us
     public string? Notes { get; set; }
+    /// <summary>Project the cheque is associated with (cost project
+    /// on outbound; revenue project on inbound).</summary>
+    public Guid? ProjectId { get; set; }
 }
 
 /// <summary>
@@ -316,6 +319,10 @@ public class StampDutyRecord : TenantEntity
     public string? RdReceiptNumber { get; set; }                // for ESD / Or.Sor.4
 
     public string? Notes { get; set; }
+
+    /// <summary>Project this duty is incurred on (rental contract
+    /// for project X, loan for project Y). Flows to the cost JE.</summary>
+    public Guid? ProjectId { get; set; }
 }
 
 /// <summary>
@@ -348,6 +355,10 @@ public class PettyCashTransaction : TenantEntity
     public Guid? ExpenseAccountId { get; set; }
     public ChartOfAccount? ExpenseAccount { get; set; }
     public Guid? JournalEntryId { get; set; }
+    /// <summary>Project the petty-cash disbursement was charged to.
+    /// Flows to the auto-generated JE line's ProjectId so project
+    /// cost reports pick it up.</summary>
+    public Guid? ProjectId { get; set; }
 }
 
 /// <summary>

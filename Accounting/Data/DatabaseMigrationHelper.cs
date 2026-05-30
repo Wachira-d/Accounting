@@ -3633,6 +3633,18 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "LastSyncedAt" timestamp NULL;""",
             """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "ExternalUrl" text NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Projects_External" ON "Projects" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ===== Project allocation rolled out to remaining entities =====
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "ExpenseClaimLines" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "PettyCashTransactions" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "Cheques" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "StampDutyRecords" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "Budgets" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Payments_Project" ON "Payments" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ExpenseClaims_Project" ON "ExpenseClaims" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

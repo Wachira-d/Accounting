@@ -37,4 +37,11 @@ public class Payment : TenantEntity
     /// Amount — enforced inline. Drives the per-receipt Dr WHT-Asset / Cr
     /// WHT-Payable line on the cash-basis GL.</summary>
     public decimal WithholdingTaxAmount { get; set; }
+
+    /// <summary>Project allocation — when set, overrides the parent
+    /// document's project for THIS payment. Useful when one document
+    /// is split across multiple project payments (advance on Project A
+    /// followed by final on Project B). Null = inherit from
+    /// Document.ProjectId.</summary>
+    public Guid? ProjectId { get; set; }
 }

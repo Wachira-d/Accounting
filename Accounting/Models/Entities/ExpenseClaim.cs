@@ -70,6 +70,11 @@ public class ExpenseClaim : TenantEntity
     public Guid? CertificateInLieuDocumentId { get; set; }
     public Document? CertificateInLieuDocument { get; set; }
 
+    /// <summary>Project this claim was incurred for. When the claim
+    /// is approved + becomes a PaymentVoucher, this flows to the new
+    /// Document.ProjectId so the cost lands in project P&amp;L.</summary>
+    public Guid? ProjectId { get; set; }
+
     public ICollection<ExpenseClaimLine> Lines { get; set; } = new List<ExpenseClaimLine>();
 }
 
@@ -91,4 +96,9 @@ public class ExpenseClaimLine : BaseEntity
     public ChartOfAccount? Account { get; set; }
     public string? Category { get; set; }
     public string? Reference { get; set; }
+    /// <summary>Per-line project override — null = use the claim's
+    /// header ProjectId. Used when a single trip's expenses split
+    /// across multiple jobs (e.g. taxi to Client A + lunch with
+    /// Client B + petrol back).</summary>
+    public Guid? ProjectId { get; set; }
 }

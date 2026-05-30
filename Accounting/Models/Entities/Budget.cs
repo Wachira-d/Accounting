@@ -10,6 +10,12 @@ public class Budget : TenantEntity
     public int FiscalYear { get; set; }
     public bool IsActive { get; set; } = true;
 
+    /// <summary>Optional project scope — when set, this budget tracks
+    /// ONE project. Null = company-wide budget (the default). Lets a
+    /// PM set "Project Alpha budget" alongside the company budget so
+    /// budget-vs-actual reports drill into a single project.</summary>
+    public Guid? ProjectId { get; set; }
+
     public ICollection<BudgetLine> Lines { get; set; } = new List<BudgetLine>();
 }
 
