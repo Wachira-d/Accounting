@@ -92,6 +92,16 @@ public class DocumentTemplateController : ControllerBase
         return File(result.PdfData, result.ContentType, result.FileName);
     }
 
+    /// <summary>Same template + layout the PDF would use, but
+    /// returned as raw HTML. The print modal embeds this so
+    /// Ctrl-P print output matches the downloaded PDF exactly.</summary>
+    [HttpPost("generate-html")]
+    public async Task<ActionResult<string>> GenerateHtml(Guid companyId, [FromBody] GeneratePdfRequest request)
+    {
+        var html = await _pdfService.GenerateDocumentHtmlAsync(companyId, request);
+        return Content(html, "text/html; charset=utf-8");
+    }
+
     [HttpGet("preview")]
     public async Task<ActionResult> Preview(Guid companyId, [FromQuery] Guid? templateId, [FromQuery] string? language)
     {

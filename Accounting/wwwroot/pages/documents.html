@@ -2663,7 +2663,27 @@
             }
           } catch (e) { console.warn('Failed to load GL entry for document print:', e); }
           document.getElementById('pdfTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
-          document.getElementById('pdfContent').innerHTML = this.generatePdfHtml(d, companyInfo, signature, glEntry);
+          // SERVER-RENDERED HTML — same code path as PDF generation so
+          // browser print preview + downloaded PDF look IDENTICAL. The
+          // server picks the default DocumentTemplate for this DocType,
+          // applies fonts/colors/logo/watermark/signature from template
+          // fields, and returns ready-to-render HTML. Fallback to the
+          // legacy client-side renderer only when the endpoint fails
+          // (e.g. older deploys without the /generate-html endpoint).
+          let renderedHtml = null;
+          try {
+            const cid = Layout.getCompanyId();
+            const token = localStorage.getItem('token');
+            const res = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ documentId: d.id, templateId: null,
+                watermarkOverride: null, copyNumber: null, language: null }),
+            });
+            if (res.ok) renderedHtml = await res.text();
+          } catch (_) { /* fall through to client render */ }
+          document.getElementById('pdfContent').innerHTML = renderedHtml
+            || this.generatePdfHtml(d, companyInfo, signature, glEntry);
           // Toggle etax-only UI: download button + green banner appear only when this
           // document has an associated EtaxInvoice (i.e. its XML has been generated).
           // Guard against empty-Guid sentinel which would otherwise pass !! truthy check.

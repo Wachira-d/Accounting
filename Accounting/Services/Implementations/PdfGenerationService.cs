@@ -61,6 +61,34 @@ public partial class PdfGenerationService : IPdfGenerationService
             "application/pdf", pdfBytes.Length, pdfBytes, DateTime.UtcNow);
     }
 
+    /// <summary>Return ONLY the rendered HTML — same code path as
+    /// GenerateDocumentPdfAsync but stops before the HTML→PDF
+    /// conversion. The browser print preview opens this directly so
+    /// PDF download + Ctrl-P print produce IDENTICAL output.</summary>
+    public async Task<string> GenerateDocumentHtmlAsync(Guid companyId, GeneratePdfRequest request)
+    {
+        var document = await _db.Documents
+            .Include(d => d.Contact).Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        DocumentTemplate template;
+        if (request.TemplateId.HasValue)
+        {
+            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
+        }
+        else
+        {
+            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+                t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
+                ?? CreateInMemoryDefaultTemplate(document.DocumentType);
+        }
+        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language);
+    }
+
     public async Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId)
     {
         var cert = await _db.WithholdingTaxCerts
