@@ -3,6 +3,7 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Hr;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -11,6 +12,7 @@ public interface IEmployeeProjectTimeService
 {
     Task<EmployeeProjectTimeResponse> CreateAsync(Guid companyId, CreateEmployeeProjectTimeRequest req, CancellationToken ct = default);
     Task<EmployeeProjectTimeResponse> GetAsync(Guid companyId, Guid id, CancellationToken ct = default);
+    Task<EmployeeProjectTimeResponse?> GetByExternalAsync(Guid companyId, string externalSystem, string externalId, CancellationToken ct = default);
     Task<EmployeeProjectTimeResponse> UpdateAsync(Guid companyId, Guid id, UpdateEmployeeProjectTimeRequest req, CancellationToken ct = default);
     Task DeleteAsync(Guid companyId, Guid id, CancellationToken ct = default);
     Task<PagedResponse<EmployeeProjectTimeResponse>> ListAsync(Guid companyId, Guid? employeeId, Guid? projectId,
@@ -36,8 +38,20 @@ public interface IFixVariableCostReportService
 public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCostReportService
 {
     private readonly AccountingDbContext _db;
+    private readonly IWebhookService? _webhooks;
 
-    public HrAllocationService(AccountingDbContext db) { _db = db; }
+    public HrAllocationService(AccountingDbContext db, IWebhookService? webhooks = null)
+    {
+        _db = db;
+        _webhooks = webhooks;
+    }
+
+    private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
+    {
+        if (_webhooks == null) return;
+        try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
+        catch { /* fire-and-forget */ }
+    }
 
     public async Task<EmployeeProjectTimeResponse> CreateAsync(Guid companyId, CreateEmployeeProjectTimeRequest req, CancellationToken ct = default)
     {
@@ -62,6 +76,12 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         };
         _db.EmployeeProjectTimes.Add(row);
         await _db.SaveChangesAsync(ct);
+        await FireWebhookAsync(companyId, "project_time.created", new
+        {
+            id = row.Id, employeeId = row.EmployeeId, projectId = row.ProjectId,
+            workDate = row.WorkDate, hours = row.Hours, category = row.Category,
+            externalId = row.ExternalId, externalSystem = row.ExternalSystem,
+        });
         return await GetResponseAsync(companyId, row.Id, ct);
     }
 
@@ -73,6 +93,18 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
             .FirstOrDefaultAsync(t => t.Id == id && t.CompanyId == companyId && !t.IsDeleted, ct)
             ?? throw new KeyNotFoundException("ไม่พบรายการเวลาทำงาน");
         return Map(row);
+    }
+
+    public async Task<EmployeeProjectTimeResponse?> GetByExternalAsync(Guid companyId, string externalSystem, string externalId, CancellationToken ct = default)
+    {
+        var row = await _db.EmployeeProjectTimes
+            .Include(t => t.Employee)
+            .Include(t => t.Project)
+            .FirstOrDefaultAsync(t => t.CompanyId == companyId
+                && t.ExternalSystem == externalSystem
+                && t.ExternalId == externalId
+                && !t.IsDeleted, ct);
+        return row == null ? null : Map(row);
     }
 
     public async Task<EmployeeProjectTimeResponse> UpdateAsync(Guid companyId, Guid id, UpdateEmployeeProjectTimeRequest req, CancellationToken ct = default)
@@ -94,6 +126,11 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         if (req.Description != null) row.Description = req.Description;
         if (req.Category != null) row.Category = req.Category;
         await _db.SaveChangesAsync(ct);
+        await FireWebhookAsync(companyId, "project_time.updated", new
+        {
+            id = row.Id, employeeId = row.EmployeeId, projectId = row.ProjectId,
+            workDate = row.WorkDate, hours = row.Hours,
+        });
         return await GetResponseAsync(companyId, row.Id, ct);
     }
 
@@ -106,6 +143,11 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
             throw new InvalidOperationException("รายการนี้ถูกใช้คำนวณ cost ของรอบจ่ายเงินเดือนแล้ว — ลบไม่ได้");
         row.IsDeleted = true;
         await _db.SaveChangesAsync(ct);
+        await FireWebhookAsync(companyId, "project_time.deleted", new
+        {
+            id = row.Id, employeeId = row.EmployeeId,
+            externalId = row.ExternalId, externalSystem = row.ExternalSystem,
+        });
     }
 
     public async Task<PagedResponse<EmployeeProjectTimeResponse>> ListAsync(Guid companyId, Guid? employeeId, Guid? projectId,
@@ -313,10 +355,19 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
 
         var employeesAllocated = details.Count(d => timeRows.Any(t => t.EmployeeId == d.EmployeeId));
 
-        return new PayrollLabourAllocationResponse(
+        var result = new PayrollLabourAllocationResponse(
             run.Id, run.Year, run.Month,
             employeesAllocated, entriesCreated,
             totalAllocated, unallocatedAdmin, summary);
+
+        await FireWebhookAsync(companyId, "payroll.labour_allocated", new
+        {
+            payrollRunId = run.Id, year = run.Year, month = run.Month,
+            costEntriesCreated = entriesCreated,
+            totalAllocated, unallocatedAdmin,
+        });
+
+        return result;
     }
 
     public async Task<FixVariableCostReport> GetMonthlyAsync(Guid companyId, int year, int month, Guid? projectId, CancellationToken ct = default)

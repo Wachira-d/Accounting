@@ -16,6 +16,9 @@ public interface IPayrollService
     /// (CompanyId, ExternalSystem, ExternalId) and updates them, otherwise
     /// inserts. Returns counts + per-row errors.</summary>
     Task<SyncEmployeesResponse> SyncEmployeesAsync(Guid companyId, SyncEmployeesRequest request);
+    Task<EmployeeResponse?> GetEmployeeByExternalAsync(Guid companyId, string externalSystem, string externalId);
+    Task DeleteEmployeeAsync(Guid companyId, Guid employeeId);
+    Task<EmployeeResponse> RestoreEmployeeAsync(Guid companyId, Guid employeeId);
 
     /// <summary>คำนวณค่าชดเชยตาม Labor Code §118 (preview เท่านั้น — ไม่บันทึก GL).
     /// ใช้แสดงตัวเลขก่อนกดเลิกจ้าง; การจ่ายจริงทำผ่านเงินเดือนสุดท้ายหรือ Expense voucher.</summary>

@@ -197,8 +197,22 @@ public class ProjectController : ControllerBase
         => StatusCode(201, new ApiResponse<ProjectCostEntryResponse>(true, await _service.AddCostEntryAsync(companyId, projectId, request)));
 
     [HttpGet("{projectId:guid}/costs")]
-    public async Task<ActionResult<ApiResponse<PagedResponse<ProjectCostEntryResponse>>>> GetCosts(Guid companyId, Guid projectId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        => Ok(new ApiResponse<PagedResponse<ProjectCostEntryResponse>>(true, await _service.GetCostEntriesAsync(companyId, projectId, new PagedRequest(page, pageSize))));
+    public async Task<ActionResult<ApiResponse<PagedResponse<ProjectCostEntryResponse>>>> GetCosts(
+        Guid companyId, Guid projectId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] string? costType = null, [FromQuery] string? costBehavior = null,
+        [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+        => Ok(new ApiResponse<PagedResponse<ProjectCostEntryResponse>>(true,
+            await _service.GetCostEntriesAsync(companyId, projectId, new PagedRequest(page, pageSize),
+                costType, costBehavior, from, to)));
+
+    [HttpPut("costs/{costEntryId:guid}")]
+    public async Task<ActionResult<ApiResponse<ProjectCostEntryResponse>>> UpdateCost(
+        Guid companyId, Guid costEntryId, [FromBody] UpdateProjectCostEntryRequest request)
+    {
+        try { return Ok(new ApiResponse<ProjectCostEntryResponse>(true, await _service.UpdateCostEntryAsync(companyId, costEntryId, request))); }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
 
     [HttpDelete("costs/{costEntryId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> DeleteCost(Guid companyId, Guid costEntryId)

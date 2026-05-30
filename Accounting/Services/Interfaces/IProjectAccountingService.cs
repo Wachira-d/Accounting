@@ -37,7 +37,9 @@ public interface IProjectAccountingService
 
     // Cost entries
     Task<ProjectCostEntryResponse> AddCostEntryAsync(Guid companyId, Guid projectId, CreateProjectCostEntryRequest request);
-    Task<PagedResponse<ProjectCostEntryResponse>> GetCostEntriesAsync(Guid companyId, Guid projectId, PagedRequest request);
+    Task<ProjectCostEntryResponse> UpdateCostEntryAsync(Guid companyId, Guid costEntryId, UpdateProjectCostEntryRequest request);
+    Task<PagedResponse<ProjectCostEntryResponse>> GetCostEntriesAsync(Guid companyId, Guid projectId, PagedRequest request,
+        string? costType = null, string? costBehavior = null, DateTime? from = null, DateTime? to = null);
     Task DeleteCostEntryAsync(Guid companyId, Guid costEntryId);
 
     // Reports

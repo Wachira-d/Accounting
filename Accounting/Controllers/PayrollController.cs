@@ -46,8 +46,37 @@ public class PayrollController : ControllerBase
         => Ok(new ApiResponse<EmployeeResponse>(true, await _service.GetEmployeeAsync(companyId, employeeId)));
 
     [HttpGet("employees")]
-    public async Task<ActionResult<ApiResponse<PagedResponse<EmployeeResponse>>>> GetEmployees(Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        => Ok(new ApiResponse<PagedResponse<EmployeeResponse>>(true, await _service.GetEmployeesAsync(companyId, new PagedRequest(page, pageSize))));
+    public async Task<ActionResult<ApiResponse<PagedResponse<EmployeeResponse>>>> GetEmployees(
+        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] string? search = null)
+        => Ok(new ApiResponse<PagedResponse<EmployeeResponse>>(true, await _service.GetEmployeesAsync(companyId, new PagedRequest(page, pageSize, search))));
+
+    /// <summary>Lookup-by-external for partner ERPs/HRIS — caller passes
+    /// its own (ExternalSystem, ExternalId) and gets back our employee
+    /// row without needing to remember our GUID.</summary>
+    [HttpGet("employees/by-external/{externalSystem}/{externalId}")]
+    public async Task<ActionResult<ApiResponse<EmployeeResponse>>> GetByExternal(
+        Guid companyId, string externalSystem, string externalId)
+    {
+        var emp = await _service.GetEmployeeByExternalAsync(companyId, externalSystem, externalId);
+        return emp == null
+            ? NotFound(new ApiResponse<object>(false, null, "ไม่พบพนักงาน"))
+            : Ok(new ApiResponse<EmployeeResponse>(true, emp));
+    }
+
+    [HttpDelete("employees/{employeeId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteEmployee(Guid companyId, Guid employeeId)
+    {
+        try { await _service.DeleteEmployeeAsync(companyId, employeeId); return Ok(new ApiResponse<bool>(true, true, "ลบพนักงานแล้ว")); }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    [HttpPost("employees/{employeeId:guid}/restore")]
+    public async Task<ActionResult<ApiResponse<EmployeeResponse>>> RestoreEmployee(Guid companyId, Guid employeeId)
+    {
+        try { return Ok(new ApiResponse<EmployeeResponse>(true, await _service.RestoreEmployeeAsync(companyId, employeeId), "กู้คืนพนักงานแล้ว")); }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
 
     [HttpPut("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> UpdateEmployee(Guid companyId, Guid employeeId, [FromBody] UpdateEmployeeRequest request)

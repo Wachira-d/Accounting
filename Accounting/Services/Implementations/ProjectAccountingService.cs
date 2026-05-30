@@ -437,7 +437,8 @@ public class ProjectAccountingService : IProjectAccountingService
             UnitCost = request.UnitCost,
             Amount = request.Quantity * request.UnitCost,
             EmployeeId = request.EmployeeId,
-            IsBillable = request.IsBillable
+            IsBillable = request.IsBillable,
+            CostBehavior = request.CostBehavior
         };
 
         _db.ProjectCostEntries.Add(entry);
@@ -447,16 +448,48 @@ public class ProjectAccountingService : IProjectAccountingService
 
         await _db.SaveChangesAsync();
 
-        return new ProjectCostEntryResponse(
-            entry.Id, entry.ProjectId, entry.EntryDate, entry.CostType,
-            entry.Description, entry.Quantity, entry.UnitCost, entry.Amount,
-            entry.IsBillable, entry.IsBilled);
+        return MapCost(entry);
     }
 
-    public async Task<PagedResponse<ProjectCostEntryResponse>> GetCostEntriesAsync(Guid companyId, Guid projectId, PagedRequest request)
+    public async Task<ProjectCostEntryResponse> UpdateCostEntryAsync(Guid companyId, Guid costEntryId, UpdateProjectCostEntryRequest request)
+    {
+        var entry = await _db.ProjectCostEntries
+            .FirstOrDefaultAsync(e => e.Id == costEntryId && e.CompanyId == companyId && !e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการ cost");
+        if (entry.IsBilled)
+            throw new InvalidOperationException("รายการที่ออกบิลแล้วแก้ไขไม่ได้ — ต้องยกเลิกบิลก่อน");
+
+        var oldAmount = entry.Amount;
+
+        if (request.EntryDate.HasValue) entry.EntryDate = request.EntryDate.Value;
+        if (request.CostType != null) entry.CostType = request.CostType;
+        if (request.Description != null) entry.Description = request.Description;
+        if (request.Quantity.HasValue) entry.Quantity = request.Quantity.Value;
+        if (request.UnitCost.HasValue) entry.UnitCost = request.UnitCost.Value;
+        entry.Amount = entry.Quantity * entry.UnitCost;
+        if (request.IsBillable.HasValue) entry.IsBillable = request.IsBillable.Value;
+        if (request.CostBehavior != null) entry.CostBehavior = request.CostBehavior;
+
+        // Roll the delta onto the project's actual cost so the dashboard
+        // stays in sync without a recompute.
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == entry.ProjectId && p.CompanyId == companyId);
+        if (project != null) project.ActualCost += (entry.Amount - oldAmount);
+
+        entry.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return MapCost(entry);
+    }
+
+    public async Task<PagedResponse<ProjectCostEntryResponse>> GetCostEntriesAsync(Guid companyId, Guid projectId, PagedRequest request,
+        string? costType = null, string? costBehavior = null, DateTime? from = null, DateTime? to = null)
     {
         var query = _db.ProjectCostEntries
-            .Where(e => e.ProjectId == projectId && e.CompanyId == companyId);
+            .Where(e => e.ProjectId == projectId && e.CompanyId == companyId && !e.IsDeleted);
+
+        if (!string.IsNullOrEmpty(costType)) query = query.Where(e => e.CostType == costType);
+        if (!string.IsNullOrEmpty(costBehavior)) query = query.Where(e => e.CostBehavior == costBehavior);
+        if (from.HasValue) query = query.Where(e => e.EntryDate >= from.Value);
+        if (to.HasValue) query = query.Where(e => e.EntryDate <= to.Value);
 
         var totalCount = await query.CountAsync();
 
@@ -469,15 +502,17 @@ public class ProjectAccountingService : IProjectAccountingService
         var totalPages = (int)Math.Ceiling(totalCount / (double)request.PageSize);
 
         return new PagedResponse<ProjectCostEntryResponse>(
-            items.Select(e => new ProjectCostEntryResponse(
-                e.Id, e.ProjectId, e.EntryDate, e.CostType,
-                e.Description, e.Quantity, e.UnitCost, e.Amount,
-                e.IsBillable, e.IsBilled)).ToList(),
+            items.Select(MapCost).ToList(),
             totalCount,
             request.Page,
             request.PageSize,
             totalPages);
     }
+
+    private static ProjectCostEntryResponse MapCost(ProjectCostEntry e) =>
+        new(e.Id, e.ProjectId, e.EntryDate, e.CostType,
+            e.Description, e.Quantity, e.UnitCost, e.Amount,
+            e.IsBillable, e.IsBilled, e.CostBehavior);
 
     // ===== Reports =====
 

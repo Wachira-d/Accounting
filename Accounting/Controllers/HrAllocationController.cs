@@ -1,6 +1,8 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Hr;
 using Accounting.Services.Implementations;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -18,11 +20,31 @@ public class HrAllocationController : ControllerBase
 {
     private readonly IEmployeeProjectTimeService _time;
     private readonly IFixVariableCostReportService _report;
+    private readonly ISensitivityService _sensitivity;
 
-    public HrAllocationController(IEmployeeProjectTimeService time, IFixVariableCostReportService report)
+    public HrAllocationController(IEmployeeProjectTimeService time,
+        IFixVariableCostReportService report, ISensitivityService sensitivity)
     {
         _time = time;
         _report = report;
+        _sensitivity = sensitivity;
+    }
+
+    /// <summary>Gate write/allocate endpoints behind the Payroll sensitivity
+    /// rule — labour cost allocation can shift money between projects and
+    /// reveals gross-salary information. Read endpoints stay open behind
+    /// plain [Authorize] since aggregate cost reports are usually broadly
+    /// shared with PMs.</summary>
+    private async Task<ActionResult?> CheckPayrollAccessAsync(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await _sensitivity.CanViewAsync(companyId, userId, Models.Enums.SensitivityKind.Payroll))
+            return StatusCode(403, new ApiResponse<object>(false, new
+            {
+                redacted = true, kind = "Payroll",
+                requiredPermission = Models.Constants.PermissionKeys.PayrollView,
+            }, "ต้องมีสิทธิ์ดูข้อมูลเงินเดือน"));
+        return null;
     }
 
     // ===== Employee project time CRUD =====
@@ -47,6 +69,19 @@ public class HrAllocationController : ControllerBase
     {
         try { return Ok(new ApiResponse<EmployeeProjectTimeResponse>(true, await _time.GetAsync(companyId, id, ct))); }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    /// <summary>Partner systems look up a time row by their own
+    /// (ExternalSystem, ExternalId) tag — symmetric with project
+    /// and employee by-external endpoints.</summary>
+    [HttpGet("project-time/by-external/{externalSystem}/{externalId}")]
+    public async Task<ActionResult<ApiResponse<EmployeeProjectTimeResponse>>> GetByExternal(
+        Guid companyId, string externalSystem, string externalId, CancellationToken ct)
+    {
+        var row = await _time.GetByExternalAsync(companyId, externalSystem, externalId, ct);
+        return row == null
+            ? NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการเวลาทำงาน"))
+            : Ok(new ApiResponse<EmployeeProjectTimeResponse>(true, row));
     }
 
     [HttpPut("project-time/{id:guid}")]
@@ -95,6 +130,7 @@ public class HrAllocationController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollLabourAllocationResponse>>> Allocate(
         Guid companyId, Guid payrollRunId, CancellationToken ct)
     {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
         try
         {
             var r = await _time.AllocatePayrollRunAsync(companyId, payrollRunId, ct);

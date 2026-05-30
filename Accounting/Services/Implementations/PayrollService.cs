@@ -440,6 +440,50 @@ public class PayrollService : IPayrollService
         return new SyncEmployeesResponse(inserted, updated, skipped, errors);
     }
 
+    public async Task<EmployeeResponse?> GetEmployeeByExternalAsync(Guid companyId, string externalSystem, string externalId)
+    {
+        var emp = await _db.Set<Employee>()
+            .Include(e => e.DepartmentRef).Include(e => e.PositionRef).Include(e => e.DirectManager)
+            .FirstOrDefaultAsync(e => e.CompanyId == companyId
+                && e.ExternalSystem == externalSystem
+                && e.ExternalId == externalId
+                && !e.IsDeleted);
+        return emp == null ? null : MapToEmployeeResponse(emp);
+    }
+
+    public async Task DeleteEmployeeAsync(Guid companyId, Guid employeeId)
+    {
+        var emp = await _db.Set<Employee>()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+        emp.IsDeleted = true;
+        emp.IsActive = false;
+        emp.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        await FireWebhookAsync(companyId, "employee.deleted", new
+        {
+            id = emp.Id, employeeCode = emp.EmployeeCode,
+            externalId = emp.ExternalId, externalSystem = emp.ExternalSystem,
+        });
+    }
+
+    public async Task<EmployeeResponse> RestoreEmployeeAsync(Guid companyId, Guid employeeId)
+    {
+        var emp = await _db.Set<Employee>()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงานที่ถูกลบไว้");
+        emp.IsDeleted = false;
+        emp.IsActive = true;
+        emp.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        await FireWebhookAsync(companyId, "employee.restored", new
+        {
+            id = emp.Id, employeeCode = emp.EmployeeCode,
+            externalId = emp.ExternalId, externalSystem = emp.ExternalSystem,
+        });
+        return await GetEmployeeAsync(companyId, emp.Id);
+    }
+
     public async Task<SeverancePreviewResponse> PreviewSeverancePayAsync(
         Guid companyId, Guid employeeId, SeverancePreviewRequest request)
     {
@@ -531,6 +575,12 @@ public class PayrollService : IPayrollService
         }
 
         await _db.SaveChangesAsync();
+        await FireWebhookAsync(companyId, "employee.terminated", new
+        {
+            id = employee.Id, employeeCode = employee.EmployeeCode,
+            endDate = employee.EndDate,
+            externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
+        });
     }
 
     // ===== Payroll Items =====

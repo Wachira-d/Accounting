@@ -52,12 +52,23 @@ public record ProjectTaskResponse(
 public record CreateProjectCostEntryRequest(
     Guid? ProjectTaskId, DateTime EntryDate, string CostType,
     string Description, decimal Quantity, decimal UnitCost,
-    Guid? EmployeeId, bool IsBillable);
+    Guid? EmployeeId, bool IsBillable,
+    string CostBehavior = "Variable");
+
+public record UpdateProjectCostEntryRequest(
+    DateTime? EntryDate = null,
+    string? CostType = null,
+    string? Description = null,
+    decimal? Quantity = null,
+    decimal? UnitCost = null,
+    bool? IsBillable = null,
+    string? CostBehavior = null);
 
 public record ProjectCostEntryResponse(
     Guid Id, Guid ProjectId, DateTime EntryDate, string CostType,
     string Description, decimal Quantity, decimal UnitCost,
-    decimal Amount, bool IsBillable, bool IsBilled);
+    decimal Amount, bool IsBillable, bool IsBilled,
+    string CostBehavior = "Variable");
 
 public record ProjectProfitabilityResponse(
     Guid ProjectId, string ProjectName, decimal ContractAmount,
