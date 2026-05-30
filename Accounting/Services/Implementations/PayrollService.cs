@@ -469,7 +469,10 @@ public class PayrollService : IPayrollService
 
     public async Task<EmployeeResponse> RestoreEmployeeAsync(Guid companyId, Guid employeeId)
     {
+        // Employee has a global query filter (!IsDeleted) — bypass it
+        // so we can locate the soft-deleted row to restore.
         var emp = await _db.Set<Employee>()
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงานที่ถูกลบไว้");
         emp.IsDeleted = false;
