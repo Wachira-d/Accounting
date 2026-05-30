@@ -228,6 +228,11 @@ builder.Services.AddScoped<Accounting.Services.Ai.IAiFeedbackRecorder, Accountin
 // to decide local vs provider; the admin UI writes through it.
 builder.Services.AddSingleton<Accounting.Services.Ai.IAiFeatureRoutingResolver,
     Accounting.Services.Ai.AiFeatureRoutingResolver>();
+// Cold-start corpus seeder — runs once at startup to populate
+// SystemOcrCategoryMapping with curated Thai vendor patterns so the
+// resolver has useful answers for tenants with zero feedback yet.
+builder.Services.AddScoped<Accounting.Services.Implementations.Ai.IDistillationCorpusSeeder,
+    Accounting.Services.Implementations.Ai.DistillationCorpusSeeder>();
 // Knowledge-distillation local student models — SINGLETON because each
 // holds an in-memory (CompanyId, key) → ranked candidates dictionary
 // that the nightly AiFeedbackTrainingJob rebuilds from feedback rows.
@@ -236,6 +241,10 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
     Accounting.Services.Ai.Distillation.VendorCanonDistillationModel>();
 builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
     Accounting.Services.Ai.Distillation.GlAccountDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.BankMatchDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.DuplicateDocumentDistillationModel>();
 // Sentence-embedding service for Thai short text (vendor names, line
 // descriptions). Try ONNX MiniLM first — if the LFS-tracked model file
 // is present and loadable, register it; otherwise transparently fall
@@ -1348,6 +1357,21 @@ try
     catch (Exception ex)
     {
         app.Logger.LogWarning(ex, "SystemOcrKnowledgeSeeder failed at startup (non-fatal — can be triggered via admin endpoint)");
+    }
+
+    // Distillation corpus seed — curated Thai vendor → account mappings
+    // so new tenants get useful local-model suggestions BEFORE their
+    // first user feedback row exists. Idempotent (skip-or-bump
+    // TimesUsed per row) so re-running on every deploy is safe.
+    try
+    {
+        var corpusSeeder = scope.ServiceProvider
+            .GetRequiredService<Accounting.Services.Implementations.Ai.IDistillationCorpusSeeder>();
+        await corpusSeeder.SeedAsync(CancellationToken.None);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "DistillationCorpusSeeder failed at startup (non-fatal)");
     }
 }
 catch (Exception ex)
