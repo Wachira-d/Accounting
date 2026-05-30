@@ -350,8 +350,20 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         // with CostBehavior on the COA, and treat each line as a cost
         // of that account-code's category. Skip when scoped to a single
         // project — project-specific data is already complete.
+        //
+        // Exclude JEs that are already referenced by a ProjectCostEntry
+        // in the same window (payroll runs typically) — those are
+        // captured above per-project and would double-count here.
         if (!projectId.HasValue)
         {
+            var referencedJeIds = await _db.ProjectCostEntries
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                    && p.EntryDate >= start && p.EntryDate < end
+                    && p.JournalEntryId.HasValue)
+                .Select(p => p.JournalEntryId!.Value)
+                .Distinct()
+                .ToListAsync(ct);
+
             var jeRows = await _db.JournalEntryLines
                 .Include(l => l.JournalEntry)
                 .Include(l => l.Account)
@@ -361,7 +373,8 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
                     && l.JournalEntry.EntryDate >= start
                     && l.JournalEntry.EntryDate < end
                     && l.Account.AccountType == AccountType.Expense
-                    && l.Account.CostBehavior != null)
+                    && l.Account.CostBehavior != null
+                    && !referencedJeIds.Contains(l.JournalEntryId))
                 .Select(l => new {
                     AccountCode = l.Account.AccountCode,
                     CostBehavior = l.Account.CostBehavior,
@@ -428,7 +441,7 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         }
 
         return new FixVariableCostReport(year, month, projectId, projectName,
-            fixedSum, varSum, adminOverhead, fixedSum + varSum, byType);
+            fixedSum, varSum, adminOverhead, fixedSum + varSum + adminOverhead, byType);
     }
 
     public async Task<List<FixVariableCostMonthlyTrend>> GetTrendAsync(Guid companyId, int fromYear, int fromMonth, int months,

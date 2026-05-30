@@ -13,10 +13,11 @@
     .stat-label { font-size:12px;color:#64748b;font-weight:600 }
     .stat-value { font-size:28px;font-weight:700;color:#1e293b;margin-top:4px }
     .stat-share { font-size:13px;color:#475569;margin-top:6px }
-    .bar { display:flex;height:30px;border-radius:6px;overflow:hidden;margin-top:8px }
+    .bar { display:flex;height:30px;border-radius:6px;overflow:hidden;margin-top:8px;background:#f1f5f9 }
     .bar > div { height:100% }
     .bar .b-fix { background:#3b82f6 }
     .bar .b-var { background:#f59e0b }
+    .bar .b-adm { background:#8b5cf6 }
   </style>
 </head>
 <body>
@@ -148,11 +149,13 @@
           const total = d.totalCost || 1;
           const fixPct = (d.fixedCost / total * 100).toFixed(1);
           const varPct = (d.variableCost / total * 100).toFixed(1);
+          const admPct = ((d.adminOverhead || 0) / total * 100).toFixed(1);
           document.getElementById('kpiFixedShare').textContent = `${fixPct}% ของรวม`;
           document.getElementById('kpiVariableShare').textContent = `${varPct}% ของรวม`;
           document.getElementById('kpiBar').innerHTML =
             `<div class="b-fix" style="width:${fixPct}%" title="Fixed ${fixPct}%"></div>` +
-            `<div class="b-var" style="width:${varPct}%" title="Variable ${varPct}%"></div>`;
+            `<div class="b-var" style="width:${varPct}%" title="Variable ${varPct}%"></div>` +
+            `<div class="b-adm" style="width:${admPct}%" title="Admin ${admPct}%"></div>`;
 
           const tbody = document.getElementById('tbodyType');
           if (!d.byCostType || d.byCostType.length === 0) {
