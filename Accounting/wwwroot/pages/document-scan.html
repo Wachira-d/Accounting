@@ -575,6 +575,53 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      /// Find the project that already appears on the most lines.
+      /// Used to pre-select the "main project" picker so when user
+      /// re-opens a partially-allocated review, the picker shows the
+      /// majority project rather than blank.
+      _detectMainProjectId(items) {
+        if (!items || items.length === 0) return null;
+        const counts = new Map();
+        for (const it of items) {
+          if (!it.projectId) continue;
+          counts.set(it.projectId, (counts.get(it.projectId) || 0) + 1);
+        }
+        if (counts.size === 0) return null;
+        let bestId = null, bestN = 0;
+        for (const [id, n] of counts) {
+          if (n > bestN) { bestId = id; bestN = n; }
+        }
+        return bestId;
+      },
+
+      /// Bulk apply — set the main-picker's project on every line
+      /// in ONE round trip. When onlyEmpty=true, lines that already
+      /// have a project keep it (preserves the user's prior
+      /// overrides — useful when they applied main, edited 2 rows,
+      /// then realised a NEW row was added and want to fill it in).
+      async applyMainProject(scanId, onlyEmpty) {
+        try {
+          const cid = Layout.getCompanyId();
+          const picker = document.getElementById(`mainProjectPicker-${scanId}`);
+          const projectId = picker?.value || null;
+          const p = projectId ? this.projects.find(p => p.id === projectId) : null;
+          await API.post(`/api/companies/${cid}/ocr/${scanId}/lines-project`, {
+            projectId: projectId || null,
+            projectName: p ? (p.projectNumber + ' ' + p.name) : null,
+            onlyEmpty,
+          });
+          // Update every per-row select inline without re-fetching
+          // the entire scan — keeps modal scroll/state intact.
+          document.querySelectorAll(`select[data-line-project]`).forEach(sel => {
+            if (onlyEmpty && sel.value) return;
+            sel.value = projectId || '';
+          });
+          Layout.toast(onlyEmpty
+            ? (projectId ? 'เติม project ให้บรรทัดที่ว่างแล้ว' : 'ไม่มีอะไรเปลี่ยน')
+            : (projectId ? 'ตั้ง project ทุกบรรทัดแล้ว' : 'ล้าง project ทุกบรรทัดแล้ว'));
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       async loadEngines() {
         try {
           const cid = Layout.getCompanyId();
@@ -1661,13 +1708,29 @@
               ${scan.paymentTermsDays ? `<div class="review-field"><label>เงื่อนไขชำระ</label><span class="form-input" style="background:var(--gray-50)">${scan.paymentTermsDays} วัน</span></div>` : ''}
               ${scan.extractedItems && scan.extractedItems.length > 0 ? `
               <div style="margin-top:8px">
-                <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">
+                <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">
                   รายการที่สกัดได้ (${scan.extractedItems.length} รายการ)
-                  <span style="font-weight:400;color:var(--gray-500);font-size:11px">— เลือก project ต่อบรรทัดได้</span>
+                </div>
+                <!-- ── Main project picker — applies to every row in
+                     one click. The most common shortcut: an entire
+                     invoice belongs to one project. User then only
+                     touches the rows that override. -->
+                <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span style="font-size:12px;font-weight:600;color:#3730a3">📌 โครงการหลัก:</span>
+                  <select id="mainProjectPicker-${scan.id}" style="flex:1;min-width:240px;padding:5px 8px;border:1px solid #a5b4fc;border-radius:6px;font-size:12px;background:#fff">
+                    ${this._projectOptionsHtml(this._detectMainProjectId(scan.extractedItems))}
+                  </select>
+                  <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.applyMainProject('${scan.id}', false)">
+                    ✓ apply ทุกบรรทัด
+                  </button>
+                  <button class="btn btn-sm" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3" onclick="Page.applyMainProject('${scan.id}', true)" title="ใส่ project นี้เฉพาะบรรทัดที่ยังไม่มี project (preserve overrides)">
+                    🩹 เติมเฉพาะที่ว่าง
+                  </button>
+                  <span style="font-size:11px;color:#4f46e5">เลือกแล้วค่อยแก้เฉพาะบรรทัดที่ไม่ตรง</span>
                 </div>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
                   <tr style="background:var(--gray-100)"><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
-                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)"><td style="padding:4px 6px">${Layout.esc(it.description || '-')}</td><td style="padding:4px 6px;text-align:right">${it.quantity || '-'}</td><td style="padding:4px 6px;text-align:right">${it.unitPrice != null ? Layout.money(it.unitPrice) : '-'}</td><td style="padding:4px 6px;text-align:right">${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td><td style="padding:4px 6px"><select onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 6px">${Layout.esc(it.description || '-')}</td><td style="padding:4px 6px;text-align:right">${it.quantity || '-'}</td><td style="padding:4px 6px;text-align:right">${it.unitPrice != null ? Layout.money(it.unitPrice) : '-'}</td><td style="padding:4px 6px;text-align:right">${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
               </div>` : ''}
             </div>

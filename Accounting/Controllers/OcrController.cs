@@ -181,6 +181,28 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(Guid companyId, Guid scanId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "")));
 
+    public sealed record SetAllLinesProjectRequest(Guid? ProjectId, string? ProjectName, bool OnlyEmpty);
+
+    /// <summary>Apply ONE project to EVERY OCR-extracted line in a
+    /// single call. Used by the UI's "main project" picker —
+    /// dramatically reduces clicks for the common case where most
+    /// lines belong to the same job. OnlyEmpty=true preserves any
+    /// per-line overrides the user already made.</summary>
+    [HttpPost("{scanId:guid}/lines-project")]
+    public async Task<ActionResult<ApiResponse<object>>> SetAllLinesProject(
+        Guid companyId, Guid scanId, [FromBody] SetAllLinesProjectRequest req)
+    {
+        await _service.SetAllExtractedLineProjectsAsync(companyId, scanId,
+            req.ProjectId, req.ProjectName, req.OnlyEmpty);
+        var verb = req.OnlyEmpty ? "เติม project ให้บรรทัดว่าง" : "ตั้ง project ทุกบรรทัด";
+        return Ok(new ApiResponse<object>(true, new
+        {
+            projectId = req.ProjectId,
+            projectName = req.ProjectName,
+            onlyEmpty = req.OnlyEmpty,
+        }, req.ProjectId.HasValue ? verb + "แล้ว" : "ล้าง project ทุกบรรทัดแล้ว"));
+    }
+
     public sealed record SetLineProjectRequest(int LineIndex, Guid? ProjectId, string? ProjectName);
 
     /// <summary>Assign / clear a project on one OCR-extracted line.

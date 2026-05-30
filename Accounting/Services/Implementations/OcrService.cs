@@ -3104,6 +3104,48 @@ public class OcrService : IOcrService
         await _db.SaveChangesAsync();
     }
 
+    public async Task SetAllExtractedLineProjectsAsync(Guid companyId, Guid scanResultId,
+        Guid? projectId, string? projectName, bool onlyEmpty)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+        if (string.IsNullOrEmpty(scan.ExtractedItemsJson))
+            throw new InvalidOperationException("Scan ไม่มีรายการสินค้าใน OCR result.");
+
+        if (projectId.HasValue)
+        {
+            var exists = await _db.Projects.AnyAsync(
+                p => p.Id == projectId.Value && p.CompanyId == companyId && !p.IsDeleted);
+            if (!exists) throw new InvalidOperationException("ไม่พบ project ที่ระบุ");
+        }
+
+        List<OcrExtractedLineItem> items;
+        try
+        {
+            items = System.Text.Json.JsonSerializer
+                .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+        }
+        catch
+        {
+            throw new InvalidOperationException("ExtractedItemsJson เสียหาย — ไม่สามารถ parse");
+        }
+
+        // Preserve user's prior per-line overrides when onlyEmpty=true.
+        // The UI uses this when the user clicks "apply main" AFTER
+        // already overriding some rows individually — we don't want
+        // to clobber their work.
+        foreach (var item in items)
+        {
+            if (onlyEmpty && item.ProjectId.HasValue) continue;
+            item.ProjectId = projectId;
+            item.ProjectName = projectName;
+        }
+        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
     {
         var result = await _db.Set<OcrScanResult>()

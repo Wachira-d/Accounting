@@ -27,6 +27,15 @@ public interface IOcrService
     Task SetExtractedLineProjectAsync(Guid companyId, Guid scanResultId,
         int lineIndex, Guid? projectId, string? projectName);
 
+    /// <summary>Bulk assign — set the same project on EVERY extracted
+    /// line. Used by the OCR review UI's "main project" picker:
+    /// user picks one project, every row inherits it, then user only
+    /// has to touch the rows that should override. When onlyEmpty=true,
+    /// only lines that don't already have a project get updated
+    /// (preserves the user's prior overrides).</summary>
+    Task SetAllExtractedLineProjectsAsync(Guid companyId, Guid scanResultId,
+        Guid? projectId, string? projectName, bool onlyEmpty);
+
     Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
     Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false);
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,
