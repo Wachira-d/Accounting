@@ -39,7 +39,7 @@
     </div>
 
     <!-- Monthly summary -->
-    <div class="grid grid-3 gap-4" style="margin-bottom:20px">
+    <div class="grid grid-4 gap-4" style="margin-bottom:20px">
       <div class="stat-card fixed">
         <div class="stat-label">🔵 Fixed Cost</div>
         <div class="stat-value" id="kpiFixed">0.00</div>
@@ -49,6 +49,11 @@
         <div class="stat-label">🟡 Variable Cost</div>
         <div class="stat-value" id="kpiVariable">0.00</div>
         <div class="stat-share" id="kpiVariableShare">—</div>
+      </div>
+      <div class="stat-card" style="border-color:#ddd6fe;background:linear-gradient(135deg,#ede9fe,#fff)">
+        <div class="stat-label">⌐ Admin Overhead</div>
+        <div class="stat-value" id="kpiAdmin">0.00</div>
+        <div class="stat-share" style="font-size:11px">payroll ที่ไม่ได้กระจายลงโครงการ</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">📊 Total Cost</div>
@@ -138,6 +143,7 @@
           const d = r.data;
           document.getElementById('kpiFixed').textContent = this._fmt(d.fixedCost);
           document.getElementById('kpiVariable').textContent = this._fmt(d.variableCost);
+          document.getElementById('kpiAdmin').textContent = this._fmt(d.adminOverhead);
           document.getElementById('kpiTotal').textContent = this._fmt(d.totalCost);
           const total = d.totalCost || 1;
           const fixPct = (d.fixedCost / total * 100).toFixed(1);

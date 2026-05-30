@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Hr;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -323,30 +324,69 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         var start = new DateTime(year, month, 1);
         var end = start.AddMonths(1);
 
-        var q = _db.ProjectCostEntries
+        // Pull project costs — for project-scoped reports this is the
+        // complete picture (all costs for a project flow through
+        // ProjectCostEntry by design).
+        var pq = _db.ProjectCostEntries
             .Where(p => p.CompanyId == companyId
                 && !p.IsDeleted
                 && p.EntryDate >= start && p.EntryDate < end);
-        if (projectId.HasValue) q = q.Where(p => p.ProjectId == projectId.Value);
+        if (projectId.HasValue) pq = pq.Where(p => p.ProjectId == projectId.Value);
 
-        var rows = await q.Select(p => new {
-            p.CostType,
-            p.CostBehavior,
-            p.Amount,
-            p.ProjectId
+        var projectRows = await pq.Select(p => new {
+            p.CostType, p.CostBehavior, p.Amount
         }).ToListAsync(ct);
 
-        var fixedSum = rows.Where(r => r.CostBehavior == "Fixed").Sum(r => r.Amount);
-        var varSum = rows.Where(r => r.CostBehavior != "Fixed").Sum(r => r.Amount);
+        var byTypeMap = projectRows.GroupBy(r => r.CostType).ToDictionary(
+            g => g.Key,
+            g => (
+                Fixed: g.Where(r => r.CostBehavior == "Fixed").Sum(r => r.Amount),
+                Variable: g.Where(r => r.CostBehavior != "Fixed").Sum(r => r.Amount)
+            ));
 
-        var byType = rows.GroupBy(r => r.CostType)
-            .Select(g => new FixVariableCostBreakdown(
-                g.Key,
-                g.Where(r => r.CostBehavior == "Fixed").Sum(r => r.Amount),
-                g.Where(r => r.CostBehavior != "Fixed").Sum(r => r.Amount),
-                g.Sum(r => r.Amount)))
+        // Company-wide reports also need NON-project GL costs (rent,
+        // utilities, depreciation) — those bypass ProjectCostEntry and
+        // live in JournalEntryLine. Pull Expense-account lines tagged
+        // with CostBehavior on the COA, and treat each line as a cost
+        // of that account-code's category. Skip when scoped to a single
+        // project — project-specific data is already complete.
+        if (!projectId.HasValue)
+        {
+            var jeRows = await _db.JournalEntryLines
+                .Include(l => l.JournalEntry)
+                .Include(l => l.Account)
+                .Where(l => l.JournalEntry.CompanyId == companyId
+                    && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                        || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+                    && l.JournalEntry.EntryDate >= start
+                    && l.JournalEntry.EntryDate < end
+                    && l.Account.AccountType == AccountType.Expense
+                    && l.Account.CostBehavior != null)
+                .Select(l => new {
+                    AccountCode = l.Account.AccountCode,
+                    CostBehavior = l.Account.CostBehavior,
+                    Net = l.DebitAmount - l.CreditAmount,
+                })
+                .ToListAsync(ct);
+
+            foreach (var grp in jeRows.GroupBy(r => $"GL:{r.AccountCode}"))
+            {
+                var net = grp.Sum(r => r.Net);
+                var beh = grp.First().CostBehavior;
+                var cur = byTypeMap.GetValueOrDefault(grp.Key);
+                if (beh == "Fixed") cur.Fixed += net; else cur.Variable += net;
+                byTypeMap[grp.Key] = cur;
+            }
+        }
+
+        var byType = byTypeMap
+            .Select(kv => new FixVariableCostBreakdown(kv.Key, kv.Value.Fixed, kv.Value.Variable,
+                kv.Value.Fixed + kv.Value.Variable))
             .OrderByDescending(b => b.Total)
             .ToList();
+
+        var fixedSum = byType.Sum(b => b.Fixed);
+        var varSum = byType.Sum(b => b.Variable);
 
         string? projectName = null;
         if (projectId.HasValue)
@@ -356,10 +396,36 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
                 .Select(p => p.Name).FirstOrDefaultAsync(ct);
         }
 
-        // Admin overhead = ProjectCostEntries are always per-project; the
-        // admin bucket only surfaces through the AllocateLabour report.
-        // Pull approved-but-unallocated payroll for the month as a proxy.
+        // Admin overhead = approved payroll runs whose JE landed in the
+        // month, MINUS the portion already allocated to projects via
+        // ProjectCostEntry. Anything left is the residual the admin team
+        // absorbs. Only relevant for company-wide reports.
         var adminOverhead = 0m;
+        if (!projectId.HasValue)
+        {
+            var runsInMonth = await _db.Set<PayrollRun>()
+                .Where(r => r.CompanyId == companyId
+                    && r.PayDate >= start && r.PayDate < end
+                    && r.Status == "Paid" && !r.IsDeleted)
+                .Select(r => new { r.Id, r.TotalGrossSalary })
+                .ToListAsync(ct);
+            var grossTotal = runsInMonth.Sum(r => r.TotalGrossSalary);
+            var runIds = runsInMonth.Select(r => r.Id).ToList();
+            var pceIds = await _db.EmployeeProjectTimes
+                .Where(t => t.CompanyId == companyId
+                    && t.IsAllocated
+                    && t.AllocatedPayrollRunId.HasValue
+                    && runIds.Contains(t.AllocatedPayrollRunId.Value)
+                    && t.ProjectCostEntryId.HasValue)
+                .Select(t => t.ProjectCostEntryId!.Value)
+                .Distinct()
+                .ToListAsync(ct);
+            var allocated = pceIds.Count == 0 ? 0m :
+                await _db.ProjectCostEntries
+                    .Where(p => p.CompanyId == companyId && pceIds.Contains(p.Id))
+                    .SumAsync(p => p.Amount, ct);
+            adminOverhead = Math.Max(0, grossTotal - allocated);
+        }
 
         return new FixVariableCostReport(year, month, projectId, projectName,
             fixedSum, varSum, adminOverhead, fixedSum + varSum, byType);

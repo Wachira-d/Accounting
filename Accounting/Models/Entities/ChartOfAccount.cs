@@ -27,6 +27,16 @@ public class ChartOfAccount : TenantEntity
     /// </summary>
     public bool InputVatClaimable { get; set; } = true;
 
+    /// <summary>
+    /// Cost behavior classification used by the Fix-vs-Variable cost
+    /// report. "Fixed" = incurred regardless of activity (rent, salaried
+    /// staff, depreciation, insurance). "Variable" = scales with activity
+    /// (hourly labor, materials, commissions). "Mixed" = semi-variable
+    /// (utilities with a fixed minimum). Defaults Null for accounts that
+    /// don't affect costing (cash, AR, AP, equity).
+    /// </summary>
+    public string? CostBehavior { get; set; }
+
     // Navigation
     public ICollection<ChartOfAccount> ChildAccounts { get; set; } = new List<ChartOfAccount>();
     public ICollection<JournalEntryLine> JournalEntryLines { get; set; } = new List<JournalEntryLine>();

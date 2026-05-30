@@ -3667,6 +3667,12 @@ public static class DatabaseMigrationHelper
             // Variable (hourly labor, materials) — drives the cost report.
             """ALTER TABLE "ProjectCostEntries" ADD COLUMN IF NOT EXISTS "CostBehavior" varchar(20) NOT NULL DEFAULT 'Variable';""",
 
+            // ChartOfAccount cost behavior — nullable; lets the report
+            // classify non-project GL costs (rent, utilities, depreciation)
+            // that bypass ProjectCostEntry. Seeded NULL; admins tag the
+            // relevant expense accounts via the COA UI.
+            """ALTER TABLE "ChartOfAccounts" ADD COLUMN IF NOT EXISTS "CostBehavior" varchar(20) NULL;""",
+
             // Employee project time allocation — feeds payroll → ProjectCostEntry
             // labor allocation. Sync-friendly (external attendance systems).
             """CREATE TABLE IF NOT EXISTS "EmployeeProjectTimes" (

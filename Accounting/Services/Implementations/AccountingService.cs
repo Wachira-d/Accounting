@@ -106,6 +106,8 @@ public partial class AccountingService : IAccountingService
         if (request.Description != null) account.Description = request.Description;
         if (request.IsActive.HasValue) account.IsActive = request.IsActive.Value;
         if (request.InputVatClaimable.HasValue) account.InputVatClaimable = request.InputVatClaimable.Value;
+        if (request.CostBehavior != null)
+            account.CostBehavior = request.CostBehavior == "" ? null : request.CostBehavior;
 
         await _db.SaveChangesAsync();
         return MapAccountToResponse(account);
@@ -2341,7 +2343,8 @@ public partial class AccountingService : IAccountingService
     private static AccountResponse MapAccountToResponse(ChartOfAccount a) => new(
         a.Id, a.AccountCode, a.AccountName, a.AccountNameEn,
         a.AccountType, (int)a.AccountType, a.ParentAccountId, a.Level, a.IsActive, a.IsSystemAccount, a.Description,
-        a.InputVatClaimable);
+        a.InputVatClaimable,
+        a.CostBehavior);
 
     private static JournalEntryResponse MapJournalEntryToResponse(JournalEntry j) =>
         MapJournalEntryToResponse(j, null, null);

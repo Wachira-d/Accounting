@@ -57,10 +57,12 @@ public class PayrollService : IPayrollService
     private const decimal PitPerDependantAllowance = 30_000m;
     private const decimal PitPvdMaxDeductible = 500_000m;
 
+    private readonly IWebhookService? _webhooks;
+
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
-        INotificationEngine? notify = null)
+        INotificationEngine? notify = null, IWebhookService? webhooks = null)
     {
         _db = db;
         _pdfService = pdfService;
@@ -69,6 +71,14 @@ public class PayrollService : IPayrollService
         _organizationService = organizationService;
         _permissionService = permissionService;
         _notify = notify;
+        _webhooks = webhooks;
+    }
+
+    private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
+    {
+        if (_webhooks == null) return;
+        try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
+        catch { /* fire-and-forget */ }
     }
 
     /// <summary>Fire-and-forget — swallowed inside the engine itself.</summary>
@@ -210,6 +220,15 @@ public class PayrollService : IPayrollService
         _db.Set<Employee>().Add(employee);
         await _db.SaveChangesAsync();
 
+        await FireWebhookAsync(companyId, "employee.created", new
+        {
+            id = employee.Id, employeeCode = employee.EmployeeCode,
+            firstNameTh = employee.FirstNameTh, lastNameTh = employee.LastNameTh,
+            email = employee.Email, employmentType = employee.EmploymentType,
+            salaryType = employee.SalaryType, baseSalary = employee.BaseSalary,
+            externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
+        });
+
         return await GetEmployeeAsync(companyId, employee.Id);
     }
 
@@ -318,6 +337,13 @@ public class PayrollService : IPayrollService
 
         employee.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        await FireWebhookAsync(companyId, "employee.updated", new
+        {
+            id = employee.Id, employeeCode = employee.EmployeeCode,
+            isActive = employee.IsActive,
+            externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
+        });
 
         return await GetEmployeeAsync(companyId, employee.Id);
     }

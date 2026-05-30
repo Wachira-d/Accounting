@@ -219,6 +219,10 @@ public class WebhookService : IWebhookService
                 JsonSerializer.Serialize(new { @event = "project.status_changed", data = new { project = new { id = Guid.Empty, code = "PRJ-001" }, from = "Active", to = "OnHold", reason = "Client requested pause" } })),
             new("project.deleted", "Fired when a project is soft-deleted.",
                 JsonSerializer.Serialize(new { @event = "project.deleted", data = new { id = Guid.Empty, code = "PRJ-001" } })),
+            new("employee.created", "Fired when a new employee is added (HR master).",
+                JsonSerializer.Serialize(new { @event = "employee.created", data = new { id = Guid.Empty, employeeCode = "E001", firstNameTh = "สมชาย", lastNameTh = "ใจดี", salaryType = "Monthly", baseSalary = 35000, externalId = "WD-12345", externalSystem = "Workday" } })),
+            new("employee.updated", "Fired when employee fields are updated (including onboarding/offboarding).",
+                JsonSerializer.Serialize(new { @event = "employee.updated", data = new { id = Guid.Empty, employeeCode = "E001", isActive = true, externalId = "WD-12345" } })),
             new("webhook.test", "Test event fired when you use the test endpoint.",
                 JsonSerializer.Serialize(new { @event = "webhook.test", data = new { message = "Hello from Accounting!" } }))
         };
