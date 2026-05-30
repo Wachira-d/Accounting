@@ -22,6 +22,7 @@
       <button class="tab-btn" onclick="Page.switchTab('movement')">สรุปเคลื่อนไหวสินค้า</button>
       <button class="tab-btn" onclick="Page.switchTab('aging')">อายุสินค้าคงเหลือ</button>
       <button class="tab-btn" onclick="Page.switchTab('snapshots')">ปิดงวดสินค้า</button>
+      <button class="tab-btn" onclick="Page.switchTab('reorder')">พยากรณ์สต็อก + สั่งซื้อ</button>
     </div>
 
     <!-- ===== Tab 1: Stock Balance as of Date ===== -->
@@ -167,6 +168,62 @@
         <div class="modal-actions"><button class="btn btn-secondary" onclick="Page.closeModal('snapshotDetailModal')" data-i18n="common.close">ปิด</button></div>
       </div>
     </div>
+
+    <!-- ===== Tab 5: Reorder Forecast (Croston per-SKU) ===== -->
+    <div id="tabReorder" class="card hidden">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <h3 class="card-title" style="margin:0">พยากรณ์สต็อก + ข้อเสนอแนะการสั่งซื้อ</h3>
+          <p style="margin:4px 0 0;font-size:13px;color:#64748b">
+            ใช้ Croston (intermittent demand) คำนวณจาก stock movement 90 วัน → แสดงจำนวนวันที่จะหมด + จำนวนที่ควรสั่ง
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px;color:#64748b">history</label>
+          <input type="number" id="reorderHistoryDays" value="90" min="14" max="365" style="width:80px" class="form-input">
+          <label style="font-size:12px;color:#64748b">lead time (วัน)</label>
+          <input type="number" id="reorderLeadDays" value="7" min="1" max="90" style="width:70px" class="form-input">
+          <label style="font-size:12px;color:#64748b">service level</label>
+          <select id="reorderServiceLevel" class="form-input" style="width:120px">
+            <option value="1.282">90%</option>
+            <option value="1.645" selected>95%</option>
+            <option value="1.960">97.5%</option>
+            <option value="2.326">99%</option>
+          </select>
+          <button class="btn btn-primary" onclick="Page.loadReorder()">โหลดรายงาน</button>
+        </div>
+      </div>
+
+      <div id="reorderSummary" style="display:none;padding:16px;background:#fef3c7;border-left:4px solid #d97706;border-radius:8px;margin:16px 0">
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div><span style="color:#92400e;font-size:13px">วิกฤต (ต้องสั่งด่วน)</span><div style="font-size:20px;font-weight:700;color:#dc2626" id="roCritCount">-</div></div>
+          <div><span style="color:#92400e;font-size:13px">เตือน (สต็อกต่ำ)</span><div style="font-size:20px;font-weight:700;color:#d97706" id="roWarnCount">-</div></div>
+          <div><span style="color:#92400e;font-size:13px">ปกติ</span><div style="font-size:20px;font-weight:700;color:#16a34a" id="roOkCount">-</div></div>
+          <div><span style="color:#92400e;font-size:13px">ไม่เคลื่อนไหว 90 วัน</span><div style="font-size:20px;font-weight:700;color:#64748b" id="roIdleCount">-</div></div>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>ชื่อสินค้า</th>
+              <th style="text-align:right">คงเหลือ</th>
+              <th style="text-align:right">ขาย/วัน เฉลี่ย</th>
+              <th style="text-align:right">หมดใน (วัน)</th>
+              <th style="text-align:right">ROP (จุดสั่งซ้ำ)</th>
+              <th style="text-align:right">แนะนำสั่ง</th>
+              <th>สถานะ</th>
+              <th>วิธี</th>
+            </tr>
+          </thead>
+          <tbody id="reorderBody">
+            <tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กด "โหลดรายงาน" เพื่อพยากรณ์ทุก SKU</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -191,11 +248,61 @@
       _fmtDate(d) { return d ? new Date(d).toLocaleDateString('th-TH') : '-'; },
 
       switchTab(tab) {
+        const tabs = ['balance', 'movement', 'aging', 'snapshots', 'reorder'];
         document.querySelectorAll('.tab-btn').forEach((b, i) =>
-          b.classList.toggle('active', ['balance', 'movement', 'aging', 'snapshots'][i] === tab));
-        ['Balance', 'Movement', 'Aging', 'Snapshots'].forEach(t =>
+          b.classList.toggle('active', tabs[i] === tab));
+        ['Balance', 'Movement', 'Aging', 'Snapshots', 'Reorder'].forEach(t =>
           document.getElementById('tab' + t).classList.toggle('hidden', t.toLowerCase() !== tab));
         if (tab === 'snapshots') this.loadSnapshots();
+      },
+
+      // ===== Reorder forecast (Croston) =====
+      async loadReorder() {
+        const api = Layout.api(); if (!api) return;
+        const tbody = document.getElementById('reorderBody');
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px">กำลังคำนวณ...</td></tr>';
+        try {
+          const h = +document.getElementById('reorderHistoryDays').value;
+          const lt = +document.getElementById('reorderLeadDays').value;
+          const sl = +document.getElementById('reorderServiceLevel').value;
+          const r = await api.get(`/products/reorder-forecast?historyDays=${h}&leadTimeDays=${lt}&serviceLevelZ=${sl}`);
+          const rows = r.data || [];
+          const counts = { Critical: 0, Warning: 0, OK: 0, Idle: 0 };
+          rows.forEach(x => { counts[x.urgency] = (counts[x.urgency] || 0) + 1; });
+          document.getElementById('roCritCount').textContent = counts.Critical;
+          document.getElementById('roWarnCount').textContent = counts.Warning;
+          document.getElementById('roOkCount').textContent = counts.OK;
+          document.getElementById('roIdleCount').textContent = counts.Idle;
+          document.getElementById('reorderSummary').style.display = 'block';
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มีสินค้าที่ track stock — เปิด TrackStock ที่หน้าสินค้าก่อน</td></tr>';
+            return;
+          }
+          const badge = u => {
+            const colors = {
+              Critical: 'background:#fee2e2;color:#dc2626',
+              Warning:  'background:#fef3c7;color:#d97706',
+              OK:       'background:#dcfce7;color:#16a34a',
+              Idle:     'background:#f1f5f9;color:#64748b',
+            };
+            return `<span style="${colors[u]||''};padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600">${u}</span>`;
+          };
+          tbody.innerHTML = rows.map(x => `<tr>
+            <td style="font-family:monospace;font-size:12px">${x.sku || '-'}</td>
+            <td>${x.name}</td>
+            <td style="text-align:right">${this._fmt(x.currentStock)}</td>
+            <td style="text-align:right">${this._fmt(x.avgDailyDemand)}</td>
+            <td style="text-align:right;color:${x.daysOfStockRemaining >= 0 && x.daysOfStockRemaining < 7 ? '#dc2626' : '#1e293b'}">
+              ${x.daysOfStockRemaining < 0 ? '∞' : this._fmt(x.daysOfStockRemaining)}
+            </td>
+            <td style="text-align:right">${this._fmt(x.reorderPoint)}</td>
+            <td style="text-align:right;font-weight:700;color:#1d4ed8">${x.suggestedOrderQuantity > 0 ? this._fmt(x.suggestedOrderQuantity) : '-'}</td>
+            <td>${badge(x.urgency)}</td>
+            <td style="font-size:11px;color:#64748b">${x.forecastMethod}</td>
+          </tr>`).join('');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
+        }
       },
 
       // ===== Balance =====

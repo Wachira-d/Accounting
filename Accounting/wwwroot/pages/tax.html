@@ -478,14 +478,72 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async fileReport(id) {
+        const api = Layout.api(); if (!api) return;
+        // Pre-check first — rule-based RD compliance scan. Errors
+        // block submission; warnings allow override.
+        try {
+          const r = await api.get(`/tax/${id}/precheck`);
+          const rep = r.data || {};
+          const errs = (rep.findings || []).filter(f => f.severity === 'Error');
+          const warns = (rep.findings || []).filter(f => f.severity === 'Warning');
+          const infos = (rep.findings || []).filter(f => f.severity === 'Info');
+          if (errs.length > 0) {
+            this._showPrecheckModal(id, errs, warns, infos, /*canSubmit=*/false);
+            return;
+          }
+          if (warns.length > 0) {
+            this._showPrecheckModal(id, errs, warns, infos, /*canSubmit=*/true);
+            return;
+          }
+        } catch (e) {
+          if (!confirm(`Pre-check ไม่สำเร็จ (${e.message}). ดำเนินการยื่นต่อ?`)) return;
+        }
+        await this._doFileReport(id);
+      },
+
+      async _doFileReport(id) {
         if (!confirm('ยืนยันการยื่นรายงานภาษี?')) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.fileTaxReport(id);
           Layout.closeModal('detailModal');
+          Layout.closeModal('precheckModal');
           Layout.toast('ยื่นภาษีสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      _showPrecheckModal(id, errs, warns, infos, canSubmit) {
+        const sevBlock = (title, items, color) => items.length === 0 ? '' :
+          `<div style="margin-bottom:14px">
+            <div style="font-weight:600;color:${color};margin-bottom:6px">${title} (${items.length})</div>
+            ${items.map(f => `<div style="padding:8px 10px;background:#f8fafc;border-left:3px solid ${color};border-radius:6px;margin-bottom:6px">
+              <div style="font-size:13px;color:#1e293b"><b style="font-family:monospace;font-size:11px;color:${color}">${f.code}</b> — ${f.message}</div>
+              ${f.fixHint ? `<div style="font-size:12px;color:#64748b;margin-top:3px">💡 ${f.fixHint}</div>` : ''}
+            </div>`).join('')}
+          </div>`;
+        let modal = document.getElementById('precheckModal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'precheckModal';
+          modal.className = 'modal-overlay';
+          modal.innerHTML = `<div class="modal" style="max-width:720px;width:90%"><div id="precheckBody"></div></div>`;
+          document.body.appendChild(modal);
+        }
+        const body = `
+          <h3 style="margin:0 0 12px">🛡️ Pre-check ภาษี ก่อนยื่น</h3>
+          <p style="font-size:13px;color:#64748b;margin-bottom:16px">ตรวจสอบกฎกรมสรรพากร (อัตโนมัติ-ฟรี) — ก่อนยิงไป e-Filing</p>
+          ${sevBlock('🛑 ต้องแก้ก่อนยื่น (Error)', errs, '#dc2626')}
+          ${sevBlock('⚠️ ควรตรวจสอบ (Warning)', warns, '#d97706')}
+          ${sevBlock('ℹ️ หมายเหตุ', infos, '#2563eb')}
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('precheckModal')">ปิด</button>
+            ${canSubmit
+              ? `<button class="btn btn-warning" onclick="Page._doFileReport('${id}')">ยืนยันยื่นทั้งที่มี warning</button>`
+              : `<button class="btn btn-danger" disabled>มี Error — แก้ก่อนยื่น</button>`}
+          </div>`;
+        document.getElementById('precheckBody').innerHTML = body;
+        Layout.openModal('precheckModal');
       },
       openGenerate() {
         const now = new Date();
