@@ -77,11 +77,25 @@ public class DocumentController : ControllerBase
         [FromQuery] Guid? projectId = null, [FromQuery] Guid? contactId = null,
         [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
         [FromQuery] Guid? relatedDocumentId = null, [FromQuery] Guid? revenueContractId = null,
-        [FromQuery] bool staleOnly = false)
+        [FromQuery] bool staleOnly = false,
+        // "Open" | "PartiallyDone" | "Done" | "Cancelled" — derived field;
+        // post-filtered after mapping. Lets partner ERPs sync only "still
+        // has work" docs without parsing Status+BalanceDue+conversion %
+        // separately.
+        [FromQuery] string? lifecycle = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly);
+        if (!string.IsNullOrWhiteSpace(lifecycle))
+        {
+            var filtered = result.Items
+                .Where(d => string.Equals(d.LifecycleStatus, lifecycle, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            result = new PagedResponse<DocumentResponse>(filtered, filtered.Count,
+                result.Page, result.PageSize,
+                (int)Math.Ceiling(filtered.Count / (double)result.PageSize));
+        }
         return Ok(new ApiResponse<PagedResponse<DocumentResponse>>(true, result));
     }
 

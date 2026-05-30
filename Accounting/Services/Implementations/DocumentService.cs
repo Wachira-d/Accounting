@@ -3783,7 +3783,10 @@ public class DocumentService : IDocumentService
         decimal? conversionPercent = null, string? conversionStatus = null,
         bool hasPce = false, int pceCount = 0, decimal pceAmount = 0,
         List<ProjectCostBrief>? bookedProjects = null,
-        Dictionary<Guid, Guid>? pceByLine = null) => new(
+        Dictionary<Guid, Guid>? pceByLine = null)
+    {
+        var (lifecycle, reason) = ComputeLifecycle(d, conversionPercent, downstream);
+        return new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
@@ -3847,7 +3850,10 @@ public class DocumentService : IDocumentService
         HasProjectCostEntries: hasPce,
         ProjectCostEntryCount: pceCount,
         ProjectCostBookedAmount: pceAmount,
-        BookedProjects: bookedProjects);
+        BookedProjects: bookedProjects,
+        LifecycleStatus: lifecycle,
+        LifecycleReason: reason);
+    }
 
     /// <summary>Build the redacted stub returned to API consumers who lack
     /// permission to see a sensitive record. Keeps the Id, DocumentNumber, and
@@ -3869,6 +3875,78 @@ public class DocumentService : IDocumentService
     /// the stale threshold — null when fresh or in a terminal status.
     /// Terminal = Paid / Voided / Rejected.</summary>
     private const int StaleThresholdDays = 60;
+    /// <summary>Derive the unified lifecycle state from the doc's
+    /// status + conversion % + balance + downstream settlement docs.
+    /// Per-doc-type rules so a fully-converted PO surfaces "Done"
+    /// even though Status is still "Approved", and a fully-paid PI
+    /// surfaces "Done" even when ConversionStatus is null. Pure
+    /// function — no DB access — so it can be reused server- and
+    /// client-side.</summary>
+    private static (string Status, string Reason) ComputeLifecycle(
+        Document d, decimal? conversionPercent, List<DocumentBrief>? downstream)
+    {
+        // Voided / Rejected always win — purpose terminated.
+        if (d.Status == DocumentStatus.Voided)
+            return ("Cancelled", "× ยกเลิกแล้ว");
+        if (d.Status == DocumentStatus.Rejected)
+            return ("Cancelled", "× ถูกปฏิเสธ");
+
+        // Draft / WaitingApproval — still being prepared. Reason mirrors status.
+        if (d.Status == DocumentStatus.Draft)
+            return ("Open", "⏳ ฉบับร่าง");
+        if (d.Status == DocumentStatus.WaitingApproval)
+            return ("Open", "⏳ รออนุมัติ");
+
+        // Per-type rules.
+        switch (d.DocumentType)
+        {
+            // Settlement-bearing receivable / payable.
+            case DocumentType.Invoice:
+            case DocumentType.TaxInvoice:
+            case DocumentType.BillingNote:
+            case DocumentType.PurchaseInvoice:
+            case DocumentType.Expense:
+            {
+                if (d.BalanceDue <= 0.01m) return ("Done", "✓ ชำระครบแล้ว");
+                if (d.Status == DocumentStatus.PartiallyPaid)
+                    return ("PartiallyDone", $"◐ ชำระบางส่วน · เหลือ {d.BalanceDue:N2}");
+                if (d.Status == DocumentStatus.Overdue)
+                    return ("Open", $"⚠ เกินกำหนด · ค้าง {d.BalanceDue:N2}");
+                return ("Open", $"⏳ รอจ่าย/รับชำระ · {d.BalanceDue:N2}");
+            }
+
+            // Conversion-bearing — purpose fulfilled when downstream consumes it.
+            case DocumentType.Quotation:
+            case DocumentType.PurchaseRequisition:
+            case DocumentType.PurchaseOrder:
+            case DocumentType.GoodsReceiptNote:
+            case DocumentType.DeliveryNote:
+            {
+                var nextLabel = downstream?.FirstOrDefault()?.DocumentNumber;
+                if (conversionPercent.HasValue && conversionPercent.Value >= 100m)
+                    return ("Done", nextLabel != null ? $"✓ แปลงเป็น {nextLabel}" : "✓ ดำเนินการครบแล้ว");
+                if (conversionPercent.HasValue && conversionPercent.Value > 0m)
+                    return ("PartiallyDone", $"◐ แปลงไป {conversionPercent.Value:F0}%");
+                return ("Open", "⏳ รอดำเนินการต่อ");
+            }
+
+            // One-shot terminal docs — Approved/Sent is the end of the line.
+            case DocumentType.Receipt:
+            case DocumentType.ReceiptVoucher:
+            case DocumentType.PaymentVoucher:
+            case DocumentType.CertificateInLieu:
+            case DocumentType.CreditNote:
+            case DocumentType.DebitNote:
+                return ("Done", "✓ บันทึกเรียบร้อย");
+
+            default:
+                // Unknown type — fall back to status.
+                return d.Status == DocumentStatus.Paid
+                    ? ("Done", "✓ ชำระแล้ว")
+                    : ("Open", "⏳ ดำเนินการ");
+        }
+    }
+
     private static int? ComputeStaleDays(Document d)
     {
         if (d.Status is DocumentStatus.Paid or DocumentStatus.Voided or DocumentStatus.Rejected)

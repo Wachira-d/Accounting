@@ -201,7 +201,21 @@ public record DocumentResponse(
     bool HasProjectCostEntries = false,
     int ProjectCostEntryCount = 0,
     decimal ProjectCostBookedAmount = 0,
-    List<ProjectCostBrief>? BookedProjects = null);
+    List<ProjectCostBrief>? BookedProjects = null,
+    // ===== Lifecycle =====
+    // Unified "what's the state of this doc's purpose?" view, derived
+    // from Status + ConversionStatus + BalanceDue. Lets the UI show a
+    // single clear badge per doc instead of asking the user to mentally
+    // combine 3 signals. Values:
+    //   • "Open"            — still has work to do
+    //   • "PartiallyDone"   — converted or settled in part
+    //   • "Done"            — purpose fulfilled (paid / fully converted / approved one-shot)
+    //   • "Cancelled"       — voided / rejected
+    string? LifecycleStatus = null,
+    // Short Thai phrase explaining the lifecycle state in context, e.g.
+    // "✓ จ่ายแล้ว", "✓ แปลงเป็น PI-001", "◐ แปลงไป 60%", "× ยกเลิก".
+    // Picked up directly by the badge tooltip + list column.
+    string? LifecycleReason = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,
