@@ -3,6 +3,7 @@ using Accounting.Models.DTOs.Project;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -85,6 +86,82 @@ public class ProjectController : ControllerBase
         if (result == null) return NotFound(new ApiResponse<object>(false, null,
             $"ไม่พบโปรเจคที่มี {externalSystem}/{externalId}"));
         return Ok(new ApiResponse<ProjectResponse>(true, result));
+    }
+
+    /// <summary>Cash flow statement scoped to ONE project — walks
+    /// JournalEntryLine.ProjectId (and JE.ProjectId fallback) to
+    /// surface Operating / Investing / Financing per the same
+    /// taxonomy as the company-wide cash flow report. Lets PM
+    /// answer "is project X bringing in cash or burning it" in
+    /// one screen. From/To default to current calendar year.</summary>
+    [HttpGet("{projectId:guid}/cash-flow")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.CashFlowStatementResponse>>> GetCashFlow(
+        Guid companyId, Guid projectId,
+        [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate,
+        [FromServices] IAccountingService accounting,
+        CancellationToken ct)
+    {
+        var from = fromDate ?? new DateTime(DateTime.UtcNow.Year, 1, 1);
+        var to = toDate ?? DateTime.UtcNow.Date;
+        var result = await accounting.GetCashFlowStatementAsync(companyId, from, to, projectId);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.CashFlowStatementResponse>(true, result,
+            $"กระแสเงินสด {from:yyyy-MM-dd} ถึง {to:yyyy-MM-dd}"));
+    }
+
+    /// <summary>Aggregated project dashboard payload — P&amp;L + cash
+    /// flow + outstanding AR + outstanding AP in ONE call so the
+    /// project detail UI can render KPIs without N round trips.</summary>
+    [HttpGet("{projectId:guid}/dashboard")]
+    public async Task<ActionResult<ApiResponse<object>>> GetDashboard(
+        Guid companyId, Guid projectId,
+        [FromServices] IAccountingService accounting,
+        [FromServices] Data.AccountingDbContext db,
+        CancellationToken ct)
+    {
+        var project = await _service.GetByIdAsync(companyId, projectId);
+        var from = new DateTime(DateTime.UtcNow.Year, 1, 1);
+        var to = DateTime.UtcNow.Date;
+        var cashFlow = await accounting.GetCashFlowStatementAsync(companyId, from, to, projectId);
+        var profit = await _service.GetProfitabilityAsync(companyId, projectId);
+
+        // Outstanding AR/AP — sum balanceDue on Documents with this project.
+        var arDue = await db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.ProjectId == projectId
+                && (d.DocumentType == Models.Enums.DocumentType.Invoice
+                    || d.DocumentType == Models.Enums.DocumentType.TaxInvoice
+                    || d.DocumentType == Models.Enums.DocumentType.BillingNote)
+                && d.BalanceDue > 0
+                && d.Status != Models.Enums.DocumentStatus.Voided)
+            .SumAsync(d => d.BalanceDue, ct);
+        var apDue = await db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.ProjectId == projectId
+                && (d.DocumentType == Models.Enums.DocumentType.PurchaseInvoice
+                    || d.DocumentType == Models.Enums.DocumentType.Expense)
+                && d.BalanceDue > 0
+                && d.Status != Models.Enums.DocumentStatus.Voided)
+            .SumAsync(d => d.BalanceDue, ct);
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            project,
+            profit,
+            cashFlow = new
+            {
+                operating = cashFlow.NetCashFromOperating,
+                investing = cashFlow.NetCashFromInvesting,
+                financing = cashFlow.NetCashFromFinancing,
+                netChange = cashFlow.NetChangeInCash,
+                period = new { from, to },
+            },
+            outstanding = new
+            {
+                receivable = arDue,
+                payable = apDue,
+                net = arDue - apDue,
+            },
+        }));
     }
 
     [HttpDelete("{projectId:guid}")]
