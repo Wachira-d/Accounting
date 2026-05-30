@@ -31,6 +31,7 @@ public static class DocumentNumberGenerator
         DocumentType.ReceiptVoucher => "RV",
         DocumentType.PurchaseRequisition => "PR",
         DocumentType.PurchaseOrder => "PO",
+        DocumentType.GoodsReceiptNote => "GR",
         DocumentType.PurchaseInvoice => "PI",
         DocumentType.Expense => "EXP",
         DocumentType.PaymentVoucher => "PV",

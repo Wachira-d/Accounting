@@ -105,6 +105,7 @@ public class DocumentService : IDocumentService
         };
         var purchaseDocTypes = new[] {
             DocumentType.PurchaseRequisition, DocumentType.PurchaseOrder,
+            DocumentType.GoodsReceiptNote,
             DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher,
             DocumentType.CertificateInLieu
         };
@@ -1676,11 +1677,23 @@ public class DocumentService : IDocumentService
         {
             DocumentType.Receipt, DocumentType.ReceiptVoucher
         },
-        // Purchase side
+        // Purchase side — full PR → PO → GRN → Invoice → Payment chain.
+        // GRN inserted between PO and PurchaseInvoice so partial receipts
+        // are tracked + 3-way match can validate billing against actual
+        // receipt quantities.
         [DocumentType.PurchaseRequisition] = new[] { DocumentType.PurchaseOrder },
         [DocumentType.PurchaseOrder] = new[]
         {
-            DocumentType.PurchaseInvoice, DocumentType.Expense
+            DocumentType.GoodsReceiptNote,        // partial GRN against PO
+            DocumentType.PurchaseInvoice,         // skip GRN when buying services
+            DocumentType.Expense,
+        },
+        [DocumentType.GoodsReceiptNote] = new[]
+        {
+            // From GRN, AP creates the bill. SourceLineId on the new
+            // invoice line points back to the GRN line so 3-way match
+            // can verify "billed qty ≤ received qty".
+            DocumentType.PurchaseInvoice, DocumentType.Expense,
         },
         [DocumentType.PurchaseInvoice] = new[]
         {
@@ -1724,7 +1737,13 @@ public class DocumentService : IDocumentService
 
     private static FulfillmentAxis GetFulfillmentAxis(DocumentType type) => type switch
     {
-        DocumentType.DeliveryNote => FulfillmentAxis.Delivery,
+        // Delivery-axis children — track "how much was physically moved":
+        //   • DeliveryNote on the sales side.
+        //   • GoodsReceiptNote on the purchase side (received qty from
+        //     the PO; multiple partial GRNs are normal).
+        DocumentType.DeliveryNote or DocumentType.GoodsReceiptNote
+            => FulfillmentAxis.Delivery,
+        // Billing-axis children — track "how much was invoiced":
         DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.BillingNote
             or DocumentType.PurchaseInvoice or DocumentType.Expense
             or DocumentType.PurchaseOrder => FulfillmentAxis.Billing,
