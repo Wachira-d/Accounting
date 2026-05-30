@@ -1650,9 +1650,17 @@
               ${d.supplierTaxInvoiceDate ? `<div><div class="text-xs text-gray-500">วันที่ใบกำกับผู้ขาย</div><div>${Layout.date(d.supplierTaxInvoiceDate)}</div></div>` : ''}
               ${d.paymentTerms || d.creditDays ? `<div><div class="text-xs text-gray-500">เทอมจ่าย</div><div>${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ' (' + d.creditDays + ' วัน)' : ''}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
-              ${d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : ''}
+              ${d.relatedDocument ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocument.id}');return false" style="color:var(--primary);font-weight:600" title="${Layout.docTypeLabel(d.relatedDocument.documentType)} · ${Layout.money(d.relatedDocument.totalAmount)}">⬅ ${d.relatedDocument.documentNumber}</a></div></div>` : (d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : '')}
+              ${d.conversionStatus && d.conversionStatus !== 'None' ? `<div><div class="text-xs text-gray-500">สถานะการแปลง</div><div class="font-medium" style="color:${d.conversionStatus === 'Full' ? '#15803d' : '#92400e'}">${d.conversionStatus === 'Full' ? '✓ แปลงครบ' : `◐ แปลง ${(d.conversionCompletionPercent || 0).toFixed(0)}%`}</div></div>` : ''}
               ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
             </div>
+            ${(d.convertedToDocuments && d.convertedToDocuments.length) ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
+                <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:6px">📄 เอกสารต่อเนื่อง (ออกต่อจากใบนี้)</div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  ${d.convertedToDocuments.map(c => `<a href="#" onclick="Page.detail('${c.id}');return false" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:white;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;text-decoration:none;color:#1e40af" title="${Layout.money(c.totalAmount)}">${Layout.docTypeLabel(c.documentType)} <b>${c.documentNumber}</b></a>`).join('')}
+                </div>
+              </div>` : ''}
             <div id="docChain_${d.id}" style="margin-bottom:12px"></div>
             <div class="table-container">
               <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
@@ -2432,11 +2440,16 @@
       },
 
       async loadDocumentChain(currentId, parentId) {
+        // Skip — GetDocumentAsync now emits relatedDocument + convertedToDocuments
+        // server-side; the lineage strip rendered inline next to the detail
+        // header covers this. Function kept as a no-op so older code paths
+        // that still invoke it don't crash.
+        return;
+        // (legacy implementation removed — see history)
         const api = Layout.api(); if (!api) return;
         const container = document.getElementById('docChain_' + currentId);
         if (!container) return;
         try {
-          // Find children: documents whose relatedDocumentId === currentId
           const childrenRes = await api.getDocuments(`?relatedDocumentId=${currentId}&pageSize=20`);
           const children = childrenRes?.data?.items || [];
           let parentInfo = null;

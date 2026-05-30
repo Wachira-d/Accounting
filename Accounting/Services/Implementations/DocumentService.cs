@@ -388,7 +388,55 @@ public class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         var etax = await GetLatestEtaxAsync(companyId, new[] { documentId });
-        return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
+
+        // Conversion lineage — populate both directions so the detail
+        // modal can show "แปลงมาจาก X" + "เอกสารต่อเนื่อง: Y, Z".
+        DocumentBrief? upstream = null;
+        if (doc.RelatedDocumentId.HasValue)
+        {
+            upstream = await _db.Documents
+                .Where(p => p.Id == doc.RelatedDocumentId.Value && p.CompanyId == companyId)
+                .Select(p => new DocumentBrief(p.Id, p.DocumentNumber, p.DocumentType,
+                    p.Status, p.DocumentDate, p.TotalAmount))
+                .FirstOrDefaultAsync();
+        }
+        var downstream = await _db.Documents
+            .Where(c => c.RelatedDocumentId == documentId && c.CompanyId == companyId)
+            .OrderBy(c => c.DocumentDate).ThenBy(c => c.CreatedAt)
+            .Select(c => new DocumentBrief(c.Id, c.DocumentNumber, c.DocumentType,
+                c.Status, c.DocumentDate, c.TotalAmount))
+            .ToListAsync();
+
+        var (pct, status) = await ComputeConversionStatusAsync(companyId, doc);
+
+        return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId),
+            upstream, downstream, pct, status);
+    }
+
+    /// <summary>Compute completion percent across child docs for the
+    /// source doc passed in. Returns null when the doc has no source
+    /// lines (i.e. nothing consumable) so the UI can hide the badge.
+    /// </summary>
+    private async Task<(decimal? Pct, string? Status)> ComputeConversionStatusAsync(Guid companyId, Document source)
+    {
+        if (source.Lines == null || source.Lines.Count == 0) return (null, null);
+        var sourceLineIds = source.Lines.Select(l => l.Id).ToList();
+        var totalSourceQty = source.Lines.Sum(l => l.Quantity);
+        if (totalSourceQty <= 0) return (null, null);
+        var consumed = await _db.DocumentLines
+            .Where(l => l.SourceLineId.HasValue && sourceLineIds.Contains(l.SourceLineId.Value))
+            .Where(l => !l.Document.IsDeleted
+                && l.Document.Status != DocumentStatus.Voided
+                && l.Document.Status != DocumentStatus.Rejected)
+            .SumAsync(l => (decimal?)l.Quantity) ?? 0;
+        var pct = Math.Min(100, Math.Round((consumed / totalSourceQty) * 100, 1, MidpointRounding.AwayFromZero));
+        var status = pct switch
+        {
+            >= 100 => "Full",
+            > 0 => "Partial",
+            _ => "None",
+        };
+        return (pct, status);
     }
 
     public async Task<DocumentResponse> GetDocumentForUserAsync(Guid companyId, Guid documentId, Guid userId)
@@ -3662,7 +3710,9 @@ public class DocumentService : IDocumentService
         }
     }
 
-    private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null) => new(
+    private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null,
+        DocumentBrief? upstream = null, List<DocumentBrief>? downstream = null,
+        decimal? conversionPercent = null, string? conversionStatus = null) => new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
@@ -3714,7 +3764,11 @@ public class DocumentService : IDocumentService
         SupplierInvoiceNumber: d.SupplierInvoiceNumber,
         SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
         CreditDays: d.CreditDays,
-        PaymentTerms: d.PaymentTerms);
+        PaymentTerms: d.PaymentTerms,
+        RelatedDocument: upstream,
+        ConvertedToDocuments: downstream,
+        ConversionCompletionPercent: conversionPercent,
+        ConversionStatus: conversionStatus);
 
     /// <summary>Build the redacted stub returned to API consumers who lack
     /// permission to see a sensitive record. Keeps the Id, DocumentNumber, and

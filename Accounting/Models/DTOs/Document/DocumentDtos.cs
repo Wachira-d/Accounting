@@ -175,7 +175,32 @@ public record DocumentResponse(
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
     int? CreditDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // ===== Conversion lineage =====
+    // Source-side view (this doc was converted from another): RelatedDocumentId
+    // already carries the upstream id; the populated brief lets the UI render
+    // "แปลงมาจาก QT-0042" without a second round-trip.
+    DocumentBrief? RelatedDocument = null,
+    // Target-side view (other docs created from this one): list of children
+    // spawned via ConvertCoreAsync — populated server-side from the
+    // (CompanyId, RelatedDocumentId) index so the source doc can render
+    // "ใบที่ออกต่อจากเอกสารนี้" without N+1.
+    List<DocumentBrief>? ConvertedToDocuments = null,
+    // 0..100 — share of source quantity consumed by child docs across
+    // all axes (Delivery + Billing). Null when this doc has no source
+    // lines. Used to badge "✓ Fully converted" / "◐ 60% converted".
+    decimal? ConversionCompletionPercent = null,
+    // Convenience aggregate of the above — "None" / "Partial" / "Full" — so
+    // the UI can pick a badge color without computing thresholds itself.
+    string? ConversionStatus = null);
+
+public record DocumentBrief(
+    Guid Id,
+    string DocumentNumber,
+    DocumentType DocumentType,
+    DocumentStatus Status,
+    DateTime DocumentDate,
+    decimal TotalAmount);
 
 public record DocumentLineResponse(
     Guid Id,

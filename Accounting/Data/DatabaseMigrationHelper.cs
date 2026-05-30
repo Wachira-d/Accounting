@@ -3662,6 +3662,13 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentTerms" varchar(100) NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_Supplier_Invoice" ON "Documents" ("CompanyId", "SupplierInvoiceNumber") WHERE "SupplierInvoiceNumber" IS NOT NULL AND "IsDeleted" = false;""",
 
+            // Reverse-lookup index — finding all child docs of a source
+            // (e.g. all DNs spawned from a QT) currently does a full scan.
+            // Index lets the detail-modal "เอกสารต่อเนื่อง" section + the
+            // ?relatedDocumentId= filter return in O(log n).
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_RelatedDocument" ON "Documents" ("CompanyId", "RelatedDocumentId") WHERE "RelatedDocumentId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentLines_SourceLine" ON "DocumentLines" ("SourceLineId") WHERE "SourceLineId" IS NOT NULL;""",
+
             // Employee EmployeeCode uniqueness is now scoped to active
             // (non-soft-deleted) rows so partners can recreate / restore
             // an employee code after deletion. Drop the legacy unique
