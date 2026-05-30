@@ -574,6 +574,11 @@ app.UseStaticFiles(new StaticFileOptions
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();
 
+// 5b. Idempotency — caches 2xx responses for 24h keyed by the
+// Idempotency-Key header so partner POST retries on network errors
+// don't double-post.
+app.UseMiddleware<IdempotencyMiddleware>();
+
 // 6. Authentication & Authorization
 app.UseAuthentication();
 app.UseAuthorization();
