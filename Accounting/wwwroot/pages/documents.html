@@ -313,7 +313,7 @@
             </div>
             <div class="table-container">
               <table class="table" id="linesTable" data-doc-side="revenue">
-                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th style="min-width:140px" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติ ระบบจะลงค่าใช้จ่ายเข้าโครงการนั้นๆ ให้อัตโนมัติ">โครงการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
               <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:4px">
@@ -700,6 +700,9 @@
           const vatSel = row.querySelector('[data-f="vat"]');
           if (vatSel) vatSel.value = String(l.vatRate ?? 7);
           row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate ?? 0;
+          // OCR per-line project allocation (set by the OCR review modal).
+          const pSel = row.querySelector('[data-f="project"]');
+          if (pSel && l.projectId) pSel.value = l.projectId;
         });
         if (!document.querySelector('#linesBody tr')) this.addLine();
         this.calcSum();
@@ -1060,6 +1063,9 @@
             const projectBadge = d.projectId
               ? `<span title="โครงการ: ${this.escapeHtml(d.projectName || '')} — บัญชีของเอกสารนี้จะถูกบันทึกเข้าโครงการนี้" style="margin-left:6px;padding:1px 6px;background:#6366f1;color:#fff;border-radius:6px;font-size:10px;font-weight:600">📁 ${this.escapeHtml(d.projectCode || d.projectName || '')}</span>`
               : '';
+            const pceBadge = d.hasProjectCostEntries
+              ? `<span title="ลงค่าใช้จ่ายเข้าโครงการแล้ว ${d.projectCostEntryCount} รายการ · ${Layout.money(d.projectCostBookedAmount)}" style="margin-left:6px;padding:1px 6px;background:#15803d;color:#fff;border-radius:6px;font-size:10px;font-weight:600">🏗️ ${d.projectCostEntryCount}</span>`
+              : '';
             // Aging badge — surfaced inline next to the document number.
             // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
             // the document detail for follow-up.
@@ -1094,7 +1100,7 @@
             }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${staleBadge}${rdBadge}</td>
+            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
@@ -1118,8 +1124,17 @@
       addLine() {
         const i = this.lineCount++;
         const row = document.createElement('tr');
+        // Build per-line project options from the header dropdown so the
+        // user doesn't have to refetch — null = inherit header's project.
+        const headerProj = document.getElementById('fProject');
+        const projOptHtml = headerProj
+          ? '<option value="">— ตามหัวเอกสาร —</option>' +
+            Array.from(headerProj.options).filter(o => o.value).map(o =>
+              `<option value="${o.value}">${o.textContent}</option>`).join('')
+          : '<option value="">—</option>';
         row.innerHTML = `
           <td><input type="text" class="form-input" style="font-size:13px" data-f="desc" placeholder="พิมพ์ชื่อสินค้า/บริการ…"></td>
+          <td><select class="form-select" data-f="project" style="font-size:12px">${projOptHtml}</select></td>
           <td><input type="number" class="form-input text-right" value="1" min="1" step="1" data-f="qty" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></td>
@@ -1349,6 +1364,9 @@
             // Carry the conversion-traceability link so editing this document
             // never breaks its partial-fulfilment accounting.
             if (l.sourceLineId) row.dataset.sourceLineId = l.sourceLineId;
+            // Per-line project — empty value means "inherit header's project".
+            const pSel = row.querySelector('[data-f="project"]');
+            if (pSel) pSel.value = l.projectId || '';
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
@@ -1391,6 +1409,11 @@
           // user-facing immutable identifier in DocumentLine.
           if (row.dataset.productCode) line.productCode = row.dataset.productCode;
           if (row.dataset.sourceLineId) line.sourceLineId = row.dataset.sourceLineId;
+          // Per-line project override (null = inherit header's project).
+          // Empty string means inherit; otherwise the GUID flows through to
+          // DocumentLine.ProjectId and feeds SyncProjectCostEntriesAsync.
+          const lineProj = row.querySelector('[data-f="project"]')?.value;
+          if (lineProj) line.projectId = lineProj;
           lines.push(line);
         });
         if (strict && strictViolators.length) {
@@ -1661,10 +1684,25 @@
                   ${d.convertedToDocuments.map(c => `<a href="#" onclick="Page.detail('${c.id}');return false" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:white;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;text-decoration:none;color:#1e40af" title="${Layout.money(c.totalAmount)}">${Layout.docTypeLabel(c.documentType)} <b>${c.documentNumber}</b></a>`).join('')}
                 </div>
               </div>` : ''}
+            ${d.hasProjectCostEntries ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                  <div style="font-size:12px;font-weight:600;color:#15803d">🏗️ ลงค่าใช้จ่ายโครงการแล้ว · ${d.projectCostEntryCount} รายการ · ${Layout.money(d.projectCostBookedAmount)}</div>
+                  <div style="font-size:11px;color:#16a34a">auto-post on approval (idempotent)</div>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  ${(d.bookedProjects||[]).map(b => `<a href="/pages/projects.html?id=${b.projectId}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:white;border:1px solid #86efac;border-radius:6px;font-size:12px;text-decoration:none;color:#15803d"><b>${this.escapeHtml(b.projectCode || '')}</b> ${this.escapeHtml(b.projectName || '')} · ${b.entryCount} · ${Layout.money(b.amount)}</a>`).join('')}
+                </div>
+              </div>` : ''}
             <div id="docChain_${d.id}" style="margin-bottom:12px"></div>
             <div class="table-container">
-              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
-              <tbody>${(d.lines||[]).map(l => `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`).join('')}</tbody></table>
+              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th>โครงการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
+              <tbody>${(d.lines||[]).map(l => {
+                const projectCell = l.projectId
+                  ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px"><b>${this.escapeHtml(l.projectCode || '')}</b> ${this.escapeHtml(l.projectName || '')}${l.hasProjectCostEntry ? ' <span title="auto-posted to ProjectCostEntry" style="color:#15803d;font-weight:600">🏗️</span>' : ''}</span>`
+                  : '<span style="color:#cbd5e1">—</span>';
+                return `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td>${projectCell}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`;
+              }).join('')}</tbody></table>
             </div>
             <div id="docFulfillment_${d.id}" style="margin-top:14px"></div>
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">

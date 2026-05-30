@@ -76,8 +76,8 @@ public class DocumentService : IDocumentService
     /// <summary>Auto-populate ProjectCostEntry from an approved
     /// expense-side document. Cost-bearing types only — Sales-side
     /// docs feed Project.ActualRevenue separately. Idempotent on
-    /// SourceDocumentLineId (description field tagged "doc-line:GUID")
-    /// so re-running on the same doc doesn't duplicate.</summary>
+    /// DocumentLineId so re-running on the same doc doesn't
+    /// duplicate.</summary>
     private async Task SyncProjectCostEntriesAsync(Guid companyId, Document doc)
     {
         var costTypes = new[] {
@@ -86,35 +86,55 @@ public class DocumentService : IDocumentService
         };
         if (!costTypes.Contains(doc.DocumentType)) return;
         if (doc.Lines == null || doc.Lines.Count == 0) return;
-        // Walk lines; the line's ProjectId wins over the header's.
+
+        // Snapshot the lines that already have a PCE so we skip them
+        // in O(1) rather than running an exists-query per line.
+        var lineIds = doc.Lines.Select(l => l.Id).ToList();
+        var alreadyBookedLineIds = await _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId
+                && !c.IsDeleted
+                && c.DocumentLineId.HasValue
+                && lineIds.Contains(c.DocumentLineId.Value))
+            .Select(c => c.DocumentLineId!.Value)
+            .ToListAsync();
+
+        // Cache projects we touch so we update each one's ActualCost
+        // exactly once across the doc's lines (some PIs split a single
+        // project across many lines; we'd otherwise hit the DB per line).
+        var touchedProjects = new Dictionary<Guid, decimal>();
+
         foreach (var line in doc.Lines)
         {
+            // Per-line projectId wins; header is the fallback so users
+            // can tag the doc once and still have individual lines
+            // override (e.g. one PO with 90% Project A + 10% Project B).
             var projectId = line.ProjectId ?? doc.ProjectId;
             if (!projectId.HasValue) continue;
-            var marker = $"doc-line:{line.Id}";
-            var exists = await _db.ProjectCostEntries.AnyAsync(c =>
-                c.CompanyId == companyId
-                && c.ProjectId == projectId.Value
-                && c.Description != null && c.Description.Contains(marker));
-            if (exists) continue;
+            if (alreadyBookedLineIds.Contains(line.Id)) continue;
             _db.ProjectCostEntries.Add(new ProjectCostEntry
             {
                 CompanyId = companyId,
                 ProjectId = projectId.Value,
                 EntryDate = doc.DocumentDate,
                 CostType = "Material",         // generic; could classify on AccountType later
-                Description = $"{line.Description} [auto from {doc.DocumentNumber} | {marker}]",
+                Description = $"{line.Description} [auto from {doc.DocumentNumber}]",
                 Quantity = line.Quantity,
                 UnitCost = line.UnitPrice,
                 Amount = line.Amount,
                 DocumentId = doc.Id,
+                DocumentLineId = line.Id,
                 IsBillable = false,
             });
-            // Keep Project.ActualCost in sync so the dashboard
-            // shows the right roll-up without an explicit recompute.
-            var project = await _db.Projects.FirstOrDefaultAsync(p =>
-                p.Id == projectId.Value && p.CompanyId == companyId);
-            if (project != null) project.ActualCost += line.Amount;
+            touchedProjects[projectId.Value] = touchedProjects.GetValueOrDefault(projectId.Value) + line.Amount;
+        }
+        if (touchedProjects.Count > 0)
+        {
+            var ids = touchedProjects.Keys.ToList();
+            var projects = await _db.Projects
+                .Where(p => p.CompanyId == companyId && ids.Contains(p.Id))
+                .ToListAsync();
+            foreach (var p in projects)
+                p.ActualCost += touchedProjects[p.Id];
         }
         await _db.SaveChangesAsync();
     }
@@ -379,7 +399,7 @@ public class DocumentService : IDocumentService
     {
         var doc = await _db.Documents
             .Include(d => d.Contact)
-            .Include(d => d.Lines)
+            .Include(d => d.Lines).ThenInclude(l => l.Project)
             .Include(d => d.Project)
             .Include(d => d.BankAccount)
             .Include(d => d.PaymentAccount)
@@ -409,8 +429,38 @@ public class DocumentService : IDocumentService
 
         var (pct, status) = await ComputeConversionStatusAsync(companyId, doc);
 
+        // Project-cost booking summary — pull every PCE auto-spawned from
+        // this doc (DocumentId or per-line DocumentLineId) and aggregate
+        // by project so the UI can flag the doc "🏗️ ลงโครงการแล้ว 3 รายการ".
+        var lineIds = doc.Lines.Select(l => l.Id).ToList();
+        var pceRows = await _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId
+                && !c.IsDeleted
+                && (c.DocumentId == documentId
+                    || (c.DocumentLineId.HasValue && lineIds.Contains(c.DocumentLineId.Value))))
+            .Select(c => new {
+                c.Id, c.ProjectId, c.DocumentLineId, c.Amount,
+                ProjectCode = c.Project.Code,
+                ProjectName = c.Project.Name,
+            })
+            .ToListAsync();
+
+        var bookedByProject = pceRows
+            .GroupBy(r => r.ProjectId)
+            .Select(g => new ProjectCostBrief(
+                g.Key, g.First().ProjectCode, g.First().ProjectName,
+                g.Count(), g.Sum(r => r.Amount)))
+            .OrderByDescending(b => b.Amount)
+            .ToList();
+        var pceByLine = pceRows
+            .Where(r => r.DocumentLineId.HasValue)
+            .GroupBy(r => r.DocumentLineId!.Value)
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
         return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId),
-            upstream, downstream, pct, status);
+            upstream, downstream, pct, status,
+            pceRows.Count > 0, pceRows.Count, pceRows.Sum(r => r.Amount), bookedByProject,
+            pceByLine);
     }
 
     /// <summary>Compute completion percent across child docs for the
@@ -558,8 +608,26 @@ public class DocumentService : IDocumentService
 
         var etaxByDoc = await GetLatestEtaxAsync(companyId, items.Select(i => i.Id));
 
+        // Batch-flag "ลงโครงการแล้ว" so the list view can show a 🏗️
+        // badge without per-row roundtrips. Only top-level counts +
+        // amount; the per-line + per-project breakdown is rendered
+        // only on detail-view to keep the list payload small.
+        var ids = items.Select(i => i.Id).ToList();
+        var pceSummary = await _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId
+                && !c.IsDeleted
+                && c.DocumentId.HasValue
+                && ids.Contains(c.DocumentId!.Value))
+            .GroupBy(c => c.DocumentId!.Value)
+            .Select(g => new { DocId = g.Key, Count = g.Count(), Amount = g.Sum(c => c.Amount) })
+            .ToDictionaryAsync(g => g.DocId, g => (g.Count, g.Amount));
+
         return new PagedResponse<DocumentResponse>(
-            items.Select(d => MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id))).ToList(),
+            items.Select(d => {
+                var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
+                return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
+                    hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount);
+            }).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -3712,7 +3780,10 @@ public class DocumentService : IDocumentService
 
     private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null,
         DocumentBrief? upstream = null, List<DocumentBrief>? downstream = null,
-        decimal? conversionPercent = null, string? conversionStatus = null) => new(
+        decimal? conversionPercent = null, string? conversionStatus = null,
+        bool hasPce = false, int pceCount = 0, decimal pceAmount = 0,
+        List<ProjectCostBrief>? bookedProjects = null,
+        Dictionary<Guid, Guid>? pceByLine = null) => new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
@@ -3725,7 +3796,11 @@ public class DocumentService : IDocumentService
             AccountId: l.AccountId,
             ProjectId: l.ProjectId,
             ProductCode: l.ProductCode,
-            SourceLineId: l.SourceLineId)).ToList(),
+            SourceLineId: l.SourceLineId,
+            ProjectCode: l.Project != null ? l.Project.Code : null,
+            ProjectName: l.Project != null ? l.Project.Name : null,
+            ProjectCostEntryId: pceByLine != null && pceByLine.TryGetValue(l.Id, out var pceId) ? pceId : (Guid?)null,
+            HasProjectCostEntry: pceByLine != null && pceByLine.ContainsKey(l.Id))).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,
@@ -3768,7 +3843,11 @@ public class DocumentService : IDocumentService
         RelatedDocument: upstream,
         ConvertedToDocuments: downstream,
         ConversionCompletionPercent: conversionPercent,
-        ConversionStatus: conversionStatus);
+        ConversionStatus: conversionStatus,
+        HasProjectCostEntries: hasPce,
+        ProjectCostEntryCount: pceCount,
+        ProjectCostBookedAmount: pceAmount,
+        BookedProjects: bookedProjects);
 
     /// <summary>Build the redacted stub returned to API consumers who lack
     /// permission to see a sensitive record. Keeps the Id, DocumentNumber, and

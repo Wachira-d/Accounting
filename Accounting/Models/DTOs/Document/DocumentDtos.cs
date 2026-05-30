@@ -192,7 +192,23 @@ public record DocumentResponse(
     decimal? ConversionCompletionPercent = null,
     // Convenience aggregate of the above — "None" / "Partial" / "Full" — so
     // the UI can pick a badge color without computing thresholds itself.
-    string? ConversionStatus = null);
+    string? ConversionStatus = null,
+    // ===== Project-cost booking summary =====
+    // Populated by GetDocumentAsync from the (DocumentId, DocumentLineId)
+    // links on ProjectCostEntry — lets the UI show "🏗️ ลงโครงการแล้ว
+    // 3 รายการ / ฿15,400" and the per-project breakdown without an extra
+    // round-trip.
+    bool HasProjectCostEntries = false,
+    int ProjectCostEntryCount = 0,
+    decimal ProjectCostBookedAmount = 0,
+    List<ProjectCostBrief>? BookedProjects = null);
+
+public record ProjectCostBrief(
+    Guid ProjectId,
+    string ProjectCode,
+    string ProjectName,
+    int EntryCount,
+    decimal Amount);
 
 public record DocumentBrief(
     Guid Id,
@@ -219,7 +235,14 @@ public record DocumentLineResponse(
     Guid? AccountId = null,
     Guid? ProjectId = null,
     string? ProductCode = null,
-    Guid? SourceLineId = null);
+    Guid? SourceLineId = null,
+    string? ProjectCode = null,
+    string? ProjectName = null,
+    // Set when this line has been auto-spawned into a ProjectCostEntry on
+    // approval (via SyncProjectCostEntriesAsync). UI flags the line
+    // "🏗️ ลงโครงการแล้ว" so the user knows the cost has been booked.
+    Guid? ProjectCostEntryId = null,
+    bool HasProjectCostEntry = false);
 
 // ===== Flexible / partial document conversion =====
 

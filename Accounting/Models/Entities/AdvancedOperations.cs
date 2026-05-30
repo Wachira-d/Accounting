@@ -101,6 +101,13 @@ public class ProjectCostEntry : TenantEntity
     public decimal Amount { get; set; }
     public Guid? EmployeeId { get; set; }
     public Guid? DocumentId { get; set; }
+    /// <summary>Per-line link back to the source DocumentLine when this
+    /// entry was auto-spawned from a PurchaseInvoice / Expense / PV /
+    /// CertificateInLieu. Lets the document UI mark each line "🏗️
+    /// ลง project แล้ว" + show which entry was created, and lets the
+    /// PCE side know which line to mirror when the doc is edited.
+    /// Null for manually-created entries.</summary>
+    public Guid? DocumentLineId { get; set; }
     public Guid? JournalEntryId { get; set; }
     public bool IsBillable { get; set; } = true;
     public bool IsBilled { get; set; } = false;
