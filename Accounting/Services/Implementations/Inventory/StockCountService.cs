@@ -60,8 +60,8 @@ public class StockCountService : IStockCountService
             sc.Lines.Add(new StockCountLine
             {
                 ProductId = p.Id,
-                BookQuantity = p.CurrentStock,
-                CountedQuantity = 0m,
+                SystemQty = p.CurrentStock,
+                CountedQty = 0m,
                 UnitCost = p.AverageUnitCost,
             });
         _db.StockCounts.Add(sc);
@@ -78,12 +78,13 @@ public class StockCountService : IStockCountService
         var sc = await _db.StockCounts.FirstOrDefaultAsync(
             s => s.Id == stockCountId && s.CompanyId == companyId, ct);
         if (sc == null) throw new InvalidOperationException("StockCount not found.");
-        if (sc.Status != "Open" && sc.Status != "Counted")
+        if (sc.Status != "Open" && sc.Status != "Draft" && sc.Status != "InProgress")
             throw new InvalidOperationException($"Cannot edit a {sc.Status} count.");
-        line.CountedQuantity = countedQty;
+        line.CountedQty = countedQty;
+        line.Variance = countedQty - line.SystemQty;
         line.Notes = notes;
-        // Auto-advance state to "Counted" when at least one line is set.
-        if (sc.Status == "Open") sc.Status = "Counted";
+        // Auto-advance state to "InProgress" when at least one line is set.
+        if (sc.Status == "Open" || sc.Status == "Draft") sc.Status = "InProgress";
         await _db.SaveChangesAsync(ct);
         return sc;
     }
@@ -95,7 +96,7 @@ public class StockCountService : IStockCountService
             .Include(s => s.Lines)
             .FirstOrDefaultAsync(s => s.Id == stockCountId && s.CompanyId == companyId, ct);
         if (sc == null) throw new InvalidOperationException("StockCount not found.");
-        if (sc.Status == "Closed")
+        if (sc.Status == "Completed" || sc.Status == "Cancelled")
             throw new InvalidOperationException("Already closed.");
 
         // Adjust Product.CurrentStock for every variance. The adjustment
@@ -104,10 +105,10 @@ public class StockCountService : IStockCountService
         // can build the JE lines.
         foreach (var line in sc.Lines)
         {
-            if (line.CountedQuantity == line.BookQuantity) continue;
+            if (line.CountedQty == line.SystemQty) continue;
             var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == line.ProductId, ct);
             if (product == null) continue;
-            product.CurrentStock = line.CountedQuantity;
+            product.CurrentStock = line.CountedQty;
             // Record a stock movement for audit (Type="ADJUST").
             _db.StockMovements.Add(new StockMovement
             {
@@ -115,13 +116,13 @@ public class StockCountService : IStockCountService
                 ProductId = product.Id,
                 MovementDate = sc.CountDate,
                 MovementType = "ADJUST",
-                Quantity = line.CountedQuantity - line.BookQuantity,
+                Quantity = line.CountedQty - line.SystemQty,
                 UnitCost = line.UnitCost,
                 Reference = $"StockCount-{sc.CountNumber}",
-                BalanceAfter = line.CountedQuantity,
+                BalanceAfter = line.CountedQty,
             });
         }
-        sc.Status = "Closed";
+        sc.Status = "Completed";
         await _db.SaveChangesAsync(ct);
         return sc;
     }

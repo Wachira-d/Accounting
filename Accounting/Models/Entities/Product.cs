@@ -144,6 +144,9 @@ public class StockCountLine : TenantEntity
     public decimal SystemQty { get; set; }
     public decimal CountedQty { get; set; }
     public decimal Variance { get; set; }       // CountedQty - SystemQty
+    /// <summary>Per-unit cost at count time (WAC snapshot) so the
+    /// adjustment JE can value variances correctly.</summary>
+    public decimal UnitCost { get; set; }
     public string? Notes { get; set; }
 }
 

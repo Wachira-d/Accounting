@@ -351,34 +351,95 @@ public class PettyCashTransaction : TenantEntity
 }
 
 /// <summary>
-/// Stock count session — counter records actual physical quantity
-/// per SKU; on close, the system posts an adjustment JE for every
-/// (counted - book) variance.
+/// PDPA data subject request — per Personal Data Protection Act
+/// B.E. 2562 (พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล). Any data subject (user
+/// or customer) can request: Access (download their data), Erasure
+/// (right to be forgotten), Rectification (correction), Portability
+/// (machine-readable export), Restriction (pause processing).
+///
+/// The system has 30 days to respond per §32. Tracking the request
+/// gives the DPO a queue to action + an audit trail for the OIC.
 /// </summary>
-public class StockCount : TenantEntity
+public class PdpaDataSubjectRequest : TenantEntity
 {
-    public string CountNumber { get; set; } = null!;
-    public DateTime CountDate { get; set; }
-    public Guid? WarehouseId { get; set; }
-    public string CountType { get; set; } = "Cycle";       // Full | Cycle | Spot
-    public string Status { get; set; } = "Open";           // Open | Counted | Adjusted | Closed
-    public Guid? CountedByUserId { get; set; }
-    public User? CountedByUser { get; set; }
-    public Guid? AdjustmentJournalEntryId { get; set; }
-    public string? Notes { get; set; }
-    public ICollection<StockCountLine> Lines { get; set; } = new List<StockCountLine>();
+    public string RequestNumber { get; set; } = null!;
+    public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Email / phone of the requester — they may not have
+    /// an account, so we store the identifier independently.</summary>
+    public string RequesterContact { get; set; } = null!;
+    public string? RequesterName { get; set; }
+    public Guid? LinkedUserId { get; set; }
+    public Guid? LinkedContactId { get; set; }
+
+    /// <summary>"Access" | "Erasure" | "Rectification" | "Portability"
+    /// | "Restriction" | "Objection".</summary>
+    public string RequestType { get; set; } = null!;
+
+    public string? Description { get; set; }
+
+    /// <summary>"Pending" → "InProgress" → "Completed" | "Rejected".</summary>
+    public string Status { get; set; } = "Pending";
+
+    public DateTime DueBy { get; set; }                  // RequestedAt + 30d per §32
+    public DateTime? CompletedAt { get; set; }
+    public string? CompletionNote { get; set; }
+    public Guid? AssignedDpoUserId { get; set; }
+    public string? RejectionReason { get; set; }
 }
 
-public class StockCountLine : BaseEntity
+/// <summary>
+/// Bill of Materials (BOM) — for SMEs that manufacture or assemble.
+/// One parent Product (the finished good) maps to N component products
+/// with per-unit quantities. Used by production orders to:
+///   • Backflush components on completion (consume components,
+///     produce 1 parent at the cumulative cost).
+///   • Forward-flush check (does on-hand inventory have enough
+///     components to build N units of the parent?).
+/// </summary>
+public class BillOfMaterials : TenantEntity
 {
-    public Guid StockCountId { get; set; }
-    public StockCount StockCount { get; set; } = null!;
+    public Guid ParentProductId { get; set; }
+    public Product ParentProduct { get; set; } = null!;
+    public string Version { get; set; } = "v1";
+    public DateTime EffectiveFrom { get; set; } = DateTime.UtcNow;
+    public DateTime? EffectiveTo { get; set; }
+    public bool IsActive { get; set; } = true;
+    public string? Notes { get; set; }
+    public ICollection<BomLine> Lines { get; set; } = new List<BomLine>();
+}
+
+public class BomLine : BaseEntity
+{
+    public Guid BomId { get; set; }
+    public BillOfMaterials Bom { get; set; } = null!;
+    public Guid ComponentProductId { get; set; }
+    public Product ComponentProduct { get; set; } = null!;
+    /// <summary>Quantity of THIS component to make 1 unit of parent.</summary>
+    public decimal QuantityPerParent { get; set; }
+    public string? Notes { get; set; }
+}
+
+/// <summary>
+/// Consignment stock — inventory we hold but don't own (vendor's
+/// goods on our shelves; we pay only when sold) OR inventory at
+/// a customer's location that we still own (we recognise the sale
+/// only on consumption). Tracking who owns the goods lets the
+/// balance sheet exclude consigned stock from our assets +
+/// pay-on-consumption avoids upfront AP.
+/// </summary>
+public class ConsignmentRecord : TenantEntity
+{
     public Guid ProductId { get; set; }
     public Product Product { get; set; } = null!;
-    public decimal BookQuantity { get; set; }
-    public decimal CountedQuantity { get; set; }
-    public decimal UnitCost { get; set; }
-    /// <summary>(counted - book) × unitCost — drives the adjustment JE.</summary>
-    public decimal VarianceValue => (CountedQuantity - BookQuantity) * UnitCost;
+    public Guid ContactId { get; set; }                    // consignor or consignee
+    public Contact Contact { get; set; } = null!;
+    /// <summary>"Inbound" = vendor's goods at our location.
+    /// "Outbound" = our goods at customer's location.</summary>
+    public string Direction { get; set; } = null!;
+    public decimal QuantityOnHand { get; set; }
+    public decimal? AgreedUnitPrice { get; set; }
+    public DateTime ReceivedAt { get; set; }
+    public DateTime? ReturnedOrSettledAt { get; set; }
     public string? Notes { get; set; }
 }

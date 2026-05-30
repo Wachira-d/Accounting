@@ -100,8 +100,10 @@ public class AccountingDbContext : DbContext
     public DbSet<StampDutyRecord> StampDutyRecords => Set<StampDutyRecord>();
     public DbSet<PettyCashFund> PettyCashFunds => Set<PettyCashFund>();
     public DbSet<PettyCashTransaction> PettyCashTransactions => Set<PettyCashTransaction>();
-    public DbSet<StockCount> StockCounts => Set<StockCount>();
-    public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
+    public DbSet<PdpaDataSubjectRequest> PdpaDataSubjectRequests => Set<PdpaDataSubjectRequest>();
+    public DbSet<BillOfMaterials> BillsOfMaterials => Set<BillOfMaterials>();
+    public DbSet<BomLine> BomLines => Set<BomLine>();
+    public DbSet<ConsignmentRecord> ConsignmentRecords => Set<ConsignmentRecord>();
 
     // ERP upgrade — Task 1 (periods, year-end, migration) + Task 4 (VAT deferral, e-Filing)
     // + Task 5 (OCR compliance log)

@@ -905,43 +905,89 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE INDEX IF NOT EXISTS "IX_PettyCashTransactions_Fund_Date" ON "PettyCashTransactions" ("FundId", "TransactionDate") WHERE "IsDeleted" = false;""",
+            // StockCount table already exists from prior schema; just
+            // add the UnitCost column on the line we need for variance JE.
+            """ALTER TABLE "StockCountLines" ADD COLUMN IF NOT EXISTS "UnitCost" decimal(18,4) NOT NULL DEFAULT 0;""",
+
+            // ===== PDPA + BOM + Consignment (Tier 3) =====
             """
-            CREATE TABLE IF NOT EXISTS "StockCounts" (
+            CREATE TABLE IF NOT EXISTS "PdpaDataSubjectRequests" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
                 "CompanyId" uuid NOT NULL,
-                "CountNumber" varchar(50) NOT NULL,
-                "CountDate" timestamp NOT NULL,
-                "WarehouseId" uuid NULL,
-                "CountType" varchar(20) NOT NULL DEFAULT 'Cycle',
-                "Status" varchar(20) NOT NULL DEFAULT 'Open',
-                "CountedByUserId" uuid NULL,
-                "AdjustmentJournalEntryId" uuid NULL,
+                "RequestNumber" varchar(50) NOT NULL,
+                "RequestedAt" timestamp NOT NULL DEFAULT now(),
+                "RequesterContact" varchar(200) NOT NULL,
+                "RequesterName" varchar(200) NULL,
+                "LinkedUserId" uuid NULL,
+                "LinkedContactId" uuid NULL,
+                "RequestType" varchar(30) NOT NULL,
+                "Description" text NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'Pending',
+                "DueBy" timestamp NOT NULL,
+                "CompletedAt" timestamp NULL,
+                "CompletionNote" text NULL,
+                "AssignedDpoUserId" uuid NULL,
+                "RejectionReason" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PdpaDataSubjectRequests" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_Pdpa_Status_Due" ON "PdpaDataSubjectRequests" ("CompanyId", "Status", "DueBy") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "BillsOfMaterials" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "ParentProductId" uuid NOT NULL,
+                "Version" varchar(20) NOT NULL DEFAULT 'v1',
+                "EffectiveFrom" timestamp NOT NULL DEFAULT now(),
+                "EffectiveTo" timestamp NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
                 "Notes" text NULL,
                 "CreatedAt" timestamp NOT NULL DEFAULT now(),
                 "UpdatedAt" timestamp NULL,
                 "CreatedBy" text NULL, "UpdatedBy" text NULL,
                 "IsDeleted" boolean NOT NULL DEFAULT false,
-                CONSTRAINT "PK_StockCounts" PRIMARY KEY ("Id")
+                CONSTRAINT "PK_BillsOfMaterials" PRIMARY KEY ("Id")
             );
             """,
             """
-            CREATE TABLE IF NOT EXISTS "StockCountLines" (
+            CREATE TABLE IF NOT EXISTS "BomLines" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
-                "StockCountId" uuid NOT NULL,
-                "ProductId" uuid NOT NULL,
-                "BookQuantity" decimal(18,4) NOT NULL DEFAULT 0,
-                "CountedQuantity" decimal(18,4) NOT NULL DEFAULT 0,
-                "UnitCost" decimal(18,4) NOT NULL DEFAULT 0,
+                "BomId" uuid NOT NULL,
+                "ComponentProductId" uuid NOT NULL,
+                "QuantityPerParent" decimal(18,4) NOT NULL,
                 "Notes" text NULL,
                 "CreatedAt" timestamp NOT NULL DEFAULT now(),
                 "UpdatedAt" timestamp NULL,
                 "CreatedBy" text NULL, "UpdatedBy" text NULL,
                 "IsDeleted" boolean NOT NULL DEFAULT false,
-                CONSTRAINT "PK_StockCountLines" PRIMARY KEY ("Id"),
-                CONSTRAINT "FK_StockCountLines_Count" FOREIGN KEY ("StockCountId") REFERENCES "StockCounts"("Id")
+                CONSTRAINT "PK_BomLines" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_BomLines_Bom" FOREIGN KEY ("BomId") REFERENCES "BillsOfMaterials"("Id")
             );
             """,
-            """CREATE INDEX IF NOT EXISTS "IX_StockCounts_Company_Date" ON "StockCounts" ("CompanyId", "CountDate") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "ConsignmentRecords" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "ProductId" uuid NOT NULL,
+                "ContactId" uuid NOT NULL,
+                "Direction" varchar(20) NOT NULL,
+                "QuantityOnHand" decimal(18,4) NOT NULL DEFAULT 0,
+                "AgreedUnitPrice" decimal(18,4) NULL,
+                "ReceivedAt" timestamp NOT NULL,
+                "ReturnedOrSettledAt" timestamp NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ConsignmentRecords" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_Consignment_Product_Contact" ON "ConsignmentRecords" ("CompanyId", "ProductId", "ContactId") WHERE "IsDeleted" = false;""",
 
             // ===== TaxReport e-Filing ACK lifecycle =====
             """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAckNumber" varchar(50) NULL;""",

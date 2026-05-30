@@ -138,6 +138,11 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IStockC
     Accounting.Services.Implementations.Inventory.StockCountService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Forex.IFxRevaluationService,
     Accounting.Services.Implementations.Forex.FxRevaluationService>();
+// PDPA + Quick search (Tier 3).
+builder.Services.AddScoped<Accounting.Services.Implementations.Pdpa.IPdpaService,
+    Accounting.Services.Implementations.Pdpa.PdpaService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Search.IQuickSearchService,
+    Accounting.Services.Implementations.Search.QuickSearchService>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();
