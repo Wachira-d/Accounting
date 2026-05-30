@@ -252,6 +252,11 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
             throw new InvalidOperationException("จัดสรร labour cost ได้เฉพาะรอบที่อนุมัติ/จ่ายแล้ว");
 
         var details = run.Details.ToList();
+        // Skip rows whose Employee nav came back null — Employee has a
+        // global !IsDeleted query filter so soft-deleted employees lose
+        // their nav. Don't post labour cost for soft-deleted staff;
+        // their time should have been cleared before deletion.
+        details = details.Where(d => d.Employee != null).ToList();
         var employeeIds = details.Select(d => d.EmployeeId).ToList();
 
         var timeRows = await _db.EmployeeProjectTimes

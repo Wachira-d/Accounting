@@ -456,9 +456,36 @@ public class PayrollService : IPayrollService
         var emp = await _db.Set<Employee>()
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        // Block deletion when the employee is still on an open payroll
+        // run or has unallocated time entries — soft-deletion would
+        // orphan those rows. Partners must close out the run / clear
+        // time first.
+        var openRun = await _db.Set<PayrollDetail>()
+            .Include(d => d.PayrollRun)
+            .AnyAsync(d => d.EmployeeId == employeeId
+                && d.CompanyId == companyId
+                && d.PayrollRun.Status != "Paid"
+                && d.PayrollRun.Status != "Voided"
+                && !d.IsDeleted);
+        if (openRun)
+            throw new InvalidOperationException("พนักงานยังอยู่ในรอบจ่ายเงินเดือนที่ยังไม่ปิด — ปิดรอบก่อน");
+
         emp.IsDeleted = true;
         emp.IsActive = false;
+        emp.EndDate ??= DateTime.UtcNow.Date;
         emp.UpdatedAt = DateTime.UtcNow;
+
+        // Mirror to the linked User so login + LIFF are revoked. Stay
+        // conservative — only flip Active → Inactive, never override
+        // stricter admin-managed states (Suspended / PendingVerification).
+        if (emp.UserId.HasValue)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == emp.UserId.Value);
+            if (user != null && user.Status == UserStatus.Active)
+                user.Status = UserStatus.Inactive;
+        }
+
         await _db.SaveChangesAsync();
         await FireWebhookAsync(companyId, "employee.deleted", new
         {
@@ -475,6 +502,19 @@ public class PayrollService : IPayrollService
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงานที่ถูกลบไว้");
+
+        // The unique index on (CompanyId, EmployeeCode) is filtered to
+        // active rows, so a partner may have created a new active
+        // employee with the same code between delete and restore.
+        // Block restore in that case rather than crashing at SaveChanges.
+        var activeDup = await _db.Set<Employee>()
+            .AnyAsync(e => e.CompanyId == companyId
+                && e.EmployeeCode == emp.EmployeeCode
+                && e.Id != employeeId);
+        if (activeDup)
+            throw new InvalidOperationException(
+                $"รหัสพนักงาน {emp.EmployeeCode} ถูกใช้กับพนักงานคนอื่นแล้ว — เปลี่ยนรหัสก่อนกู้คืน");
+
         emp.IsDeleted = false;
         emp.IsActive = true;
         emp.UpdatedAt = DateTime.UtcNow;

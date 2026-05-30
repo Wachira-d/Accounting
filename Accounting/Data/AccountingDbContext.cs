@@ -1218,7 +1218,15 @@ public class AccountingDbContext : DbContext
         // ===== Employee =====
         modelBuilder.Entity<Employee>(e =>
         {
-            e.HasIndex(emp => new { emp.CompanyId, emp.EmployeeCode }).IsUnique();
+            // Unique-per-active scope: a soft-deleted row keeps the slot
+            // when modelled at the plain index level, so partners can't
+            // recreate (or restore-after-create-collision) a code. The
+            // filtered unique index lets soft-deleted EmployeeCode rows
+            // coexist with a new active one. Restore must check + bail
+            // when an active duplicate already exists.
+            e.HasIndex(emp => new { emp.CompanyId, emp.EmployeeCode })
+                .IsUnique()
+                .HasFilter("\"IsDeleted\" = false");
             e.Property(emp => emp.EmployeeCode).HasMaxLength(50);
             e.Property(emp => emp.TitleTh).HasMaxLength(20);
             e.Property(emp => emp.FirstNameTh).HasMaxLength(200);

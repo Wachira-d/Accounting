@@ -3652,6 +3652,14 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "ApprovalRules" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_ApprovalRules_Project" ON "ApprovalRules" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
 
+            // Employee EmployeeCode uniqueness is now scoped to active
+            // (non-soft-deleted) rows so partners can recreate / restore
+            // an employee code after deletion. Drop the legacy unique
+            // constraint first, then create the partial unique index.
+            """ALTER TABLE "Employees" DROP CONSTRAINT IF EXISTS "AK_Employees_CompanyId_EmployeeCode";""",
+            """DROP INDEX IF EXISTS "IX_Employees_CompanyId_EmployeeCode";""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_Employees_CompanyId_EmployeeCode_Active" ON "Employees" ("CompanyId", "EmployeeCode") WHERE "IsDeleted" = false;""",
+
             // HR: employee external-sync + cost-behavior fields. ExternalId/
             // ExternalSystem let attendance / HRIS push or pull rows without
             // name-matching. CostBehavior drives the Fixed-vs-Variable cost

@@ -363,6 +363,16 @@ public class ProjectAccountingService : IProjectAccountingService
 
         if (entry.IsBilled)
             throw new InvalidOperationException("ไม่สามารถลบรายการต้นทุนที่ออกบิลแล้ว");
+        // Same immutability rule as Update: entries auto-posted from a
+        // JE or sourced from a Document cannot be deleted via the
+        // partner API — they'd orphan the source. Reverse the source
+        // first.
+        if (entry.JournalEntryId.HasValue)
+            throw new InvalidOperationException(
+                "รายการนี้ผูกกับ Journal Entry แล้ว — ลบที่ JE ต้นทาง หรือ reverse JE ก่อน");
+        if (entry.DocumentId.HasValue)
+            throw new InvalidOperationException(
+                "รายการนี้ผูกกับเอกสาร — ยกเลิกเอกสารต้นทางก่อน");
 
         // Roll back actual cost
         var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == entry.ProjectId && p.CompanyId == companyId);
@@ -458,6 +468,16 @@ public class ProjectAccountingService : IProjectAccountingService
             ?? throw new KeyNotFoundException("ไม่พบรายการ cost");
         if (entry.IsBilled)
             throw new InvalidOperationException("รายการที่ออกบิลแล้วแก้ไขไม่ได้ — ต้องยกเลิกบิลก่อน");
+        // Entries auto-posted from a payroll allocation / document / JE
+        // are immutable from the partner API — editing them would let
+        // ProjectCostEntry drift away from the GL. Partners should adjust
+        // the underlying JE / payroll instead.
+        if (entry.JournalEntryId.HasValue)
+            throw new InvalidOperationException(
+                "รายการนี้ผูกกับรายการบัญชี (Journal Entry) แล้ว — แก้ไขที่ JE ต้นทางแทน");
+        if (entry.DocumentId.HasValue)
+            throw new InvalidOperationException(
+                "รายการนี้ผูกกับเอกสาร (Invoice/Bill) แล้ว — แก้ไขที่เอกสารต้นทางแทน");
 
         var oldAmount = entry.Amount;
 
