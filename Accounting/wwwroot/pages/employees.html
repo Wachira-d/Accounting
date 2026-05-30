@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>พนักงาน — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; }
+    .b-Fixed { background:#dbeafe; color:#1e40af; }
+    .b-Variable { background:#fef3c7; color:#92400e; }
+    .b-Active { background:#dcfce7; color:#15803d; }
+    .b-Inactive { background:#f1f5f9; color:#64748b; }
+    .b-Sync { background:#ede9fe; color:#5b21b6; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">พนักงาน (HR Master)</h2>
+        <p class="page-subtitle">สร้าง · จัดการรายละเอียด · ตั้งฐานเงินเดือนรายเดือน/รายวัน/รายชั่วโมง · sync กับระบบ HR ภายนอก</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.openSync()">🔁 Sync จากระบบ HR</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มพนักงาน</button>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-bottom:14px">
+      <input type="text" class="search-input" placeholder="ค้นหาด้วยรหัส / ชื่อ" id="searchInput" oninput="Page.debounceLoad()">
+      <select class="filter-select" id="filterActive" onchange="Page.load()">
+        <option value="">ทุกสถานะ</option>
+        <option value="true" selected>เฉพาะที่ Active</option>
+        <option value="false">เฉพาะที่ Inactive</option>
+      </select>
+    </div>
+
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr>
+          <th>รหัส</th><th>ชื่อ</th><th>แผนก/ตำแหน่ง</th>
+          <th>ประเภทจ้าง</th><th>ฐานเงิน</th>
+          <th>Cost behavior</th><th>Sync</th><th>สถานะ</th><th>การจัดการ</th>
+        </tr></thead>
+        <tbody id="tbody"><tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div id="pagination" style="margin-top:12px;text-align:center"></div>
+
+    <!-- Create / edit modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:780px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">+ เพิ่มพนักงาน</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="fCode" placeholder="EMP001"></div>
+            <div class="form-group"><label class="form-label">คำนำหน้า</label>
+              <select class="form-select" id="fTitle">
+                <option>นาย</option><option>นาง</option><option>นางสาว</option><option>ดร.</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อ (ไทย) *</label><input type="text" class="form-input" id="fFirstNameTh"></div>
+            <div class="form-group"><label class="form-label">นามสกุล (ไทย) *</label><input type="text" class="form-input" id="fLastNameTh"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อ (Eng)</label><input type="text" class="form-input" id="fFirstNameEn"></div>
+            <div class="form-group"><label class="form-label">นามสกุล (Eng)</label><input type="text" class="form-input" id="fLastNameEn"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เลขบัตรประชาชน (13 หลัก)</label><input type="text" class="form-input" id="fCitizenId" maxlength="13"></div>
+            <div class="form-group"><label class="form-label">เลขประจำตัวผู้เสียภาษี</label><input type="text" class="form-input" id="fTaxId"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
+            <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">แผนก (string)</label><input type="text" class="form-input" id="fDept" placeholder="เช่น Engineering"></div>
+            <div class="form-group"><label class="form-label">ตำแหน่ง</label><input type="text" class="form-input" id="fPos"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภทการจ้าง</label>
+              <select class="form-select" id="fEmpType">
+                <option value="FullTime">เต็มเวลา</option>
+                <option value="PartTime">บางเวลา</option>
+                <option value="Contract">สัญญา</option>
+                <option value="Probation">ทดลองงาน</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">วันเริ่มงาน *</label><input type="date" class="form-input" id="fStart"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ฐานเงิน (บาท) *</label><input type="number" class="form-input" id="fSalary" step="0.01" min="0"></div>
+            <div class="form-group"><label class="form-label">รูปแบบฐาน *</label>
+              <select class="form-select" id="fSalaryType" onchange="Page.onSalaryTypeChange()">
+                <option value="Monthly">รายเดือน (Monthly)</option>
+                <option value="Daily">รายวัน (Daily)</option>
+                <option value="Hourly">รายชั่วโมง (Hourly)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Cost behavior</label>
+              <select class="form-select" id="fCostBehavior">
+                <option value="Fixed">Fixed — รับเงินไม่ว่าจะทำงานหรือไม่</option>
+                <option value="Variable">Variable — จ่ายตามที่ทำ</option>
+              </select>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">💡 Default: Monthly→Fixed · Daily/Hourly→Variable</div>
+            </div>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:6px;padding-top:24px;font-size:13px">
+                <input type="checkbox" id="fSso" checked> ผู้ประกันตน SSO
+              </label>
+            </div>
+          </div>
+          <div style="border-top:1px solid var(--gray-200);margin:8px 0;padding-top:8px">
+            <div class="text-xs text-gray-500" style="margin-bottom:6px;font-weight:600">บัญชีธนาคาร (รับเงินเดือน)</div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ธนาคาร</label><input type="text" class="form-input" id="fBankName"></div>
+              <div class="form-group"><label class="form-label">เลขที่บัญชี</label><input type="text" class="form-input" id="fBankAcct"></div>
+            </div>
+            <div class="form-group"><label class="form-label">ชื่อบัญชี</label><input type="text" class="form-input" id="fBankAcctName"></div>
+          </div>
+          <div style="border-top:1px solid var(--gray-200);margin:8px 0;padding-top:8px">
+            <div class="text-xs text-gray-500" style="margin-bottom:6px;font-weight:600">External sync (HRIS / attendance)</div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">External system</label>
+                <input type="text" class="form-input" id="fExtSys" placeholder="เช่น Workday, BambooHR, SAP">
+              </div>
+              <div class="form-group"><label class="form-label">External ID</label><input type="text" class="form-input" id="fExtId"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sync modal -->
+    <div class="modal-overlay" id="syncModal">
+      <div class="modal" style="max-width:720px">
+        <div class="modal-header"><h3 class="modal-title">🔁 Sync จากระบบ HR ภายนอก</h3><button class="modal-close" onclick="Layout.closeModal('syncModal')">&times;</button></div>
+        <div class="modal-body">
+          <p style="color:#64748b;font-size:13px">วาง JSON array (CreateEmployeeRequest[] schema) — ระบบจะ upsert ตาม (CompanyId, ExternalSystem, ExternalId)</p>
+          <div class="form-group">
+            <label class="form-label">External system</label>
+            <input type="text" class="form-input" id="syncSys" placeholder="เช่น Workday">
+          </div>
+          <div class="form-group">
+            <label class="form-label">JSON rows</label>
+            <textarea class="form-input" id="syncRows" rows="12" style="font-family:monospace;font-size:12px" placeholder='[{"employeeCode":"E001","titleTh":"นาย","firstNameTh":"สมชาย","lastNameTh":"ใจดี","startDate":"2024-01-15","baseSalary":35000,"salaryType":"Monthly","externalId":"WD-12345","externalSystem":"Workday","isSubjectToSocialSecurity":true,"hasProvidentFund":false,"providentFundEmployeePercent":0,"providentFundEmployerPercent":0,"firstNameEn":null,"lastNameEn":null,"citizenId":null,"dateOfBirth":null,"gender":null,"address":null,"phone":null,"email":null,"department":null,"position":null,"employmentType":"FullTime","bankName":null,"bankAccountNumber":null,"bankAccountName":null,"socialSecurityNumber":null,"socialSecurityHospital":null,"branchId":null,"dimensionId":null}]'></textarea>
+          </div>
+          <div id="syncResult"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('syncModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.doSync()">Sync</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _page: 1,
+      _debounce: null,
+      async init() {
+        if (!Layout.init('employees')) return;
+        Layout.setTitle('พนักงาน');
+        await this.load();
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); },
+      debounceLoad() {
+        clearTimeout(this._debounce);
+        this._debounce = setTimeout(() => this.load(), 300);
+      },
+      onSalaryTypeChange() {
+        const t = document.getElementById('fSalaryType').value;
+        document.getElementById('fCostBehavior').value = (t === 'Monthly') ? 'Fixed' : 'Variable';
+      },
+      async load() {
+        const tbody = document.getElementById('tbody');
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด...</td></tr>';
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/payroll/employees?page=${this._page}&pageSize=20`);
+          const items = r.data?.items || r.data || [];
+          const activeFilter = document.getElementById('filterActive').value;
+          const search = document.getElementById('searchInput').value.trim().toLowerCase();
+          let rows = items;
+          if (activeFilter !== '') rows = rows.filter(e => String(e.isActive) === activeFilter);
+          if (search) rows = rows.filter(e =>
+            (e.employeeCode || '').toLowerCase().includes(search) ||
+            (e.firstNameTh || '').toLowerCase().includes(search) ||
+            (e.lastNameTh || '').toLowerCase().includes(search));
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ไม่มีพนักงาน — กด + เพิ่มพนักงาน เพื่อสร้าง</td></tr>';
+          } else {
+            tbody.innerHTML = rows.map(e => {
+              const salaryUnit = e.salaryType === 'Daily' ? '/วัน' : (e.salaryType === 'Hourly' ? '/ชม.' : '/เดือน');
+              const sync = e.externalSystem ? `<span class="badge b-Sync">${e.externalSystem}</span>` : '<span style="color:#cbd5e1">—</span>';
+              return `<tr>
+                <td><b>${e.employeeCode}</b></td>
+                <td>${e.titleTh || ''}${e.firstNameTh || ''} ${e.lastNameTh || ''}</td>
+                <td>${e.departmentName || e.department || '-'}<div style="font-size:11px;color:#64748b">${e.positionTitle || e.position || ''}</div></td>
+                <td>${e.employmentType || '-'}</td>
+                <td style="text-align:right">${this._fmt(e.baseSalary)}<div style="font-size:11px;color:#64748b">${e.salaryType}${salaryUnit}</div></td>
+                <td><span class="badge b-${e.costBehavior || 'Fixed'}">${e.costBehavior || 'Fixed'}</span></td>
+                <td>${sync}</td>
+                <td><span class="badge b-${e.isActive ? 'Active' : 'Inactive'}">${e.isActive ? 'Active' : 'Inactive'}</span></td>
+                <td>
+                  <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${e.id}')">แก้ไข</button>
+                  ${e.isActive ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.toggleActive('${e.id}', false)">ปิด</button>`
+                              : `<button class="btn btn-sm btn-ghost text-success" onclick="Page.toggleActive('${e.id}', true)">เปิด</button>`}
+                </td>
+              </tr>`;
+            }).join('');
+          }
+          const total = r.data?.totalItems || items.length;
+          const totalPages = r.data?.totalPages || 1;
+          document.getElementById('pagination').innerHTML =
+            `หน้า ${this._page}/${totalPages} · รวม ${total} คน` +
+            (this._page > 1 ? ` <button class="btn btn-sm btn-ghost" onclick="Page._page--;Page.load()">‹ ก่อน</button>` : '') +
+            (this._page < totalPages ? ` <button class="btn btn-sm btn-ghost" onclick="Page._page++;Page.load()">ถัดไป ›</button>` : '');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
+        }
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = '+ เพิ่มพนักงาน';
+        document.getElementById('fId').value = '';
+        ['fCode','fFirstNameTh','fLastNameTh','fFirstNameEn','fLastNameEn','fCitizenId',
+         'fTaxId','fPhone','fEmail','fDept','fPos','fBankName','fBankAcct','fBankAcctName',
+         'fExtSys','fExtId'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('fCode').disabled = false;
+        document.getElementById('fTitle').value = 'นาย';
+        document.getElementById('fEmpType').value = 'FullTime';
+        document.getElementById('fStart').value = Layout.toDateInput(new Date());
+        document.getElementById('fSalary').value = '';
+        document.getElementById('fSalaryType').value = 'Monthly';
+        document.getElementById('fCostBehavior').value = 'Fixed';
+        document.getElementById('fSso').checked = true;
+        Layout.openModal('formModal');
+      },
+      async openEdit(id) {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/payroll/employees/${id}`);
+          const e = r.data;
+          document.getElementById('formTitle').textContent = `แก้ไข ${e.employeeCode}`;
+          document.getElementById('fId').value = e.id;
+          document.getElementById('fCode').value = e.employeeCode;
+          document.getElementById('fCode').disabled = true;
+          document.getElementById('fTitle').value = e.titleTh || 'นาย';
+          document.getElementById('fFirstNameTh').value = e.firstNameTh || '';
+          document.getElementById('fLastNameTh').value = e.lastNameTh || '';
+          document.getElementById('fFirstNameEn').value = e.firstNameEn || '';
+          document.getElementById('fLastNameEn').value = e.lastNameEn || '';
+          document.getElementById('fCitizenId').value = e.citizenId || '';
+          document.getElementById('fPhone').value = e.phone || '';
+          document.getElementById('fEmail').value = e.email || '';
+          document.getElementById('fDept').value = e.department || '';
+          document.getElementById('fPos').value = e.position || '';
+          document.getElementById('fEmpType').value = e.employmentType || 'FullTime';
+          document.getElementById('fStart').value = Layout.toDateInput(new Date(e.startDate));
+          document.getElementById('fSalary').value = e.baseSalary;
+          document.getElementById('fSalaryType').value = e.salaryType || 'Monthly';
+          document.getElementById('fCostBehavior').value = e.costBehavior || 'Fixed';
+          document.getElementById('fExtSys').value = e.externalSystem || '';
+          document.getElementById('fExtId').value = e.externalId || '';
+          Layout.openModal('formModal');
+        } catch (err) { Layout.toast(err.message, 'error'); }
+      },
+      async save() {
+        const id = document.getElementById('fId').value;
+        const cid = Layout.getCompanyId();
+        const sal = parseFloat(document.getElementById('fSalary').value) || 0;
+        if (!id) {
+          // Create
+          const body = {
+            employeeCode: document.getElementById('fCode').value.trim(),
+            titleTh: document.getElementById('fTitle').value,
+            firstNameTh: document.getElementById('fFirstNameTh').value.trim(),
+            lastNameTh: document.getElementById('fLastNameTh').value.trim(),
+            firstNameEn: document.getElementById('fFirstNameEn').value.trim() || null,
+            lastNameEn: document.getElementById('fLastNameEn').value.trim() || null,
+            citizenId: document.getElementById('fCitizenId').value.trim() || null,
+            dateOfBirth: null, gender: null, address: null,
+            phone: document.getElementById('fPhone').value.trim() || null,
+            email: document.getElementById('fEmail').value.trim() || null,
+            department: document.getElementById('fDept').value.trim() || null,
+            position: document.getElementById('fPos').value.trim() || null,
+            employmentType: document.getElementById('fEmpType').value,
+            startDate: document.getElementById('fStart').value,
+            baseSalary: sal,
+            salaryType: document.getElementById('fSalaryType').value,
+            bankName: document.getElementById('fBankName').value.trim() || null,
+            bankAccountNumber: document.getElementById('fBankAcct').value.trim() || null,
+            bankAccountName: document.getElementById('fBankAcctName').value.trim() || null,
+            socialSecurityNumber: null, socialSecurityHospital: null,
+            isSubjectToSocialSecurity: document.getElementById('fSso').checked,
+            hasProvidentFund: false,
+            providentFundEmployeePercent: 0,
+            providentFundEmployerPercent: 0,
+            branchId: null, dimensionId: null,
+            costBehavior: document.getElementById('fCostBehavior').value,
+            externalId: document.getElementById('fExtId').value.trim() || null,
+            externalSystem: document.getElementById('fExtSys').value.trim() || null,
+          };
+          if (!body.employeeCode || !body.firstNameTh || !body.lastNameTh || !body.startDate || !sal) {
+            Layout.toast('กรอกข้อมูลที่จำเป็นให้ครบ', 'error'); return;
+          }
+          try {
+            await API.post(`/api/companies/${cid}/payroll/employees`, body);
+            Layout.closeModal('formModal');
+            Layout.toast('เพิ่มพนักงานสำเร็จ');
+            await this.load();
+          } catch (err) { Layout.toast(err.message, 'error'); }
+        } else {
+          // Update
+          const body = {
+            position: document.getElementById('fPos').value.trim() || null,
+            department: document.getElementById('fDept').value.trim() || null,
+            phone: document.getElementById('fPhone').value.trim() || null,
+            email: document.getElementById('fEmail').value.trim() || null,
+            baseSalary: sal,
+            bankName: document.getElementById('fBankName').value.trim() || null,
+            bankAccountNumber: document.getElementById('fBankAcct').value.trim() || null,
+            socialSecurityHospital: null,
+            hasProvidentFund: null,
+            providentFundEmployeePercent: null,
+            providentFundEmployerPercent: null,
+            branchId: null, dimensionId: null,
+            costBehavior: document.getElementById('fCostBehavior').value,
+            externalId: document.getElementById('fExtId').value.trim() || null,
+            externalSystem: document.getElementById('fExtSys').value.trim() || null,
+            salaryType: document.getElementById('fSalaryType').value,
+          };
+          try {
+            await API.put(`/api/companies/${cid}/payroll/employees/${id}`, body);
+            Layout.closeModal('formModal');
+            Layout.toast('แก้ไขสำเร็จ');
+            await this.load();
+          } catch (err) { Layout.toast(err.message, 'error'); }
+        }
+      },
+      async toggleActive(id, on) {
+        try {
+          const cid = Layout.getCompanyId();
+          await API.put(`/api/companies/${cid}/payroll/employees/${id}`, { isActive: on });
+          Layout.toast(on ? 'เปิดใช้งานพนักงาน' : 'ปิดใช้งานพนักงาน');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openSync() {
+        document.getElementById('syncSys').value = '';
+        document.getElementById('syncRows').value = '';
+        document.getElementById('syncResult').innerHTML = '';
+        Layout.openModal('syncModal');
+      },
+      async doSync() {
+        const sys = document.getElementById('syncSys').value.trim();
+        const text = document.getElementById('syncRows').value.trim();
+        if (!sys || !text) { Layout.toast('ใส่ system + JSON ให้ครบ', 'error'); return; }
+        let rows;
+        try { rows = JSON.parse(text); }
+        catch (e) { Layout.toast('JSON ไม่ valid: ' + e.message, 'error'); return; }
+        if (!Array.isArray(rows)) { Layout.toast('ต้องเป็น array', 'error'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/payroll/employees/sync`,
+            { externalSystem: sys, rows });
+          const d = r.data;
+          document.getElementById('syncResult').innerHTML = `
+            <div style="margin-top:12px;padding:10px;border-radius:6px;background:#f1f5f9">
+              <b>เสร็จสิ้น</b> · เพิ่ม ${d.inserted} · อัปเดต ${d.updated} · ข้าม ${d.skipped}
+              ${d.errors?.length ? '<ul style="color:#dc2626;margin-top:8px">' +
+                d.errors.map(e => '<li>' + e + '</li>').join('') + '</ul>' : ''}
+            </div>`;
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

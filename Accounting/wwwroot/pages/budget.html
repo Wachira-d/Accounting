@@ -87,7 +87,7 @@
           const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
           const items = r.data?.items || r.data || [];
           const opts = items.map(p =>
-            `<option value="${p.id}">${(p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
           document.getElementById('fProject').innerHTML =
             '<option value="">— ไม่ระบุ (งบประมาณรวมของบริษัท) —</option>' + opts;
         } catch (e) { /* ignore */ }

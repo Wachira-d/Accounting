@@ -199,7 +199,12 @@ public class PayrollService : IPayrollService
             DimensionId = request.DimensionId,
             DepartmentId = request.DepartmentId,
             PositionId = request.PositionId,
-            DirectManagerId = request.DirectManagerId
+            DirectManagerId = request.DirectManagerId,
+            CostBehavior = request.CostBehavior
+                ?? ((request.SalaryType ?? "Monthly") == "Monthly" ? "Fixed" : "Variable"),
+            ExternalId = request.ExternalId,
+            ExternalSystem = request.ExternalSystem,
+            LastSyncedAt = request.ExternalId != null ? DateTime.UtcNow : null,
         };
 
         _db.Set<Employee>().Add(employee);
@@ -284,6 +289,11 @@ public class PayrollService : IPayrollService
         // employee record itself stays for audit. Re-onboarding restores
         // Active. Only mirrored when the User isn't already in a stricter
         // state (Suspended, PendingVerification) which is admin-managed.
+        if (request.CostBehavior != null) employee.CostBehavior = request.CostBehavior;
+        if (request.ExternalId != null) employee.ExternalId = request.ExternalId;
+        if (request.ExternalSystem != null) employee.ExternalSystem = request.ExternalSystem;
+        if (request.SalaryType != null) employee.SalaryType = request.SalaryType;
+        if (request.CostBehavior != null || request.ExternalId != null) employee.LastSyncedAt = DateTime.UtcNow;
         if (request.IsActive.HasValue)
         {
             employee.IsActive = request.IsActive.Value;
@@ -304,6 +314,98 @@ public class PayrollService : IPayrollService
         await _db.SaveChangesAsync();
 
         return await GetEmployeeAsync(companyId, employee.Id);
+    }
+
+    public async Task<SyncEmployeesResponse> SyncEmployeesAsync(Guid companyId, SyncEmployeesRequest request)
+    {
+        var inserted = 0; var updated = 0; var skipped = 0;
+        var errors = new List<string>();
+
+        foreach (var r in request.Rows)
+        {
+            if (string.IsNullOrWhiteSpace(r.ExternalId))
+            {
+                errors.Add($"{r.EmployeeCode}: ต้องระบุ ExternalId เพื่อ sync");
+                skipped++;
+                continue;
+            }
+            var existing = await _db.Set<Employee>().FirstOrDefaultAsync(e =>
+                e.CompanyId == companyId
+                && e.ExternalSystem == request.ExternalSystem
+                && e.ExternalId == r.ExternalId
+                && !e.IsDeleted);
+
+            if (existing != null)
+            {
+                existing.FirstNameTh = r.FirstNameTh;
+                existing.LastNameTh = r.LastNameTh;
+                if (r.FirstNameEn != null) existing.FirstNameEn = r.FirstNameEn;
+                if (r.LastNameEn != null) existing.LastNameEn = r.LastNameEn;
+                if (r.Email != null) existing.Email = r.Email;
+                if (r.Phone != null) existing.Phone = r.Phone;
+                if (r.Department != null) existing.Department = r.Department;
+                if (r.Position != null) existing.Position = r.Position;
+                if (r.BaseSalary > 0) existing.BaseSalary = r.BaseSalary;
+                if (r.SalaryType != null) existing.SalaryType = r.SalaryType;
+                if (r.CostBehavior != null) existing.CostBehavior = r.CostBehavior;
+                existing.LastSyncedAt = DateTime.UtcNow;
+                existing.UpdatedAt = DateTime.UtcNow;
+                updated++;
+            }
+            else
+            {
+                try
+                {
+                    var dup = await _db.Set<Employee>()
+                        .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == r.EmployeeCode);
+                    if (dup)
+                    {
+                        errors.Add($"{r.EmployeeCode}: รหัสซ้ำ");
+                        skipped++;
+                        continue;
+                    }
+                    var newEmp = new Employee
+                    {
+                        CompanyId = companyId,
+                        EmployeeCode = r.EmployeeCode,
+                        TitleTh = r.TitleTh,
+                        FirstNameTh = r.FirstNameTh,
+                        LastNameTh = r.LastNameTh,
+                        FirstNameEn = r.FirstNameEn,
+                        LastNameEn = r.LastNameEn,
+                        CitizenId = r.CitizenId,
+                        Email = r.Email,
+                        Phone = r.Phone,
+                        Department = r.Department,
+                        Position = r.Position,
+                        EmploymentType = r.EmploymentType,
+                        StartDate = r.StartDate,
+                        BaseSalary = r.BaseSalary,
+                        SalaryType = r.SalaryType ?? "Monthly",
+                        BankName = r.BankName,
+                        BankAccountNumber = r.BankAccountNumber,
+                        BankAccountName = r.BankAccountName,
+                        SocialSecurityNumber = r.SocialSecurityNumber,
+                        IsSubjectToSocialSecurity = r.IsSubjectToSocialSecurity,
+                        CostBehavior = r.CostBehavior
+                            ?? ((r.SalaryType ?? "Monthly") == "Monthly" ? "Fixed" : "Variable"),
+                        ExternalId = r.ExternalId,
+                        ExternalSystem = request.ExternalSystem,
+                        LastSyncedAt = DateTime.UtcNow,
+                    };
+                    _db.Set<Employee>().Add(newEmp);
+                    inserted++;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{r.EmployeeCode}: {ex.Message}");
+                    skipped++;
+                }
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return new SyncEmployeesResponse(inserted, updated, skipped, errors);
     }
 
     public async Task<SeverancePreviewResponse> PreviewSeverancePayAsync(
@@ -1610,7 +1712,9 @@ public class PayrollService : IPayrollService
             e.DirectManager != null
                 ? $"{e.DirectManager.TitleTh}{e.DirectManager.FirstNameTh} {e.DirectManager.LastNameTh}".Trim()
                 : null,
-            e.ContactId);
+            e.ContactId,
+            e.CostBehavior,
+            e.ExternalId, e.ExternalSystem, e.LastSyncedAt);
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,

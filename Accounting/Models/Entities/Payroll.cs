@@ -88,6 +88,20 @@ public class Employee : TenantEntity
     public Guid? SalaryExpenseAccountId { get; set; }
     public ChartOfAccount? SalaryExpenseAccount { get; set; }
 
+    /// <summary>Cost behavior of this employee's base salary. Monthly
+    /// salaried = Fixed (รับเงินไม่ว่าจะทำงานหรือไม่). Daily/Hourly =
+    /// Variable (จ่ายตามที่ทำ). Drives fix-vs-variable cost reports.
+    /// Default inferred from SalaryType on create.</summary>
+    public string CostBehavior { get; set; } = "Fixed";  // Fixed, Variable
+
+    /// <summary>Optional external HR system identifier (HRIS, attendance
+    /// software, parent-company SAP, etc.) — lets a sync push/pull this
+    /// employee row without name-matching. ExternalSystem labels the
+    /// origin so multi-source syncs can co-exist.</summary>
+    public string? ExternalId { get; set; }
+    public string? ExternalSystem { get; set; }
+    public DateTime? LastSyncedAt { get; set; }
+
     public ICollection<PayrollRun> PayrollRuns { get; set; } = new List<PayrollRun>();
     public ICollection<EmployeeLeave> Leaves { get; set; } = new List<EmployeeLeave>();
 }

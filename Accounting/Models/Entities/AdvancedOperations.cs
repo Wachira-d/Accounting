@@ -104,6 +104,54 @@ public class ProjectCostEntry : TenantEntity
     public Guid? JournalEntryId { get; set; }
     public bool IsBillable { get; set; } = true;
     public bool IsBilled { get; set; } = false;
+    /// <summary>Cost behavior — Fixed (rent, salaried staff, depreciation),
+    /// Variable (hourly labor, materials, subcontractor). Feeds the
+    /// fix-vs-variable cost report.</summary>
+    public string CostBehavior { get; set; } = "Variable"; // Fixed, Variable
+}
+
+/// <summary>
+/// Daily/period record of an employee's time on a project (or the
+/// admin/internal bucket when ProjectId is null). Built to be sync-
+/// friendly: every row can carry an ExternalId from a third-party
+/// time-tracking / attendance system so duplicate inserts are de-duped
+/// on (Company, ExternalSystem, ExternalId).
+///
+/// Multiple rows per employee per day are allowed — that's how an
+/// 8-hour day gets split across projects (4h Project A + 3h Project B
+/// + 1h admin).
+///
+/// At payroll-pay time, PayrollService uses these rows to allocate the
+/// employee's salary across projects pro-rata to hours worked; un-
+/// allocated time falls into the admin/overhead bucket.
+/// </summary>
+public class EmployeeProjectTime : TenantEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    /// <summary>Null = admin / internal / non-project time. The cost
+    /// allocator routes this bucket to the dimension's overhead account
+    /// instead of a ProjectCostEntry.</summary>
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public Guid? ProjectTaskId { get; set; }
+    public DateTime WorkDate { get; set; }
+    public decimal Hours { get; set; }
+    public string? Description { get; set; }
+    /// <summary>"Billable" | "NonBillable" | "Admin" — purely for
+    /// reporting; allocation logic uses Hours + ProjectId.</summary>
+    public string Category { get; set; } = "Billable";
+    /// <summary>Set by PayrollService.AllocateLabourCostsAsync once the
+    /// employee's salary has been broken across projects for the period
+    /// — prevents double-allocation if a run is re-paid.</summary>
+    public bool IsAllocated { get; set; } = false;
+    public Guid? AllocatedPayrollRunId { get; set; }
+    public Guid? ProjectCostEntryId { get; set; }
+
+    // Sync from external attendance / time-tracking systems.
+    public string? ExternalId { get; set; }
+    public string? ExternalSystem { get; set; }
+    public DateTime? LastSyncedAt { get; set; }
 }
 
 // ===== Revenue Recognition (TFRS 15 / IFRS 15) =====

@@ -174,6 +174,7 @@ public class AccountingDbContext : DbContext
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ProjectTask> ProjectTasks => Set<ProjectTask>();
     public DbSet<ProjectCostEntry> ProjectCostEntries => Set<ProjectCostEntry>();
+    public DbSet<EmployeeProjectTime> EmployeeProjectTimes => Set<EmployeeProjectTime>();
 
     // Warehouse Management
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();

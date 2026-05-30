@@ -3651,6 +3651,49 @@ public static class DatabaseMigrationHelper
             // amount tier. Backfilled NULL = applies to all projects (legacy).
             """ALTER TABLE "ApprovalRules" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_ApprovalRules_Project" ON "ApprovalRules" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // HR: employee external-sync + cost-behavior fields. ExternalId/
+            // ExternalSystem let attendance / HRIS push or pull rows without
+            // name-matching. CostBehavior drives the Fixed-vs-Variable cost
+            // report — defaulted to Fixed (monthly salaried is the common
+            // case; daily/hourly should be flipped via UpdateEmployee).
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(50) NULL;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "LastSyncedAt" timestamp NULL;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "CostBehavior" varchar(20) NOT NULL DEFAULT 'Fixed';""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_Employees_ExternalSync" ON "Employees" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ProjectCostEntry cost behavior — Fixed (rent, salaried) vs
+            // Variable (hourly labor, materials) — drives the cost report.
+            """ALTER TABLE "ProjectCostEntries" ADD COLUMN IF NOT EXISTS "CostBehavior" varchar(20) NOT NULL DEFAULT 'Variable';""",
+
+            // Employee project time allocation — feeds payroll → ProjectCostEntry
+            // labor allocation. Sync-friendly (external attendance systems).
+            """CREATE TABLE IF NOT EXISTS "EmployeeProjectTimes" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "ProjectId" uuid NULL,
+                "ProjectTaskId" uuid NULL,
+                "WorkDate" timestamp NOT NULL,
+                "Hours" decimal(8,2) NOT NULL DEFAULT 0,
+                "Description" text NULL,
+                "Category" varchar(50) NOT NULL DEFAULT 'Billable',
+                "IsAllocated" boolean NOT NULL DEFAULT false,
+                "AllocatedPayrollRunId" uuid NULL,
+                "ProjectCostEntryId" uuid NULL,
+                "ExternalId" varchar(200) NULL,
+                "ExternalSystem" varchar(50) NULL,
+                "LastSyncedAt" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Employee_Date" ON "EmployeeProjectTimes" ("CompanyId", "EmployeeId", "WorkDate") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Project_Date" ON "EmployeeProjectTimes" ("CompanyId", "ProjectId", "WorkDate") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeProjectTimes_ExternalSync" ON "EmployeeProjectTimes" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

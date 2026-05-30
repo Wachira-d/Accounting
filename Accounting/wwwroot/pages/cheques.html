@@ -103,7 +103,7 @@
           const items = r.data?.items || r.data || [];
           const sel = document.getElementById('issueProject');
           const opts = items.map(p =>
-            `<option value="${p.id}">${(p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
           sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
         } catch (e) { /* ignore */ }
       },

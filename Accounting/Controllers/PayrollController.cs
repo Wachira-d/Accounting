@@ -53,6 +53,15 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> UpdateEmployee(Guid companyId, Guid employeeId, [FromBody] UpdateEmployeeRequest request)
         => Ok(new ApiResponse<EmployeeResponse>(true, await _service.UpdateEmployeeAsync(companyId, employeeId, request)));
 
+    [HttpPost("employees/sync")]
+    public async Task<ActionResult<ApiResponse<SyncEmployeesResponse>>> SyncEmployees(
+        Guid companyId, [FromBody] SyncEmployeesRequest request)
+    {
+        var r = await _service.SyncEmployeesAsync(companyId, request);
+        return Ok(new ApiResponse<SyncEmployeesResponse>(true, r,
+            $"sync เสร็จ — เพิ่ม {r.Inserted} · อัปเดต {r.Updated} · ข้าม {r.Skipped}"));
+    }
+
     [HttpPost("employees/{employeeId:guid}/terminate")]
     public async Task<ActionResult<ApiResponse<bool>>> Terminate(Guid companyId, Guid employeeId, [FromQuery] DateTime endDate)
     { await _service.TerminateEmployeeAsync(companyId, employeeId, endDate); return Ok(new ApiResponse<bool>(true, true)); }

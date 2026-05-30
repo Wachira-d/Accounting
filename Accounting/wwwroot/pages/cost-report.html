@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fix-Variable Cost — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .stat-card { padding:20px;border-radius:12px;background:linear-gradient(135deg,#f8fafc,#fff);border:1px solid #e2e8f0; }
+    .stat-card.fixed { border-color:#bfdbfe;background:linear-gradient(135deg,#dbeafe,#fff); }
+    .stat-card.variable { border-color:#fde68a;background:linear-gradient(135deg,#fef3c7,#fff); }
+    .stat-label { font-size:12px;color:#64748b;font-weight:600 }
+    .stat-value { font-size:28px;font-weight:700;color:#1e293b;margin-top:4px }
+    .stat-share { font-size:13px;color:#475569;margin-top:6px }
+    .bar { display:flex;height:30px;border-radius:6px;overflow:hidden;margin-top:8px }
+    .bar > div { height:100% }
+    .bar .b-fix { background:#3b82f6 }
+    .bar .b-var { background:#f59e0b }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">รายงาน Fix vs Variable Cost</h2>
+        <p class="page-subtitle">ต้นทุนคงที่ vs ผันแปร รายเดือนหรือรายโครงการ — จาก ProjectCostEntry</p>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-bottom:14px">
+      <label>ปี:</label>
+      <select class="filter-select" id="filterYear" onchange="Page.load()"></select>
+      <label>เดือน:</label>
+      <select class="filter-select" id="filterMonth" onchange="Page.load()"></select>
+      <label>โครงการ:</label>
+      <select class="filter-select" id="filterProject" onchange="Page.load()" style="min-width:240px"><option value="">— ทุกโครงการ —</option></select>
+      <button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button>
+    </div>
+
+    <!-- Monthly summary -->
+    <div class="grid grid-3 gap-4" style="margin-bottom:20px">
+      <div class="stat-card fixed">
+        <div class="stat-label">🔵 Fixed Cost</div>
+        <div class="stat-value" id="kpiFixed">0.00</div>
+        <div class="stat-share" id="kpiFixedShare">—</div>
+      </div>
+      <div class="stat-card variable">
+        <div class="stat-label">🟡 Variable Cost</div>
+        <div class="stat-value" id="kpiVariable">0.00</div>
+        <div class="stat-share" id="kpiVariableShare">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">📊 Total Cost</div>
+        <div class="stat-value" id="kpiTotal">0.00</div>
+        <div class="bar" id="kpiBar"></div>
+      </div>
+    </div>
+
+    <!-- By cost type breakdown -->
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">แยกตามประเภทต้นทุน</h3></div>
+      <div class="table-container">
+        <table class="data-table">
+          <thead><tr>
+            <th>ประเภท</th>
+            <th style="text-align:right">Fixed</th>
+            <th style="text-align:right">Variable</th>
+            <th style="text-align:right">Total</th>
+            <th style="text-align:right">% Total</th>
+          </tr></thead>
+          <tbody id="tbodyType"><tr><td colspan="5" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Monthly trend -->
+    <div class="card" style="margin-top:20px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <h3 class="card-title">แนวโน้มย้อนหลัง 12 เดือน</h3>
+        <button class="btn btn-secondary btn-sm" onclick="Page.loadTrend()">โหลด trend</button>
+      </div>
+      <div class="table-container">
+        <table class="data-table">
+          <thead><tr>
+            <th>เดือน</th>
+            <th style="text-align:right">Fixed</th>
+            <th style="text-align:right">Variable</th>
+            <th style="text-align:right">Total</th>
+            <th>Fixed %</th>
+          </tr></thead>
+          <tbody id="tbodyTrend"><tr><td colspan="5" style="text-align:center;padding:30px;color:#94a3b8">กด โหลด trend เพื่อแสดง</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('cost-report')) return;
+        Layout.setTitle('Fix vs Variable Cost');
+        const now = new Date();
+        const ySel = document.getElementById('filterYear');
+        for (let y = now.getFullYear() - 3; y <= now.getFullYear() + 1; y++) {
+          ySel.innerHTML += `<option value="${y}"${y === now.getFullYear() ? ' selected' : ''}>${y}</option>`;
+        }
+        const mSel = document.getElementById('filterMonth');
+        for (let m = 1; m <= 12; m++) {
+          mSel.innerHTML += `<option value="${m}"${m === now.getMonth() + 1 ? ' selected' : ''}>${String(m).padStart(2,'0')}</option>`;
+        }
+        await this.loadProjects();
+        await this.load();
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/projects?pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const opts = items.map(p => `<option value="${p.id}">${(p.code || p.projectNumber || '')} · ${p.name || ''}</option>`).join('');
+          document.getElementById('filterProject').innerHTML = '<option value="">— ทุกโครงการ —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+      async load() {
+        const year = +document.getElementById('filterYear').value;
+        const month = +document.getElementById('filterMonth').value;
+        const projectId = document.getElementById('filterProject').value;
+        try {
+          const cid = Layout.getCompanyId();
+          const params = [`year=${year}`, `month=${month}`];
+          if (projectId) params.push(`projectId=${projectId}`);
+          const r = await API.get(`/api/companies/${cid}/hr/reports/fix-variable-cost?${params.join('&')}`);
+          const d = r.data;
+          document.getElementById('kpiFixed').textContent = this._fmt(d.fixedCost);
+          document.getElementById('kpiVariable').textContent = this._fmt(d.variableCost);
+          document.getElementById('kpiTotal').textContent = this._fmt(d.totalCost);
+          const total = d.totalCost || 1;
+          const fixPct = (d.fixedCost / total * 100).toFixed(1);
+          const varPct = (d.variableCost / total * 100).toFixed(1);
+          document.getElementById('kpiFixedShare').textContent = `${fixPct}% ของรวม`;
+          document.getElementById('kpiVariableShare').textContent = `${varPct}% ของรวม`;
+          document.getElementById('kpiBar').innerHTML =
+            `<div class="b-fix" style="width:${fixPct}%" title="Fixed ${fixPct}%"></div>` +
+            `<div class="b-var" style="width:${varPct}%" title="Variable ${varPct}%"></div>`;
+
+          const tbody = document.getElementById('tbodyType');
+          if (!d.byCostType || d.byCostType.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีข้อมูล</td></tr>';
+          } else {
+            tbody.innerHTML = d.byCostType.map(b => `<tr>
+              <td><b>${b.costType}</b></td>
+              <td style="text-align:right">${this._fmt(b.fixed)}</td>
+              <td style="text-align:right">${this._fmt(b.variable)}</td>
+              <td style="text-align:right"><b>${this._fmt(b.total)}</b></td>
+              <td style="text-align:right">${total > 0 ? (b.total / total * 100).toFixed(1) : 0}%</td>
+            </tr>`).join('');
+          }
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async loadTrend() {
+        const tbody = document.getElementById('tbodyTrend');
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px">กำลังโหลด...</td></tr>';
+        try {
+          const cid = Layout.getCompanyId();
+          const year = +document.getElementById('filterYear').value;
+          const month = +document.getElementById('filterMonth').value;
+          const projectId = document.getElementById('filterProject').value;
+          // 12 months back from selected
+          let fromY = year, fromM = month - 11;
+          while (fromM < 1) { fromM += 12; fromY--; }
+          const params = [`fromYear=${fromY}`, `fromMonth=${fromM}`, `months=12`];
+          if (projectId) params.push(`projectId=${projectId}`);
+          const r = await API.get(`/api/companies/${cid}/hr/reports/fix-variable-cost/trend?${params.join('&')}`);
+          const rows = r.data || [];
+          tbody.innerHTML = rows.map(t => {
+            const pct = t.totalCost > 0 ? (t.fixedCost / t.totalCost * 100).toFixed(1) : 0;
+            return `<tr>
+              <td>${t.year}/${String(t.month).padStart(2,'0')}</td>
+              <td style="text-align:right">${this._fmt(t.fixedCost)}</td>
+              <td style="text-align:right">${this._fmt(t.variableCost)}</td>
+              <td style="text-align:right"><b>${this._fmt(t.totalCost)}</b></td>
+              <td>${pct}%</td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:30px">ไม่มีข้อมูล</td></tr>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
