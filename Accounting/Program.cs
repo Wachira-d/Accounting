@@ -143,6 +143,11 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Pdpa.IPdpaService
     Accounting.Services.Implementations.Pdpa.PdpaService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Search.IQuickSearchService,
     Accounting.Services.Implementations.Search.QuickSearchService>();
+// Vendor portal — token-based access for counterparties without
+// full user accounts. AP issues magic-links via the admin endpoint;
+// vendors hit /vendor-portal.html with the token in the URL.
+builder.Services.AddScoped<Accounting.Services.Implementations.Portal.IVendorPortalService,
+    Accounting.Services.Implementations.Portal.VendorPortalService>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();

@@ -421,6 +421,44 @@ public class BomLine : BaseEntity
 }
 
 /// <summary>
+/// Vendor portal access token — gives a counterparty (vendor or
+/// customer) a magic-link to log into a minimal "view your POs +
+/// upload invoices + check payment status" UI WITHOUT requiring
+/// them to be a full User in the tenant.
+///
+/// Token rotation: TokenHash stored (SHA-256), raw token shown to
+/// vendor exactly once at issuance. ExpiresAt + RevokedAt let the AP
+/// admin invalidate without deleting the audit trail.
+/// </summary>
+public class VendorPortalToken : TenantEntity
+{
+    /// <summary>SHA-256 of the raw token. We never store the raw value.</summary>
+    public string TokenHash { get; set; } = null!;
+
+    /// <summary>The counterparty this token grants access for —
+    /// scopes every read/write to documents involving this contact.</summary>
+    public Guid ContactId { get; set; }
+    public Contact Contact { get; set; } = null!;
+
+    /// <summary>"Vendor" (sees their POs + bills + payment status)
+    /// or "Customer" (sees their invoices + receipts).</summary>
+    public string Role { get; set; } = "Vendor";
+
+    public DateTime IssuedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    public string? RevokedReason { get; set; }
+    public Guid? IssuedByUserId { get; set; }
+    public User? IssuedByUser { get; set; }
+
+    /// <summary>Optional email/phone vendor uses to claim the
+    /// magic-link — also displays on audit log.</summary>
+    public string? RecipientEmail { get; set; }
+    public string? Notes { get; set; }
+}
+
+/// <summary>
 /// Consignment stock — inventory we hold but don't own (vendor's
 /// goods on our shelves; we pay only when sold) OR inventory at
 /// a customer's location that we still own (we recognise the sale

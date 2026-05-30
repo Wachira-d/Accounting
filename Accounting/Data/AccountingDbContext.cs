@@ -104,6 +104,7 @@ public class AccountingDbContext : DbContext
     public DbSet<BillOfMaterials> BillsOfMaterials => Set<BillOfMaterials>();
     public DbSet<BomLine> BomLines => Set<BomLine>();
     public DbSet<ConsignmentRecord> ConsignmentRecords => Set<ConsignmentRecord>();
+    public DbSet<VendorPortalToken> VendorPortalTokens => Set<VendorPortalToken>();
 
     // ERP upgrade — Task 1 (periods, year-end, migration) + Task 4 (VAT deferral, e-Filing)
     // + Task 5 (OCR compliance log)
