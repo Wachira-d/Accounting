@@ -317,3 +317,68 @@ public class StampDutyRecord : TenantEntity
 
     public string? Notes { get; set; }
 }
+
+/// <summary>
+/// Petty cash float — small cash kept on hand for ad-hoc expenses
+/// (postage, taxi, courier). Each tin has a custodian + an imprest
+/// amount. Reimbursements top it back to the imprest.
+/// </summary>
+public class PettyCashFund : TenantEntity
+{
+    public string Name { get; set; } = null!;
+    public Guid? CustodianUserId { get; set; }
+    public User? CustodianUser { get; set; }
+    public decimal ImprestAmount { get; set; }
+    public decimal CurrentBalance { get; set; }
+    public Guid? LinkedAccountId { get; set; }
+    public ChartOfAccount? LinkedAccount { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class PettyCashTransaction : TenantEntity
+{
+    public Guid FundId { get; set; }
+    public PettyCashFund Fund { get; set; } = null!;
+    public DateTime TransactionDate { get; set; }
+    public decimal Amount { get; set; }
+    /// <summary>"Disbursement" | "Replenishment" | "Adjustment".</summary>
+    public string Type { get; set; } = null!;
+    public string Description { get; set; } = null!;
+    public string? ReceiptReference { get; set; }
+    public Guid? ExpenseAccountId { get; set; }
+    public ChartOfAccount? ExpenseAccount { get; set; }
+    public Guid? JournalEntryId { get; set; }
+}
+
+/// <summary>
+/// Stock count session — counter records actual physical quantity
+/// per SKU; on close, the system posts an adjustment JE for every
+/// (counted - book) variance.
+/// </summary>
+public class StockCount : TenantEntity
+{
+    public string CountNumber { get; set; } = null!;
+    public DateTime CountDate { get; set; }
+    public Guid? WarehouseId { get; set; }
+    public string CountType { get; set; } = "Cycle";       // Full | Cycle | Spot
+    public string Status { get; set; } = "Open";           // Open | Counted | Adjusted | Closed
+    public Guid? CountedByUserId { get; set; }
+    public User? CountedByUser { get; set; }
+    public Guid? AdjustmentJournalEntryId { get; set; }
+    public string? Notes { get; set; }
+    public ICollection<StockCountLine> Lines { get; set; } = new List<StockCountLine>();
+}
+
+public class StockCountLine : BaseEntity
+{
+    public Guid StockCountId { get; set; }
+    public StockCount StockCount { get; set; } = null!;
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public decimal BookQuantity { get; set; }
+    public decimal CountedQuantity { get; set; }
+    public decimal UnitCost { get; set; }
+    /// <summary>(counted - book) × unitCost — drives the adjustment JE.</summary>
+    public decimal VarianceValue => (CountedQuantity - BookQuantity) * UnitCost;
+    public string? Notes { get; set; }
+}

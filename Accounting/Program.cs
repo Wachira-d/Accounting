@@ -131,6 +131,13 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Cheque.IChequeSer
 // payment status tracking.
 builder.Services.AddScoped<Accounting.Services.Implementations.Tax.IStampDutyService,
     Accounting.Services.Implementations.Tax.StampDutyService>();
+// Petty cash + Stock count + FX revaluation — Tier 2 SME modules.
+builder.Services.AddScoped<Accounting.Services.Implementations.PettyCash.IPettyCashService,
+    Accounting.Services.Implementations.PettyCash.PettyCashService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IStockCountService,
+    Accounting.Services.Implementations.Inventory.StockCountService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Forex.IFxRevaluationService,
+    Accounting.Services.Implementations.Forex.FxRevaluationService>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();

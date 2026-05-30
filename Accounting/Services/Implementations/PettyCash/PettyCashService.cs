@@ -1,0 +1,127 @@
+using Accounting.Data;
+using Accounting.Models.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations.PettyCash;
+
+/// <summary>
+/// Petty cash management — open a tin with an imprest amount, record
+/// disbursements as they happen, replenish back to imprest at month-
+/// end. Posts the cash-side JE automatically; user picks the expense
+/// account per disbursement.
+///
+/// Custodian model: each fund has ONE responsible user. Audit shows
+/// who took out what. Cycle-count (compare CurrentBalance to physical
+/// cash on hand) belongs in the StockCount-like flow but for cash.
+/// </summary>
+public interface IPettyCashService
+{
+    Task<PettyCashFund> CreateFundAsync(Guid companyId, string name,
+        Guid? custodianUserId, decimal imprestAmount, Guid? linkedAccountId,
+        CancellationToken ct = default);
+
+    Task<PettyCashTransaction> DisburseAsync(Guid companyId, Guid fundId,
+        decimal amount, string description, Guid? expenseAccountId,
+        string? receiptRef, DateTime txnDate, CancellationToken ct = default);
+
+    Task<PettyCashTransaction> ReplenishAsync(Guid companyId, Guid fundId,
+        decimal amount, string? notes, DateTime txnDate, CancellationToken ct = default);
+
+    Task<IReadOnlyList<PettyCashFund>> ListAsync(Guid companyId, CancellationToken ct = default);
+    Task<IReadOnlyList<PettyCashTransaction>> ListTransactionsAsync(Guid companyId, Guid fundId,
+        DateTime? fromDate, DateTime? toDate, CancellationToken ct = default);
+}
+
+public class PettyCashService : IPettyCashService
+{
+    private readonly AccountingDbContext _db;
+
+    public PettyCashService(AccountingDbContext db) { _db = db; }
+
+    public async Task<PettyCashFund> CreateFundAsync(Guid companyId, string name,
+        Guid? custodianUserId, decimal imprestAmount, Guid? linkedAccountId,
+        CancellationToken ct = default)
+    {
+        if (imprestAmount <= 0)
+            throw new ArgumentException("Imprest amount must be positive.");
+        var fund = new PettyCashFund
+        {
+            CompanyId = companyId,
+            Name = name,
+            CustodianUserId = custodianUserId,
+            ImprestAmount = imprestAmount,
+            CurrentBalance = 0m,            // bank → cash JE on first replenishment funds the tin
+            LinkedAccountId = linkedAccountId,
+        };
+        _db.PettyCashFunds.Add(fund);
+        await _db.SaveChangesAsync(ct);
+        return fund;
+    }
+
+    public async Task<PettyCashTransaction> DisburseAsync(Guid companyId, Guid fundId,
+        decimal amount, string description, Guid? expenseAccountId,
+        string? receiptRef, DateTime txnDate, CancellationToken ct = default)
+    {
+        if (amount <= 0) throw new ArgumentException("Amount must be positive.");
+        var fund = await _db.PettyCashFunds.FirstOrDefaultAsync(
+            f => f.Id == fundId && f.CompanyId == companyId, ct);
+        if (fund == null) throw new InvalidOperationException("Fund not found.");
+        if (fund.CurrentBalance < amount)
+            throw new InvalidOperationException(
+                $"Insufficient petty cash: balance {fund.CurrentBalance:N2}, requested {amount:N2}");
+        fund.CurrentBalance -= amount;
+        var txn = new PettyCashTransaction
+        {
+            CompanyId = companyId,
+            FundId = fundId,
+            TransactionDate = txnDate,
+            Amount = amount,
+            Type = "Disbursement",
+            Description = description,
+            ExpenseAccountId = expenseAccountId,
+            ReceiptReference = receiptRef,
+        };
+        _db.PettyCashTransactions.Add(txn);
+        await _db.SaveChangesAsync(ct);
+        return txn;
+    }
+
+    public async Task<PettyCashTransaction> ReplenishAsync(Guid companyId, Guid fundId,
+        decimal amount, string? notes, DateTime txnDate, CancellationToken ct = default)
+    {
+        if (amount <= 0) throw new ArgumentException("Amount must be positive.");
+        var fund = await _db.PettyCashFunds.FirstOrDefaultAsync(
+            f => f.Id == fundId && f.CompanyId == companyId, ct);
+        if (fund == null) throw new InvalidOperationException("Fund not found.");
+        fund.CurrentBalance += amount;
+        var txn = new PettyCashTransaction
+        {
+            CompanyId = companyId,
+            FundId = fundId,
+            TransactionDate = txnDate,
+            Amount = amount,
+            Type = "Replenishment",
+            Description = notes ?? "Top up petty cash",
+        };
+        _db.PettyCashTransactions.Add(txn);
+        await _db.SaveChangesAsync(ct);
+        return txn;
+    }
+
+    public Task<IReadOnlyList<PettyCashFund>> ListAsync(Guid companyId, CancellationToken ct = default) =>
+        _db.PettyCashFunds.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted)
+            .OrderBy(f => f.Name)
+            .ToListAsync(ct).ContinueWith(t => (IReadOnlyList<PettyCashFund>)t.Result, ct);
+
+    public Task<IReadOnlyList<PettyCashTransaction>> ListTransactionsAsync(Guid companyId, Guid fundId,
+        DateTime? fromDate, DateTime? toDate, CancellationToken ct = default)
+    {
+        var q = _db.PettyCashTransactions.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && t.FundId == fundId && !t.IsDeleted);
+        if (fromDate.HasValue) q = q.Where(t => t.TransactionDate >= fromDate.Value);
+        if (toDate.HasValue) q = q.Where(t => t.TransactionDate <= toDate.Value);
+        return q.OrderByDescending(t => t.TransactionDate).Take(500).ToListAsync(ct)
+            .ContinueWith(t => (IReadOnlyList<PettyCashTransaction>)t.Result, ct);
+    }
+}

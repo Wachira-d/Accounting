@@ -2,6 +2,7 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -168,6 +169,38 @@ public class TaxController : ControllerBase
         var fileName = $"{formType}_{year}{month:D2}.txt";
         var bytes = System.Text.Encoding.UTF8.GetBytes(export.FileContent);
         return File(bytes, "text/plain; charset=utf-8", fileName);
+    }
+
+    public sealed record RecordAckRequest(string RdAckNumber, DateTime RdAcknowledgedAt,
+        string? Status, string? RejectionReason, string? AckDocumentUrl);
+
+    /// <summary>Record the RD e-Filing acknowledgement after admin
+    /// uploads the report via the RD portal. The RD returns an ACK
+    /// number + timestamp (or a rejection); persisting these lets
+    /// the admin dashboard show "Filed + accepted" vs "Filed but ACK
+    /// pending" + the legal "received by RD" date for deadline
+    /// compliance.</summary>
+    [HttpPost("{reportId:guid}/rd-ack")]
+    public async Task<ActionResult<ApiResponse<object>>> RecordAck(
+        Guid companyId, Guid reportId, [FromBody] RecordAckRequest req,
+        [FromServices] Data.AccountingDbContext db,
+        CancellationToken ct)
+    {
+        var report = await db.TaxReports.FirstOrDefaultAsync(
+            r => r.Id == reportId && r.CompanyId == companyId, ct);
+        if (report == null) return NotFound(new ApiResponse<object>(false, null, "TaxReport not found"));
+        report.RdAckNumber = req.RdAckNumber;
+        report.RdAcknowledgedAt = req.RdAcknowledgedAt;
+        report.RdSubmissionStatus = req.Status ?? "Accepted";
+        report.RdRejectionReason = req.RejectionReason;
+        report.RdAcknowledgementDocumentUrl = req.AckDocumentUrl;
+        await db.SaveChangesAsync(ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            reportId, ackNumber = req.RdAckNumber,
+            acknowledgedAt = req.RdAcknowledgedAt,
+            status = report.RdSubmissionStatus,
+        }));
     }
 
     /// <summary>Local rule-based pre-check before e-Filing submission.

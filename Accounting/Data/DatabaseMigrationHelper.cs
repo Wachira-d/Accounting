@@ -866,6 +866,90 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "CostingMethod" integer NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "AverageUnitCost" decimal(18,4) NOT NULL DEFAULT 0;""",
 
+            // ===== Petty cash + stock count =====
+            """
+            CREATE TABLE IF NOT EXISTS "PettyCashFunds" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Name" varchar(100) NOT NULL,
+                "CustodianUserId" uuid NULL,
+                "ImprestAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "CurrentBalance" decimal(18,2) NOT NULL DEFAULT 0,
+                "LinkedAccountId" uuid NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PettyCashFunds" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "PettyCashTransactions" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "FundId" uuid NOT NULL,
+                "TransactionDate" timestamp NOT NULL,
+                "Amount" decimal(18,2) NOT NULL,
+                "Type" varchar(20) NOT NULL,
+                "Description" text NOT NULL,
+                "ReceiptReference" varchar(100) NULL,
+                "ExpenseAccountId" uuid NULL,
+                "JournalEntryId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PettyCashTransactions" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PettyCashTransactions_Fund" FOREIGN KEY ("FundId") REFERENCES "PettyCashFunds"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PettyCashTransactions_Fund_Date" ON "PettyCashTransactions" ("FundId", "TransactionDate") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "StockCounts" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "CountNumber" varchar(50) NOT NULL,
+                "CountDate" timestamp NOT NULL,
+                "WarehouseId" uuid NULL,
+                "CountType" varchar(20) NOT NULL DEFAULT 'Cycle',
+                "Status" varchar(20) NOT NULL DEFAULT 'Open',
+                "CountedByUserId" uuid NULL,
+                "AdjustmentJournalEntryId" uuid NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_StockCounts" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "StockCountLines" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "StockCountId" uuid NOT NULL,
+                "ProductId" uuid NOT NULL,
+                "BookQuantity" decimal(18,4) NOT NULL DEFAULT 0,
+                "CountedQuantity" decimal(18,4) NOT NULL DEFAULT 0,
+                "UnitCost" decimal(18,4) NOT NULL DEFAULT 0,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_StockCountLines" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_StockCountLines_Count" FOREIGN KEY ("StockCountId") REFERENCES "StockCounts"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_StockCounts_Company_Date" ON "StockCounts" ("CompanyId", "CountDate") WHERE "IsDeleted" = false;""",
+
+            // ===== TaxReport e-Filing ACK lifecycle =====
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAckNumber" varchar(50) NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAcknowledgedAt" timestamp NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdSubmissionStatus" varchar(30) NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdRejectionReason" text NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAcknowledgementDocumentUrl" text NULL;""",
+
             // ============================================================
             // ERP Upgrade — Task 1 (period close + migration), Task 4
             // (VAT deferral + filing lock + e-Filing), Task 5 (OCR audit)
