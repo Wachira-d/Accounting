@@ -1138,6 +1138,25 @@
         }
         try {
           await api.batchReconcile({ items });
+          // Per-match feedback — closes the training loop so
+          // BankMatchDistillationModel learns from every confirmed match.
+          // Fire-and-forget; never blocks the user.
+          try {
+            const accId = this.selectedAccount.id;
+            const cid = Layout.getCompanyId();
+            const outcomes = matches
+              .filter(m => m.perMatchFeedbackId && m.perMatchFeedbackId !== '00000000-0000-0000-0000-000000000000')
+              .map(m => ({
+                perMatchFeedbackId: m.perMatchFeedbackId,
+                chosenCandidateJson: JSON.stringify(m.candidates.map(c => ({
+                  type: c.candidateType, id: c.candidateId, amount: c.amount }))),
+                acceptedAi: true,        // user kept AI's suggestion
+              }));
+            if (outcomes.length > 0) {
+              await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match/outcomes`,
+                { outcomes });
+            }
+          } catch (e) { /* training feedback is best-effort */ }
           let msg = `ยืนยัน match แล้ว ${items.length} รายการ`;
           if (skipped.length > 0) msg += ` (ข้าม ${skipped.length} รายการที่ไม่มี Payment/JE)`;
           Layout.toast(msg);

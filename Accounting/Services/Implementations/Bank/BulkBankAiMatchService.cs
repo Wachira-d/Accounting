@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Ai;
 using Accounting.Services.Ai.Prompts;
@@ -27,7 +28,19 @@ public interface IBulkBankAiMatchService
 {
     Task<BulkAiMatchPlan> ProposeAsync(Guid companyId, Guid bankAccountId,
         DateTime fromDate, DateTime toDate, CancellationToken ct);
+
+    /// <summary>Record user's per-match accept/reject after the bulk
+    /// modal action — feeds the BankMatchDistillationModel training
+    /// corpus. Called by the controller right after batch-reconcile
+    /// applies, for each match the user accepted (or rejected).</summary>
+    Task RecordMatchOutcomesAsync(Guid companyId,
+        IReadOnlyList<BulkMatchOutcome> outcomes, CancellationToken ct);
 }
+
+public sealed record BulkMatchOutcome(
+    Guid PerMatchFeedbackId,
+    string ChosenCandidateJson,    // JSON of the chosen Payment/JE id (same shape as predicted)
+    bool AcceptedAi);              // true = accepted AI's suggestion as-is; false = picked alternative or rejected
 
 public sealed record BulkAiMatchPlan(
     Guid? FeedbackId,
@@ -46,7 +59,8 @@ public sealed record ProposedMatch(
     string MatchType,                         // "OneToOne" | "OneBankToManyDocs" | "ManyBanksToOneDoc"
     IReadOnlyList<MatchCandidate> Candidates,
     decimal Confidence,
-    string? Reasoning);
+    string? Reasoning,
+    Guid PerMatchFeedbackId);                 // child feedback row id — UI passes back when user accepts/rejects
 
 public sealed record MatchCandidate(
     Guid CandidateId,
@@ -63,11 +77,72 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
 
     private readonly AccountingDbContext _db;
     private readonly IAiOrchestrator _orchestrator;
+    private readonly IAiFeedbackRecorder _recorder;
     private readonly ILogger<BulkBankAiMatchService> _logger;
 
     public BulkBankAiMatchService(AccountingDbContext db, IAiOrchestrator orchestrator,
+        IAiFeedbackRecorder recorder,
         ILogger<BulkBankAiMatchService> logger)
-    { _db = db; _orchestrator = orchestrator; _logger = logger; }
+    { _db = db; _orchestrator = orchestrator; _recorder = recorder; _logger = logger; }
+
+    /// <summary>Per-match feedback synthesis — for each proposed match
+    /// we write a child feedback row in the SINGLE-MATCH shape that
+    /// BankMatchDistillationModel knows how to parse. Cost stays
+    /// attributed to the parent bulk call.</summary>
+    private async Task<Guid> SynthesisePerMatchFeedbackAsync(Guid companyId, Guid bankTxnId,
+        BankTransaction txn, string answerJson, decimal confidence,
+        Guid parentFeedbackId, CancellationToken ct)
+    {
+        // Single-match shape that BankMatchDistillationModel.ExtractKey
+        // recognises (description signature + amount bucket).
+        var perMatchJson = JsonSerializer.Serialize(new
+        {
+            bankTxn = new
+            {
+                description = txn.Description,
+                reference = txn.Reference,
+                payee = txn.Payee,
+                amount = Math.Abs(txn.Amount),
+                direction = txn.Amount >= 0 ? "In" : "Out",
+            },
+        });
+        var record = new AiFeedbackRecord(
+            CompanyId: companyId, FeatureKey: AiFeatureKey.BankStatementMatch,
+            PromptHash: "", PromptJson: perMatchJson,
+            ResponseJson: null,
+            AiPrimaryAnswer: answerJson, AiConfidence: confidence,
+            LocalModelAnswer: null, LocalModelConfidence: null, LocalModelVersion: null,
+            SourceEntityType: "BankTransaction", SourceEntityId: bankTxnId,
+            Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+            ModelVersion: null,
+            LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
+            CacheHitOfFeedbackId: parentFeedbackId == Guid.Empty ? null : parentFeedbackId,
+            ErrorMessage: null);
+        try { return await _recorder.RecordCallAsync(record, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Per-match feedback record failed for txn {Id}", bankTxnId);
+            return Guid.Empty;
+        }
+    }
+
+    public async Task RecordMatchOutcomesAsync(Guid companyId,
+        IReadOnlyList<BulkMatchOutcome> outcomes, CancellationToken ct)
+    {
+        foreach (var o in outcomes)
+        {
+            if (o.PerMatchFeedbackId == Guid.Empty) continue;
+            try
+            {
+                await _recorder.RecordUserChoiceAsync(o.PerMatchFeedbackId,
+                    o.ChosenCandidateJson, o.AcceptedAi, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Bulk match outcome record failed for fid {Id}", o.PerMatchFeedbackId);
+            }
+        }
+    }
 
     public async Task<BulkAiMatchPlan> ProposeAsync(Guid companyId, Guid bankAccountId,
         DateTime fromDate, DateTime toDate, CancellationToken ct)
@@ -241,6 +316,33 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // ── 8. Parse — defensive because AI output is JSON-but-fallible ─
         var parsed = ParseResponse(resp.RawResponseJson ?? resp.PrimaryAnswer);
 
+        // ── 8b. Per-match child feedback rows — so when user accepts /
+        // ── edits each row in the modal, BankMatchDistillationModel can
+        // ── learn per-signature instead of one big undifferentiated row.
+        // ── Need the BankTransaction entities again (with description /
+        // ── reference / payee) to populate the single-match shape.
+        var bankTxnLookup = await _db.BankTransactions.AsNoTracking()
+            .Where(t => t.BankAccountId == bankAccountId && !t.IsDeleted
+                        && parsed.Matches.Select(m => m.BankTxnId).Contains(t.Id))
+            .ToDictionaryAsync(t => t.Id, t => t, ct);
+        var matchesWithFids = new List<ProposedMatch>(parsed.Matches.Count);
+        foreach (var m in parsed.Matches)
+        {
+            if (!bankTxnLookup.TryGetValue(m.BankTxnId, out var bt))
+            {
+                matchesWithFids.Add(m with { PerMatchFeedbackId = Guid.Empty });
+                continue;
+            }
+            var answerJson = JsonSerializer.Serialize(m.Candidates.Select(c => new
+            {
+                type = c.CandidateType, id = c.CandidateId.ToString(), amount = c.Amount,
+            }));
+            var perFid = await SynthesisePerMatchFeedbackAsync(
+                companyId, m.BankTxnId, bt, answerJson, m.Confidence,
+                resp.FeedbackId ?? Guid.Empty, ct);
+            matchesWithFids.Add(m with { PerMatchFeedbackId = perFid });
+        }
+
         // Collect truncation + AI-side warnings into one cohesive list.
         var warnings = new List<string>(parsed.Warnings);
         if (truncatedBankTxns)
@@ -265,7 +367,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             Status: status,
             BankTxnsConsidered: txns.Count,
             CandidatesConsidered: openDocs.Count + openPayments.Count + openJes.Count,
-            Matches: parsed.Matches,
+            Matches: matchesWithFids,
             Unmatched: parsed.Unmatched,
             MissingData: parsed.MissingData,
             Warnings: warnings,
@@ -331,7 +433,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                         }
                     }
                     if (cands.Count > 0)
-                        matches.Add(new ProposedMatch(bid.Value, type, cands, conf, reasoning));
+                        matches.Add(new ProposedMatch(bid.Value, type, cands, conf, reasoning, Guid.Empty));
                 }
             }
             if (root.TryGetProperty("unmatched", out var us) && us.ValueKind == JsonValueKind.Array)

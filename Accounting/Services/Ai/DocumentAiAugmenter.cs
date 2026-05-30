@@ -75,6 +75,16 @@ public interface IDocumentAiAugmenter
         IReadOnlyList<string> warnings,
         object documentSnapshot, object? vendorHistory,
         CancellationToken ct = default);
+
+    /// <summary>Probe for a near-duplicate of the supplied draft —
+    /// routes through the orchestrator using FuzzyDuplicateDetection
+    /// so the local DuplicateDocumentDistillationModel runs first and
+    /// short-circuits the call when its cosine + amount + date score
+    /// exceeds the 0.70 floor. Returns null when no duplicate is
+    /// likely. Caller surfaces the warning in the save UI.</summary>
+    Task<DocumentAiSuggestion?> CheckDuplicateAsync(Guid companyId,
+        Guid contactId, decimal amount, DateTime documentDate,
+        string? subject, CancellationToken ct = default);
 }
 
 public sealed record BulkPvAccountingResult(
@@ -104,11 +114,56 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
 {
     private readonly AccountingDbContext _db;
     private readonly IAiOrchestrator _orchestrator;
+    private readonly IAiFeedbackRecorder _recorder;
     private readonly ILogger<DocumentAiAugmenter> _logger;
 
     public DocumentAiAugmenter(AccountingDbContext db, IAiOrchestrator orchestrator,
+        IAiFeedbackRecorder recorder,
         ILogger<DocumentAiAugmenter> logger)
-    { _db = db; _orchestrator = orchestrator; _logger = logger; }
+    { _db = db; _orchestrator = orchestrator; _recorder = recorder; _logger = logger; }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Per-line / per-warning feedback synthesis
+    //  ─────────────────────────────────────────
+    //  Bulk AI calls return ONE FeedbackId from the orchestrator
+    //  because the orchestrator records ONE row per provider call.
+    //  But distillation models learn per-(vendor, line-keyword) or
+    //  per-(warning template) — they need ONE feedback row per child
+    //  item with the SINGLE-ITEM prompt shape they know how to parse.
+    //
+    //  We synthesise those child rows immediately after parsing the
+    //  bulk response, linking each back to the parent via
+    //  CacheHitOfFeedbackId so the cost stays attributed to the
+    //  parent (child rows have LatencyMs=0, Cost=0). The UI then
+    //  calls RecordUserChoice with the CHILD's FeedbackId when the
+    //  user accepts/edits a single line, and distillation training
+    //  picks up the per-line label naturally.
+    // ────────────────────────────────────────────────────────────────
+    private async Task<Guid> SynthesiseChildFeedbackAsync(
+        Guid companyId, AiFeatureKey feature,
+        string syntheticPromptJson, string? aiAnswer, decimal? aiConfidence,
+        string? sourceEntityType, Guid? sourceEntityId,
+        Guid parentFeedbackId, CancellationToken ct)
+    {
+        var record = new AiFeedbackRecord(
+            CompanyId: companyId, FeatureKey: feature,
+            PromptHash: "", PromptJson: syntheticPromptJson,
+            ResponseJson: null,
+            AiPrimaryAnswer: aiAnswer, AiConfidence: aiConfidence,
+            LocalModelAnswer: null, LocalModelConfidence: null, LocalModelVersion: null,
+            SourceEntityType: sourceEntityType, SourceEntityId: sourceEntityId,
+            Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+            ModelVersion: null,
+            LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
+            CacheHitOfFeedbackId: parentFeedbackId == Guid.Empty ? null : parentFeedbackId,
+            ErrorMessage: null);
+        try { return await _recorder.RecordCallAsync(record, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Child feedback record failed for {Feature}", feature);
+            return Guid.Empty;
+        }
+    }
 
     public async Task<DocumentAiSuggestion> SuggestApprovalWarningFixAsync(
         Guid companyId, Guid documentId, string warningText,
@@ -339,7 +394,38 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 vendor, src, lineInputs, candidates, history, currency);
             var resp = await _orchestrator.AskAsync(req, ct);
 
-            return ParseBulkPvResponse(resp, lines);
+            var parsed = ParseBulkPvResponse(resp, lines);
+
+            // Synthesise per-line child feedback rows so the GL-account
+            // distillation model has the single-line shape it knows how
+            // to parse + so the UI's per-line "user picked X" can flow
+            // into per-line training labels.
+            var withChildIds = new Dictionary<Guid, DocumentAiSuggestion>(parsed.ByLineId.Count);
+            foreach (var l in lines)
+            {
+                if (!parsed.ByLineId.TryGetValue(l.LineId, out var sugg))
+                {
+                    withChildIds[l.LineId] = Fallback(null, null);
+                    continue;
+                }
+                var perLineJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    vendor = new { name = vendorName, tax_id = vendorTaxId, industry = vendorIndustry },
+                    line = new { description = l.Description, amount = l.Amount },
+                });
+                var childFid = await SynthesiseChildFeedbackAsync(
+                    companyId,
+                    AiFeatureKey.PaymentVoucherAccountingSuggestion,
+                    perLineJson,
+                    aiAnswer: sugg.Answer,
+                    aiConfidence: sugg.Confidence,
+                    sourceEntityType: "DocumentLine",
+                    sourceEntityId: l.LineId,
+                    parentFeedbackId: resp.FeedbackId ?? Guid.Empty,
+                    ct);
+                withChildIds[l.LineId] = sugg with { FeedbackId = childFid };
+            }
+            return parsed with { ByLineId = withChildIds };
         }
         catch (Exception ex)
         {
@@ -448,7 +534,33 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             var req = BulkApprovalWarningFixPrompt.Build(
                 companyId, documentId, warnings, documentSnapshot, vendorHistory);
             var resp = await _orchestrator.AskAsync(req, ct);
-            return ParseBulkApprovalResponse(resp, warnings);
+            var parsed = ParseBulkApprovalResponse(resp, warnings);
+
+            // Synthesise per-warning child rows so ApprovalWarningDistillationModel
+            // can mine each warning_template → fix mapping individually.
+            // UI uses these per-warning FeedbackIds when user confirms.
+            var enriched = new List<DocumentAiSuggestion>(parsed.Hints.Count);
+            for (int i = 0; i < parsed.Hints.Count; i++)
+            {
+                var hint = parsed.Hints[i];
+                var perWarnJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    warning = warnings[i],
+                    document = documentSnapshot,
+                });
+                var childFid = await SynthesiseChildFeedbackAsync(
+                    companyId,
+                    AiFeatureKey.ApprovalWarningFixSuggestion,
+                    perWarnJson,
+                    aiAnswer: hint.Answer,
+                    aiConfidence: hint.Confidence,
+                    sourceEntityType: "Document",
+                    sourceEntityId: documentId,
+                    parentFeedbackId: resp.FeedbackId ?? Guid.Empty,
+                    ct);
+                enriched.Add(hint with { FeedbackId = childFid });
+            }
+            return parsed with { Hints = enriched };
         }
         catch (Exception ex)
         {
@@ -516,6 +628,46 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
         for (int i = 0; i < warnings.Count; i++)
             hints.Add(byIdx.TryGetValue(i, out var h) ? h : Fallback("Acknowledge", 0.50m));
         return new BulkApprovalWarningFixResult(hints, rootCause, parseWarnings, resp.UsedAi);
+    }
+
+    public async Task<DocumentAiSuggestion?> CheckDuplicateAsync(Guid companyId,
+        Guid contactId, decimal amount, DateTime documentDate,
+        string? subject, CancellationToken ct = default)
+    {
+        try
+        {
+            var payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                document = new
+                {
+                    contactId = contactId.ToString(),
+                    amount,
+                    documentDate = documentDate.ToString("yyyy-MM-dd"),
+                    subject = subject ?? "",
+                },
+            });
+            var req = new AiRequest
+            {
+                FeatureKey = AiFeatureKey.FuzzyDuplicateDetection,
+                CompanyId = companyId,
+                SystemPrompt = "Detect near-duplicate documents based on contact + amount + date + subject similarity.",
+                UserPromptJson = payload,
+                SourceEntityType = "DocumentDraft",
+                CacheTtlOverrideDays = 0,
+                BypassCache = true,
+                MaxTokensOverride = 300,
+            };
+            var resp = await _orchestrator.AskAsync(req, ct);
+            // Local model returns the matched Document id JSON when
+            // confidence ≥ 0.70 (its floor); below that, both local and
+            // AI may decline — Convert handles null PrimaryAnswer.
+            return string.IsNullOrWhiteSpace(resp.PrimaryAnswer) ? null : Convert(resp);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Duplicate detection failed");
+            return null;
+        }
     }
 
     private static DocumentAiSuggestion Convert(AiResponse resp) => new(

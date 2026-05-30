@@ -136,6 +136,26 @@ public class BankController : ControllerBase
         return Ok(new ApiResponse<Services.Implementations.Bank.BulkAiMatchPlan>(true, plan, msg));
     }
 
+    public sealed record BulkBankMatchOutcomesRequest(
+        List<Services.Implementations.Bank.BulkMatchOutcome> Outcomes);
+
+    /// <summary>Hook for the UI to record per-match feedback after the
+    /// user clicks "ยืนยัน match ที่เลือก" in the bulk modal. Each
+    /// outcome is the child feedback row id + the chosen candidate +
+    /// whether the user took AI's pick as-is. Feeds the
+    /// BankMatchDistillationModel training corpus so accuracy keeps
+    /// improving with every bulk session.</summary>
+    [HttpPost("accounts/{accountId:guid}/bulk-ai-match/outcomes")]
+    public async Task<ActionResult<ApiResponse<object>>> RecordBulkMatchOutcomes(
+        Guid companyId, Guid accountId,
+        [FromBody] BulkBankMatchOutcomesRequest req,
+        [FromServices] Services.Implementations.Bank.IBulkBankAiMatchService bulk,
+        CancellationToken ct)
+    {
+        await bulk.RecordMatchOutcomesAsync(companyId, req.Outcomes ?? new(), ct);
+        return Ok(new ApiResponse<object>(true, new { recorded = req.Outcomes?.Count ?? 0 }));
+    }
+
     [HttpGet("accounts/{accountId:guid}/reconciliation-summary")]
     public async Task<ActionResult<ApiResponse<ReconciliationSummaryDto>>> GetReconciliationSummary(
         Guid companyId, Guid accountId)

@@ -456,6 +456,109 @@ public class AiSuggestionController : ControllerBase
         catch { return Array.Empty<string>(); }
     }
 
+    // ────────────────────────────────────────────────────────────────
+    //  Reorder forecast narrative — wraps the Croston output with a
+    //  DeepSeek prose summary so admin gets a one-line per-SKU
+    //  recommendation ("SKU 1234 จะหมดใน 7 วัน — แนะนำสั่ง 50 ชิ้น").
+    // ────────────────────────────────────────────────────────────────
+    public sealed record ReorderNarrativeRequest(
+        List<ReorderNarrativeRow> Rows);
+
+    public sealed record ReorderNarrativeRow(
+        string Sku, string Name, decimal CurrentStock,
+        decimal AvgDailyDemand, decimal DaysOfStockRemaining,
+        decimal SuggestedOrderQuantity, string Urgency);
+
+    [HttpPost("inventory/reorder-narrative")]
+    public async Task<ActionResult<ApiResponse<object>>> ReorderNarrative(
+        Guid companyId, [FromBody] ReorderNarrativeRequest req,
+        [FromServices] IAiOrchestrator orchestrator,
+        CancellationToken ct)
+    {
+        if (req.Rows == null || req.Rows.Count == 0)
+            return Ok(new ApiResponse<object>(true, new { narrative = "", usedAi = false }));
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            task = "reorder_forecast_narrative",
+            rows = req.Rows.Take(40),       // cap context
+        });
+        var aiReq = new AiRequest
+        {
+            FeatureKey = AiFeatureKey.ReorderForecast,
+            CompanyId = companyId,
+            SystemPrompt = "You are a Thai inventory analyst. Given a Croston-forecasted reorder report, produce 3-5 sentences in Thai prioritising which SKUs to act on first + why. Be specific (use SKU codes + amounts).",
+            UserPromptJson = payload,
+            CacheTtlOverrideDays = 1,
+            MaxTokensOverride = 600,
+        };
+        var resp = await orchestrator.AskAsync(aiReq, ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            narrative = resp.PrimaryAnswer ?? resp.Reasoning ?? "",
+            usedAi = resp.UsedAi,
+            feedbackId = resp.FeedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Anomaly explanation — local model returns deterministic Thai
+    //  reason + suggested actions from MAD z-score; DeepSeek wraps
+    //  the borderline 5% with prose. Hybrid mode by default.
+    // ────────────────────────────────────────────────────────────────
+    public sealed record ExplainAnomalyRequest(
+        Guid? AnomalyId, decimal Amount,
+        List<decimal> History,
+        string? VendorName, string? VendorTaxId);
+
+    [HttpPost("anomaly/explain")]
+    public async Task<ActionResult<ApiResponse<object>>> ExplainAnomaly(
+        Guid companyId, [FromBody] ExplainAnomalyRequest req,
+        [FromServices] IAiOrchestrator orchestrator,
+        CancellationToken ct)
+    {
+        if (req.Amount <= 0 || req.History == null || req.History.Count < 3)
+            return BadRequest(new ApiResponse<object>(false, null,
+                "ต้องการ amount + ประวัติย่างน้อย 3 ค่า"));
+        var aiReq = Accounting.Services.Ai.Prompts.AnomalyExplainPrompt.Build(
+            companyId, req.AnomalyId ?? Guid.NewGuid(),
+            anomalyType: "AmountOutlier",
+            anomalyDescription: $"Amount {req.Amount} flagged",
+            vendorHistory12mo: new { vendor = req.VendorName, history = req.History },
+            peerAverage: new { },
+            anomalyAmount: req.Amount,
+            anomalyContextJson: "{}",
+            localGuess: null);
+        var resp = await orchestrator.AskAsync(aiReq, ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            answer = resp.PrimaryAnswer,
+            confidence = resp.Confidence,
+            reasoning = resp.Reasoning,
+            usedAi = resp.UsedAi,
+            feedbackId = resp.FeedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Duplicate document detection — UI calls this BEFORE save to
+    //  surface "a very similar document already exists" warning.
+    // ────────────────────────────────────────────────────────────────
+    public sealed record CheckDuplicateRequest(
+        Guid ContactId, decimal Amount, DateTime DocumentDate, string? Subject);
+
+    [HttpPost("documents/check-duplicate")]
+    public async Task<ActionResult<ApiResponse<object>>> CheckDuplicate(
+        Guid companyId, [FromBody] CheckDuplicateRequest req, CancellationToken ct)
+    {
+        var r = await _docAi.CheckDuplicateAsync(
+            companyId, req.ContactId, req.Amount, req.DocumentDate, req.Subject, ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            isDuplicate = r != null,
+            ai = ToDto(r),
+        }));
+    }
+
     private static object ToDto(DocumentAiSuggestion? r)
     {
         r ??= new DocumentAiSuggestion(

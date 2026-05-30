@@ -191,8 +191,12 @@
             <option value="2.326">99%</option>
           </select>
           <button class="btn btn-primary" onclick="Page.loadReorder()">โหลดรายงาน</button>
+          <button class="btn" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
+            onclick="Page.requestReorderNarrative()" id="btnReorderAi"
+            title="ให้ AI สรุปลำดับความสำคัญ + เหตุผลภาษาไทย">🧠 AI สรุป</button>
         </div>
       </div>
+      <div id="reorderNarrative" style="display:none;background:#eef2ff;border-left:4px solid #6366f1;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:14px;color:#1e293b"></div>
 
       <div id="reorderSummary" style="display:none;padding:16px;background:#fef3c7;border-left:4px solid #d97706;border-radius:8px;margin:16px 0">
         <div style="display:flex;gap:24px;flex-wrap:wrap">
@@ -267,6 +271,7 @@
           const sl = +document.getElementById('reorderServiceLevel').value;
           const r = await api.get(`/products/reorder-forecast?historyDays=${h}&leadTimeDays=${lt}&serviceLevelZ=${sl}`);
           const rows = r.data || [];
+          this._lastReorderRows = rows;
           const counts = { Critical: 0, Warning: 0, OK: 0, Idle: 0 };
           rows.forEach(x => { counts[x.urgency] = (counts[x.urgency] || 0) + 1; });
           document.getElementById('roCritCount').textContent = counts.Critical;
@@ -302,6 +307,36 @@
           </tr>`).join('');
         } catch (e) {
           tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
+        }
+      },
+
+      async requestReorderNarrative() {
+        if (!this._lastReorderRows || this._lastReorderRows.length === 0) {
+          Layout.toast('โหลดรายงานก่อน', 'error'); return;
+        }
+        const btn = document.getElementById('btnReorderAi');
+        const nb = document.getElementById('reorderNarrative');
+        btn.disabled = true; btn.textContent = '🧠 AI กำลังคิด...';
+        nb.style.display = 'block'; nb.textContent = 'กำลังประมวลผล...';
+        try {
+          const cid = Layout.getCompanyId();
+          const top = this._lastReorderRows
+            .filter(r => r.urgency === 'Critical' || r.urgency === 'Warning')
+            .slice(0, 40);
+          const r = await API.post(`/api/companies/${cid}/ai/inventory/reorder-narrative`, {
+            rows: top.map(x => ({
+              sku: x.sku || '-', name: x.name,
+              currentStock: x.currentStock, avgDailyDemand: x.avgDailyDemand,
+              daysOfStockRemaining: x.daysOfStockRemaining,
+              suggestedOrderQuantity: x.suggestedOrderQuantity,
+              urgency: x.urgency,
+            })),
+          });
+          nb.textContent = r.data?.narrative || '(AI ไม่ตอบ)';
+          btn.disabled = false; btn.textContent = '🧠 AI สรุป';
+        } catch (e) {
+          nb.textContent = 'ผิดพลาด: ' + e.message;
+          btn.disabled = false; btn.textContent = '🧠 AI สรุป';
         }
       },
 
