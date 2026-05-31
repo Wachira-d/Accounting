@@ -3755,23 +3755,45 @@ public static class DatabaseMigrationHelper
             // ChequeBook.BankAccount, inbound has no chequeBook.
             """ALTER TABLE "Cheques" ADD COLUMN IF NOT EXISTS "DepositBankAccountId" uuid NULL;""",
 
-            // Orphan column on CompanySettings — added by a past migration
-            // with NOT NULL but no DEFAULT, and the C# entity never carried
-            // the property. Every GetOrCreateSettingsAsync on a brand-new
-            // company exploded with "23502 null value in column
-            // AllowFreelanceAccess". Setting a DEFAULT here makes EF's
-            // INSERT (which omits the column it doesn't know about) succeed
-            // by falling back to the default. Idempotent.
+            // Orphan NOT NULL columns on CompanySettings — added by past
+            // migrations without DEFAULT, never carried into the C# entity.
+            // Every GetOrCreateSettingsAsync on a brand-new company exploded
+            // because EF's INSERT omits unknown columns; Postgres rejects
+            // the row on the NOT NULL constraint. Specific casualties:
+            // AllowFreelanceAccess, MaxFreelanceUsers, possibly others.
+            //
+            // Rather than patch each name individually (we keep finding more),
+            // this DO block walks information_schema and SETs a type-
+            // appropriate DEFAULT on every NOT NULL column that lacks one,
+            // then backfills NULLs (defensive — should be none since the
+            // constraint already blocks them, but safe). Idempotent.
             """
-            DO $$ BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'CompanySettings'
-                      AND column_name = 'AllowFreelanceAccess'
-                ) THEN
-                    ALTER TABLE "CompanySettings" ALTER COLUMN "AllowFreelanceAccess" SET DEFAULT false;
-                    UPDATE "CompanySettings" SET "AllowFreelanceAccess" = false WHERE "AllowFreelanceAccess" IS NULL;
-                END IF;
+            DO $$
+            DECLARE r record;
+            BEGIN
+                FOR r IN
+                    SELECT column_name, data_type, udt_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'CompanySettings'
+                      AND is_nullable = 'NO'
+                      AND column_default IS NULL
+                LOOP
+                    IF r.data_type IN ('boolean') THEN
+                        EXECUTE format('ALTER TABLE "CompanySettings" ALTER COLUMN %I SET DEFAULT false', r.column_name);
+                    ELSIF r.data_type IN ('integer','bigint','smallint','numeric','real','double precision') THEN
+                        EXECUTE format('ALTER TABLE "CompanySettings" ALTER COLUMN %I SET DEFAULT 0', r.column_name);
+                    ELSIF r.data_type IN ('character varying','varchar','text','character','char') THEN
+                        EXECUTE format('ALTER TABLE "CompanySettings" ALTER COLUMN %I SET DEFAULT ''''', r.column_name);
+                    ELSIF r.data_type IN ('timestamp without time zone','timestamp with time zone','timestamptz') THEN
+                        EXECUTE format('ALTER TABLE "CompanySettings" ALTER COLUMN %I SET DEFAULT now()', r.column_name);
+                    ELSIF r.data_type IN ('date') THEN
+                        EXECUTE format('ALTER TABLE "CompanySettings" ALTER COLUMN %I SET DEFAULT CURRENT_DATE', r.column_name);
+                    ELSIF r.data_type IN ('uuid') THEN
+                        -- Don't auto-default uuids; CompanyId etc. should always be supplied.
+                        NULL;
+                    END IF;
+                END LOOP;
             END $$;
             """,
 
