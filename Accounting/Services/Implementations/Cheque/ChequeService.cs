@@ -2,6 +2,11 @@ using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
+// Alias the Cheque entity — the file's own namespace
+// (Accounting.Services.Implementations.Cheque) shadows the unqualified
+// name "Cheque" via outer-namespace resolution, so we use this alias
+// in method signatures + var initialisers to disambiguate.
+using ChequeEntity = Accounting.Models.Entities.Cheque;
 
 namespace Accounting.Services.Implementations.Cheque;
 
@@ -26,11 +31,11 @@ public interface IChequeService
     Task<ChequeBook> OpenChequeBookAsync(Guid companyId, Guid bankAccountId,
         string bookNumber, long startNumber, long endNumber, CancellationToken ct = default);
 
-    Task<Cheque> IssueOutboundAsync(Guid companyId, Guid chequeBookId,
+    Task<ChequeEntity> IssueOutboundAsync(Guid companyId, Guid chequeBookId,
         Guid? contactId, DateTime chequeDate, decimal amount, Guid? paymentId,
         string? notes, Guid? projectId = null, CancellationToken ct = default);
 
-    Task<Cheque> RecordInboundAsync(Guid companyId, Guid? contactId,
+    Task<ChequeEntity> RecordInboundAsync(Guid companyId, Guid? contactId,
         long chequeNumber, string issuingBank, DateTime chequeDate,
         decimal amount, Guid? paymentId, string? notes,
         Guid? projectId = null,
@@ -40,16 +45,16 @@ public interface IChequeService
         Guid? depositBankAccountId = null,
         CancellationToken ct = default);
 
-    Task<Cheque> MarkClearedAsync(Guid companyId, Guid chequeId,
+    Task<ChequeEntity> MarkClearedAsync(Guid companyId, Guid chequeId,
         DateTime clearedAt, CancellationToken ct = default);
 
-    Task<Cheque> MarkBouncedAsync(Guid companyId, Guid chequeId,
+    Task<ChequeEntity> MarkBouncedAsync(Guid companyId, Guid chequeId,
         string reason, CancellationToken ct = default);
 
-    Task<Cheque> VoidAsync(Guid companyId, Guid chequeId,
+    Task<ChequeEntity> VoidAsync(Guid companyId, Guid chequeId,
         string? notes, CancellationToken ct = default);
 
-    Task<IReadOnlyList<Cheque>> ListOutstandingAsync(Guid companyId,
+    Task<IReadOnlyList<ChequeEntity>> ListOutstandingAsync(Guid companyId,
         Guid? bankAccountId, CancellationToken ct = default);
 }
 
@@ -75,7 +80,7 @@ public class ChequeService : IChequeService
     {
         if (endNumber < startNumber)
             throw new ArgumentException("EndChequeNumber must be ≥ StartChequeNumber.");
-        var book = new ChequeBook
+        var book = new ChequeEntityBook
         {
             CompanyId = companyId,
             BankAccountId = bankAccountId,
@@ -90,7 +95,7 @@ public class ChequeService : IChequeService
         return book;
     }
 
-    public async Task<Cheque> IssueOutboundAsync(Guid companyId, Guid chequeBookId,
+    public async Task<ChequeEntity> IssueOutboundAsync(Guid companyId, Guid chequeBookId,
         Guid? contactId, DateTime chequeDate, decimal amount, Guid? paymentId,
         string? notes, Guid? projectId = null, CancellationToken ct = default)
     {
@@ -102,7 +107,7 @@ public class ChequeService : IChequeService
         if (book.NextNumber > book.EndChequeNumber)
             throw new InvalidOperationException("ChequeBook exhausted — open a new book first.");
 
-        var cheque = new Cheque
+        var cheque = new ChequeEntity
         {
             CompanyId = companyId,
             ChequeBookId = book.Id,
@@ -124,14 +129,14 @@ public class ChequeService : IChequeService
         return cheque;
     }
 
-    public async Task<Cheque> RecordInboundAsync(Guid companyId, Guid? contactId,
+    public async Task<ChequeEntity> RecordInboundAsync(Guid companyId, Guid? contactId,
         long chequeNumber, string issuingBank, DateTime chequeDate,
         decimal amount, Guid? paymentId, string? notes,
         Guid? projectId = null,
         Guid? depositBankAccountId = null, CancellationToken ct = default)
     {
         if (amount <= 0) throw new ArgumentException("Amount must be positive.");
-        var cheque = new Cheque
+        var cheque = new ChequeEntity
         {
             CompanyId = companyId,
             ChequeBookId = null,                 // not from OUR book
@@ -152,7 +157,7 @@ public class ChequeService : IChequeService
         return cheque;
     }
 
-    public async Task<Cheque> MarkClearedAsync(Guid companyId, Guid chequeId,
+    public async Task<ChequeEntity> MarkClearedAsync(Guid companyId, Guid chequeId,
         DateTime clearedAt, CancellationToken ct = default)
     {
         var cheque = await _db.Cheques
@@ -195,7 +200,7 @@ public class ChequeService : IChequeService
         return cheque;
     }
 
-    public async Task<Cheque> MarkBouncedAsync(Guid companyId, Guid chequeId,
+    public async Task<ChequeEntity> MarkBouncedAsync(Guid companyId, Guid chequeId,
         string reason, CancellationToken ct = default)
     {
         var cheque = await _db.Cheques
@@ -217,7 +222,7 @@ public class ChequeService : IChequeService
         return cheque;
     }
 
-    public async Task<Cheque> VoidAsync(Guid companyId, Guid chequeId,
+    public async Task<ChequeEntity> VoidAsync(Guid companyId, Guid chequeId,
         string? notes, CancellationToken ct = default)
     {
         var cheque = await _db.Cheques.FirstOrDefaultAsync(c => c.Id == chequeId
@@ -232,7 +237,7 @@ public class ChequeService : IChequeService
         return cheque;
     }
 
-    public async Task<IReadOnlyList<Cheque>> ListOutstandingAsync(Guid companyId,
+    public async Task<IReadOnlyList<ChequeEntity>> ListOutstandingAsync(Guid companyId,
         Guid? bankAccountId, CancellationToken ct = default)
     {
         var q = _db.Cheques.AsNoTracking()
