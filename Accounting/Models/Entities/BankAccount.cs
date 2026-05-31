@@ -266,6 +266,14 @@ public class Cheque : TenantEntity
 
     public bool IsInbound { get; set; }       // true = received from customer; false = issued by us
     public string? Notes { get; set; }
+
+    /// <summary>Inbound only — our bank account that the customer's
+    /// cheque is deposited into. Drives the bank-balance credit when
+    /// the deposit clears (outbound cheques use ChequeBook.BankAccount
+    /// instead). Null = bank-balance side intentionally skipped (rare,
+    /// e.g. cheque endorsed forward without depositing).</summary>
+    public Guid? DepositBankAccountId { get; set; }
+    public BankAccount? DepositBankAccount { get; set; }
     /// <summary>Project the cheque is associated with (cost project
     /// on outbound; revenue project on inbound).</summary>
     public Guid? ProjectId { get; set; }

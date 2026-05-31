@@ -3743,6 +3743,11 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Payment" ON "PaymentAllocations" ("PaymentId") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Document" ON "PaymentAllocations" ("CompanyId", "DocumentId") WHERE "IsDeleted" = false;""",
 
+            // Inbound cheques need an explicit deposit-bank link so
+            // MarkCleared can update bank balance — outbound uses
+            // ChequeBook.BankAccount, inbound has no chequeBook.
+            """ALTER TABLE "Cheques" ADD COLUMN IF NOT EXISTS "DepositBankAccountId" uuid NULL;""",
+
             // Employee EmployeeCode uniqueness is now scoped to active
             // (non-soft-deleted) rows so partners can recreate / restore
             // an employee code after deletion. Drop the legacy unique

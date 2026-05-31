@@ -2990,6 +2990,16 @@ public class AccountingDbContext : DbContext
             e.HasQueryFilter(c => !c.IsDeleted);
         });
 
+        // ===== Soft-delete filters for entities created via raw-SQL
+        //       migration (no other EF config beyond the DbSet). Without
+        //       these, eager-loaded nav properties on Payment.Allocations
+        //       and Employee.CompensationProfile would surface soft-
+        //       deleted rows.
+        modelBuilder.Entity<PaymentAllocation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<EmployeeProjectTime>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<EmployeeCompensationProfile>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CompanyCompensationDefaults>().HasQueryFilter(e => !e.IsDeleted);
+
         // ===== SiteCustomerAddress =====
         modelBuilder.Entity<SiteCustomerAddress>(e =>
         {

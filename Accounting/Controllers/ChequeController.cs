@@ -53,7 +53,12 @@ public class ChequeController : ControllerBase
 
     public sealed record RecordInboundRequest(Guid? ContactId, long ChequeNumber,
         string IssuingBank, DateTime ChequeDate, decimal Amount, Guid? PaymentId, string? Notes,
-        Guid? ProjectId = null);
+        Guid? ProjectId = null,
+        /// <summary>Our bank account that the customer cheque is deposited into.
+        /// Drives the bank-balance credit when MarkCleared fires. Strongly
+        /// recommended; when omitted, the cleared event logs a warning and
+        /// skips the balance side (operator must reconcile manually).</summary>
+        Guid? DepositBankAccountId = null);
 
     [HttpPost("inbound")]
     public async Task<ActionResult<ApiResponse<Cheque>>> RecordInbound(
@@ -62,7 +67,8 @@ public class ChequeController : ControllerBase
         try
         {
             var c = await _svc.RecordInboundAsync(companyId, req.ContactId, req.ChequeNumber,
-                req.IssuingBank, req.ChequeDate, req.Amount, req.PaymentId, req.Notes, req.ProjectId, ct);
+                req.IssuingBank, req.ChequeDate, req.Amount, req.PaymentId, req.Notes,
+                req.ProjectId, req.DepositBankAccountId, ct);
             return Ok(new ApiResponse<Cheque>(true, c, "บันทึกเช็ครับจากลูกค้า"));
         }
         catch (ArgumentException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
