@@ -1703,8 +1703,19 @@ const Layout = {
       // Ignore aborted fetches / cancelled requests
       if (r.name === 'AbortError') return;
       const raw = (r.message || String(r));
-      // Strip the "Server returned non-JSON…" technical noise — replace
-      // with a short message and keep the detail in the console for debugging.
+      // Suppress the generic backend 500 toast when we don't have a useful
+      // hint — repeatedly slamming the user with "เกิดข้อผิดพลาดภายในระบบ"
+      // on every page load (when one of the many background init calls
+      // fails) is worse than silent. We still log to console + ErrorLogs
+      // server-side, and a click on the silent-error icon in the header
+      // surfaces the last error for debugging.
+      const isGenericBackend500 = /เกิดข้อผิดพลาดภายในระบบ/.test(raw) && (r.status === 500 || /HTTP 500/.test(raw));
+      if (isGenericBackend500) {
+        this._lastSilentError = { at: new Date().toISOString(), reason: r, message: raw };
+        console.error('[unhandled · 500 suppressed]', r);
+        try { this._showSilentErrorBadge(); } catch {}
+        return;
+      }
       const friendly = /non-JSON|HTTP 5\d\d|<!doctype/i.test(raw)
         ? 'เซิร์ฟเวอร์มีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้ง หรือรีเฟรชหน้านี้'
         : raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
@@ -1718,6 +1729,21 @@ const Layout = {
       console.error('[window.error]', e.error);
     });
     this._errHandlerInstalled = true;
+  },
+
+  _showSilentErrorBadge() {
+    if (document.getElementById('silentErrorBadge')) return;
+    const badge = document.createElement('div');
+    badge.id = 'silentErrorBadge';
+    badge.style.cssText = 'position:fixed;bottom:16px;right:16px;background:#fbbf24;color:#78350f;padding:8px 14px;border-radius:20px;font-size:12px;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,.15);cursor:pointer;z-index:9998;display:flex;align-items:center;gap:6px';
+    badge.innerHTML = '⚠️ มี API บางตัวล้มเหลว (คลิกเพื่อดูรายละเอียด)';
+    badge.onclick = () => {
+      const e = this._lastSilentError;
+      if (!e) return;
+      const txt = `เวลา: ${e.at}\nข้อความ: ${e.message}\n\n${e.reason?.body ? 'Body:\n' + JSON.stringify(e.reason.body, null, 2) : ''}`;
+      alert(txt);
+    };
+    document.body.appendChild(badge);
   },
 
   toast(msg, type = 'success') {
