@@ -2880,6 +2880,239 @@ public class DocumentService : IDocumentService
         }); // end ExecutionStrategy
     }
 
+    /// <summary>Multi-document payment — one Payment row settles many
+    /// Documents pro-rata to caller-specified AllocatedAmount per row.
+    /// Each allocation triggers the same per-doc settlement (PaidAmount
+    /// roll, status flip, WHT slice, per-doc JE) the legacy
+    /// single-doc path uses, so existing accounting invariants stay
+    /// intact. Bank balance is updated ONCE at the total.
+    ///
+    /// Validation:
+    ///   • Every allocation amount must be ≤ that doc's BalanceDue
+    ///   • SUM(allocations) ≤ Amount; the remainder is reported as
+    ///     UnappliedCredit (operator can attach later via PUT)
+    ///   • All target docs must be Approved / PartiallyPaid / Sent
+    ///   • Documents must share the same Contact (mixing customers in
+    ///     one cheque is almost always a data-entry error)
+    ///   • Multiple bank accounts across docs are tolerated — the bank
+    ///     balance hits the OverrideBankAccountId or the FIRST doc's
+    ///     BankAccountId in that order.
+    /// </summary>
+    public async Task<PaymentResponse> CreateMultiDocPaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
+    {
+        if (request.Allocations == null || request.Allocations.Count == 0)
+            throw new InvalidOperationException("Allocations ต้องมีอย่างน้อย 1 รายการ");
+        if (request.Amount <= 0)
+            throw new InvalidOperationException("จำนวนเงินชำระต้องมากกว่า 0");
+        if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
+            throw new InvalidOperationException("วันที่ชำระเงินต้องไม่เป็นวันที่ในอนาคต");
+
+        var allocSum = request.Allocations.Sum(a => a.AllocatedAmount);
+        if (request.Allocations.Any(a => a.AllocatedAmount <= 0))
+            throw new InvalidOperationException("AllocatedAmount ของทุกแถวต้องมากกว่า 0");
+        if (allocSum > request.Amount + 0.01m)
+            throw new InvalidOperationException(
+                $"รวม allocation ({allocSum:N2}) เกินจำนวนเงินชำระ ({request.Amount:N2})");
+
+        var docIds = request.Allocations.Select(a => a.DocumentId).Distinct().ToList();
+        if (docIds.Count != request.Allocations.Count)
+            throw new InvalidOperationException("แต่ละ Document จัดสรรได้แค่ครั้งเดียวต่อ payment");
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            // Lock all target docs in one go — sort by Id to avoid deadlock
+            // when two concurrent multi-doc payments overlap on the same
+            // docs in different orders.
+            var docs = await _db.Documents
+                .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = ANY({0}) AND \"CompanyId\" = {1} ORDER BY \"Id\" FOR UPDATE",
+                    docIds.ToArray(), companyId)
+                .ToListAsync();
+            if (docs.Count != docIds.Count)
+                throw new KeyNotFoundException("ไม่พบเอกสารบางรายการ");
+
+            var contacts = docs.Select(d => d.ContactId).Distinct().ToList();
+            if (contacts.Count > 1)
+                throw new InvalidOperationException(
+                    "เอกสารทั้งหมดในการชำระครั้งเดียวต้องเป็นของลูกค้า/ผู้ขายรายเดียวกัน");
+
+            var docMap = docs.ToDictionary(d => d.Id);
+            foreach (var alloc in request.Allocations)
+            {
+                var d = docMap[alloc.DocumentId];
+                if (d.Status != DocumentStatus.Approved && d.Status != DocumentStatus.PartiallyPaid && d.Status != DocumentStatus.Sent)
+                    throw new InvalidOperationException(
+                        $"เอกสาร {d.DocumentNumber} สถานะ {d.Status} ไม่สามารถชำระได้");
+                if (alloc.AllocatedAmount > d.BalanceDue + 0.01m)
+                    throw new InvalidOperationException(
+                        $"จัดสรร {alloc.AllocatedAmount:N2} ของ {d.DocumentNumber} เกินยอดค้าง ({d.BalanceDue:N2})");
+            }
+
+            await using var transaction = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                // ===== Create the parent Payment =====
+                var payYearMonth = DateTime.UtcNow.ToString("yyyyMM");
+                var payPrefix = $"PAY-{payYearMonth}-";
+                var maxPayNum = await _db.Payments
+                    .IgnoreQueryFilters()
+                    .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(payPrefix))
+                    .Select(p => p.PaymentNumber)
+                    .MaxAsync() as string;
+                var paySeq = 1;
+                if (maxPayNum != null && int.TryParse(maxPayNum.Substring(payPrefix.Length), out var parsed))
+                    paySeq = parsed + 1;
+
+                var firstDoc = docMap[request.Allocations[0].DocumentId];
+                var payment = new Payment
+                {
+                    CompanyId = companyId,
+                    PaymentNumber = $"{payPrefix}{paySeq:D4}",
+                    // Primary DocumentId = first allocation's doc (back-compat).
+                    DocumentId = firstDoc.Id,
+                    PaymentDate = request.PaymentDate,
+                    Amount = request.Amount,
+                    PaymentMethod = request.PaymentMethod,
+                    Reference = request.Reference,
+                    BankAccount = request.BankAccount,
+                    BankAccountId = request.OverrideBankAccountId ?? firstDoc.BankAccountId,
+                    OverrideBankAccountId = request.OverrideBankAccountId,
+                    WithholdingTaxAmount = 0,  // accumulated below from allocations
+                    ProjectId = request.ProjectId,
+                    Notes = request.Notes,
+                    CreatedBy = createdBy,
+                };
+                _db.Payments.Add(payment);
+                await _db.SaveChangesAsync();
+
+                // ===== Per-doc settlement + WHT split + JE =====
+                decimal totalWht = 0;
+                var allocIndex = 0;
+                foreach (var alloc in request.Allocations)
+                {
+                    allocIndex++;
+                    var d = docMap[alloc.DocumentId];
+
+                    // WHT slice — explicit override per allocation OR
+                    // proportional to AllocatedAmount / d.TotalAmount.
+                    decimal whtSlice = 0;
+                    if (d.WithholdingTaxAmount > 0)
+                    {
+                        if (alloc.WithholdingTaxAmount.HasValue)
+                        {
+                            whtSlice = Math.Round(alloc.WithholdingTaxAmount.Value, 2, MidpointRounding.AwayFromZero);
+                        }
+                        else
+                        {
+                            var alreadyWht = await _db.Payments.AsNoTracking()
+                                .Where(p => p.DocumentId == d.Id && !p.IsDeleted && p.Id != payment.Id)
+                                .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+                            var remainingCap = Math.Max(0m, d.WithholdingTaxAmount - alreadyWht);
+                            var isFinal = alloc.AllocatedAmount + 0.01m >= d.BalanceDue;
+                            whtSlice = isFinal
+                                ? remainingCap
+                                : Math.Min(remainingCap,
+                                    d.TotalAmount > 0
+                                        ? Math.Round(alloc.AllocatedAmount * d.WithholdingTaxAmount / d.TotalAmount,
+                                            2, MidpointRounding.AwayFromZero)
+                                        : 0);
+                        }
+                    }
+
+                    _db.PaymentAllocations.Add(new PaymentAllocation
+                    {
+                        CompanyId = companyId,
+                        PaymentId = payment.Id,
+                        DocumentId = d.Id,
+                        AllocatedAmount = alloc.AllocatedAmount,
+                        WithholdingTaxAmount = whtSlice,
+                        Note = alloc.Note,
+                        CreatedBy = createdBy,
+                    });
+                    totalWht += whtSlice;
+
+                    // Settle the document
+                    d.PaidAmount += alloc.AllocatedAmount;
+                    d.BalanceDue = d.TotalAmount - d.PaidAmount;
+                    d.Status = d.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+                    if (d.Status == DocumentStatus.Paid)
+                    {
+                        d.AgingDays = null;
+                        d.AgingLastEvaluatedAt = DateTime.UtcNow;
+                    }
+
+                    // Per-doc journal — synthesize a non-tracked Payment
+                    // scoped to this allocation row. CreatePaymentJournalAsync
+                    // reads only Amount / WithholdingTaxAmount / PaymentNumber
+                    // / PaymentDate / ProjectId off the param; never
+                    // touches Id and never adds to DbContext. Allocation-
+                    // specific PaymentNumber tag lets the JE Reference
+                    // distinguish multiple JEs from the same parent payment.
+                    var virtualPayment = new Payment
+                    {
+                        CompanyId = companyId,
+                        PaymentNumber = $"{payment.PaymentNumber}/{allocIndex}",
+                        DocumentId = d.Id,
+                        PaymentDate = payment.PaymentDate,
+                        Amount = alloc.AllocatedAmount,
+                        PaymentMethod = payment.PaymentMethod,
+                        Reference = payment.Reference,
+                        BankAccount = payment.BankAccount,
+                        BankAccountId = payment.BankAccountId,
+                        OverrideBankAccountId = payment.OverrideBankAccountId,
+                        WithholdingTaxAmount = whtSlice,
+                        ProjectId = payment.ProjectId,
+                        Notes = payment.Notes,
+                        CreatedBy = createdBy,
+                    };
+                    await CreatePaymentJournalAsync(companyId, d, virtualPayment, createdBy);
+                }
+
+                payment.WithholdingTaxAmount = totalWht;
+                await _db.SaveChangesAsync();
+
+                // ===== Bank-balance sync (once at total) =====
+                if (payment.BankAccountId.HasValue)
+                {
+                    var isInflow = firstDoc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
+                        or DocumentType.Receipt or DocumentType.ReceiptVoucher
+                        or DocumentType.DebitNote or DocumentType.BillingNote;
+                    var delta = isInflow ? request.Amount : -request.Amount;
+                    await _db.BankAccounts
+                        .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
+                }
+
+                await transaction.CommitAsync();
+
+                // Re-load PaymentAllocation rows to pick up generated Ids,
+                // then enrich with the docMap (resolved client-side).
+                var rawAllocs = await _db.PaymentAllocations
+                    .Where(pa => pa.PaymentId == payment.Id && !pa.IsDeleted)
+                    .Select(pa => new { pa.Id, pa.PaymentId, pa.DocumentId,
+                        pa.AllocatedAmount, pa.WithholdingTaxAmount, pa.Note })
+                    .ToListAsync();
+                var persistedAllocs = rawAllocs.Select(pa => new PaymentAllocationResponse(
+                    pa.Id, pa.PaymentId, pa.DocumentId,
+                    docMap[pa.DocumentId].DocumentNumber,
+                    docMap[pa.DocumentId].DocumentType,
+                    pa.AllocatedAmount, pa.WithholdingTaxAmount, pa.Note)).ToList();
+
+                return new PaymentResponse(
+                    payment.Id, payment.PaymentNumber, payment.DocumentId,
+                    payment.PaymentDate, payment.Amount, payment.PaymentMethod,
+                    payment.Reference, payment.BankAccount, payment.BankAccountId,
+                    payment.Notes, payment.CreatedAt,
+                    persistedAllocs, request.Amount - allocSum);
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
     public async Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null)
     {
         var query = _db.Payments.Where(p => p.CompanyId == companyId);

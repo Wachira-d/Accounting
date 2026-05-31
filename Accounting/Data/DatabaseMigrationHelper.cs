@@ -3723,6 +3723,26 @@ public static class DatabaseMigrationHelper
             );""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyCompDefaults_Company" ON "CompanyCompensationDefaults" ("CompanyId") WHERE "IsDeleted" = false;""",
 
+            // PaymentAllocation — one Payment may settle many Documents.
+            // Existing Payment rows stay valid (legacy 1:1 path); new
+            // multi-doc payments insert one row per target document.
+            """CREATE TABLE IF NOT EXISTS "PaymentAllocations" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "PaymentId" uuid NOT NULL,
+                "DocumentId" uuid NOT NULL,
+                "AllocatedAmount" decimal(18,2) NOT NULL,
+                "WithholdingTaxAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "Note" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Payment" ON "PaymentAllocations" ("PaymentId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Document" ON "PaymentAllocations" ("CompanyId", "DocumentId") WHERE "IsDeleted" = false;""",
+
             // Employee EmployeeCode uniqueness is now scoped to active
             // (non-soft-deleted) rows so partners can recreate / restore
             // an employee code after deletion. Drop the legacy unique

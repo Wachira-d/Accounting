@@ -485,7 +485,31 @@ public record CreatePaymentRequest(
     /// project payments (advance booked to Project A; final to
     /// Project B). The auto-posted JE picks this up first; falls
     /// back to Document.ProjectId.</summary>
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    /// <summary>Multi-document allocation — when set with 1+ rows,
+    /// the legacy DocumentId field is ignored and the payment is
+    /// split across these target documents. SUM(AllocatedAmount) must
+    /// be ≤ Amount; the remainder lands as UnappliedCredit on the
+    /// response. WHT is allocated proportionally when individual
+    /// rows omit WithholdingTaxAmount. Each AllocatedAmount must be
+    /// ≤ the target document's current BalanceDue.</summary>
+    List<PaymentAllocationRequest>? Allocations = null);
+
+public record PaymentAllocationRequest(
+    Guid DocumentId,
+    decimal AllocatedAmount,
+    decimal? WithholdingTaxAmount = null,
+    string? Note = null);
+
+public record PaymentAllocationResponse(
+    Guid Id,
+    Guid PaymentId,
+    Guid DocumentId,
+    string DocumentNumber,
+    DocumentType DocumentType,
+    decimal AllocatedAmount,
+    decimal WithholdingTaxAmount,
+    string? Note);
 
 public record PaymentResponse(
     Guid Id,
@@ -498,7 +522,17 @@ public record PaymentResponse(
     string? BankAccount,
     Guid? BankAccountId,
     string? Notes,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    /// <summary>Multi-document allocation rows. Empty for legacy
+    /// single-doc payments (and the legacy DocumentId then carries
+    /// the settled doc id).</summary>
+    List<PaymentAllocationResponse>? Allocations = null,
+    /// <summary>Amount − SUM(Allocations.AllocatedAmount). Positive
+    /// when the customer overpaid (carry-forward credit); zero
+    /// otherwise. Doesn't itself create a credit-note; the operator
+    /// can later attach the unapplied amount to a new invoice via
+    /// /payments/{id}/allocations.</summary>
+    decimal UnappliedCredit = 0);
 
 
 public record WriteOffBadDebtRequest(string? Reason);

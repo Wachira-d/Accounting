@@ -378,8 +378,15 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<PaymentResponse>>> CreatePayment(Guid companyId, [FromBody] CreatePaymentRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _documentService.CreatePaymentAsync(companyId, request, userId);
-        return StatusCode(201, new ApiResponse<PaymentResponse>(true, result, "บันทึกการชำระเงินสำเร็จ"));
+        // Single endpoint, two paths: when Allocations is non-empty the
+        // multi-doc settler runs; otherwise legacy 1:1 settler.
+        var result = (request.Allocations != null && request.Allocations.Count > 0)
+            ? await _documentService.CreateMultiDocPaymentAsync(companyId, request, userId)
+            : await _documentService.CreatePaymentAsync(companyId, request, userId);
+        var msg = (request.Allocations != null && request.Allocations.Count > 0)
+            ? $"บันทึกการชำระสำเร็จ — กระจายเป็น {request.Allocations.Count} เอกสาร"
+            : "บันทึกการชำระเงินสำเร็จ";
+        return StatusCode(201, new ApiResponse<PaymentResponse>(true, result, msg));
     }
 
     /// <summary>
