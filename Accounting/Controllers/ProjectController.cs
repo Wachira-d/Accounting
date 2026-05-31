@@ -95,7 +95,7 @@ public class ProjectController : ControllerBase
     /// answer "is project X bringing in cash or burning it" in
     /// one screen. From/To default to current calendar year.</summary>
     [HttpGet("{projectId:guid}/cash-flow")]
-    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.CashFlowStatementResponse>>> GetCashFlow(
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Accounting.CashFlowStatementResponse>>> GetCashFlow(
         Guid companyId, Guid projectId,
         [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate,
         [FromServices] IAccountingService accounting,
@@ -104,7 +104,7 @@ public class ProjectController : ControllerBase
         var from = fromDate ?? new DateTime(DateTime.UtcNow.Year, 1, 1);
         var to = toDate ?? DateTime.UtcNow.Date;
         var result = await accounting.GetCashFlowStatementAsync(companyId, from, to, projectId);
-        return Ok(new ApiResponse<Accounting.Models.DTOs.CashFlowStatementResponse>(true, result,
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Accounting.CashFlowStatementResponse>(true, result,
             $"กระแสเงินสด {from:yyyy-MM-dd} ถึง {to:yyyy-MM-dd}"));
     }
 
