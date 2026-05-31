@@ -135,4 +135,18 @@ public class SmeOperationsController : ControllerBase
         return Ok(new ApiResponse<FxRevaluationResult>(true, result,
             $"กำไรสุทธิจาก FX revaluation: {result.NetEffect:N2}"));
     }
+
+    /// <summary>Post the proposed FX revaluation as a single JE
+    /// (Dr/Cr AR/AP control vs FX gain/loss accounts). Idempotent per
+    /// period via Reference="FX-REVAL-yyyyMM"; re-running on the same
+    /// period returns the existing JE.</summary>
+    [HttpPost("fx-revaluation/post")]
+    public async Task<ActionResult<ApiResponse<FxRevaluationPostResult>>> PostFxRevaluation(
+        Guid companyId, [FromBody] FxRevalRequest req,
+        [FromServices] IFxRevaluationService svc, CancellationToken ct)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await svc.PostAsync(companyId, req.AsOf, req.ClosingRates, userId, ct);
+        return Ok(new ApiResponse<FxRevaluationPostResult>(true, result, result.Message));
+    }
 }

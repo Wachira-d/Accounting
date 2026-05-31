@@ -765,6 +765,8 @@ const Layout = {
       description: 'แยกตามอายุ 30/60/90/120 วัน · alert ค้างชำระ · auto-refresh ทุก 6 ชม.' },
     { id: 'cash-forecast', label: 'คาดการณ์กระแสเงินสด', icon: '💰', href: '/pages/cash-forecast.html', feature: 'AdvancedReporting',
       description: 'รายวัน 30/60/90 วัน · เงินเข้า-ออก · ติดลบเมื่อไหร่ · risk alerts · ลูกหนี้/เจ้าหนี้ top' },
+    { id: 'fx-reval', label: 'FX Revaluation', icon: '💱', href: '/pages/fx-reval.html', feature: 'MultiCurrency',
+      description: 'Period-end revalue AR/AP FCY → post JE กำไร/ขาดทุน · idempotent ต่องวด' },
     { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',
       description: 'DSO · DPO · cycle time · ลูกค้า top-N · เจ้าหนี้ top-N' },
     { id: 'fpa', label: 'วิเคราะห์การเงิน (FP&A)', icon: '📉', href: '/pages/fpa.html', feature: 'FPA', _i18nKey: 'nav.fpa',
