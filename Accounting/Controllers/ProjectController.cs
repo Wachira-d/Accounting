@@ -226,6 +226,17 @@ public class ProjectController : ControllerBase
     public async Task<ActionResult<ApiResponse<ProjectProfitabilityResponse>>> GetProfitability(Guid companyId, Guid projectId)
         => Ok(new ApiResponse<ProjectProfitabilityResponse>(true, await _service.GetProfitabilityAsync(companyId, projectId)));
 
+    /// <summary>Per-employee labour cost breakdown for this project —
+    /// who worked how many hours and how much salary cost landed on
+    /// the project. Pull-down support for the project detail "ค่าแรง"
+    /// tab.</summary>
+    [HttpGet("{projectId:guid}/labour-breakdown")]
+    public async Task<ActionResult<ApiResponse<ProjectLabourBreakdown>>> GetLabourBreakdown(
+        Guid companyId, Guid projectId,
+        [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+        => Ok(new ApiResponse<ProjectLabourBreakdown>(true,
+            await _service.GetLabourBreakdownAsync(companyId, projectId, from, to)));
+
     [HttpGet("{projectId:guid}/gl-summary")]
     public async Task<ActionResult<ApiResponse<ProjectGlSummaryResponse>>> GetGlSummary(Guid companyId, Guid projectId, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
         => Ok(new ApiResponse<ProjectGlSummaryResponse>(true, await _service.GetGlSummaryAsync(companyId, projectId, fromDate, toDate)));

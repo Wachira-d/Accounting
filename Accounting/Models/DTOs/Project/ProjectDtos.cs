@@ -70,6 +70,35 @@ public record ProjectCostEntryResponse(
     decimal Amount, bool IsBillable, bool IsBilled,
     string CostBehavior = "Variable");
 
+/// <summary>Per-employee labour breakdown for one project over a date
+/// window. Answers the question "ค่าแรงพนักงานไปลงโครงการไหน บ้าง"
+/// — for project X, who contributed how many hours and how much
+/// salary cost was allocated.</summary>
+public record ProjectLabourBreakdown(
+    Guid ProjectId,
+    string ProjectCode,
+    string ProjectName,
+    DateTime? From,
+    DateTime? To,
+    decimal TotalHours,
+    decimal TotalAmount,
+    int EmployeeCount,
+    List<ProjectLabourByEmployee> ByEmployee);
+
+public record ProjectLabourByEmployee(
+    Guid EmployeeId,
+    string EmployeeCode,
+    string EmployeeName,
+    string? Department,
+    string? Position,
+    decimal Hours,
+    decimal Amount,
+    decimal AverageRate,           // amount / hours
+    string CostBehavior,           // Fixed / Variable (employee-level default)
+    int PayrollRunCount,           // how many runs allocated to this employee on this project
+    int BillableHours,
+    int NonBillableHours);
+
 public record ProjectProfitabilityResponse(
     Guid ProjectId, string ProjectName, decimal ContractAmount,
     decimal TotalCost, decimal TotalRevenue, decimal GrossProfit,

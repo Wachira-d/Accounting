@@ -44,6 +44,7 @@ public interface IProjectAccountingService
 
     // Reports
     Task<ProjectProfitabilityResponse> GetProfitabilityAsync(Guid companyId, Guid projectId);
+    Task<ProjectLabourBreakdown> GetLabourBreakdownAsync(Guid companyId, Guid projectId, DateTime? from, DateTime? to);
     Task<List<ProjectSummaryResponse>> GetProjectSummaryAsync(Guid companyId);
     Task<ProjectGlSummaryResponse> GetGlSummaryAsync(Guid companyId, Guid projectId, DateTime? fromDate, DateTime? toDate);
 }

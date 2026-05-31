@@ -67,12 +67,14 @@
             <div class="tab" onclick="Page.detailTab('costs',this)">ต้นทุน</div>
             <div class="tab" onclick="Page.detailTab('profit',this)">กำไร</div>
             <div class="tab" onclick="Page.detailTab('cashflow',this)">💵 กระแสเงินสด</div>
+            <div class="tab" onclick="Page.detailTab('labour',this)">👷 ค่าแรง</div>
             <div class="tab" onclick="Page.detailTab('dashboard',this)">📊 Dashboard</div>
           </div>
           <div id="tasksTab" style="max-height:400px;overflow-y:auto"></div>
           <div id="costsTab" class="hidden" style="max-height:400px;overflow-y:auto"></div>
           <div id="profitTab" class="hidden"></div>
           <div id="cashflowTab" class="hidden" style="max-height:500px;overflow-y:auto"></div>
+          <div id="labourTab" class="hidden" style="max-height:500px;overflow-y:auto"></div>
           <div id="dashboardTab" class="hidden"></div>
         </div>
         <div class="modal-footer" id="detailFooter"></div>
@@ -260,14 +262,72 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       detailTab(tab, el) {
-        const tabs = ['tasks', 'costs', 'profit', 'cashflow', 'dashboard'];
+        const tabs = ['tasks', 'costs', 'profit', 'cashflow', 'labour', 'dashboard'];
         tabs.forEach(t => document.getElementById(t + 'Tab').classList.toggle('hidden', tab !== t));
         el.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
         if (tab === 'costs') this.loadCosts(this.currentProjectId);
         if (tab === 'profit') this.loadProfit(this.currentProjectId);
         if (tab === 'cashflow') this.loadCashFlow(this.currentProjectId);
+        if (tab === 'labour') this.loadLabour(this.currentProjectId);
         if (tab === 'dashboard') this.loadDashboard(this.currentProjectId);
+      },
+
+      async loadLabour(projectId) {
+        const el = document.getElementById('labourTab');
+        el.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8">กำลังโหลด...</div>';
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/projects/${projectId}/labour-breakdown`);
+          const d = r.data;
+          const fmt = n => (n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+          const fmtH = n => (n||0).toLocaleString('th-TH',{minimumFractionDigits:1,maximumFractionDigits:2});
+          if (!d.byEmployee?.length) {
+            el.innerHTML = `<div style="padding:40px;text-align:center;color:#94a3b8">ยังไม่มีค่าแรงพนักงานบนโครงการนี้<br><small>เมื่อ payroll run ถูก allocate (หน้า "เวลาทำงาน-โครงการ" → กระจาย labour cost) ข้อมูลจะปรากฏที่นี่</small></div>`;
+            return;
+          }
+          el.innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+              <div style="padding:14px;border-radius:10px;background:#dbeafe;border:1px solid #93c5fd">
+                <div style="font-size:11px;color:#1e40af;font-weight:600">รวมชั่วโมง</div>
+                <div style="font-size:24px;font-weight:700;color:#1e293b">${fmtH(d.totalHours)} ชม.</div>
+              </div>
+              <div style="padding:14px;border-radius:10px;background:#dcfce7;border:1px solid #86efac">
+                <div style="font-size:11px;color:#15803d;font-weight:600">รวมค่าแรง</div>
+                <div style="font-size:24px;font-weight:700;color:#1e293b">${fmt(d.totalAmount)}</div>
+              </div>
+              <div style="padding:14px;border-radius:10px;background:#ede9fe;border:1px solid #c4b5fd">
+                <div style="font-size:11px;color:#5b21b6;font-weight:600">จำนวนพนักงาน</div>
+                <div style="font-size:24px;font-weight:700;color:#1e293b">${d.employeeCount} คน</div>
+              </div>
+            </div>
+            <table class="data-table" style="font-size:13px">
+              <thead><tr>
+                <th>รหัส</th><th>ชื่อ</th><th>แผนก/ตำแหน่ง</th>
+                <th style="text-align:right">ชั่วโมง</th>
+                <th style="text-align:right">Billable / Non</th>
+                <th style="text-align:right">ค่าแรงรวม</th>
+                <th style="text-align:right">เฉลี่ย/ชม.</th>
+                <th>ประเภท</th>
+                <th style="text-align:right">รอบจ่าย</th>
+              </tr></thead>
+              <tbody>
+                ${d.byEmployee.map(e => `<tr>
+                  <td><b>${e.employeeCode}</b></td>
+                  <td>${e.employeeName}</td>
+                  <td><div style="font-size:12px">${e.department || '-'}</div><div style="font-size:11px;color:#64748b">${e.position || ''}</div></td>
+                  <td style="text-align:right">${fmtH(e.hours)}</td>
+                  <td style="text-align:right;font-size:11px"><span style="color:#15803d">${e.billableHours}</span> / <span style="color:#92400e">${e.nonBillableHours}</span></td>
+                  <td style="text-align:right;font-weight:600">${fmt(e.amount)}</td>
+                  <td style="text-align:right">${fmt(e.averageRate)}</td>
+                  <td><span class="badge ${e.costBehavior==='Fixed'?'b-Fixed':'b-Variable'}" style="padding:2px 8px;border-radius:999px;font-size:10px;background:${e.costBehavior==='Fixed'?'#dbeafe':'#fef3c7'};color:${e.costBehavior==='Fixed'?'#1e40af':'#92400e'}">${e.costBehavior}</span></td>
+                  <td style="text-align:right">${e.payrollRunCount}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>`;
+        } catch (e) {
+          el.innerHTML = `<div style="color:#dc2626;padding:20px;text-align:center">${e.message}</div>`;
+        }
       },
 
       async loadCashFlow(id) {

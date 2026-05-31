@@ -536,6 +536,104 @@ public class ProjectAccountingService : IProjectAccountingService
 
     // ===== Reports =====
 
+    /// <summary>Walk every labour ProjectCostEntry tagged to this project
+    /// in the window and aggregate by employee. Hours come from the
+    /// EmployeeProjectTime rows that spawned each entry (linked via the
+    /// payroll-run allocation); when missing (manually-created Labour
+    /// entries) the entry's Quantity field is used as the hour count
+    /// fallback. Billable/non-billable split is read off
+    /// EmployeeProjectTime.Category.</summary>
+    public async Task<ProjectLabourBreakdown> GetLabourBreakdownAsync(
+        Guid companyId, Guid projectId, DateTime? from, DateTime? to)
+    {
+        var project = await _db.Projects
+            .Where(p => p.Id == projectId && p.CompanyId == companyId)
+            .Select(p => new { p.Id, p.Code, p.Name })
+            .FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบโครงการ");
+
+        // Labour entries scoped to this project + window.
+        var pceQuery = _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId
+                && c.ProjectId == projectId
+                && !c.IsDeleted
+                && c.CostType == "Labor"
+                && c.EmployeeId.HasValue);
+        if (from.HasValue) pceQuery = pceQuery.Where(c => c.EntryDate >= from.Value);
+        if (to.HasValue) pceQuery = pceQuery.Where(c => c.EntryDate < to.Value.Date.AddDays(1));
+
+        var pces = await pceQuery
+            .Select(c => new { c.Id, c.EmployeeId, c.Quantity, c.Amount, c.JournalEntryId })
+            .ToListAsync();
+        if (pces.Count == 0)
+        {
+            return new ProjectLabourBreakdown(project.Id, project.Code, project.Name,
+                from, to, 0, 0, 0, new List<ProjectLabourByEmployee>());
+        }
+
+        // Map ProjectCostEntryId → list of EmployeeProjectTime rows so we
+        // can read true hours + billable category instead of relying on
+        // the rounded Quantity field. EmployeeProjectTime carries the
+        // billable / non-billable split per row.
+        var pceIds = pces.Select(p => p.Id).ToList();
+        var timeRows = await _db.EmployeeProjectTimes
+            .Where(t => t.CompanyId == companyId
+                && t.ProjectCostEntryId.HasValue
+                && pceIds.Contains(t.ProjectCostEntryId!.Value)
+                && !t.IsDeleted)
+            .Select(t => new { t.ProjectCostEntryId, t.EmployeeId, t.Hours, t.Category })
+            .ToListAsync();
+
+        var hoursByPce = timeRows
+            .GroupBy(t => t.ProjectCostEntryId!.Value)
+            .ToDictionary(g => g.Key, g => new {
+                Hours = g.Sum(t => t.Hours),
+                Billable = g.Where(t => t.Category == "Billable").Sum(t => t.Hours),
+                NonBillable = g.Where(t => t.Category != "Billable").Sum(t => t.Hours),
+            });
+
+        // Per-employee aggregation.
+        var employeeIds = pces.Where(p => p.EmployeeId.HasValue)
+            .Select(p => p.EmployeeId!.Value).Distinct().ToList();
+        var employees = await _db.Employees
+            .Where(e => e.CompanyId == companyId && employeeIds.Contains(e.Id))
+            .Select(e => new {
+                e.Id, e.EmployeeCode, e.FirstNameTh, e.LastNameTh,
+                e.Department, e.Position, e.CostBehavior,
+            })
+            .ToDictionaryAsync(e => e.Id);
+
+        var byEmployee = pces
+            .Where(p => p.EmployeeId.HasValue)
+            .GroupBy(p => p.EmployeeId!.Value)
+            .Select(g =>
+            {
+                var emp = employees.GetValueOrDefault(g.Key);
+                var pceHours = g.Sum(p => hoursByPce.TryGetValue(p.Id, out var h) ? h.Hours : p.Quantity);
+                var billable = (int)g.Sum(p => hoursByPce.TryGetValue(p.Id, out var h) ? h.Billable : 0);
+                var nonBillable = (int)g.Sum(p => hoursByPce.TryGetValue(p.Id, out var h) ? h.NonBillable : 0);
+                var amount = g.Sum(p => p.Amount);
+                var runCount = g.Where(p => p.JournalEntryId.HasValue)
+                    .Select(p => p.JournalEntryId!.Value).Distinct().Count();
+                return new ProjectLabourByEmployee(
+                    g.Key,
+                    emp?.EmployeeCode ?? "(unknown)",
+                    emp != null ? $"{emp.FirstNameTh} {emp.LastNameTh}".Trim() : "(unknown)",
+                    emp?.Department, emp?.Position,
+                    pceHours, amount,
+                    pceHours > 0 ? Math.Round(amount / pceHours, 2, MidpointRounding.AwayFromZero) : 0,
+                    emp?.CostBehavior ?? "Fixed",
+                    runCount, billable, nonBillable);
+            })
+            .OrderByDescending(e => e.Amount)
+            .ToList();
+
+        return new ProjectLabourBreakdown(
+            project.Id, project.Code, project.Name, from, to,
+            byEmployee.Sum(e => e.Hours), byEmployee.Sum(e => e.Amount),
+            byEmployee.Count, byEmployee);
+    }
+
     public async Task<ProjectProfitabilityResponse> GetProfitabilityAsync(Guid companyId, Guid projectId)
     {
         var project = await _db.Projects
