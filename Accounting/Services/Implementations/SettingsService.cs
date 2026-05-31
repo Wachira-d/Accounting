@@ -97,13 +97,44 @@ public class SettingsService : ISettingsService
         if (!allowedTypes.Contains(contentType.ToLower()))
             throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น");
 
-        // Delete old logo if exists
-        if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
-            File.Delete(settings.LogoPath);
+        // WebRootPath is null in environments where wwwroot doesn't exist
+        // (slim deployments, certain Docker setups). Fall back to ContentRoot
+        // + "wwwroot" so the upload still has a home; the resulting public
+        // URL still resolves via UseStaticFiles when the path eventually
+        // exists. Without this guard, Path.Combine throws and bubbles up as
+        // "เกิดข้อผิดพลาดภายในระบบ".
+        var webRoot = _env.WebRootPath
+            ?? Path.Combine(_env.ContentRootPath ?? Directory.GetCurrentDirectory(), "wwwroot");
 
-        var dir = Path.Combine(_env.WebRootPath, "uploads", "logos", companyId.ToString());
+        // Delete old logo if exists
+        try
+        {
+            if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
+                File.Delete(settings.LogoPath);
+        }
+        catch { /* old file may be locked / missing — keep going with the new upload */ }
+
+        var dir = Path.Combine(webRoot, "uploads", "logos", companyId.ToString());
         var web = $"/uploads/logos/{companyId}";
-        var processed = await _images.ProcessAndSaveAsync(fileStream, contentType, fileName, dir, web, ImageProfile.Logo);
+        ProcessedImageResult processed;
+        try
+        {
+            processed = await _images.ProcessAndSaveAsync(fileStream, contentType, fileName, dir, web, ImageProfile.Logo);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new InvalidOperationException(
+                $"ระบบไม่มีสิทธิ์เขียนไฟล์ลงโฟลเดอร์ uploads ({dir}) — โปรดติดต่อผู้ดูแลระบบเพื่อเพิ่มสิทธิ์", ex);
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            throw new InvalidOperationException(
+                $"ไม่พบโฟลเดอร์ปลายทาง ({dir}) — โปรดให้ผู้ดูแลระบบสร้างโฟลเดอร์ก่อน", ex);
+        }
+        catch (IOException ex)
+        {
+            throw new InvalidOperationException($"บันทึกไฟล์ไม่สำเร็จ: {ex.Message}", ex);
+        }
 
         settings.LogoPath = processed.AbsolutePath;
         settings.LogoUrl = processed.RelativeUrl;

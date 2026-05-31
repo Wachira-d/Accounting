@@ -567,9 +567,26 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-// Serve uploaded files (logos, attachments)
+// Serve uploaded files (logos, attachments). Also ensure the wwwroot
+// uploads tree exists so SettingsService.UploadLogoAsync + its
+// siblings don't fail on a fresh deployment where the folder hasn't
+// been pre-created. Creating empty dirs is cheap and idempotent.
 var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "uploads");
 if (!Directory.Exists(uploadsPath)) Directory.CreateDirectory(uploadsPath);
+try
+{
+    var webRoot = app.Environment.WebRootPath
+        ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+    foreach (var sub in new[] { "uploads", "uploads/logos", "uploads/attachments", "uploads/banners" })
+    {
+        var p = Path.Combine(webRoot, sub);
+        if (!Directory.Exists(p)) Directory.CreateDirectory(p);
+    }
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"[startup] Could not pre-create wwwroot/uploads tree: {ex.Message} — uploads may fail until folder is created manually.");
+}
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),

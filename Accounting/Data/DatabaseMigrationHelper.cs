@@ -3755,6 +3755,26 @@ public static class DatabaseMigrationHelper
             // ChequeBook.BankAccount, inbound has no chequeBook.
             """ALTER TABLE "Cheques" ADD COLUMN IF NOT EXISTS "DepositBankAccountId" uuid NULL;""",
 
+            // Orphan column on CompanySettings — added by a past migration
+            // with NOT NULL but no DEFAULT, and the C# entity never carried
+            // the property. Every GetOrCreateSettingsAsync on a brand-new
+            // company exploded with "23502 null value in column
+            // AllowFreelanceAccess". Setting a DEFAULT here makes EF's
+            // INSERT (which omits the column it doesn't know about) succeed
+            // by falling back to the default. Idempotent.
+            """
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'CompanySettings'
+                      AND column_name = 'AllowFreelanceAccess'
+                ) THEN
+                    ALTER TABLE "CompanySettings" ALTER COLUMN "AllowFreelanceAccess" SET DEFAULT false;
+                    UPDATE "CompanySettings" SET "AllowFreelanceAccess" = false WHERE "AllowFreelanceAccess" IS NULL;
+                END IF;
+            END $$;
+            """,
+
             // Employee EmployeeCode uniqueness is now scoped to active
             // (non-soft-deleted) rows so partners can recreate / restore
             // an employee code after deletion. Drop the legacy unique
