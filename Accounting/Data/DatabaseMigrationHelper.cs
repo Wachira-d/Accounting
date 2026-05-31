@@ -783,6 +783,266 @@ public static class DatabaseMigrationHelper
                 ON "BankReconciliationPatterns" ("CompanyId", "BankAccountId", "DescriptionSignature", "AmountBucket");
             """,
 
+            // ===== ChequeBook + Cheque (Thai SME cheque management) =====
+            """
+            CREATE TABLE IF NOT EXISTS "ChequeBooks" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "BankAccountId" uuid NOT NULL,
+                "BookNumber" varchar(50) NOT NULL,
+                "StartChequeNumber" bigint NOT NULL,
+                "EndChequeNumber" bigint NOT NULL,
+                "NextNumber" bigint NOT NULL,
+                "ReceivedFromBankAt" timestamp NOT NULL DEFAULT now(),
+                "ExhaustedAt" timestamp NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ChequeBooks" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ChequeBooks_BankAccount" FOREIGN KEY ("BankAccountId") REFERENCES "BankAccounts"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ChequeBooks_Company_Bank" ON "ChequeBooks" ("CompanyId", "BankAccountId") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "Cheques" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "ChequeBookId" uuid NULL,
+                "ChequeNumber" bigint NOT NULL,
+                "ChequeDate" timestamp NOT NULL,
+                "Amount" decimal(18,2) NOT NULL,
+                "Currency" varchar(3) NOT NULL DEFAULT 'THB',
+                "ContactId" uuid NULL,
+                "IssuingBankName" varchar(100) NULL,
+                "PaymentId" uuid NULL,
+                "Status" integer NOT NULL DEFAULT 0,
+                "ClearedAt" timestamp NULL,
+                "BounceReason" text NULL,
+                "ReplacesChequeId" uuid NULL,
+                "IsInbound" boolean NOT NULL DEFAULT false,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_Cheques" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_Cheques_Book" FOREIGN KEY ("ChequeBookId") REFERENCES "ChequeBooks"("Id"),
+                CONSTRAINT "FK_Cheques_Replaces" FOREIGN KEY ("ReplacesChequeId") REFERENCES "Cheques"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_Cheques_Company_Status" ON "Cheques" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Cheques_Payment" ON "Cheques" ("PaymentId") WHERE "PaymentId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ===== StampDutyRecords (อากรแสตมป์) =====
+            """
+            CREATE TABLE IF NOT EXISTS "StampDutyRecords" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Reference" varchar(100) NOT NULL,
+                "ContactId" uuid NULL,
+                "InstrumentEntityType" varchar(50) NULL,
+                "InstrumentEntityId" uuid NULL,
+                "RdScheduleNumber" integer NOT NULL,
+                "InstrumentType" varchar(50) NOT NULL,
+                "InstrumentValue" decimal(18,2) NOT NULL,
+                "DutyAmount" decimal(18,2) NOT NULL,
+                "InstrumentDate" timestamp NOT NULL,
+                "PaymentMethod" varchar(20) NOT NULL DEFAULT 'ESD',
+                "PaidAt" timestamp NULL,
+                "RdReceiptNumber" varchar(50) NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_StampDutyRecords" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_StampDutyRecords_Company" ON "StampDutyRecords" ("CompanyId", "InstrumentDate") WHERE "IsDeleted" = false;""",
+
+            // ===== Product costing extension =====
+            """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "CostingMethod" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS "AverageUnitCost" decimal(18,4) NOT NULL DEFAULT 0;""",
+
+            // ===== Petty cash + stock count =====
+            """
+            CREATE TABLE IF NOT EXISTS "PettyCashFunds" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Name" varchar(100) NOT NULL,
+                "CustodianUserId" uuid NULL,
+                "ImprestAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "CurrentBalance" decimal(18,2) NOT NULL DEFAULT 0,
+                "LinkedAccountId" uuid NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PettyCashFunds" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "PettyCashTransactions" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "FundId" uuid NOT NULL,
+                "TransactionDate" timestamp NOT NULL,
+                "Amount" decimal(18,2) NOT NULL,
+                "Type" varchar(20) NOT NULL,
+                "Description" text NOT NULL,
+                "ReceiptReference" varchar(100) NULL,
+                "ExpenseAccountId" uuid NULL,
+                "JournalEntryId" uuid NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PettyCashTransactions" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PettyCashTransactions_Fund" FOREIGN KEY ("FundId") REFERENCES "PettyCashFunds"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PettyCashTransactions_Fund_Date" ON "PettyCashTransactions" ("FundId", "TransactionDate") WHERE "IsDeleted" = false;""",
+            // StockCount table already exists from prior schema; just
+            // add the UnitCost column on the line we need for variance JE.
+            """ALTER TABLE "StockCountLines" ADD COLUMN IF NOT EXISTS "UnitCost" decimal(18,4) NOT NULL DEFAULT 0;""",
+
+            // ===== PDPA + BOM + Consignment (Tier 3) =====
+            """
+            CREATE TABLE IF NOT EXISTS "PdpaDataSubjectRequests" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "RequestNumber" varchar(50) NOT NULL,
+                "RequestedAt" timestamp NOT NULL DEFAULT now(),
+                "RequesterContact" varchar(200) NOT NULL,
+                "RequesterName" varchar(200) NULL,
+                "LinkedUserId" uuid NULL,
+                "LinkedContactId" uuid NULL,
+                "RequestType" varchar(30) NOT NULL,
+                "Description" text NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'Pending',
+                "DueBy" timestamp NOT NULL,
+                "CompletedAt" timestamp NULL,
+                "CompletionNote" text NULL,
+                "AssignedDpoUserId" uuid NULL,
+                "RejectionReason" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PdpaDataSubjectRequests" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_Pdpa_Status_Due" ON "PdpaDataSubjectRequests" ("CompanyId", "Status", "DueBy") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "BillsOfMaterials" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "ParentProductId" uuid NOT NULL,
+                "Version" varchar(20) NOT NULL DEFAULT 'v1',
+                "EffectiveFrom" timestamp NOT NULL DEFAULT now(),
+                "EffectiveTo" timestamp NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_BillsOfMaterials" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "BomLines" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "BomId" uuid NOT NULL,
+                "ComponentProductId" uuid NOT NULL,
+                "QuantityPerParent" decimal(18,4) NOT NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_BomLines" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_BomLines_Bom" FOREIGN KEY ("BomId") REFERENCES "BillsOfMaterials"("Id")
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "ConsignmentRecords" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "ProductId" uuid NOT NULL,
+                "ContactId" uuid NOT NULL,
+                "Direction" varchar(20) NOT NULL,
+                "QuantityOnHand" decimal(18,4) NOT NULL DEFAULT 0,
+                "AgreedUnitPrice" decimal(18,4) NULL,
+                "ReceivedAt" timestamp NOT NULL,
+                "ReturnedOrSettledAt" timestamp NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ConsignmentRecords" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_Consignment_Product_Contact" ON "ConsignmentRecords" ("CompanyId", "ProductId", "ContactId") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "VendorPortalTokens" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "TokenHash" varchar(64) NOT NULL,
+                "ContactId" uuid NOT NULL,
+                "Role" varchar(20) NOT NULL DEFAULT 'Vendor',
+                "IssuedAt" timestamp NOT NULL DEFAULT now(),
+                "ExpiresAt" timestamp NOT NULL,
+                "LastUsedAt" timestamp NULL,
+                "RevokedAt" timestamp NULL,
+                "RevokedReason" text NULL,
+                "IssuedByUserId" uuid NULL,
+                "RecipientEmail" varchar(200) NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_VendorPortalTokens" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_VendorPortalTokens_Hash" ON "VendorPortalTokens" ("TokenHash") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_VendorPortalTokens_Contact" ON "VendorPortalTokens" ("CompanyId", "ContactId") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "ProductionOrders" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "OrderNumber" varchar(50) NOT NULL,
+                "ParentProductId" uuid NOT NULL,
+                "BomId" uuid NOT NULL,
+                "PlannedQty" decimal(18,4) NOT NULL,
+                "CompletedQty" decimal(18,4) NOT NULL DEFAULT 0,
+                "PlannedStartAt" timestamp NOT NULL,
+                "CompletedAt" timestamp NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'Planned',
+                "CumulativeComponentCost" decimal(18,4) NOT NULL DEFAULT 0,
+                "JournalEntryId" uuid NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL, "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_ProductionOrders" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ProductionOrders_Company_Status" ON "ProductionOrders" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
+
+            // ===== TaxReport e-Filing ACK lifecycle =====
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAckNumber" varchar(50) NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAcknowledgedAt" timestamp NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdSubmissionStatus" varchar(30) NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdRejectionReason" text NULL;""",
+            """ALTER TABLE "TaxReports" ADD COLUMN IF NOT EXISTS "RdAcknowledgementDocumentUrl" text NULL;""",
+
             // ============================================================
             // ERP Upgrade — Task 1 (period close + migration), Task 4
             // (VAT deferral + filing lock + e-Filing), Task 5 (OCR audit)
@@ -3068,6 +3328,482 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_CmsLeads_Company_Site_Created" ON "CmsLeads" ("CompanyId", "SiteId", "CreatedAt" DESC) WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_CmsLeads_Status" ON "CmsLeads" ("CompanyId", "SiteId", "Status") WHERE "IsDeleted" = false;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_CmsLeads_Company_LeadNumber" ON "CmsLeads" ("CompanyId", "LeadNumber") WHERE "IsDeleted" = false;""",
+
+            // ===== AI Integration tables (DeepSeek / OpenAI / Anthropic / etc) =====
+            // Provider registry — one row per configured provider, at most
+            // one IsActive at a time (enforced by partial unique index).
+            """
+            CREATE TABLE IF NOT EXISTS "AiProviderConfigs" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "ProviderType" integer NOT NULL,
+                "DisplayName" varchar(200) NOT NULL DEFAULT '',
+                "IsActive" boolean NOT NULL DEFAULT false,
+                "IsEnabled" boolean NOT NULL DEFAULT true,
+                "Endpoint" varchar(500) NULL,
+                "ApiKey" text NULL,
+                "Model" varchar(200) NOT NULL DEFAULT 'deepseek-chat',
+                "Temperature" decimal(4,2) NOT NULL DEFAULT 0.10,
+                "MaxOutputTokens" integer NOT NULL DEFAULT 1024,
+                "RequestTimeoutSeconds" integer NOT NULL DEFAULT 8,
+                "DailyCallCap" integer NULL,
+                "MonthlyBudgetUsd" decimal(18,4) NULL,
+                "PricePerInputTokenUsd1M" decimal(18,6) NULL,
+                "PricePerOutputTokenUsd1M" decimal(18,6) NULL,
+                "LastTestedAt" timestamp NULL,
+                "LastTestStatus" varchar(500) NULL,
+                "ExtraSettingsJson" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiProviderConfigs" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiProviderConfigs_OneActive" ON "AiProviderConfigs" ("IsActive") WHERE "IsActive" = true;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiProviderConfigs_ProviderType" ON "AiProviderConfigs" ("ProviderType");""",
+
+            // Per-call feedback row — the training set. Every orchestrator
+            // invocation writes here (Success / Cached / Failed / Skipped).
+            """
+            CREATE TABLE IF NOT EXISTS "AiSuggestionFeedbacks" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "FeatureKey" varchar(100) NOT NULL,
+                "PromptHash" varchar(80) NOT NULL,
+                "PromptJson" jsonb NOT NULL,
+                "ResponseJson" jsonb NULL,
+                "AiPrimaryAnswer" text NULL,
+                "AiConfidence" decimal(5,4) NULL,
+                "LocalModelAnswer" text NULL,
+                "LocalModelConfidence" decimal(5,4) NULL,
+                "LocalModelVersion" varchar(100) NULL,
+                "UserChosenAnswer" text NULL,
+                "UserChosenAt" timestamp NULL,
+                "UserAcceptedAi" boolean NULL,
+                "SourceEntityType" varchar(100) NULL,
+                "SourceEntityId" uuid NULL,
+                "Status" integer NOT NULL DEFAULT 1,
+                "ProviderUsed" integer NOT NULL DEFAULT 1,
+                "ModelVersion" varchar(200) NULL,
+                "LatencyMs" integer NULL,
+                "InputTokens" integer NULL,
+                "OutputTokens" integer NULL,
+                "CostUsd" decimal(18,6) NULL,
+                "CacheHitOfFeedbackId" uuid NULL,
+                "ErrorMessage" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiSuggestionFeedbacks" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_AiSuggestionFeedbacks_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_Company_Feature_Date" ON "AiSuggestionFeedbacks" ("CompanyId", "FeatureKey", "CreatedAt" DESC) WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_PromptHash" ON "AiSuggestionFeedbacks" ("PromptHash") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiSuggestionFeedbacks_Feature_UserChosen" ON "AiSuggestionFeedbacks" ("FeatureKey", "UserChosenAt") WHERE "IsDeleted" = false;""",
+
+            // Prompt response cache — tenant-scoped, content-addressed.
+            """
+            CREATE TABLE IF NOT EXISTS "AiResponseCaches" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "PromptHash" varchar(80) NOT NULL,
+                "FeatureKey" varchar(100) NOT NULL,
+                "ResponseJson" jsonb NOT NULL,
+                "ProviderUsed" integer NOT NULL,
+                "ModelVersion" varchar(200) NULL,
+                "Confidence" decimal(5,4) NULL,
+                "CompanyId" uuid NULL,
+                "HitCount" integer NOT NULL DEFAULT 0,
+                "LastHitAt" timestamp NULL,
+                "ExpiresAt" timestamp NOT NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiResponseCaches" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiResponseCaches_Hash_Company" ON "AiResponseCaches" ("PromptHash", "CompanyId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiResponseCaches_ExpiresAt" ON "AiResponseCaches" ("ExpiresAt") WHERE "IsDeleted" = false;""",
+
+            // Per-feature local-model health (one row per FeatureKey).
+            """
+            CREATE TABLE IF NOT EXISTS "LocalModelHealths" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "FeatureKey" varchar(100) NOT NULL,
+                "LocalModelVersion" varchar(100) NOT NULL DEFAULT 'v1',
+                "SamplesLast30d" integer NOT NULL DEFAULT 0,
+                "LocalAccuracy30d" decimal(5,4) NOT NULL DEFAULT 0,
+                "AiAccuracy30d" decimal(5,4) NOT NULL DEFAULT 0,
+                "AgreementRate30d" decimal(5,4) NOT NULL DEFAULT 0,
+                "LastEvaluatedAt" timestamp NOT NULL DEFAULT now(),
+                "Status" integer NOT NULL DEFAULT 1,
+                "Recommendation" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_LocalModelHealths" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_FeatureKey" ON "LocalModelHealths" ("FeatureKey") WHERE "IsDeleted" = false;""",
+
+            // Per-feature routing policy — admin sets mode + thresholds
+            // per AiFeatureKey. Sparse (rows missing fall back to global
+            // defaults in the orchestrator).
+            """
+            CREATE TABLE IF NOT EXISTS "AiFeatureRoutingConfigs" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "FeatureKey" varchar(100) NOT NULL,
+                "Mode" integer NOT NULL DEFAULT 3,
+                "LocalConfidenceThreshold" decimal(5,4) NULL,
+                "ProviderSamplingRate" decimal(5,4) NULL,
+                "AdminNote" text NULL,
+                "LastModifiedBy" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiFeatureRoutingConfigs" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiFeatureRoutingConfigs_FeatureKey" ON "AiFeatureRoutingConfigs" ("FeatureKey") WHERE "IsDeleted" = false;""",
+
+            // Daily usage rollup — drives the admin AI burn widget. One
+            // row per (day, provider, feature). Job upserts at end-of-day.
+            """
+            CREATE TABLE IF NOT EXISTS "AiUsageDailies" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "UsageDate" timestamp NOT NULL,
+                "ProviderType" integer NOT NULL,
+                "FeatureKey" varchar(100) NOT NULL,
+                "CallsAttempted" integer NOT NULL DEFAULT 0,
+                "CallsSuccessful" integer NOT NULL DEFAULT 0,
+                "CallsCached" integer NOT NULL DEFAULT 0,
+                "CallsFailed" integer NOT NULL DEFAULT 0,
+                "CallsBudgetBlocked" integer NOT NULL DEFAULT 0,
+                "InputTokensTotal" bigint NOT NULL DEFAULT 0,
+                "OutputTokensTotal" bigint NOT NULL DEFAULT 0,
+                "CostUsdTotal" decimal(18,6) NOT NULL DEFAULT 0,
+                "AvgLatencyMs" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_AiUsageDailies" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiUsageDailies_Day_Provider_Feature" ON "AiUsageDailies" ("UsageDate", "ProviderType", "FeatureKey") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AiUsageDailies_UsageDate" ON "AiUsageDailies" ("UsageDate" DESC) WHERE "IsDeleted" = false;""",
+
+            // SiteSettings — AI master switches.
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiAugmentationEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiReviewConfidenceThreshold" decimal(5,4) NOT NULL DEFAULT 0.6500;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiSamplingRate" decimal(5,4) NOT NULL DEFAULT 0.1000;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiDefaultCacheTtlDays" integer NOT NULL DEFAULT 30;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiStripPiiInPrompts" boolean NOT NULL DEFAULT true;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiVerifyAgainstThaiComplianceRules" boolean NOT NULL DEFAULT true;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AiLastFeedbackTrainingAt" timestamp NULL;""",
+
+            // OcrScanResult — AI augmentation trail.
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestedContactId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestionFeedbackId" uuid NULL;""",
+
+            // EmployeeLeave — half-day support added 2026.
+            """ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "HalfDayMarker" integer NOT NULL DEFAULT 0;""",
+
+            // CompanySettings — owner-level feature + menu overrides
+            // (subtractive only; Subscription.EnabledFeatures is the
+            // upper bound, this lets the Owner opt-out features they
+            // don't use / hide menus they find noisy).
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "OwnerDisabledFeatures" bigint NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "OwnerHiddenMenuIdsJson" text NULL;""",
+
+            // LeaveType — HR-configurable catalog (replaces hardcoded
+            // string keys in CompanySettings.LeaveQuotasJson).
+            """
+            CREATE TABLE IF NOT EXISTS "LeaveTypes" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Code" varchar(50) NOT NULL,
+                "NameTh" varchar(200) NOT NULL,
+                "NameEn" varchar(200) NULL,
+                "AnnualQuota" decimal(10,2) NOT NULL DEFAULT 0,
+                "IsPaid" boolean NOT NULL DEFAULT true,
+                "AllowHalfDay" boolean NOT NULL DEFAULT true,
+                "CarryForward" boolean NOT NULL DEFAULT false,
+                "CarryForwardCap" decimal(10,2) NULL,
+                "AdvanceNoticeDays" integer NOT NULL DEFAULT 0,
+                "RequiresAttachment" boolean NOT NULL DEFAULT false,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "Color" varchar(20) NOT NULL DEFAULT '#6366f1',
+                "Icon" varchar(20) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_LeaveTypes" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_LeaveTypes_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LeaveTypes_Company_Code" ON "LeaveTypes" ("CompanyId", "Code") WHERE "IsDeleted" = false;""",
+
+            // PublicHoliday — calendar.
+            """
+            CREATE TABLE IF NOT EXISTS "PublicHolidays" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Date" timestamp NOT NULL,
+                "NameTh" varchar(200) NOT NULL,
+                "NameEn" varchar(200) NULL,
+                "Category" varchar(50) NOT NULL DEFAULT 'Public',
+                "IsSubstitute" boolean NOT NULL DEFAULT false,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_PublicHolidays" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_PublicHolidays_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PublicHolidays_Company_Date" ON "PublicHolidays" ("CompanyId", "Date") WHERE "IsDeleted" = false;""",
+
+            // EmployeeLeaveBalance — carry-forward + manual HR adjustment.
+            """
+            CREATE TABLE IF NOT EXISTS "EmployeeLeaveBalances" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "Year" integer NOT NULL,
+                "LeaveTypeCode" varchar(50) NOT NULL,
+                "CarriedForwardDays" decimal(10,2) NOT NULL DEFAULT 0,
+                "AdjustmentDays" decimal(10,2) NOT NULL DEFAULT 0,
+                "Notes" text NULL,
+                "Phase" varchar(20) NOT NULL DEFAULT 'Manual',
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_EmployeeLeaveBalances" PRIMARY KEY ("Id"),
+                CONSTRAINT "FK_ELB_Companies" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id"),
+                CONSTRAINT "FK_ELB_Employees" FOREIGN KEY ("EmployeeId") REFERENCES "Employees"("Id")
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ELB_Company_Emp_Year_Type" ON "EmployeeLeaveBalances" ("CompanyId", "EmployeeId", "Year", "LeaveTypeCode") WHERE "IsDeleted" = false;""",
+
+            // Contact — per-contact GL account overrides. Default AR =
+            // "113" prefix in FindAccountAsync; specific contacts can pin
+            // their own (e.g. ลูกหนี้พนักงาน vs ลูกหนี้การค้า).
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultArAccountId" uuid NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultApAccountId" uuid NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultIrGrAccountId" uuid NULL;""",
+
+            // ExpenseClaim — no-receipt claim (§65 ทวิ) auto-generates a
+            // Document(CertificateInLieu) on Approve. New columns added
+            // 2026 — idempotent ADD COLUMN IF NOT EXISTS.
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "NoReceipt" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "NoReceiptReason" varchar(500) NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "WitnessName" varchar(200) NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "WitnessPosition" varchar(200) NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "CertificateInLieuDocumentId" uuid NULL;""",
+
+            // AnomalyDetection — lazy AI explanation cache.
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiVerdict" varchar(50) NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiConfidence" decimal(5,4) NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiReasoning" text NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiSuggestedActionsJson" text NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiRisksJson" text NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "AnomalyDetections" ADD COLUMN IF NOT EXISTS "AiExplainedAt" timestamp NULL;""",
+
+            // ===== Project external sync (partner system linkage) =====
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(50) NULL;""",
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "LastSyncedAt" timestamp NULL;""",
+            """ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "ExternalUrl" text NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Projects_External" ON "Projects" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ===== Project allocation rolled out to remaining entities =====
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "ExpenseClaims" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "ExpenseClaimLines" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "PettyCashTransactions" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "Cheques" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "StampDutyRecords" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """ALTER TABLE "Budgets" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Payments_Project" ON "Payments" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ExpenseClaims_Project" ON "ExpenseClaims" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Approval rule per-project scope — lets a company route project X
+            // spend through PM Alice and project Y through PM Bob at the same
+            // amount tier. Backfilled NULL = applies to all projects (legacy).
+            """ALTER TABLE "ApprovalRules" ADD COLUMN IF NOT EXISTS "ProjectId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ApprovalRules_Project" ON "ApprovalRules" ("ProjectId") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Document gains supplier-side tax invoice metadata for
+            // PurchaseInvoice + credit-term fields. Indexed by
+            // (CompanyId, SupplierInvoiceNumber) so partner-statement
+            // reconciliation can find a row in one hop.
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SupplierInvoiceNumber" varchar(100) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SupplierTaxInvoiceDate" timestamp NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CreditDays" integer NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentTerms" varchar(100) NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_Supplier_Invoice" ON "Documents" ("CompanyId", "SupplierInvoiceNumber") WHERE "SupplierInvoiceNumber" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Reverse-lookup index — finding all child docs of a source
+            // (e.g. all DNs spawned from a QT) currently does a full scan.
+            // Index lets the detail-modal "เอกสารต่อเนื่อง" section + the
+            // ?relatedDocumentId= filter return in O(log n).
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_RelatedDocument" ON "Documents" ("CompanyId", "RelatedDocumentId") WHERE "RelatedDocumentId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentLines_SourceLine" ON "DocumentLines" ("SourceLineId") WHERE "SourceLineId" IS NOT NULL;""",
+
+            // Per-line link from a ProjectCostEntry back to the DocumentLine
+            // that spawned it. Lets the doc UI flag each line "🏗️ ลงโครงการแล้ว"
+            // without re-parsing the auto-marker in the Description.
+            """ALTER TABLE "ProjectCostEntries" ADD COLUMN IF NOT EXISTS "DocumentLineId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProjectCostEntries_DocumentLine" ON "ProjectCostEntries" ("DocumentLineId") WHERE "DocumentLineId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProjectCostEntries_Document" ON "ProjectCostEntries" ("CompanyId", "DocumentId") WHERE "DocumentId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // Attendance metadata on EmployeeProjectTime — optional
+            // fields synced from clock-in / attendance systems. If
+            // never set, payroll calc behaves exactly as before.
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "OvertimeHours" decimal(8,2) NULL;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "IsHoliday" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "HasPerDiem" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "HasAccommodation" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "HasOvertimeMeal" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "AttendanceMetadataJson" text NULL;""",
+
+            // Per-employee + company-wide compensation profile tables.
+            """CREATE TABLE IF NOT EXISTS "EmployeeCompensationProfiles" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "OvertimeRateMultiplierWeekday" decimal(6,3) NULL,
+                "OvertimeRateMultiplierHoliday" decimal(6,3) NULL,
+                "PerDiemRate" decimal(18,2) NULL,
+                "AccommodationAllowance" decimal(18,2) NULL,
+                "OvertimeMealAllowance" decimal(18,2) NULL,
+                "CustomBenefitsJson" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeCompProfile_Employee" ON "EmployeeCompensationProfiles" ("CompanyId", "EmployeeId") WHERE "IsDeleted" = false;""",
+
+            """CREATE TABLE IF NOT EXISTS "CompanyCompensationDefaults" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "OvertimeRateMultiplierWeekday" decimal(6,3) NOT NULL DEFAULT 1.5,
+                "OvertimeRateMultiplierHoliday" decimal(6,3) NOT NULL DEFAULT 3.0,
+                "PerDiemRate" decimal(18,2) NOT NULL DEFAULT 500,
+                "AccommodationAllowance" decimal(18,2) NOT NULL DEFAULT 800,
+                "OvertimeMealAllowance" decimal(18,2) NOT NULL DEFAULT 30,
+                "StandardWorkHoursPerDay" decimal(6,2) NOT NULL DEFAULT 8,
+                "StandardWorkDaysPerMonth" decimal(6,2) NOT NULL DEFAULT 30,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyCompDefaults_Company" ON "CompanyCompensationDefaults" ("CompanyId") WHERE "IsDeleted" = false;""",
+
+            // PaymentAllocation — one Payment may settle many Documents.
+            // Existing Payment rows stay valid (legacy 1:1 path); new
+            // multi-doc payments insert one row per target document.
+            """CREATE TABLE IF NOT EXISTS "PaymentAllocations" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "PaymentId" uuid NOT NULL,
+                "DocumentId" uuid NOT NULL,
+                "AllocatedAmount" decimal(18,2) NOT NULL,
+                "WithholdingTaxAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "Note" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Payment" ON "PaymentAllocations" ("PaymentId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Document" ON "PaymentAllocations" ("CompanyId", "DocumentId") WHERE "IsDeleted" = false;""",
+
+            // Inbound cheques need an explicit deposit-bank link so
+            // MarkCleared can update bank balance — outbound uses
+            // ChequeBook.BankAccount, inbound has no chequeBook.
+            """ALTER TABLE "Cheques" ADD COLUMN IF NOT EXISTS "DepositBankAccountId" uuid NULL;""",
+
+            // Employee EmployeeCode uniqueness is now scoped to active
+            // (non-soft-deleted) rows so partners can recreate / restore
+            // an employee code after deletion. Drop the legacy unique
+            // constraint first, then create the partial unique index.
+            """ALTER TABLE "Employees" DROP CONSTRAINT IF EXISTS "AK_Employees_CompanyId_EmployeeCode";""",
+            """DROP INDEX IF EXISTS "IX_Employees_CompanyId_EmployeeCode";""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_Employees_CompanyId_EmployeeCode_Active" ON "Employees" ("CompanyId", "EmployeeCode") WHERE "IsDeleted" = false;""",
+
+            // HR: employee external-sync + cost-behavior fields. ExternalId/
+            // ExternalSystem let attendance / HRIS push or pull rows without
+            // name-matching. CostBehavior drives the Fixed-vs-Variable cost
+            // report — defaulted to Fixed (monthly salaried is the common
+            // case; daily/hourly should be flipped via UpdateEmployee).
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(50) NULL;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "LastSyncedAt" timestamp NULL;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "CostBehavior" varchar(20) NOT NULL DEFAULT 'Fixed';""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_Employees_ExternalSync" ON "Employees" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ProjectCostEntry cost behavior — Fixed (rent, salaried) vs
+            // Variable (hourly labor, materials) — drives the cost report.
+            """ALTER TABLE "ProjectCostEntries" ADD COLUMN IF NOT EXISTS "CostBehavior" varchar(20) NOT NULL DEFAULT 'Variable';""",
+
+            // ChartOfAccount cost behavior — nullable; lets the report
+            // classify non-project GL costs (rent, utilities, depreciation)
+            // that bypass ProjectCostEntry. Seeded NULL; admins tag the
+            // relevant expense accounts via the COA UI.
+            """ALTER TABLE "ChartOfAccounts" ADD COLUMN IF NOT EXISTS "CostBehavior" varchar(20) NULL;""",
+
+            // Employee project time allocation — feeds payroll → ProjectCostEntry
+            // labor allocation. Sync-friendly (external attendance systems).
+            """CREATE TABLE IF NOT EXISTS "EmployeeProjectTimes" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "ProjectId" uuid NULL,
+                "ProjectTaskId" uuid NULL,
+                "WorkDate" timestamp NOT NULL,
+                "Hours" decimal(8,2) NOT NULL DEFAULT 0,
+                "Description" text NULL,
+                "Category" varchar(50) NOT NULL DEFAULT 'Billable',
+                "IsAllocated" boolean NOT NULL DEFAULT false,
+                "AllocatedPayrollRunId" uuid NULL,
+                "ProjectCostEntryId" uuid NULL,
+                "ExternalId" varchar(200) NULL,
+                "ExternalSystem" varchar(50) NULL,
+                "LastSyncedAt" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Employee_Date" ON "EmployeeProjectTimes" ("CompanyId", "EmployeeId", "WorkDate") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Project_Date" ON "EmployeeProjectTimes" ("CompanyId", "ProjectId", "WorkDate") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeProjectTimes_ExternalSync" ON "EmployeeProjectTimes" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

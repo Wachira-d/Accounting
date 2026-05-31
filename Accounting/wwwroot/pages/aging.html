@@ -23,6 +23,8 @@
          data-tour-text="เลือกวันที่อ้างอิง — ระบบจัด bucket: 0-30 / 31-60 / 61-90 / 91-180 / 180+ วัน + ยอดรวมเงินที่ค้าง">
       <label class="text-sm font-medium">ณ วันที่:</label>
       <input type="date" class="form-input" id="asOfDate" style="width:180px">
+      <label class="text-sm font-medium">โครงการ:</label>
+      <select class="form-input" id="filterProject" style="width:240px"><option value="">— ทุกโครงการ —</option></select>
       <button class="btn btn-primary" onclick="Page.load()">แสดงรายงาน</button>
     </div>
 
@@ -42,10 +44,23 @@
   <script>
     const Page = {
       reportType: 'AccountsReceivable',
-      init() {
+      async init() {
         if (!Layout.init('aging')) return;
         Layout.setTitle('รายงานอายุลูกหนี้/เจ้าหนี้');
         document.getElementById('asOfDate').value = Layout.toDateInput(new Date());
+        await this.loadProjects();
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          document.getElementById('filterProject').innerHTML =
+            '<option value="">— ทุกโครงการ —</option>' + opts;
+        } catch (e) { /* ignore */ }
       },
       setType(type, el) {
         this.reportType = type;
@@ -55,7 +70,11 @@
       async load() {
         const api = Layout.api(); if (!api) return;
         const date = document.getElementById('asOfDate').value;
-        const q = date ? `?asOfDate=${date}` : '';
+        const projectId = document.getElementById('filterProject').value;
+        const params = [];
+        if (date) params.push(`asOfDate=${date}`);
+        if (projectId) params.push(`projectId=${projectId}`);
+        const q = params.length ? `?${params.join('&')}` : '';
         try {
           const res = this.reportType === 'AccountsReceivable'
             ? await api.getAgingReceivables(q)

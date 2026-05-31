@@ -482,6 +482,114 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, request.IsAdmin ? "กำหนดเป็น Admin สำเร็จ" : "ยกเลิกสิทธิ์ Admin สำเร็จ"));
     }
 
+    /// <summary>System-wide Azure DI / Local OCR usage for the current
+    /// billing month. Drives the "ดูการใช้งานเดือนนี้" widget on the
+    /// admin OCR config page so the operator can tell when to top up the
+    /// Azure Cognitive Services credit before the next page-load hits 429.
+    ///
+    /// Sources page counters from Subscription.CurrentMonthAzureOcrPages /
+    /// CurrentMonthLocalOcrPages (incremented by OcrQuotaService on each
+    /// successful scan). Linear forecast = pages-so-far × days-in-month /
+    /// days-elapsed; rough but good enough to spot "we're burning credit
+    /// 3× last month's rate" early.
+    ///
+    /// Pricing — Azure DI prebuilt-invoice S0 list price as of 2024-11:
+    /// US$0.05 / page for the first 1M pages then sliding to $0.03 above
+    /// 1M. We compute at the simple flat rate; the operator validates
+    /// against their actual Azure invoice. F0 (Free) tenants are flagged
+    /// "0 USD billed, 500-page free cap" so they see runway not cost.
+    /// </summary>
+    [HttpGet("ocr/azure-usage")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAzureOcrUsage(
+        [FromQuery] decimal? pricePerPageUsd = 0.05m,
+        [FromQuery] decimal? usdToThb = 36.5m,
+        [FromQuery] int topN = 10)
+    {
+        // Sum across active (non-soft-deleted) subscriptions — counters are
+        // reset by the lazy monthly-reset logic in OcrQuotaService, so a
+        // sub whose UsageResetDate is in the past contributes 0 here even
+        // though the column hasn't been zeroed yet (we mirror that logic).
+        var now = DateTime.UtcNow;
+        var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var monthEnd = monthStart.AddMonths(1);
+        var daysInMonth = (monthEnd - monthStart).TotalDays;
+        var daysElapsed = Math.Max(1, (now - monthStart).TotalDays);
+
+        var liveSubs = await _db.Subscriptions.AsNoTracking()
+            .Where(s => !s.IsDeleted && s.UsageResetDate > now)
+            .Select(s => new
+            {
+                s.CompanyId,
+                s.CurrentMonthAzureOcrPages,
+                s.CurrentMonthLocalOcrPages,
+                s.CurrentMonthOcrPages,
+            })
+            .ToListAsync();
+
+        var totalAzure = liveSubs.Sum(s => s.CurrentMonthAzureOcrPages);
+        var totalLocal = liveSubs.Sum(s => s.CurrentMonthLocalOcrPages);
+        var totalAll = liveSubs.Sum(s => s.CurrentMonthOcrPages);
+
+        // Per-tenant top N for the "which company is burning credit" view.
+        var topCompanyIds = liveSubs
+            .Where(s => s.CurrentMonthAzureOcrPages > 0)
+            .OrderByDescending(s => s.CurrentMonthAzureOcrPages)
+            .Take(topN)
+            .Select(s => s.CompanyId)
+            .ToList();
+        var companyNames = await _db.Companies.AsNoTracking()
+            .Where(c => topCompanyIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var topRows = liveSubs
+            .Where(s => topCompanyIds.Contains(s.CompanyId))
+            .OrderByDescending(s => s.CurrentMonthAzureOcrPages)
+            .Select(s => new
+            {
+                companyId = s.CompanyId,
+                companyName = companyNames.GetValueOrDefault(s.CompanyId, "(no name)"),
+                azurePages = s.CurrentMonthAzureOcrPages,
+                localPages = s.CurrentMonthLocalOcrPages,
+            })
+            .ToList();
+
+        var pricePerPage = pricePerPageUsd ?? 0.05m;
+        var fx = usdToThb ?? 36.5m;
+        var costUsd = Math.Round(totalAzure * pricePerPage, 2, MidpointRounding.AwayFromZero);
+        var costThb = Math.Round(costUsd * fx, 2, MidpointRounding.AwayFromZero);
+        var forecastPages = (int)Math.Ceiling(totalAzure * daysInMonth / daysElapsed);
+        var forecastUsd = Math.Round(forecastPages * pricePerPage, 2, MidpointRounding.AwayFromZero);
+        var forecastThb = Math.Round(forecastUsd * fx, 2, MidpointRounding.AwayFromZero);
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            month = monthStart.ToString("yyyy-MM"),
+            daysElapsed = (int)daysElapsed,
+            daysInMonth = (int)daysInMonth,
+            totalAzurePages = totalAzure,
+            totalLocalPages = totalLocal,
+            totalAllPages = totalAll,
+            // Currently-billed (Azure DI charges per page consumed).
+            pricing = new
+            {
+                pricePerPageUsd = pricePerPage,
+                usdToThb = fx,
+                currentMonthCostUsd = costUsd,
+                currentMonthCostThb = costThb,
+                forecastFullMonthPages = forecastPages,
+                forecastFullMonthCostUsd = forecastUsd,
+                forecastFullMonthCostThb = forecastThb,
+            },
+            // Burn-rate signals for the budget dashboard.
+            burnRate = new
+            {
+                pagesPerDay = Math.Round(totalAzure / daysElapsed, 1),
+                pagesPerDayLocal = Math.Round(totalLocal / daysElapsed, 1),
+            },
+            topCompanies = topRows,
+            activeSubscriptionsTracked = liveSubs.Count,
+        }, null));
+    }
+
     [HttpPut("companies/{companyId:guid}/users/{userId:guid}/role")]
     public async Task<ActionResult<ApiResponse<string>>> ChangeCompanyUserRole(
         Guid companyId, Guid userId, [FromBody] UpdateUserRoleRequest request)

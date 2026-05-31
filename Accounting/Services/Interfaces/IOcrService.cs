@@ -5,11 +5,37 @@ namespace Accounting.Services.Interfaces;
 
 public interface IOcrService
 {
-    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId);
+    /// <summary>
+    /// Run the OCR cascade on an uploaded file.
+    /// <paramref name="preferredEngine"/>: "auto" | "azure" | "local" (case-
+    /// insensitive). Null/empty/auto = full cascade (Tier 0 e-Tax XML →
+    /// Tier 1 Azure DI → Tier 2 Local Python → Tier 3 Embedded Tesseract).
+    /// "azure" skips Tier 2 / Tier 3 (no silent local fallback when the user
+    /// explicitly asked for Azure-grade accuracy). "local" skips Tier 1 so
+    /// no Azure cost is incurred. Tier 0 always runs regardless — it's free,
+    /// 100% accurate, and consumes no engine quota.
+    /// </summary>
+    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null);
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
+
+    /// <summary>Persist a per-line project assignment into the scan's
+    /// ExtractedItemsJson so CreateDocumentFromScanAsync can flow it
+    /// to DocumentLine.ProjectId.</summary>
+    Task SetExtractedLineProjectAsync(Guid companyId, Guid scanResultId,
+        int lineIndex, Guid? projectId, string? projectName);
+
+    /// <summary>Bulk assign — set the same project on EVERY extracted
+    /// line. Used by the OCR review UI's "main project" picker:
+    /// user picks one project, every row inherits it, then user only
+    /// has to touch the rows that should override. When onlyEmpty=true,
+    /// only lines that don't already have a project get updated
+    /// (preserves the user's prior overrides).</summary>
+    Task SetAllExtractedLineProjectsAsync(Guid companyId, Guid scanResultId,
+        Guid? projectId, string? projectName, bool onlyEmpty);
+
     Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
     Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false);
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,

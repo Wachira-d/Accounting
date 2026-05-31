@@ -88,6 +88,20 @@ public class Employee : TenantEntity
     public Guid? SalaryExpenseAccountId { get; set; }
     public ChartOfAccount? SalaryExpenseAccount { get; set; }
 
+    /// <summary>Cost behavior of this employee's base salary. Monthly
+    /// salaried = Fixed (รับเงินไม่ว่าจะทำงานหรือไม่). Daily/Hourly =
+    /// Variable (จ่ายตามที่ทำ). Drives fix-vs-variable cost reports.
+    /// Default inferred from SalaryType on create.</summary>
+    public string CostBehavior { get; set; } = "Fixed";  // Fixed, Variable
+
+    /// <summary>Optional external HR system identifier (HRIS, attendance
+    /// software, parent-company SAP, etc.) — lets a sync push/pull this
+    /// employee row without name-matching. ExternalSystem labels the
+    /// origin so multi-source syncs can co-exist.</summary>
+    public string? ExternalId { get; set; }
+    public string? ExternalSystem { get; set; }
+    public DateTime? LastSyncedAt { get; set; }
+
     public ICollection<PayrollRun> PayrollRuns { get; set; } = new List<PayrollRun>();
     public ICollection<EmployeeLeave> Leaves { get; set; } = new List<EmployeeLeave>();
 }
@@ -188,6 +202,132 @@ public class EmployeeLeave : TenantEntity
     public string Status { get; set; } = "Pending";      // Pending, Approved, Rejected, Cancelled
     public string? ApprovedBy { get; set; }
     public string? RejectionReason { get; set; }         // Filled when Status = Rejected
+
+    /// <summary>0 = full day(s) only, 1 = half-day morning, 2 = half-day
+    /// afternoon. When set to 1/2, TotalDays should be 0.5. The quota
+    /// deducts the fractional value.</summary>
+    public int HalfDayMarker { get; set; } = 0;
+}
+
+/// <summary>
+/// HR-configurable leave-type catalog. Replaces the hardcoded string-key
+/// LeaveQuotasJson in CompanySettings (kept as fallback for legacy
+/// tenants). Each row = one leave type per company. The defaults
+/// auto-seeded on first read mirror Thai labor-law (Annual 6d, Sick 30d,
+/// Personal 3d, Maternity 98d) — HR adjusts via /pages/leave-types.html.
+/// </summary>
+public class LeaveType : TenantEntity
+{
+    /// <summary>Stable key referenced by EmployeeLeave.LeaveType — "Annual",
+    /// "Sick", "Personal", "Maternity", "Other" plus any custom keys the
+    /// company defines (e.g. "Bereavement").</summary>
+    public string Code { get; set; } = "";
+
+    /// <summary>Thai display name shown on the request form.</summary>
+    public string NameTh { get; set; } = "";
+    public string? NameEn { get; set; }
+
+    /// <summary>Days allowed per calendar year. Decimal so half-days +
+    /// hourly conversions stay clean.</summary>
+    public decimal AnnualQuota { get; set; }
+
+    /// <summary>Paid leave deducts from quota but pays salary. Unpaid
+    /// (= false) flows to payroll's UnpaidLeave deduction line.</summary>
+    public bool IsPaid { get; set; } = true;
+
+    /// <summary>Allow half-day requests (TotalDays = 0.5).</summary>
+    public bool AllowHalfDay { get; set; } = true;
+
+    /// <summary>Allow unused days to roll to next year. Standard Thai
+    /// practice: Annual allows ≤5d roll-over; Sick resets every year.</summary>
+    public bool CarryForward { get; set; } = false;
+
+    /// <summary>Max days that can carry forward when CarryForward = true.
+    /// Null = unlimited (rare).</summary>
+    public decimal? CarryForwardCap { get; set; }
+
+    /// <summary>Required advance-notice days. 0 = same-day allowed
+    /// (Sick / emergency). UI warns when violated; not server-enforced.</summary>
+    public int AdvanceNoticeDays { get; set; } = 0;
+
+    /// <summary>Require photo / cert attachment. Thai labor law §32:
+    /// Sick > 3 days needs doctor's certificate. Server gates Submit.</summary>
+    public bool RequiresAttachment { get; set; } = false;
+
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>Hex colour for calendar pills + dashboard charts.</summary>
+    public string Color { get; set; } = "#6366f1";
+    public string? Icon { get; set; }
+}
+
+/// <summary>
+/// Per-employee, per-year, per-type balance adjustment. Holds the
+/// carry-forward day-count from the previous year (after applying
+/// LeaveType.CarryForwardCap) plus any manual HR adjustment (e.g. add
+/// 3 days as a perk, deduct 1 day for a forgotten clock-in).
+///
+/// Effective quota for an employee × year × type =
+///     LeaveType.AnnualQuota
+///   + EmployeeLeaveBalance.CarriedForwardDays
+///   + EmployeeLeaveBalance.AdjustmentDays
+///
+/// Rows are written by the year-end carry-forward job
+/// (Phase=YearEnd) or by the HR adjustment endpoint (Phase=Manual).
+/// Unique on (CompanyId, EmployeeId, Year, LeaveTypeCode) so each
+/// employee has exactly one balance row per type per year — the job
+/// upserts; HR adjustments overwrite the AdjustmentDays portion.
+/// </summary>
+public class EmployeeLeaveBalance : TenantEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+
+    /// <summary>Calendar year this row applies to (the YEAR FOR WHICH
+    /// the quota is being adjusted, not the year the unused days came
+    /// from). E.g. Year=2026 row carries forward 2025's unused days.</summary>
+    public int Year { get; set; }
+
+    /// <summary>References LeaveType.Code — stable string key.</summary>
+    public string LeaveTypeCode { get; set; } = "";
+
+    /// <summary>Days rolled forward from Year-1. Already clamped by
+    /// LeaveType.CarryForwardCap when the year-end job ran. Can be 0
+    /// when the type doesn't carry forward (e.g. Sick).</summary>
+    public decimal CarriedForwardDays { get; set; } = 0m;
+
+    /// <summary>Free-form HR adjustment (positive = add, negative =
+    /// deduct). Independent of carry-forward; HR uses this for one-off
+    /// changes (perk days, disciplinary deduction, prorated hire).</summary>
+    public decimal AdjustmentDays { get; set; } = 0m;
+
+    public string? Notes { get; set; }
+
+    /// <summary>"YearEnd" (written by the auto-roll job at Jan 1) or
+    /// "Manual" (HR-adjustment endpoint). Lets the audit see who
+    /// produced the entry.</summary>
+    public string Phase { get; set; } = "Manual";
+}
+
+/// <summary>
+/// Public-holiday calendar — company-configurable list. Used by the
+/// leave engine to skip non-working days when computing TotalDays + by
+/// payroll for §29 holiday-pay multipliers.
+/// </summary>
+public class PublicHoliday : TenantEntity
+{
+    public DateTime Date { get; set; }
+    public string NameTh { get; set; } = "";
+    public string? NameEn { get; set; }
+
+    /// <summary>"Public" (ราชการ), "Religious" (ทางศาสนา), "Substitute"
+    /// (วันหยุดชดเชย), "Company" (วันหยุดบริษัทเอง).</summary>
+    public string Category { get; set; } = "Public";
+
+    /// <summary>Flag when this is a labor-law substitute day for a
+    /// weekend-overlapping holiday.</summary>
+    public bool IsSubstitute { get; set; } = false;
 }
 
 /// <summary>

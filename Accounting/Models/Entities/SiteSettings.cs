@@ -139,4 +139,51 @@ public class SiteSettings : BaseEntity
     /// Thai SME invoices/receipts; tenants who routinely scan long
     /// contracts can raise this. Null = no cap (whole PDF).</summary>
     public int? OcrMaxPagesPerScan { get; set; } = 10;
+
+    // ===== AI Augmentation (System-wide master switch) =====
+    // Per-provider credentials live in AiProviderConfig — admin picks
+    // active provider there. These knobs are the system-wide policy
+    // that applies regardless of which provider is wired up.
+
+    /// <summary>Master kill-switch. When false, the orchestrator never
+    /// calls any provider — every feature falls through to local-only.
+    /// Independent of per-provider IsActive flags so an outage can be
+    /// neutralised in one click.</summary>
+    public bool AiAugmentationEnabled { get; set; } = false;
+
+    /// <summary>Local-model confidence floor below which AI gets called
+    /// for review. Above the floor, local answer is used directly (and
+    /// AI may still be sampled at AiSamplingRate for accuracy tracking).
+    /// 0.65 matches the existing ExpenseCategoryLearner threshold so
+    /// behaviour stays consistent.</summary>
+    public decimal AiReviewConfidenceThreshold { get; set; } = 0.65m;
+
+    /// <summary>Sampling rate for high-local-confidence cases (≥ threshold).
+    /// 0.10 = 10% of confident local predictions still get AI review so
+    /// LocalModelHealth has a steady ground-truth signal. Set to 0 to
+    /// disable sampling once cost matters more than calibration.</summary>
+    public decimal AiSamplingRate { get; set; } = 0.10m;
+
+    /// <summary>Cache TTL knob for the per-feature cache layer. Per-feature
+    /// PromptBuilder may override, but this is the system default for
+    /// "don't have an opinion" features. 30 days mirrors the vendor-canon
+    /// reuse pattern: same vendor name → same matched contact for weeks.</summary>
+    public int AiDefaultCacheTtlDays { get; set; } = 30;
+
+    /// <summary>Strip PII from prompts before sending to the provider.
+    /// When true (default), TaxId is masked, customer personal names are
+    /// hashed, addresses keep only province. Tenants in regulated sectors
+    /// (healthcare, finance) MUST keep this on for PDPA compliance.</summary>
+    public bool AiStripPiiInPrompts { get; set; } = true;
+
+    /// <summary>Tier-3 verification — when true, every AI response is
+    /// double-checked against RdComplianceValidator before being shown to
+    /// the user. Catches the case where the model invents a VAT rate or
+    /// hallucinates a non-existent revenue code (50ter etc.).</summary>
+    public bool AiVerifyAgainstThaiComplianceRules { get; set; } = true;
+
+    /// <summary>Timestamp of the last LLMFeedbackTrainingJob run. Surfaces
+    /// "last trained X hours ago" on the admin AI page so an operator
+    /// notices when the job is wedged.</summary>
+    public DateTime? AiLastFeedbackTrainingAt { get; set; }
 }

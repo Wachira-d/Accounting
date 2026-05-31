@@ -107,6 +107,62 @@ builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 
 // New modules
 builder.Services.AddScoped<IProductService, ProductService>();
+// Per-SKU demand forecast + reorder recommendation (Croston). Cheap
+// enough to run on demand from the stock UI.
+builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInventoryReorderForecastService,
+    Accounting.Services.Implementations.Inventory.InventoryReorderForecastService>();
+// Local rule-based pre-checker for Thai tax filings — runs before
+// DeepSeek narrative so DeepSeek only has to explain, not verify.
+builder.Services.AddScoped<Accounting.Services.Implementations.Tax.ITaxComplianceChecker,
+    Accounting.Services.Implementations.Tax.TaxComplianceChecker>();
+// Inventory costing (Weighted-Average + FIFO + Standard) — called by
+// every stock-IN / stock-OUT path so COGS posts at the correct value.
+builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IInventoryCostingService,
+    Accounting.Services.Implementations.Inventory.InventoryCostingService>();
+// 3-way match — PO ↔ GRN ↔ Invoice. Blocks AP overpayment before
+// the cheque goes out.
+builder.Services.AddScoped<Accounting.Services.Implementations.Procurement.IGrnMatchService,
+    Accounting.Services.Implementations.Procurement.GrnMatchService>();
+// Cheque lifecycle — book ordering, issuance, clearing, bouncing,
+// outstanding-cheque report.
+builder.Services.AddScoped<Accounting.Services.Implementations.Cheque.IChequeService,
+    Accounting.Services.Implementations.Cheque.ChequeService>();
+// Stamp duty (อากรแสตมป์) tracker — schedule-aware computation +
+// payment status tracking.
+builder.Services.AddScoped<Accounting.Services.Implementations.Tax.IStampDutyService,
+    Accounting.Services.Implementations.Tax.StampDutyService>();
+// Petty cash + Stock count + FX revaluation — Tier 2 SME modules.
+builder.Services.AddScoped<Accounting.Services.Implementations.PettyCash.IPettyCashService,
+    Accounting.Services.Implementations.PettyCash.PettyCashService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Inventory.IStockCountService,
+    Accounting.Services.Implementations.Inventory.StockCountService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Forex.IFxRevaluationService,
+    Accounting.Services.Implementations.Forex.FxRevaluationService>();
+// PDPA + Quick search (Tier 3).
+builder.Services.AddScoped<Accounting.Services.Implementations.Pdpa.IPdpaService,
+    Accounting.Services.Implementations.Pdpa.PdpaService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Search.IQuickSearchService,
+    Accounting.Services.Implementations.Search.QuickSearchService>();
+// Vendor portal — token-based access for counterparties without
+// full user accounts. AP issues magic-links via the admin endpoint;
+// vendors hit /vendor-portal.html with the token in the URL.
+builder.Services.AddScoped<Accounting.Services.Implementations.Portal.IVendorPortalService,
+    Accounting.Services.Implementations.Portal.VendorPortalService>();
+// Competitor migration framework — Express / PEAK / FlowAccount.
+// Each adapter sniffs the file format + maps to canonical Contacts.
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.ExpressContactsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.PeakContactsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.FlowAccountContactsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportCoordinator,
+    Accounting.Services.Implementations.Migration.CompetitorImportCoordinator>();
+// Production orders (BOM backflush) + Consignment movement service.
+builder.Services.AddScoped<Accounting.Services.Implementations.Production.IProductionOrderService,
+    Accounting.Services.Implementations.Production.ProductionOrderService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Consignment.IConsignmentService,
+    Accounting.Services.Implementations.Consignment.ConsignmentService>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
 builder.Services.AddScoped<IBankService, BankService>();
@@ -143,6 +199,11 @@ builder.Services.AddScoped<IDimensionalAccountingService, DimensionalAccountingS
 builder.Services.AddScoped<IIntercompanyService, IntercompanyService>();
 builder.Services.AddScoped<IConsolidationService, ConsolidationService>();
 builder.Services.AddScoped<IPayrollService, PayrollService>();
+builder.Services.AddScoped<HrAllocationService>();
+builder.Services.AddScoped<IEmployeeProjectTimeService>(sp => sp.GetRequiredService<HrAllocationService>());
+builder.Services.AddScoped<IFixVariableCostReportService>(sp => sp.GetRequiredService<HrAllocationService>());
+builder.Services.AddScoped<ICashForecastService, CashForecastService>();
+builder.Services.AddScoped<ICompensationProfileService, CompensationProfileService>();
 builder.Services.AddScoped<ISalaryAdvanceService, SalaryAdvanceService>();
 builder.Services.AddScoped<IOrganizationService, OrganizationService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
@@ -185,6 +246,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.CrossTenantKn
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.ActiveLearningRanker>();
 // Nightly batch — aggregator + miner — runs in-process via IHostedService
 builder.Services.AddHostedService<Accounting.Services.Implementations.OcrMlBackgroundService>();
+builder.Services.AddHostedService<Accounting.Services.Implementations.Jobs.AiFeedbackTrainingJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkflowService>();
 // Embedded OCR is a singleton — the TesseractEngine is expensive to construct,
 // and the service maintains a thread-local engine pool for thread safety.
@@ -201,6 +263,92 @@ builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddScoped<IMobileApiService, MobileApiService>();
 builder.Services.AddScoped<IDbdLookupService, DbdLookupService>();
 builder.Services.AddHttpClient();
+
+// ───── AI integration (DeepSeek + swappable providers + orchestrator) ─────
+// Provider implementations are registered as IAiProvider so the
+// orchestrator can pick the active one by AiProviderType. Adding a new
+// provider = drop a class in Services/Ai/Providers + add a line here.
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.DeepSeekProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.OpenAiProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.OpenAiCompatibleProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiProvider, Accounting.Services.Ai.Providers.LocalLlamaProvider>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiPromptSanitizer, Accounting.Services.Ai.AiPromptSanitizer>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiResponseCacheService, Accounting.Services.Ai.AiResponseCacheService>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiBudgetGuard, Accounting.Services.Ai.AiBudgetGuard>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAiFeedbackRecorder, Accounting.Services.Ai.AiFeedbackRecorder>();
+// Per-feature routing policy — SINGLETON so the 1-minute cache survives
+// across HTTP requests. The orchestrator consults this on every AI call
+// to decide local vs provider; the admin UI writes through it.
+builder.Services.AddSingleton<Accounting.Services.Ai.IAiFeatureRoutingResolver,
+    Accounting.Services.Ai.AiFeatureRoutingResolver>();
+// Cold-start corpus seeder — runs once at startup to populate
+// SystemOcrCategoryMapping with curated Thai vendor patterns so the
+// resolver has useful answers for tenants with zero feedback yet.
+builder.Services.AddScoped<Accounting.Services.Implementations.Ai.IDistillationCorpusSeeder,
+    Accounting.Services.Implementations.Ai.DistillationCorpusSeeder>();
+// Knowledge-distillation local student models — SINGLETON because each
+// holds an in-memory (CompanyId, key) → ranked candidates dictionary
+// that the nightly AiFeedbackTrainingJob rebuilds from feedback rows.
+// Scoped lifetime would discard learned state on every HTTP request.
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.VendorCanonDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.GlAccountDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.BankMatchDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.DuplicateDocumentDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.AnomalyExplanationDistillationModel>();
+builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
+    Accounting.Services.Ai.Distillation.ApprovalWarningDistillationModel>();
+// Risk scoring & smart approval routing — surfaces decisions the
+// admin/AR/AP teams use directly + feeds the corresponding AI narrative
+// features (AgingExplanation, ApprovalWarningFixSuggestion).
+builder.Services.AddScoped<Accounting.Services.Implementations.Risk.ICustomerPaymentRiskService,
+    Accounting.Services.Implementations.Risk.CustomerPaymentRiskService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Risk.IVendorRiskScoringService,
+    Accounting.Services.Implementations.Risk.VendorRiskScoringService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Risk.ISmartApprovalRoutingService,
+    Accounting.Services.Implementations.Risk.SmartApprovalRoutingService>();
+// One-shot whole-month bank reconciliation — bundles bank txns + open
+// docs/JEs/payments + company context into a single DeepSeek call.
+builder.Services.AddScoped<Accounting.Services.Implementations.Bank.IBulkBankAiMatchService,
+    Accounting.Services.Implementations.Bank.BulkBankAiMatchService>();
+// Sentence-embedding service for Thai short text (vendor names, line
+// descriptions). Try ONNX MiniLM first — if the LFS-tracked model file
+// is present and loadable, register it; otherwise transparently fall
+// back to HashingEmbeddingService so dev clones without `git lfs pull`
+// (or CI runners without LFS support) still build + run.
+{
+    var modelPath = Path.Combine(builder.Environment.ContentRootPath, "models", "sentence-encoder.onnx");
+    var vocabPath = Path.Combine(builder.Environment.ContentRootPath, "models", "vocab.txt");
+    var onnxOk = false;
+    try
+    {
+        if (File.Exists(modelPath) && new FileInfo(modelPath).Length > 1_000_000
+            && File.Exists(vocabPath) && new FileInfo(vocabPath).Length > 1024)
+        {
+            builder.Services.AddSingleton<Accounting.Services.Ai.Embedding.IEmbeddingService>(
+                _ => new Accounting.Services.Ai.Embedding.OnnxSentenceEmbeddingService(modelPath, vocabPath));
+            onnxOk = true;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"ONNX embedding init failed, falling back to hashing: {ex.Message}");
+    }
+    if (!onnxOk)
+    {
+        builder.Services.AddSingleton<Accounting.Services.Ai.Embedding.IEmbeddingService,
+            Accounting.Services.Ai.Embedding.HashingEmbeddingService>();
+    }
+}
+builder.Services.AddScoped<Accounting.Services.Ai.IAiOrchestrator, Accounting.Services.Ai.AiOrchestrator>();
+builder.Services.AddScoped<Accounting.Services.Ai.IOcrAiAugmenter, Accounting.Services.Ai.OcrAiAugmenter>();
+builder.Services.AddScoped<Accounting.Services.Ai.IDocumentAiAugmenter, Accounting.Services.Ai.DocumentAiAugmenter>();
+builder.Services.AddScoped<Accounting.Services.Ai.IBankAiAugmenter, Accounting.Services.Ai.BankAiAugmenter>();
+builder.Services.AddScoped<Accounting.Services.Ai.IAdvancedAiAugmenter, Accounting.Services.Ai.AdvancedAiAugmenter>();
 
 // Email service
 builder.Services.AddScoped<IEmailService, EmailService>();
@@ -430,6 +578,11 @@ app.UseStaticFiles(new StaticFileOptions
 
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();
+
+// 5b. Idempotency — caches 2xx responses for 24h keyed by the
+// Idempotency-Key header so partner POST retries on network errors
+// don't double-post.
+app.UseMiddleware<IdempotencyMiddleware>();
 
 // 6. Authentication & Authorization
 app.UseAuthentication();
@@ -1279,6 +1432,21 @@ try
     catch (Exception ex)
     {
         app.Logger.LogWarning(ex, "SystemOcrKnowledgeSeeder failed at startup (non-fatal — can be triggered via admin endpoint)");
+    }
+
+    // Distillation corpus seed — curated Thai vendor → account mappings
+    // so new tenants get useful local-model suggestions BEFORE their
+    // first user feedback row exists. Idempotent (skip-or-bump
+    // TimesUsed per row) so re-running on every deploy is safe.
+    try
+    {
+        var corpusSeeder = scope.ServiceProvider
+            .GetRequiredService<Accounting.Services.Implementations.Ai.IDistillationCorpusSeeder>();
+        await corpusSeeder.SeedAsync(CancellationToken.None);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "DistillationCorpusSeeder failed at startup (non-fatal)");
     }
 }
 catch (Exception ex)

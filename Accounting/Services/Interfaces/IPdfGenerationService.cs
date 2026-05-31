@@ -10,6 +10,14 @@ public interface IPdfGenerationService
     Task<GeneratePdfResponse> GenerateReceiptPdfAsync(Guid companyId, Guid paymentId);
     Task<byte[]> GeneratePreviewPdfAsync(Guid companyId, PdfPreviewRequest request);
 
+    /// <summary>Build the SAME HTML the PDF generator uses — exposed
+    /// so the browser print preview can render an identical layout
+    /// (no more "downloaded PDF and ctrl-P print look different"
+    /// drift). The browser then runs window.print() on this HTML so
+    /// the output matches the PDF exactly minus driver-specific
+    /// rendering differences.</summary>
+    Task<string> GenerateDocumentHtmlAsync(Guid companyId, GeneratePdfRequest request);
+
     /// <summary>Convert raw HTML string to PDF bytes (for use by other services)</summary>
     byte[] ConvertHtmlToPdfBytes(string html);
 

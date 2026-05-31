@@ -19,7 +19,10 @@ public record UpdateAccountRequest(
     string? AccountNameEn,
     string? Description,
     bool? IsActive,
-    bool? InputVatClaimable = null);
+    bool? InputVatClaimable = null,
+    /// <summary>"Fixed" | "Variable" | "Mixed" | null. Drives the
+    /// Fix-vs-Variable cost report. Only meaningful on Expense accounts.</summary>
+    string? CostBehavior = null);
 
 public record AccountResponse(
     Guid Id,
@@ -33,7 +36,8 @@ public record AccountResponse(
     bool IsActive,
     bool IsSystemAccount,
     string? Description,
-    bool InputVatClaimable = true);
+    bool InputVatClaimable = true,
+    string? CostBehavior = null);
 
 // ===== Journal Entry =====
 public record CreateJournalEntryRequest(

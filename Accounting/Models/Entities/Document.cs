@@ -13,6 +13,29 @@ public class Document : TenantEntity
     public DateTime DocumentDate { get; set; }
     public DateTime? DueDate { get; set; }
 
+    // Counterparty-side tax-invoice metadata. Required for PurchaseInvoice
+    // (and any other doc where the counterparty issues their own tax
+    // invoice we then book). SupplierInvoiceNumber is the partner's own
+    // running number — distinct from our internal DocumentNumber and
+    // needed for VAT-audit reconciliation against the supplier's
+    // statement. SupplierTaxInvoiceDate is the date on the partner's
+    // tax invoice; it controls which VAT period the input VAT is
+    // claimed in (per Revenue Code §82/4 it may differ from our
+    // DocumentDate when we book the bill late).
+    public string? SupplierInvoiceNumber { get; set; }
+    public DateTime? SupplierTaxInvoiceDate { get; set; }
+
+    /// <summary>Credit term in days from the document date — used to
+    /// auto-fill DueDate when not explicit, and to roll DSO / DPO
+    /// reports. Defaulted from Contact.PaymentTermDays on create when
+    /// the caller doesn't override.</summary>
+    public int? CreditDays { get; set; }
+
+    /// <summary>Free-text payment terms label (e.g. "Net 30", "2/10
+    /// Net 30", "EOM+15") — for human readability on printed
+    /// documents. Independent of CreditDays which drives auto math.</summary>
+    public string? PaymentTerms { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;
@@ -222,6 +245,26 @@ public class Contact : TenantEntity
     public string? Email { get; set; }
     public string? ContactPerson { get; set; }
     public bool IsActive { get; set; } = true;
+
+    // ───── Per-contact GL account overrides ─────
+    // Default at the system level is the first level-4+ account starting
+    // with "113" (AR) / "212" (AP) / "212305" (IR/GR clearing) — see
+    // DocumentService.FindAccountAsync. When a contact has a specific
+    // override here, DocumentService uses THAT account on every doc
+    // created against this contact. Lets shops with multiple ลูกหนี้
+    // (เครดิตการค้า / ลูกหนี้พนักงาน / ลูกหนี้กรรมการ) book each contact
+    // straight to the right ledger without manual JE adjustment.
+    public Guid? DefaultArAccountId { get; set; }
+    public ChartOfAccount? DefaultArAccount { get; set; }
+
+    public Guid? DefaultApAccountId { get; set; }
+    public ChartOfAccount? DefaultApAccount { get; set; }
+
+    /// <summary>IR/GR clearing account — used by the goods-received-not-
+    /// invoiced and invoice-received-not-goods accruals. Default 212305
+    /// "ค่าใช้จ่ายค้างจ่ายอื่น" in the Thai SME template.</summary>
+    public Guid? DefaultIrGrAccountId { get; set; }
+    public ChartOfAccount? DefaultIrGrAccount { get; set; }
 
     /// <summary>Loyalty points balance — earned per POS sale, redeemable next visit.
     /// Default earn rate = 1 point per ฿100, set on the company config later.</summary>

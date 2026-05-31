@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าประเภทการลา - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ตั้งค่าประเภทการลา + วันหยุดประจำปี</h2>
+        <p class="page-subtitle">HR Admin · กำหนดประเภทการลา · โควต้า · นโยบายแนบหลักฐาน · ปฏิทินวันหยุด</p>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" onclick="Page.switchTab('types',this)">ประเภทการลา</div>
+      <div class="tab" onclick="Page.switchTab('holidays',this)">วันหยุดประจำปี</div>
+      <div class="tab" onclick="Page.switchTab('carry',this)">ตัดยอด / ยกยอดสิ้นปี</div>
+    </div>
+
+    <!-- Leave types tab -->
+    <div id="tab-types">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <p style="margin:0;font-size:13px;color:#64748b">ทุกประเภทเริ่มต้นด้วยค่ามาตรฐานตาม พ.ร.บ.คุ้มครองแรงงาน · ปรับได้ตามนโยบายบริษัท</p>
+        <button class="btn btn-primary" onclick="Page.openTypeModal()">+ เพิ่มประเภท</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr>
+            <th>Code</th><th>ชื่อ</th><th class="text-right">โควต้า/ปี</th>
+            <th>จ่ายค่าจ้าง</th><th>ครึ่งวัน</th><th>ยกยอด</th>
+            <th>แจ้งล่วงหน้า</th><th>ต้องแนบ</th><th>สถานะ</th><th>จัดการ</th>
+          </tr></thead>
+          <tbody id="typesBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Year-end carry-forward tab -->
+    <div id="tab-carry" style="display:none">
+      <div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#1e40af;line-height:1.6">
+        💡 <b>การยกยอด (carry-forward) ตั้งค่าต่อประเภทในแท็บ "ประเภทการลา"</b><br>
+        — ประเภทที่ตั้ง <b>ยกยอด=✅</b> + <b>ยกยอดสูงสุด=N วัน</b> → วันที่ไม่ได้ใช้ในปีก่อน (≤ N) จะถูกบวกเข้าปีใหม่<br>
+        — ประเภทที่ <b>ยกยอด=❌</b> → วันที่ไม่ใช้จะถูก <b>ตัดทิ้ง</b> (เริ่มนับใหม่ทุกปี)<br>
+        แนะนำ run <i>Dry-run</i> ก่อน เพื่อตรวจตัวเลขก่อนกด Commit จริง
+      </div>
+      <div style="display:flex;gap:10px;align-items:end;margin-bottom:14px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">จากปี (FromYear)</label>
+          <input type="number" id="cFromYear" class="form-input" style="width:120px">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">ไปปี (ToYear)</label>
+          <input type="number" id="cToYear" class="form-input" style="width:120px">
+        </div>
+        <button class="btn btn-secondary" onclick="Page.runCarry(true)">🔍 Dry-run (ดูตัวอย่าง)</button>
+        <button class="btn btn-primary" onclick="Page.runCarry(false)">✅ Commit ยกยอดจริง</button>
+      </div>
+      <div id="carryResult" style="font-size:13px;color:#64748b">ระบุปีแล้วกด Dry-run</div>
+    </div>
+
+    <!-- Holidays tab -->
+    <div id="tab-holidays" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px">
+        <select id="yearFilter" class="form-input" style="width:auto" onchange="Page.loadHolidays()"></select>
+        <button class="btn btn-primary" onclick="Page.openHolidayModal()">+ เพิ่มวันหยุด</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันที่</th><th>ชื่อ (ไทย)</th><th>EN</th><th>หมวด</th><th>ชดเชย</th><th>จัดการ</th></tr></thead>
+          <tbody id="holidaysBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leave type modal -->
+  <div class="modal-overlay" id="typeModal">
+    <div class="modal" style="max-width:640px">
+      <div class="modal-header">
+        <h3 class="modal-title" id="typeModalTitle">เพิ่มประเภทการลา</h3>
+        <button class="modal-close" onclick="Layout.closeModal('typeModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="tId">
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Code *</label><input type="text" id="tCode" class="form-input" placeholder="Annual / Sick / Personal / ..."></div>
+          <div class="form-group"><label class="form-label">SortOrder</label><input type="number" id="tOrder" class="form-input" value="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">ชื่อภาษาไทย *</label><input type="text" id="tNameTh" class="form-input"></div>
+          <div class="form-group"><label class="form-label">ชื่อภาษาอังกฤษ</label><input type="text" id="tNameEn" class="form-input"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">โควต้าต่อปี (วัน) *</label><input type="number" id="tQuota" class="form-input" step="0.5" min="0" value="0"></div>
+          <div class="form-group"><label class="form-label">แจ้งล่วงหน้า (วัน)</label><input type="number" id="tNotice" class="form-input" min="0" value="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="display:flex;align-items:center;gap:8px;padding-top:24px">
+            <input type="checkbox" id="tPaid" checked> <label for="tPaid">ลามีเงิน (จ่ายค่าจ้าง)</label>
+          </div>
+          <div class="form-group" style="display:flex;align-items:center;gap:8px;padding-top:24px">
+            <input type="checkbox" id="tHalfDay" checked> <label for="tHalfDay">อนุญาตครึ่งวัน</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="display:flex;align-items:center;gap:8px;padding-top:24px">
+            <input type="checkbox" id="tCarry"> <label for="tCarry">ยกยอดเหลือไปปีถัดไป</label>
+          </div>
+          <div class="form-group"><label class="form-label">ยกยอดสูงสุด (วัน)</label><input type="number" id="tCarryCap" class="form-input" step="0.5" min="0" placeholder="ปล่อยว่าง = ไม่จำกัด"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="display:flex;align-items:center;gap:8px;padding-top:24px">
+            <input type="checkbox" id="tAttach"> <label for="tAttach">ต้องแนบหลักฐาน (เช่นใบรับรองแพทย์)</label>
+          </div>
+          <div class="form-group" style="display:flex;align-items:center;gap:8px;padding-top:24px">
+            <input type="checkbox" id="tActive" checked> <label for="tActive">เปิดใช้งาน</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">สี</label><input type="color" id="tColor" class="form-input" value="#6366f1"></div>
+          <div class="form-group"><label class="form-label">Icon (emoji)</label><input type="text" id="tIcon" class="form-input" placeholder="🌴"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('typeModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.saveType()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Holiday modal -->
+  <div class="modal-overlay" id="holidayModal">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header"><h3 class="modal-title" id="holidayModalTitle">เพิ่มวันหยุด</h3><button class="modal-close" onclick="Layout.closeModal('holidayModal')">&times;</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="hId">
+        <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" id="hDate" class="form-input"></div>
+        <div class="form-group"><label class="form-label">ชื่อ (ไทย) *</label><input type="text" id="hNameTh" class="form-input"></div>
+        <div class="form-group"><label class="form-label">ชื่อ (อังกฤษ)</label><input type="text" id="hNameEn" class="form-input"></div>
+        <div class="form-group"><label class="form-label">หมวด</label>
+          <select id="hCategory" class="form-select">
+            <option value="Public">วันหยุดราชการ</option>
+            <option value="Religious">ทางศาสนา</option>
+            <option value="Substitute">วันหยุดชดเชย</option>
+            <option value="Company">วันหยุดบริษัท</option>
+          </select>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="hSubstitute"> <label for="hSubstitute">เป็นวันหยุดชดเชย (กรณีตรงกับวันเสาร์-อาทิตย์)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('holidayModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.saveHoliday()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      currentTab: 'types',
+      async init() {
+        if (!Layout.init('leave-types')) return;
+        Layout.setTitle('ตั้งค่าประเภทการลา + วันหยุด');
+        const yr = document.getElementById('yearFilter');
+        const y0 = new Date().getFullYear();
+        yr.innerHTML = [-1,0,1].map(d => `<option value="${y0+d}" ${d===0?'selected':''}>${y0+d+543}</option>`).join('');
+        await this.loadTypes();
+      },
+      switchTab(t, el) {
+        document.querySelectorAll('.tabs .tab').forEach(x => x.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tab-types').style.display = t === 'types' ? '' : 'none';
+        document.getElementById('tab-holidays').style.display = t === 'holidays' ? '' : 'none';
+        document.getElementById('tab-carry').style.display = t === 'carry' ? '' : 'none';
+        this.currentTab = t;
+        if (t === 'holidays') this.loadHolidays();
+        if (t === 'carry') {
+          const y = new Date().getFullYear();
+          document.getElementById('cFromYear').value = y - 1;
+          document.getElementById('cToYear').value = y;
+        }
+      },
+
+      // ── Year-end carry-forward run ──
+      async runCarry(dryRun) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const body = {
+          fromYear: parseInt(document.getElementById('cFromYear').value),
+          toYear: parseInt(document.getElementById('cToYear').value),
+          dryRun,
+        };
+        if (!body.fromYear || !body.toYear) { Layout.toast('ระบุปีให้ครบ', 'error'); return; }
+        if (!dryRun && !confirm('ยืนยันยกยอดจริง? — ข้อมูลปี ' + body.toYear + ' จะถูกอัปเดต')) return;
+        const out = document.getElementById('carryResult');
+        out.textContent = 'กำลังประมวลผล...';
+        try {
+          const r = await API.post(`/api/companies/${cid}/leaves/admin/carry-forward`, body);
+          const d = r?.data;
+          if (!d || !d.preview?.length) { out.innerHTML = '<i>ไม่มี balance ที่ต้องยกยอด (ทุกประเภทอาจตั้งยกยอด=❌)</i>'; return; }
+          out.innerHTML = `
+            <div style="margin-bottom:10px;font-weight:600;color:${dryRun ? '#d97706' : '#16a34a'}">
+              ${dryRun ? '🔍 Dry-run' : '✅ Committed'} · ${d.preview.length} รายการ · ${body.fromYear} → ${body.toYear}
+            </div>
+            <div class="table-container">
+              <table class="table">
+                <thead><tr>
+                  <th>พนักงาน</th><th>ประเภท</th>
+                  <th class="text-right">โควต้า + คงเหลือก่อน</th>
+                  <th class="text-right">ใช้ไป</th><th class="text-right">เหลือ</th>
+                  <th class="text-right">Cap</th><th class="text-right">ยกยอด</th>
+                </tr></thead>
+                <tbody>${d.preview.map(p => `<tr>
+                  <td>${Layout.esc(p.employeeName)}</td>
+                  <td>${Layout.esc(p.leaveTypeName)}</td>
+                  <td class="text-right">${p.quota}</td>
+                  <td class="text-right">${p.used}</td>
+                  <td class="text-right">${p.unused}</td>
+                  <td class="text-right">${p.cap ?? '∞'}</td>
+                  <td class="text-right" style="font-weight:600;color:#16a34a">+${p.rolledForward}</td>
+                </tr>`).join('')}</tbody>
+              </table>
+            </div>`;
+          if (!dryRun) Layout.toast('ยกยอดสำเร็จ');
+        } catch (e) { out.innerHTML = '<span style="color:#dc2626">' + Layout.esc(e.message) + '</span>'; }
+      },
+
+      // ── Leave types CRUD ──
+      async loadTypes() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await API.get(`/api/companies/${cid}/leaves/admin/types`);
+          this._types = r?.data || [];
+          const tbody = document.getElementById('typesBody');
+          if (!this._types.length) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:30px">ยังไม่มี</td></tr>'; return; }
+          tbody.innerHTML = this._types.map(t => `<tr>
+            <td><code>${Layout.esc(t.code)}</code></td>
+            <td><span style="font-size:18px">${Layout.esc(t.icon || '')}</span> <b>${Layout.esc(t.nameTh)}</b>${t.nameEn ? ' <small style="color:#64748b">' + Layout.esc(t.nameEn) + '</small>' : ''}</td>
+            <td class="text-right">${t.annualQuota}</td>
+            <td>${t.isPaid ? '✅' : '⛔'}</td>
+            <td>${t.allowHalfDay ? '✅' : '—'}</td>
+            <td>${t.carryForward ? '✅' + (t.carryForwardCap ? ' (≤' + t.carryForwardCap + ')' : '') : '—'}</td>
+            <td>${t.advanceNoticeDays > 0 ? t.advanceNoticeDays + ' วัน' : '—'}</td>
+            <td>${t.requiresAttachment ? '📎' : '—'}</td>
+            <td>${t.isActive ? '<span style="color:#16a34a">active</span>' : '<span style="color:#94a3b8">ปิด</span>'}</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick='Page.editType(${JSON.stringify(t)})'>แก้</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteType('${t.id}','${Layout.esc(t.nameTh)}')">ลบ</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openTypeModal() {
+        document.getElementById('typeModalTitle').textContent = 'เพิ่มประเภทการลา';
+        ['tId','tCode','tNameTh','tNameEn','tIcon','tCarryCap'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('tQuota').value = 0;
+        document.getElementById('tNotice').value = 0;
+        document.getElementById('tOrder').value = 0;
+        document.getElementById('tPaid').checked = true;
+        document.getElementById('tHalfDay').checked = true;
+        document.getElementById('tCarry').checked = false;
+        document.getElementById('tAttach').checked = false;
+        document.getElementById('tActive').checked = true;
+        document.getElementById('tColor').value = '#6366f1';
+        Layout.openModal('typeModal');
+      },
+      editType(t) {
+        document.getElementById('typeModalTitle').textContent = 'แก้ไข ' + (t.nameTh || '');
+        document.getElementById('tId').value = t.id;
+        document.getElementById('tCode').value = t.code;
+        document.getElementById('tNameTh').value = t.nameTh;
+        document.getElementById('tNameEn').value = t.nameEn || '';
+        document.getElementById('tQuota').value = t.annualQuota;
+        document.getElementById('tNotice').value = t.advanceNoticeDays;
+        document.getElementById('tOrder').value = t.sortOrder;
+        document.getElementById('tPaid').checked = t.isPaid;
+        document.getElementById('tHalfDay').checked = t.allowHalfDay;
+        document.getElementById('tCarry').checked = t.carryForward;
+        document.getElementById('tCarryCap').value = t.carryForwardCap || '';
+        document.getElementById('tAttach').checked = t.requiresAttachment;
+        document.getElementById('tActive').checked = t.isActive;
+        document.getElementById('tColor').value = t.color || '#6366f1';
+        document.getElementById('tIcon').value = t.icon || '';
+        Layout.openModal('typeModal');
+      },
+      async saveType() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const id = document.getElementById('tId').value;
+        const body = {
+          code: document.getElementById('tCode').value.trim(),
+          nameTh: document.getElementById('tNameTh').value.trim(),
+          nameEn: document.getElementById('tNameEn').value.trim() || null,
+          annualQuota: parseFloat(document.getElementById('tQuota').value) || 0,
+          isPaid: document.getElementById('tPaid').checked,
+          allowHalfDay: document.getElementById('tHalfDay').checked,
+          carryForward: document.getElementById('tCarry').checked,
+          carryForwardCap: parseFloat(document.getElementById('tCarryCap').value) || null,
+          advanceNoticeDays: parseInt(document.getElementById('tNotice').value) || 0,
+          requiresAttachment: document.getElementById('tAttach').checked,
+          sortOrder: parseInt(document.getElementById('tOrder').value) || 0,
+          isActive: document.getElementById('tActive').checked,
+          color: document.getElementById('tColor').value,
+          icon: document.getElementById('tIcon').value || null,
+        };
+        if (!body.code || !body.nameTh) { Layout.toast('Code / ชื่อ ห้ามว่าง', 'error'); return; }
+        try {
+          const url = `/api/companies/${cid}/leaves/admin/types` + (id ? `?id=${id}` : '');
+          await API.post(url, body);
+          Layout.toast('บันทึกสำเร็จ');
+          Layout.closeModal('typeModal');
+          await this.loadTypes();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteType(id, name) {
+        if (!confirm(`ลบประเภท "${name}"?`)) return;
+        const cid = Layout.getCompanyId();
+        try { await API.delete(`/api/companies/${cid}/leaves/admin/types/${id}`); Layout.toast('ลบแล้ว'); await this.loadTypes(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── Holidays CRUD ──
+      async loadHolidays() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const yr = document.getElementById('yearFilter').value;
+        try {
+          const r = await API.get(`/api/companies/${cid}/leaves/admin/holidays?year=${yr}`);
+          const rows = r?.data || [];
+          const tbody = document.getElementById('holidaysBody');
+          if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:30px">ยังไม่มีวันหยุดในปีนี้</td></tr>'; return; }
+          tbody.innerHTML = rows.map(h => `<tr>
+            <td>${Layout.date(h.date)}</td>
+            <td><b>${Layout.esc(h.nameTh)}</b></td>
+            <td>${Layout.esc(h.nameEn || '-')}</td>
+            <td>${h.category}</td>
+            <td>${h.isSubstitute ? '✅' : '—'}</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick='Page.editHoliday(${JSON.stringify(h)})'>แก้</button>
+              <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteHoliday('${h.id}','${Layout.esc(h.nameTh)}')">ลบ</button>
+            </td>
+          </tr>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openHolidayModal() {
+        document.getElementById('holidayModalTitle').textContent = 'เพิ่มวันหยุด';
+        ['hId','hNameTh','hNameEn'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('hDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('hCategory').value = 'Public';
+        document.getElementById('hSubstitute').checked = false;
+        Layout.openModal('holidayModal');
+      },
+      editHoliday(h) {
+        document.getElementById('holidayModalTitle').textContent = 'แก้ไขวันหยุด';
+        document.getElementById('hId').value = h.id;
+        document.getElementById('hDate').value = h.date.split('T')[0];
+        document.getElementById('hNameTh').value = h.nameTh;
+        document.getElementById('hNameEn').value = h.nameEn || '';
+        document.getElementById('hCategory').value = h.category;
+        document.getElementById('hSubstitute').checked = h.isSubstitute;
+        Layout.openModal('holidayModal');
+      },
+      async saveHoliday() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const id = document.getElementById('hId').value;
+        const body = {
+          date: document.getElementById('hDate').value,
+          nameTh: document.getElementById('hNameTh').value.trim(),
+          nameEn: document.getElementById('hNameEn').value.trim() || null,
+          category: document.getElementById('hCategory').value,
+          isSubstitute: document.getElementById('hSubstitute').checked,
+        };
+        if (!body.date || !body.nameTh) { Layout.toast('วันที่ / ชื่อ ห้ามว่าง', 'error'); return; }
+        try {
+          const url = `/api/companies/${cid}/leaves/admin/holidays` + (id ? `?id=${id}` : '');
+          await API.post(url, body);
+          Layout.toast('บันทึกสำเร็จ'); Layout.closeModal('holidayModal'); await this.loadHolidays();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteHoliday(id, name) {
+        if (!confirm(`ลบ "${name}"?`)) return;
+        const cid = Layout.getCompanyId();
+        try { await API.delete(`/api/companies/${cid}/leaves/admin/holidays/${id}`); Layout.toast('ลบแล้ว'); await this.loadHolidays(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

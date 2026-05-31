@@ -13,6 +13,16 @@
       <div><h2 class="page-title">เบิกค่าใช้จ่าย</h2><p class="page-subtitle">จัดการใบเบิกค่าใช้จ่ายพนักงาน</p></div>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างใบเบิก</button>
     </div>
+    <!-- 💡 Help banner — clarifies which expense flow to use for what.
+         2 modes within this page + 1 alternative page. -->
+    <div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;line-height:1.65;color:#1e40af">
+      <strong>💡 ใช้หน้านี้เมื่อ:</strong> <b>พนักงานออกเงินส่วนตัวก่อน</b> แล้วมาเบิกคืน (manager อนุมัติก่อนจ่าย)<br>
+      &nbsp;&nbsp;• <a href="/pages/expense.html" style="color:#1e40af;font-weight:600">มีใบเสร็จ</a> = เบิกปกติ
+      &nbsp;•&nbsp;
+      <a href="/pages/expense.html?noReceipt=1" style="color:#7c2d12;font-weight:600">ไม่มีใบเสร็จ (§65 ทวิ)</a> = แนบรูปหลักฐาน → อนุมัติแล้วระบบสร้างใบรับรองให้อัตโนมัติ<br>
+      <strong>ใช้หน้าอื่นเมื่อ:</strong>
+      <a href="/pages/documents.html?openCreate=expense&type=Expense" style="color:#1e40af;font-weight:600">เอกสาร → ค่าใช้จ่าย</a> = บริษัทจ่ายเอง (Dr Expense / Cr Cash ทันที, ไม่ใช่พนักงานเบิก)
+    </div>
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" oninput="Page.load()">
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
@@ -38,10 +48,76 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างใบเบิกค่าใช้จ่าย</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="fId">
+
+          <!-- ───── §65 ทวิ — ไม่มีใบเสร็จ toggle ─────
+               When checked, the form reveals the reason/witness section
+               below and the submit payload sets noReceipt=true. The
+               backend ApproveAsync will auto-generate a
+               Document(CertificateInLieu) for the approver to print. -->
+          <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin-bottom:14px">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;color:#92400e">
+              <input type="checkbox" id="fNoReceipt" onchange="Page.onNoReceiptToggle()" style="width:18px;height:18px">
+              เบิกแบบไม่มีใบเสร็จ (§65 ทวิ — ผู้ขายออกใบเสร็จไม่ได้)
+            </label>
+            <div id="fNoReceiptHint" style="display:none;margin-top:8px;font-size:12px;color:#7c2d12;line-height:1.5">
+              ตามประมวลรัษฎากร §65 ทวิ — ใช้กรณีซื้อจากผู้ขายที่ไม่ออกใบเสร็จได้
+              (ตลาดสด · taxi · ผู้ขายไม่จด VAT · ใบเสร็จสูญหาย).
+              <b>เมื่อ manager อนุมัติ ระบบจะสร้าง "ใบรับรองแทนใบเสร็จ" ให้อัตโนมัติ</b>
+              ใช้เป็นเอกสารหักภาษีได้ตามกฎหมาย
+            </div>
+          </div>
+
           <div class="form-group"><label class="form-label">หัวข้อ *</label><input type="text" class="form-input" id="fTitle"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
             <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="fDesc"></div>
+          </div>
+
+          <!-- §65 ทวิ extra fields — only visible when NoReceipt is on -->
+          <div id="fNoReceiptFields" style="display:none;background:#fffbeb;border:1px dashed #fde047;border-radius:8px;padding:12px;margin-bottom:14px">
+            <div class="form-group" style="margin-bottom:10px">
+              <label class="form-label" style="color:#92400e">เหตุผลที่ไม่มีใบเสร็จ *</label>
+              <input type="text" class="form-input" id="fNoReceiptReason"
+                     placeholder="เช่น 'ซื้อจากร้านตลาดสดที่ไม่ออกใบเสร็จ' หรือ 'taxi ที่ไม่มีมิเตอร์พิมพ์'">
+              <div class="hint" style="font-size:11px;color:#7c2d12;margin-top:4px">กรอกให้ชัดเจน — ข้อความนี้จะอยู่บนใบรับรองที่กรมสรรพากรจะตรวจ</div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" style="color:#92400e">ชื่อพยาน (ไม่บังคับ)</label>
+                <input type="text" class="form-input" id="fWitnessName" placeholder="พยานเซ็นยืนยันการจ่าย">
+              </div>
+              <div class="form-group">
+                <label class="form-label" style="color:#92400e">ตำแหน่งพยาน</label>
+                <input type="text" class="form-input" id="fWitnessPosition" placeholder="เช่น เพื่อนร่วมงาน, หัวหน้าฝ่าย">
+              </div>
+            </div>
+
+            <!-- §65 ทวิ evidence upload — REQUIRED before Submit.
+                 The server-side SubmitAsync gate enforces this; the
+                 inline UI here is purely so the employee can attach
+                 photos without leaving the form. Save creates the
+                 claim first, then this file picker becomes active
+                 (claim id needed to scope the attachment). When
+                 editing an existing claim, the picker is active
+                 immediately. -->
+            <div class="form-group" style="margin-top:10px;margin-bottom:0">
+              <label class="form-label" style="color:#92400e">หลักฐาน (รูป / PDF) *</label>
+              <div id="fNoReceiptAttachZone" style="border:2px dashed #fde047;border-radius:8px;padding:14px;text-align:center;background:#fffbeb">
+                <div id="fNoReceiptAttachIdle" style="color:#7c2d12;font-size:13px">
+                  📎 กดบันทึก draft ก่อน จากนั้นกลับมาแนบรูป/ไฟล์หลักฐาน<br>
+                  <span style="font-size:11px;color:#a16207">รูปสินค้า · meter taxi · slip การโอน · CC statement</span>
+                </div>
+                <div id="fNoReceiptAttachActive" style="display:none">
+                  <input type="file" id="fNoReceiptFile" accept="image/*,application/pdf" multiple
+                         onchange="Page.uploadNoReceiptEvidence()" style="display:none">
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('fNoReceiptFile').click()">📎 เลือกไฟล์ / ถ่ายรูป</button>
+                  <div id="fNoReceiptAttachList" style="margin-top:10px;text-align:left;font-size:12px;color:#7c2d12"></div>
+                </div>
+              </div>
+              <div class="hint" style="font-size:11px;color:#7c2d12;margin-top:4px">
+                อย่างน้อย 1 ไฟล์ — manager + ฝ่ายบัญชี + RD ใช้ตรวจประกอบใบรับรอง
+              </div>
+            </div>
           </div>
           <div style="margin-top:16px">
             <div class="flex items-center justify-between" style="margin-bottom:8px">
@@ -80,9 +156,22 @@
     const Page = {
       page: 1,
       async init() {
-        if (!Layout.init('expense')) return;
-        Layout.setTitle('เบิกค่าใช้จ่าย');
+        // Match the sidebar nav id — when ?noReceipt=1 we're effectively
+        // the "expense-no-receipt" page so highlight that entry instead
+        // of the regular "expense" one.
+        const isNoReceipt = new URLSearchParams(window.location.search).get('noReceipt') === '1';
+        const navId = isNoReceipt ? 'expense-no-receipt' : 'expense';
+        if (!Layout.init(navId)) return;
+        Layout.setTitle(isNoReceipt ? 'เบิกค่าใช้จ่าย (ไม่มีใบเสร็จ — §65 ทวิ)' : 'เบิกค่าใช้จ่าย');
         await this.load();
+        // Deep-link from sidebar "เบิกค่าใช้จ่ายไม่มีใบเสร็จ" pre-opens
+        // the create modal so the employee starts the form immediately
+        // (one less click than landing on the list first).
+        if (isNoReceipt && new URLSearchParams(window.location.search).get('open') !== '0') {
+          // Defer one tick so the list render finishes before the modal
+          // overlay paints.
+          setTimeout(() => this.openCreate(), 50);
+        }
       },
       async load() {
         const api = Layout.api(); if (!api) return;
@@ -133,12 +222,104 @@
         });
         document.getElementById('fTotal').textContent = Layout.money(total);
       },
+      // 🧾 onNoReceiptToggle — reveal/hide the §65 ทวิ extra fields +
+      // update the modal title so the user knows what mode they're in.
+      // Called from the checkbox onchange + after openCreate's pre-fill.
+      onNoReceiptToggle() {
+        const on = document.getElementById('fNoReceipt').checked;
+        document.getElementById('fNoReceiptHint').style.display = on ? '' : 'none';
+        document.getElementById('fNoReceiptFields').style.display = on ? '' : 'none';
+        document.getElementById('formTitle').textContent = on
+          ? 'สร้างใบเบิกค่าใช้จ่าย (ไม่มีใบเสร็จ — §65 ทวิ)'
+          : 'สร้างใบเบิกค่าใช้จ่าย';
+        // Picker is active only when we have a claim id (= editing
+        // existing claim or after save-then-reopen). Otherwise the
+        // idle hint nudges the user to save the draft first.
+        const id = document.getElementById('fId').value;
+        document.getElementById('fNoReceiptAttachIdle').style.display = (on && !id) ? '' : 'none';
+        document.getElementById('fNoReceiptAttachActive').style.display = (on && id) ? '' : 'none';
+        if (on && id) this.loadNoReceiptEvidence();
+      },
+
+      async loadNoReceiptEvidence() {
+        const id = document.getElementById('fId').value;
+        const cid = Layout.getCompanyId();
+        if (!id || !cid) return;
+        try {
+          const res = await fetch(`/api/companies/${cid}/attachments/ExpenseClaim/${id}`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          const json = await res.json();
+          const list = (json.data || json || []);
+          const el = document.getElementById('fNoReceiptAttachList');
+          if (!list.length) {
+            el.innerHTML = '<em style="color:#a16207">ยังไม่มีหลักฐานแนบ — ต้องอย่างน้อย 1 ไฟล์</em>';
+            return;
+          }
+          el.innerHTML = list.map(a => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#fff;border:1px solid #fde047;border-radius:6px;margin-bottom:4px">
+              <span>📎 ${Layout.esc(a.originalFileName || a.fileName)} <span style="color:#94a3b8">(${((a.fileSize||0)/1024).toFixed(0)} KB)</span></span>
+              <span>
+                <a href="/api/companies/${cid}/attachments/${a.id}/download" target="_blank" class="btn btn-sm btn-ghost">ดู</a>
+                <button type="button" class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteNoReceiptEvidence('${a.id}')">ลบ</button>
+              </span>
+            </div>`).join('');
+        } catch (e) { console.warn('Load evidence failed', e); }
+      },
+
+      async uploadNoReceiptEvidence() {
+        const id = document.getElementById('fId').value;
+        const cid = Layout.getCompanyId();
+        if (!id || !cid) { Layout.toast('กรุณาบันทึก draft ก่อน', 'error'); return; }
+        const input = document.getElementById('fNoReceiptFile');
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
+        for (const file of files) {
+          const fd = new FormData();
+          fd.append('file', file);
+          try {
+            await fetch(`/api/companies/${cid}/attachments/ExpenseClaim/${id}`, {
+              method: 'POST', body: fd,
+              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+            });
+          } catch (e) { Layout.toast('อัพโหลด ' + file.name + ' ไม่สำเร็จ', 'error'); }
+        }
+        input.value = '';
+        Layout.toast(`อัพโหลด ${files.length} ไฟล์สำเร็จ`);
+        this.loadNoReceiptEvidence();
+      },
+
+      async deleteNoReceiptEvidence(attId) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        if (!confirm('ลบหลักฐานนี้?')) return;
+        try {
+          await fetch(`/api/companies/${cid}/attachments/${attId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          this.loadNoReceiptEvidence();
+        } catch (e) { Layout.toast('ลบไม่สำเร็จ', 'error'); }
+      },
+
       openCreate() {
         document.getElementById('formTitle').textContent = 'สร้างใบเบิกค่าใช้จ่าย';
         document.getElementById('fId').value = '';
         document.getElementById('fTitle').value = '';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDesc').value = '';
+        // Reset §65 ทวิ fields so a previous "no-receipt" session
+        // doesn't leak its state into the next claim.
+        document.getElementById('fNoReceipt').checked = false;
+        document.getElementById('fNoReceiptReason').value = '';
+        document.getElementById('fWitnessName').value = '';
+        document.getElementById('fWitnessPosition').value = '';
+        // Honour ?noReceipt=1 deep-link from the sidebar so the
+        // "เบิกค่าใช้จ่ายไม่มีใบเสร็จ" menu item pre-toggles the mode.
+        const urlNoReceipt = new URLSearchParams(window.location.search).get('noReceipt');
+        if (urlNoReceipt === '1' || urlNoReceipt === 'true') {
+          document.getElementById('fNoReceipt').checked = true;
+        }
+        this.onNoReceiptToggle();
         document.getElementById('linesBody').innerHTML = '';
         document.getElementById('fTotal').textContent = '0.00';
         this.addLine();
@@ -154,6 +335,12 @@
           document.getElementById('fTitle').value = e.title;
           document.getElementById('fDate').value = Layout.dateInput(e.expenseDate);
           document.getElementById('fDesc').value = e.description || '';
+          // Restore §65 ทวิ fields when editing a no-receipt claim.
+          document.getElementById('fNoReceipt').checked = !!e.noReceipt;
+          document.getElementById('fNoReceiptReason').value = e.noReceiptReason || '';
+          document.getElementById('fWitnessName').value = e.witnessName || '';
+          document.getElementById('fWitnessPosition').value = e.witnessPosition || '';
+          this.onNoReceiptToggle();
           document.getElementById('linesBody').innerHTML = '';
           (e.lines || []).forEach(l => {
             this.addLine();
@@ -186,16 +373,48 @@
       async save() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('fId').value;
+        const noReceipt = document.getElementById('fNoReceipt').checked;
+        const noReceiptReason = document.getElementById('fNoReceiptReason').value.trim();
+        // Client-side §65 ทวิ guard — server enforces too, but blocking
+        // here saves a round-trip when the user forgets the reason.
+        if (noReceipt && !noReceiptReason) {
+          Layout.toast('กรุณากรอกเหตุผลที่ไม่มีใบเสร็จ (§65 ทวิ)', 'error');
+          document.getElementById('fNoReceiptReason').focus();
+          return;
+        }
         const data = {
           title: document.getElementById('fTitle').value,
           description: document.getElementById('fDesc').value || null,
           expenseDate: document.getElementById('fDate').value,
-          lines: this.getLines()
+          lines: this.getLines(),
+          noReceipt,
+          noReceiptReason: noReceipt ? noReceiptReason : null,
+          witnessName: noReceipt ? (document.getElementById('fWitnessName').value || null) : null,
+          witnessPosition: noReceipt ? (document.getElementById('fWitnessPosition').value || null) : null,
         };
         try {
-          if (id) { await api.updateExpenseClaim(id, data); }
-          else { await api.createExpenseClaim(data); }
-          Layout.closeModal('formModal'); Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างใบเบิกสำเร็จ'); await this.load();
+          let savedId = id;
+          if (id) {
+            await api.updateExpenseClaim(id, data);
+          } else {
+            const created = await api.createExpenseClaim(data);
+            savedId = created?.data?.id || created?.id;
+          }
+          await this.load();
+          // For no-receipt claims, KEEP the modal open in edit mode
+          // so the employee can immediately attach evidence without
+          // navigating away. The Submit button still works only after
+          // ≥1 attachment is uploaded (server-side guard).
+          if (noReceipt && savedId) {
+            document.getElementById('fId').value = savedId;
+            document.getElementById('formTitle').textContent = 'แนบหลักฐาน (§65 ทวิ) — ' + (document.getElementById('fTitle').value || 'ใบเบิก');
+            // Activate the attach picker now that the claim has an id.
+            this.onNoReceiptToggle();
+            Layout.toast('บันทึก draft แล้ว — แนบรูป/ไฟล์หลักฐานก่อนส่งอนุมัติ');
+            return;
+          }
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างใบเบิกสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async viewDetail(id) {
@@ -218,7 +437,19 @@
             } catch (_) { /* ignore — silent if no employee record */ }
           }
 
-          document.getElementById('detailContent').innerHTML = mgrLine + `
+          // §65 ทวิ banner — show prominently when this is a no-receipt
+          // claim so the reviewer knows to scrutinise the reason field
+          // before approving (the auto-generated CertificateInLieu
+          // carries this verbatim onto an audited document).
+          const noReceiptBanner = e.noReceipt ? `
+            <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e;line-height:1.55">
+              <strong>📝 ไม่มีใบเสร็จ (§65 ทวิ)</strong><br>
+              <b>เหตุผล:</b> ${Layout.esc(e.noReceiptReason || '—')}
+              ${e.witnessName ? `<br><b>พยาน:</b> ${Layout.esc(e.witnessName)}${e.witnessPosition ? ' (' + Layout.esc(e.witnessPosition) + ')' : ''}` : ''}
+              ${e.certificateInLieuDocumentId ? `<br>📜 ใบรับรองแทนใบเสร็จที่สร้างอัตโนมัติ: <a href="/pages/documents.html?editDoc=${e.certificateInLieuDocumentId}" style="color:#92400e;font-weight:600;text-decoration:underline">${Layout.esc(e.certificateInLieuDocumentNumber || 'เปิดดู')}</a>` : (e.status === 'Approved' || e.status === 'Paid' ? '<br>⚠️ ใบรับรองแทนใบเสร็จยังไม่ถูกสร้าง — ติดต่อ admin' : '')}
+            </div>` : '';
+
+          document.getElementById('detailContent').innerHTML = mgrLine + noReceiptBanner + `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${Layout.esc(e.claimNumber)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(e.status)}</div></div>

@@ -158,6 +158,55 @@ public enum TaxType
     PersonalIncomeTax91 = 7, // ภงด.91 (ภาษีเงินได้บุคคลธรรมดา)
     WithholdingTax54 = 8, // ภงด.54 (Foreign WHT — บริการต่างประเทศ)
     VatPp36 = 9,          // ภพ.36 (Foreign service VAT)
+    StampDuty = 10,       // อากรแสตมป์ (Code §103-105 ประมวลรัษฎากร)
+}
+
+/// <summary>
+/// Inventory costing method per product. Determines how COGS is
+/// calculated on outbound stock movements + how period-end snapshot
+/// values are computed.
+/// </summary>
+public enum CostingMethod
+{
+    /// <summary>Default for Thai SME — running weighted average
+    /// recomputed on every receipt: newAvg = (oldStock×oldAvg +
+    /// receivedQty×receivedCost) / (oldStock + receivedQty).</summary>
+    WeightedAverage = 0,
+
+    /// <summary>FIFO — oldest stock layer consumed first. Requires
+    /// tracking individual cost layers via StockMovement history.</summary>
+    Fifo = 1,
+
+    /// <summary>Standard cost — uses Product.CostPrice fixed value
+    /// regardless of receipt prices; variances posted separately.</summary>
+    Standard = 2,
+}
+
+/// <summary>
+/// Cheque lifecycle states — Thai SMEs still use cheques heavily for
+/// vendor payments + customer collections. Tracking these states lets
+/// AP/AR teams know which cheques are outstanding and need follow-up.
+/// </summary>
+public enum ChequeStatus
+{
+    /// <summary>Cheque written + handed to payee, not yet cashed.</summary>
+    Issued = 0,
+
+    /// <summary>Cashed at the bank — cleared the account.</summary>
+    Cleared = 1,
+
+    /// <summary>Stop-payment requested OR cheque returned (bounced).
+    /// Need to issue replacement.</summary>
+    Bounced = 2,
+
+    /// <summary>Voided before issuing — torn out of the book or
+    /// admin-cancelled. Used to keep the chequebook number sequence
+    /// honest.</summary>
+    Voided = 3,
+
+    /// <summary>Cheque received from a customer, deposited but not
+    /// yet cleared. Funds in transit.</summary>
+    DepositedPending = 4,
 }
 
 // ==================== Migration Wizard ====================
@@ -226,6 +275,7 @@ public enum DocumentType
     // ===== ฝั่งรายจ่าย (Expense/Purchase) =====
     PurchaseRequisition = 12, // ใบขอซื้อ
     PurchaseOrder = 7,        // ใบสั่งซื้อ
+    GoodsReceiptNote = 16,    // ใบรับสินค้า (GRN) — รับของจริงจาก vendor; 3-way match: PO ↔ GRN ↔ Invoice
     PurchaseInvoice = 8,      // ใบแจ้งหนี้ซื้อ
     Expense = 9,              // ใบบันทึกค่าใช้จ่าย
     PaymentVoucher = 13,      // ใบสำคัญจ่าย
@@ -311,7 +361,11 @@ public enum ReconciliationStatus
 {
     Unmatched = 0,
     Matched = 1,
-    Excluded = 2
+    Excluded = 2,
+    /// <summary>AI-suggested match — user must confirm in the bank
+    /// reconciliation UI before it counts as Matched. Used when local
+    /// strict-match misses but AI re-ranking finds a likely candidate.</summary>
+    Suggested = 3,
 }
 
 // ==================== Recurring ====================
@@ -1013,4 +1067,215 @@ public enum WhtRecognitionBasis
     /// SMBs; the auditor accepts it. Stays as an opt-in for tenants that
     /// already book this way in their existing GL.</summary>
     Accrual = 2,
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  AI integration enums — keep numeric values STABLE because they're
+//  persisted directly in AiSuggestionFeedback.ProviderUsed and the daily
+//  rollup table. Append-only when adding a new provider.
+// ─────────────────────────────────────────────────────────────────────────
+
+public enum AiProviderType
+{
+    /// <summary>DeepSeek chat API (https://api.deepseek.com/v1/chat/completions).
+    /// First and default provider — pricing ~10× cheaper than GPT-4o-mini
+    /// for similar quality on accounting-domain prompts.</summary>
+    DeepSeek = 1,
+
+    /// <summary>OpenAI chat completion (https://api.openai.com/v1).
+    /// Standby slot for tenants that already have an OpenAI agreement.</summary>
+    OpenAi = 2,
+
+    /// <summary>Anthropic Messages API. Different request shape than
+    /// OpenAI-compatible providers — the AnthropicProvider implementation
+    /// translates the canonical AiRequest into the Anthropic schema.</summary>
+    Anthropic = 3,
+
+    /// <summary>Google Gemini. OpenAI-compat endpoint reserved for parity.</summary>
+    Gemini = 4,
+
+    /// <summary>Locally hosted llama.cpp / Ollama instance. Same OpenAI-
+    /// compat schema as the cloud providers; switches the orchestrator into
+    /// "always-on, no budget" mode.</summary>
+    LocalLlama = 5,
+
+    /// <summary>Custom OpenAI-compatible endpoint (Azure OpenAI, proxy,
+    /// gateway). Uses the OpenAI request shape; admin sets Endpoint + Model
+    /// freely.</summary>
+    Custom = 99,
+}
+
+/// <summary>
+/// Stable identifier for each call site — every AI integration point
+/// declares one and uses it for AiSuggestionFeedback.FeatureKey,
+/// AiResponseCache.FeatureKey, AiUsageDaily.FeatureKey, and LocalModelHealth.
+/// New features append to the bottom without breaking existing rows.
+/// </summary>
+public enum AiFeatureKey
+{
+    /// <summary>OCR vendor name → existing Contact id matching.</summary>
+    VendorCanonicalization = 1,
+
+    /// <summary>Suggest which GL account a line item should debit.</summary>
+    GlAccountSuggestion = 2,
+
+    /// <summary>Receipt vs TaxInvoice vs DeliveryNote classification.</summary>
+    DocumentTypeClassification = 3,
+
+    /// <summary>Buyer / Seller role inference from headers.</summary>
+    DocumentRoleInference = 4,
+
+    /// <summary>WHT category (revenue code 50, 50bis, 53) from vendor
+    /// industry + line description.</summary>
+    WhtCategoryInference = 5,
+
+    /// <summary>Parse table region into structured line items when regex
+    /// fails on irregular formatting.</summary>
+    LineItemStructuredParse = 6,
+
+    /// <summary>For each approval warning, propose a concrete fix.</summary>
+    ApprovalWarningFixSuggestion = 7,
+
+    /// <summary>Match a bank statement line → outstanding invoice(s).</summary>
+    BankStatementMatch = 8,
+
+    /// <summary>Credit note reason classification (Return / Discount /
+    /// Adjustment / Writeoff).</summary>
+    CreditNoteReasonClassification = 9,
+
+    /// <summary>Fuzzy duplicate document detection.</summary>
+    FuzzyDuplicateDetection = 10,
+
+    /// <summary>Explain why an anomaly was flagged + suggest action.</summary>
+    AnomalyExplanation = 11,
+
+    /// <summary>Narrate a cashflow forecast + suggest scenarios.</summary>
+    ForecastNarrative = 12,
+
+    /// <summary>Match a free-text product name → existing Product.</summary>
+    ProductMatch = 13,
+
+    /// <summary>Match a free-text contact name → existing Contact.</summary>
+    ContactMatch = 14,
+
+    /// <summary>Suggest payment method given vendor history + amount.</summary>
+    PaymentMethodSuggestion = 15,
+
+    /// <summary>Suggest currency + FX rate sanity-check.</summary>
+    CurrencyAndFxSuggestion = 16,
+
+    /// <summary>Aging-receivable explanation per customer.</summary>
+    AgingExplanation = 17,
+
+    /// <summary>Tax filing pre-check narrative (PND.3 / PND.53 / PP.30).</summary>
+    TaxFilingPreCheck = 18,
+
+    /// <summary>Stock movement validation + suggested action when
+    /// quantity-on-hand would go negative.</summary>
+    StockMovementValidation = 19,
+
+    /// <summary>Suggest debit / credit split when creating a Payment
+    /// Voucher from a TaxInvoice (the "ใบสำคัญจ่าย" workflow the
+    /// user called out explicitly).</summary>
+    PaymentVoucherAccountingSuggestion = 20,
+
+    /// <summary>Suggest JournalEntry lines when user is composing a
+    /// freeform manual JE.</summary>
+    ManualJournalSuggestion = 21,
+
+    /// <summary>OCR Tier-4 comprehensive review — distinct from the
+    /// simpler DocumentTypeClassification because this returns
+    /// corrections for every field, not just the doc-type label.
+    /// Tracked separately in LocalModelHealth so accuracy of the
+    /// review can be measured independently.</summary>
+    OcrFullReview = 22,
+
+    /// <summary>"What target doc should I create from this scanned
+    /// source?" — outputs a list of viable targets + prefill strategy.
+    /// Separate from DocumentTypeClassification (which just labels the
+    /// scanned paper) so the conversion-suggestion accuracy can be
+    /// tracked separately.</summary>
+    DocumentConversionSuggestion = 23,
+
+    /// <summary>Per-SKU demand forecast + reorder point recommendation.
+    /// Local: Croston / Holt-Winters per product. AI: narrative
+    /// + scenario suggestions.</summary>
+    ReorderForecast = 24,
+
+    /// <summary>Whole-month bank reconciliation in ONE call. Bundles
+    /// every unmatched bank txn + every open AR/AP/JE/Payment + the
+    /// company + bank-account context and asks AI to produce a complete
+    /// match plan, surface unmatched lines with explicit "missing data"
+    /// reasons, and detect cross-line patterns (split payments, lumped
+    /// settlements) the per-txn flow misses. Distinct from
+    /// BankStatementMatch because the input shape + output shape are
+    /// batch-orientated; accuracy tracked separately.</summary>
+    BulkBankStatementMatch = 25,
+
+    /// <summary>Catch-all for ad-hoc admin queries.</summary>
+    AdHocAnalysis = 99,
+}
+
+public enum AiCallStatus
+{
+    Success = 1,
+    /// <summary>Served from AiResponseCache — no provider call.</summary>
+    Cached = 2,
+    Failed = 3,
+    /// <summary>Skipped because feature is disabled or tenant opted out.</summary>
+    Skipped = 4,
+    /// <summary>Refused by AiBudgetGuard (daily or monthly cap).</summary>
+    BudgetExceeded = 5,
+    /// <summary>Refused because no provider is configured / enabled.</summary>
+    NoProvider = 6,
+    /// <summary>Provider returned a response that failed schema validation
+    /// or Thai-compliance double-check.</summary>
+    InvalidResponse = 7,
+}
+
+public enum LocalModelHealthStatus
+{
+    Healthy = 1,
+    /// <summary>Accuracy trending down — admin should look at training data.</summary>
+    Degraded = 2,
+    /// <summary>Local model consistently loses to AI; recommend redesign
+    /// or always-on AI for this feature.</summary>
+    NeedsRedesign = 3,
+    /// <summary>Insufficient samples to evaluate.</summary>
+    InsufficientData = 4,
+}
+
+/// <summary>
+/// Per-feature routing mode set by admin in /admin/ai-models.html.
+/// Drives AiOrchestrator.AskInternalAsync Step 0 — pick local, pick
+/// provider, or mix them.
+/// </summary>
+public enum AiFeatureRoutingMode
+{
+    /// <summary>Feature off — orchestrator returns the local-fallback
+    /// answer (or a Skipped status if no local was supplied). No
+    /// provider tokens spent, no learning happens.</summary>
+    Disabled = 0,
+
+    /// <summary>Local distilled model answers; provider is never called.
+    /// Use once the student plateaus at user-acceptable accuracy and
+    /// the cost saving outweighs occasional drift.</summary>
+    LocalOnly = 1,
+
+    /// <summary>Always call the provider; ignore any local prediction.
+    /// The default for features without a local student yet, or where
+    /// the admin wants pure-AI behaviour while debugging.</summary>
+    ProviderOnly = 2,
+
+    /// <summary>Default smart routing: local short-circuit when ≥
+    /// threshold; provider sampled at ProviderSamplingRate for drift
+    /// calibration. Cheapest balanced mode.</summary>
+    Hybrid = 3,
+
+    /// <summary>"Teach me" mode — every call hits the provider AND
+    /// the local prediction is recorded head-to-head for training.
+    /// Used to grow the corpus quickly for an immature student.
+    /// Costs as much as ProviderOnly but generates the maximum
+    /// supervision signal per call.</summary>
+    AlwaysTeach = 4,
 }

@@ -52,6 +52,12 @@ public interface IDocumentService
 
     // Payments
     Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy);
+    /// <summary>Multi-document payment — one Payment row that settles
+    /// many Documents pro-rata to caller-supplied AllocatedAmount per
+    /// row. Use when one cheque / transfer covers multiple invoices.
+    /// Request.Allocations must be non-empty; SUM(AllocatedAmount) ≤
+    /// Amount; remainder lands as UnappliedCredit on the response.</summary>
+    Task<PaymentResponse> CreateMultiDocPaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy);
     Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null);
     /// <summary>ยกเลิกการชำระเงิน: reverse JE + คืนยอดเอกสาร</summary>
     Task VoidPaymentAsync(Guid companyId, Guid paymentId);

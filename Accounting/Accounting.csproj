@@ -56,6 +56,15 @@
          pins. MiniExcel ships as one DLL — the publish output cannot drop
          a transitive that doesn't exist. -->
     <PackageReference Include="MiniExcel" Version="1.34.2" />
+    <!-- Multilingual sentence embeddings via ONNX Runtime. Powers the
+         high-quality path of IEmbeddingService — vendor canon fuzzy
+         match and document near-dup detection. Model file lives at
+         models/sentence-encoder.onnx + models/vocab.txt (tracked via
+         Git LFS). On startup the service probes for these files; if
+         missing, DI falls back to HashingEmbeddingService transparently.
+         Microsoft.ML.OnnxRuntime ships native binaries cross-platform
+         (Linux x64 + macOS arm64 + Windows x64); no extra config. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
   </ItemGroup>
 
   <ItemGroup>

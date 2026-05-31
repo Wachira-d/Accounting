@@ -37,6 +37,33 @@ public class Project : TenantEntity
     // Dimension link
     public Guid? DimensionId { get; set; }
 
+    // ===== External system linkage =====
+    // When a partner system (Jira, Asana, Microsoft Project, etc.)
+    // creates / updates a project via our API, it can pass its own
+    // identifier in ExternalId so subsequent webhook callbacks +
+    // GET-by-external-id lookups don't require storing OUR GUID.
+    // ExternalSystem distinguishes which partner owns the ID (avoids
+    // collisions when one company integrates with multiple systems).
+
+    /// <summary>Partner-system identifier — opaque to us, indexed
+    /// per-company for fast lookup.</summary>
+    public string? ExternalId { get; set; }
+
+    /// <summary>Partner system name — "Jira", "Asana",
+    /// "MS-Project", "Monday", etc. Combined with ExternalId for
+    /// the unique key.</summary>
+    public string? ExternalSystem { get; set; }
+
+    /// <summary>Last time the external system pushed a sync update
+    /// for this project. Drives the "🔁 synced X mins ago" badge
+    /// in the project list.</summary>
+    public DateTime? LastSyncedAt { get; set; }
+
+    /// <summary>Free-form external URL (e.g. Jira ticket link) so
+    /// users can deep-link from our project page to the partner's
+    /// canonical view.</summary>
+    public string? ExternalUrl { get; set; }
+
     public ICollection<ProjectTask> Tasks { get; set; } = new List<ProjectTask>();
     public ICollection<ProjectCostEntry> CostEntries { get; set; } = new List<ProjectCostEntry>();
     public ICollection<RevenueContract> RevenueContracts { get; set; } = new List<RevenueContract>();
@@ -74,9 +101,152 @@ public class ProjectCostEntry : TenantEntity
     public decimal Amount { get; set; }
     public Guid? EmployeeId { get; set; }
     public Guid? DocumentId { get; set; }
+    /// <summary>Per-line link back to the source DocumentLine when this
+    /// entry was auto-spawned from a PurchaseInvoice / Expense / PV /
+    /// CertificateInLieu. Lets the document UI mark each line "🏗️
+    /// ลง project แล้ว" + show which entry was created, and lets the
+    /// PCE side know which line to mirror when the doc is edited.
+    /// Null for manually-created entries.</summary>
+    public Guid? DocumentLineId { get; set; }
     public Guid? JournalEntryId { get; set; }
     public bool IsBillable { get; set; } = true;
     public bool IsBilled { get; set; } = false;
+    /// <summary>Cost behavior — Fixed (rent, salaried staff, depreciation),
+    /// Variable (hourly labor, materials, subcontractor). Feeds the
+    /// fix-vs-variable cost report.</summary>
+    public string CostBehavior { get; set; } = "Variable"; // Fixed, Variable
+}
+
+/// <summary>
+/// Daily/period record of an employee's time on a project (or the
+/// admin/internal bucket when ProjectId is null). Built to be sync-
+/// friendly: every row can carry an ExternalId from a third-party
+/// time-tracking / attendance system so duplicate inserts are de-duped
+/// on (Company, ExternalSystem, ExternalId).
+///
+/// Multiple rows per employee per day are allowed — that's how an
+/// 8-hour day gets split across projects (4h Project A + 3h Project B
+/// + 1h admin).
+///
+/// At payroll-pay time, PayrollService uses these rows to allocate the
+/// employee's salary across projects pro-rata to hours worked; un-
+/// allocated time falls into the admin/overhead bucket.
+/// </summary>
+public class EmployeeProjectTime : TenantEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    /// <summary>Null = admin / internal / non-project time. The cost
+    /// allocator routes this bucket to the dimension's overhead account
+    /// instead of a ProjectCostEntry.</summary>
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public Guid? ProjectTaskId { get; set; }
+    public DateTime WorkDate { get; set; }
+    public decimal Hours { get; set; }
+    public string? Description { get; set; }
+    /// <summary>"Billable" | "NonBillable" | "Admin" — purely for
+    /// reporting; allocation logic uses Hours + ProjectId.</summary>
+    public string Category { get; set; } = "Billable";
+    /// <summary>Set by PayrollService.AllocateLabourCostsAsync once the
+    /// employee's salary has been broken across projects for the period
+    /// — prevents double-allocation if a run is re-paid.</summary>
+    public bool IsAllocated { get; set; } = false;
+    public Guid? AllocatedPayrollRunId { get; set; }
+    public Guid? ProjectCostEntryId { get; set; }
+
+    // ===== Attendance metadata (optional — system works without it) =====
+    // External attendance systems push these flags so payroll can
+    // auto-compute OT pay, per-diem, accommodation, OT-meal allowances
+    // per the employee's compensation profile. Manual entry can leave
+    // them all default and behave like the original time-only model.
+    /// <summary>Hours within the total that count as overtime. Multiplied
+    /// by the employee's OvertimeRateMultiplierWeekday (or Holiday when
+    /// IsHoliday is true) at payroll-calc time.</summary>
+    public decimal? OvertimeHours { get; set; }
+    /// <summary>True when the row falls on a public/company holiday —
+    /// flips the OT multiplier to the holiday rate.</summary>
+    public bool IsHoliday { get; set; } = false;
+    /// <summary>Eligible for per-diem (พักต่างจังหวัด). Payroll adds
+    /// PerDiemDays × CompensationProfile.PerDiemRate per occurrence.</summary>
+    public bool HasPerDiem { get; set; } = false;
+    /// <summary>Eligible for overnight accommodation allowance.</summary>
+    public bool HasAccommodation { get; set; } = false;
+    /// <summary>Worked OT past the meal threshold — gets the OT-meal
+    /// allowance (typically ฿30/day).</summary>
+    public bool HasOvertimeMeal { get; set; } = false;
+    /// <summary>Free-form metadata for benefits the external system
+    /// already computed (JSON object). Payroll merges it after the
+    /// rule-based add-ons.</summary>
+    public string? AttendanceMetadataJson { get; set; }
+
+    // Sync from external attendance / time-tracking systems.
+    public string? ExternalId { get; set; }
+    public string? ExternalSystem { get; set; }
+    public DateTime? LastSyncedAt { get; set; }
+}
+
+/// <summary>
+/// Per-employee compensation profile — overrides company defaults for
+/// OT rates, per-diem, accommodation, OT-meal, and free-form custom
+/// benefit items. Null fields fall back to the company-wide default.
+/// One row per employee; created on demand.
+/// </summary>
+public class EmployeeCompensationProfile : TenantEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Models.Entities.Employee Employee { get; set; } = null!;
+
+    /// <summary>OT multiplier × hourly base rate on weekdays.
+    /// Thai labour law default = 1.5 (ค่าล่วงเวลา) for regular OT.
+    /// Null → use CompanyCompensationDefaults.</summary>
+    public decimal? OvertimeRateMultiplierWeekday { get; set; }
+    /// <summary>OT multiplier on company holidays / public holidays.
+    /// Thai labour law: 1.0 for working on holiday (regular hours) +
+    /// 3.0 for OT past 8 hrs on holiday. We model the OT-past-8 rate
+    /// (3.0) since the regular-holiday-hours portion is the base
+    /// daily wage already.</summary>
+    public decimal? OvertimeRateMultiplierHoliday { get; set; }
+
+    /// <summary>Per-diem rate (baht/day) when traveling and staying
+    /// overnight away from base location. Stamped on the day's
+    /// EmployeeProjectTime row by setting HasPerDiem = true.</summary>
+    public decimal? PerDiemRate { get; set; }
+    /// <summary>Accommodation allowance (baht/night) when actual
+    /// receipts aren't required — reimbursement is on the flat rate.</summary>
+    public decimal? AccommodationAllowance { get; set; }
+    /// <summary>OT-meal allowance (baht/OT day) — typically ฿30 in
+    /// Thai SME practice. Triggered by HasOvertimeMeal on the time
+    /// row.</summary>
+    public decimal? OvertimeMealAllowance { get; set; }
+
+    /// <summary>Free-form custom benefit items — JSON array of
+    /// { code, name, amount, trigger }. Trigger values:
+    /// "PerPayrollRun" (flat add each run), "PerWorkDay" (× workdays),
+    /// "PerOvertimeDay" (× HasOvertimeMeal-eligible days). Lets the
+    /// company add benefits beyond the four built-ins without a code
+    /// change.</summary>
+    public string? CustomBenefitsJson { get; set; }
+}
+
+/// <summary>
+/// Company-wide compensation defaults — applied when an employee
+/// has no CompensationProfile or the profile leaves a field null.
+/// One row per Company.
+/// </summary>
+public class CompanyCompensationDefaults : TenantEntity
+{
+    public decimal OvertimeRateMultiplierWeekday { get; set; } = 1.5m;
+    public decimal OvertimeRateMultiplierHoliday { get; set; } = 3.0m;
+    public decimal PerDiemRate { get; set; } = 500m;
+    public decimal AccommodationAllowance { get; set; } = 800m;
+    public decimal OvertimeMealAllowance { get; set; } = 30m;
+    /// <summary>Standard work hours per day used to convert monthly
+    /// salary → hourly rate for OT calc. Default 8.</summary>
+    public decimal StandardWorkHoursPerDay { get; set; } = 8m;
+    /// <summary>Standard work days per month for the same conversion.
+    /// Thai labour code default = 30. Some companies use 22 (5×4.4).</summary>
+    public decimal StandardWorkDaysPerMonth { get; set; } = 30m;
 }
 
 // ===== Revenue Recognition (TFRS 15 / IFRS 15) =====

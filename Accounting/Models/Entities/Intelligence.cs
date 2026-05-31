@@ -59,6 +59,18 @@ public class AnomalyDetection : TenantEntity
     public string? ResolvedBy { get; set; }
     public string? ResolutionNotes { get; set; }
     public DateTime DetectedAt { get; set; } = DateTime.UtcNow;
+
+    // AI-generated explanation — populated lazily by ExplainAnomalyAsync
+    // on first /explain call. Cached so re-views don't pay for the
+    // same explanation; user-confirm-or-override updates the feedback
+    // row, not this column.
+    public string? AiVerdict { get; set; }
+    public decimal? AiConfidence { get; set; }
+    public string? AiReasoning { get; set; }
+    public string? AiSuggestedActionsJson { get; set; }
+    public string? AiRisksJson { get; set; }
+    public Guid? AiFeedbackId { get; set; }
+    public DateTime? AiExplainedAt { get; set; }
 }
 
 /// <summary>
@@ -159,6 +171,15 @@ public class OcrScanResult : TenantEntity
     // Matching
     public Guid? MatchedContactId { get; set; }
     public Guid? CreatedDocumentId { get; set; }           // Document created from OCR
+
+    // AI augmentation trail — populated when IOcrAiAugmenter ran post-
+    // extraction. AiSuggestedContactId is what AI proposed (may equal
+    // MatchedContactId when AI's pick was accepted, or differ when the
+    // user later overrides via the review modal). AiSuggestionFeedbackId
+    // is the FK back to AiSuggestionFeedback so the UI can post a
+    // user-accept back to that row.
+    public Guid? AiSuggestedContactId { get; set; }
+    public Guid? AiSuggestionFeedbackId { get; set; }
     public string? RawTextContent { get; set; }
     public string? ProcessingNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }

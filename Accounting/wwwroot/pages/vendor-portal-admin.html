@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vendor Portal — Admin — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">Vendor Portal — ออก magic-link</h2>
+        <p class="page-subtitle">AP ส่ง link ให้ vendor / customer เข้าดู PO + invoice + payment status — ไม่ต้องสร้าง user</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>ออก token ใหม่</h3>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;max-width:760px">
+        <div><label>Contact (ผู้ติดต่อ)</label><input id="contactId" class="form-input" placeholder="contact guid"></div>
+        <div><label>บทบาท</label>
+          <select id="role" class="form-input">
+            <option value="Vendor">Vendor — เห็น PO + invoice</option>
+            <option value="Customer">Customer — เห็น invoice + receipts</option>
+          </select>
+        </div>
+        <div><label>อายุ (วัน)</label><input id="validDays" type="number" class="form-input" value="90"></div>
+        <div><label>อีเมลผู้รับ (optional)</label><input id="recipientEmail" type="email" class="form-input"></div>
+      </div>
+      <div style="margin-top:14px">
+        <button class="btn btn-primary" onclick="Page.issue()">ออก link</button>
+      </div>
+      <div id="result" style="margin-top:16px"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div style="background:#fef3c7;border-left:4px solid #d97706;border-radius:6px;padding:10px 14px;font-size:13px;color:#92400e">
+        ⚠️ <b>raw token แสดงครั้งเดียวเท่านั้น</b> — ระบบเก็บเป็น SHA-256 hash. คัดลอกแล้วส่งให้ vendor ทันที (ผ่าน email/LINE) ถ้าหายต้องออกใหม่.
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('vendor-portal-admin')) return;
+        Layout.setTitle('Vendor Portal — Admin');
+      },
+      async issue() {
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.post(`/api/companies/${cid}/vendor-portal/tokens`, {
+            contactId: document.getElementById('contactId').value,
+            role: document.getElementById('role').value,
+            validDays: +document.getElementById('validDays').value,
+            recipientEmail: document.getElementById('recipientEmail').value || null,
+          });
+          const d = r.data;
+          const url = window.location.origin + d.portalUrl;
+          document.getElementById('result').innerHTML = `
+            <div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:8px;padding:14px 18px">
+              <div style="font-weight:700;color:#15803d;margin-bottom:8px">✅ ${r.message}</div>
+              <div style="font-size:12px;color:#475569;margin-bottom:6px">Token id: ${d.tokenId} · หมดอายุ ${new Date(d.expiresAt).toLocaleDateString('th-TH')}</div>
+              <div style="background:#fff;padding:10px 14px;border-radius:6px;font-family:monospace;font-size:13px;word-break:break-all;border:1px solid #bbf7d0">
+                ${url}
+              </div>
+              <button class="btn btn-sm btn-success" style="margin-top:10px" onclick="navigator.clipboard.writeText('${url}').then(() => Layout.toast('คัดลอกแล้ว'))">📋 คัดลอก link</button>
+            </div>`;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

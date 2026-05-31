@@ -17,14 +17,17 @@ public class ExpenseClaimService : IExpenseClaimService
     private readonly IAccountingService? _accountingService;
     private readonly IDocumentService? _documentService;
     private readonly INotificationEngine? _notify;
+    private readonly ILogger<ExpenseClaimService>? _logger;
 
     public ExpenseClaimService(AccountingDbContext db, IAccountingService? accountingService = null,
-        IDocumentService? documentService = null, INotificationEngine? notify = null)
+        IDocumentService? documentService = null, INotificationEngine? notify = null,
+        ILogger<ExpenseClaimService>? logger = null)
     {
         _db = db;
         _accountingService = accountingService;
         _documentService = documentService;
         _notify = notify;
+        _logger = logger;
     }
 
     /// <summary>Fire-and-forget HR notification. Resolves the claim
@@ -66,6 +69,13 @@ public class ExpenseClaimService : IExpenseClaimService
         }
         var claimNumber = $"{expPrefix}{expSeq:D4}";
 
+        // No-receipt validation per §65 ทวิ — reason is mandatory because
+        // it ends up on the auto-generated CertificateInLieu document and
+        // is what the Revenue Department audits.
+        if (request.NoReceipt && string.IsNullOrWhiteSpace(request.NoReceiptReason))
+            throw new InvalidOperationException(
+                "เบิกค่าใช้จ่ายไม่มีใบเสร็จต้องระบุเหตุผล (เช่น 'ผู้ขายไม่ออก', 'ใบเสร็จสูญหาย', 'ตลาดสด') — §65 ทวิ");
+
         var claim = new ExpenseClaim
         {
             CompanyId = companyId,
@@ -73,7 +83,12 @@ public class ExpenseClaimService : IExpenseClaimService
             Title = request.Title,
             Description = request.Description,
             ExpenseDate = request.ExpenseDate,
-            SubmittedByUserId = submittedByUserId
+            SubmittedByUserId = submittedByUserId,
+            NoReceipt = request.NoReceipt,
+            NoReceiptReason = request.NoReceiptReason,
+            WitnessName = request.WitnessName,
+            WitnessPosition = request.WitnessPosition,
+            ProjectId = request.ProjectId,
         };
 
         var order = 1;
@@ -91,7 +106,8 @@ public class ExpenseClaimService : IExpenseClaimService
                 NetAmount = line.NetAmount,
                 AccountId = line.AccountId,
                 Category = line.Category,
-                Reference = line.Reference
+                Reference = line.Reference,
+                ProjectId = line.ProjectId,
             });
         }
 
@@ -115,19 +131,27 @@ public class ExpenseClaimService : IExpenseClaimService
             .Include(e => e.Lines).ThenInclude(l => l.Account)
             .Include(e => e.SubmittedByUser)
             .Include(e => e.ApprovedByUser)
+            .Include(e => e.CertificateInLieuDocument)   // for the UI deep-link
             .FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบเบิกค่าใช้จ่าย");
 
         return MapToResponse(claim);
     }
 
-    public async Task<PagedResponse<ExpenseClaimResponse>> GetAllAsync(Guid companyId, ExpenseClaimStatus? status, PagedRequest request)
+    public async Task<PagedResponse<ExpenseClaimResponse>> GetAllAsync(Guid companyId, ExpenseClaimStatus? status, PagedRequest request, Guid? restrictToUserId = null)
     {
         var query = _db.ExpenseClaims
             .Include(e => e.Lines).ThenInclude(l => l.Account)
             .Include(e => e.SubmittedByUser)
             .Include(e => e.ApprovedByUser)
             .Where(e => e.CompanyId == companyId);
+
+        // Row-level scope — controller passes the JWT user when role
+        // lacks perm:HR.Admin / perm:Expense.Approve. Service ALWAYS
+        // honours the parameter; never bypassed even for "List view"
+        // since the controller is the boundary that knows the policy.
+        if (restrictToUserId.HasValue)
+            query = query.Where(e => e.SubmittedByUserId == restrictToUserId.Value);
 
         if (status.HasValue)
             query = query.Where(e => e.Status == status.Value);
@@ -159,6 +183,14 @@ public class ExpenseClaimService : IExpenseClaimService
         if (request.Title != null) claim.Title = request.Title;
         if (request.Description != null) claim.Description = request.Description;
         if (request.ExpenseDate.HasValue) claim.ExpenseDate = request.ExpenseDate.Value;
+        if (request.NoReceipt.HasValue) claim.NoReceipt = request.NoReceipt.Value;
+        if (request.NoReceiptReason != null) claim.NoReceiptReason = request.NoReceiptReason;
+        if (request.WitnessName != null) claim.WitnessName = request.WitnessName;
+        if (request.WitnessPosition != null) claim.WitnessPosition = request.WitnessPosition;
+        // §65 ทวิ enforcement on update too — same rule as Create.
+        if (claim.NoReceipt && string.IsNullOrWhiteSpace(claim.NoReceiptReason))
+            throw new InvalidOperationException(
+                "เบิกค่าใช้จ่ายไม่มีใบเสร็จต้องระบุเหตุผล — §65 ทวิ");
 
         if (request.Lines != null)
         {
@@ -203,6 +235,28 @@ public class ExpenseClaimService : IExpenseClaimService
         if (claim.Status != ExpenseClaimStatus.Draft)
             throw new InvalidOperationException("สามารถส่งอนุมัติได้เฉพาะใบเบิกที่เป็น Draft");
 
+        // ───── §65 ทวิ evidence requirement ─────
+        // The Revenue Department doesn't accept a no-receipt claim
+        // without supporting evidence. Require at least one
+        // FileAttachment (EntityType="ExpenseClaim", EntityId=claimId)
+        // before letting the employee submit for approval. The
+        // attachment is typically a photo of the goods, the taxi
+        // meter, the bank/CC statement showing the transaction, or a
+        // signed handwritten receipt from the seller. Manager still
+        // reviews the evidence before approving.
+        if (claim.NoReceipt)
+        {
+            var attachmentCount = await _db.Set<FileAttachment>()
+                .CountAsync(a => a.CompanyId == companyId
+                    && a.EntityType == "ExpenseClaim"
+                    && a.EntityId == claim.Id
+                    && !a.IsDeleted);
+            if (attachmentCount == 0)
+                throw new InvalidOperationException(
+                    "เบิกแบบไม่มีใบเสร็จต้องแนบหลักฐานอย่างน้อย 1 ไฟล์ก่อนส่งอนุมัติ " +
+                    "(เช่น รูปสินค้า, รูป meter taxi, slip การโอน, statement บัตรเครดิต) — §65 ทวิ");
+        }
+
         claim.Status = ExpenseClaimStatus.Submitted;
         await _db.SaveChangesAsync();
 
@@ -216,11 +270,19 @@ public class ExpenseClaimService : IExpenseClaimService
 
     public async Task<ExpenseClaimResponse> ApproveAsync(Guid companyId, Guid claimId, Guid approverUserId, ApproveExpenseClaimRequest request)
     {
-        var claim = await _db.ExpenseClaims.FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
+        // Load lines + approver upfront — both are needed when this is a
+        // no-receipt claim because we have to auto-generate the Document
+        // (CertificateInLieu) before the SaveChanges below.
+        var claim = await _db.ExpenseClaims
+            .Include(e => e.Lines)
+            .Include(e => e.SubmittedByUser)
+            .FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบเบิกค่าใช้จ่าย");
 
         if (claim.Status != ExpenseClaimStatus.Submitted)
             throw new InvalidOperationException("สามารถอนุมัติได้เฉพาะใบเบิกที่ Submitted");
+
+        var approver = await _db.Users.FirstOrDefaultAsync(u => u.Id == approverUserId);
 
         claim.Status = ExpenseClaimStatus.Approved;
         claim.ApprovedByUserId = approverUserId;
@@ -228,12 +290,109 @@ public class ExpenseClaimService : IExpenseClaimService
         claim.ApprovalNotes = request.Notes;
         await _db.SaveChangesAsync();
 
+        // ───── No-receipt claim → auto-generate CertificateInLieu ─────
+        // §65 ทวิ allows companies to claim an expense without a vendor
+        // receipt provided they issue their own certificate carrying the
+        // reason + signatory. The certificate lives as a regular
+        // Document(CertificateInLieu) so it gets the same PDF, e-Tax
+        // integration, audit log, and PV chain as any other expense
+        // document. We create it ONCE here on first approval; if approval
+        // is rejected and re-submitted, CertificateInLieuDocumentId is
+        // already set so we skip (idempotent).
+        if (claim.NoReceipt && !claim.CertificateInLieuDocumentId.HasValue && _documentService != null)
+        {
+            try
+            {
+                await AutoGenerateCertificateInLieuAsync(companyId, claim, approver);
+            }
+            catch (Exception ex)
+            {
+                // The approval succeeded; the certificate gen is a follow-
+                // up that we can retry. Log + surface a non-fatal warning.
+                // The Pay step will still work without the certificate
+                // (it creates a PaymentVoucher independently); the
+                // certificate just won't be auto-linked.
+                _logger?.LogWarning(ex,
+                    "Failed to auto-generate CertificateInLieu for claim {ClaimId} — " +
+                    "approval saved, certificate can be created manually",
+                    claim.Id);
+            }
+        }
+
         await NotifyClaimEventAsync(companyId, NotificationEvents.ExpenseApproved, claim,
             actorUserId: approverUserId,
             title: $"ใบเบิก {claim.ClaimNumber} ได้รับอนุมัติ",
-            message: $"{claim.Title} · {claim.TotalAmount:N2} บาท — รอจ่ายเงิน");
+            message: $"{claim.Title} · {claim.TotalAmount:N2} บาท — รอจ่ายเงิน" +
+                     (claim.CertificateInLieuDocumentId.HasValue
+                        ? " · สร้างใบรับรองแทนใบเสร็จอัตโนมัติแล้ว"
+                        : ""));
 
         return await GetByIdAsync(companyId, claim.Id);
+    }
+
+    /// <summary>
+    /// Creates a Document(CertificateInLieu) carrying the §65 ทวิ legal
+    /// fields. Called from ApproveAsync when claim.NoReceipt == true.
+    /// The document is left in Draft status — accountant should review
+    /// + approve via the regular document flow. Sets
+    /// claim.CertificateInLieuDocumentId so the UI can deep-link.
+    /// </summary>
+    private async Task AutoGenerateCertificateInLieuAsync(
+        Guid companyId, ExpenseClaim claim, User? approver)
+    {
+        if (_documentService == null) return;
+        if (claim.SubmittedByUser == null)
+            throw new InvalidOperationException(
+                "ไม่พบข้อมูลผู้เบิก — ไม่สามารถสร้างใบรับรองแทนใบเสร็จอัตโนมัติได้");
+
+        var contactId = await EnsurePayeeContactAsync(
+            companyId, claim.SubmittedByUserId, claim.SubmittedByUser);
+
+        // Map each ExpenseClaimLine → DocumentLineRequest. Quantity is 1,
+        // UnitPrice = line.Amount; matches the way MarkAsPaidAsync builds
+        // the PaymentVoucher line list.
+        var docLines = claim.Lines.OrderBy(l => l.LineOrder).Select(l =>
+            new DocumentLineRequest(
+                l.Description, 1m, null, l.Amount, 0m,
+                l.VatRate, l.WithholdingTaxRate, l.AccountId,
+                ProjectId: l.ProjectId ?? claim.ProjectId)).ToList();
+
+        var approverName = approver != null
+            ? (approver.FullName ?? approver.Email ?? "(ผู้อนุมัติ)")
+            : "(ผู้อนุมัติ)";
+
+        var createReq = new CreateDocumentRequest(
+            DocumentType.CertificateInLieu,
+            DateTime.UtcNow.Date,
+            null,
+            contactId,
+            claim.ClaimNumber,            // reference back to the claim
+            $"ใบรับรองแทนใบเสร็จ — {claim.Title} (จากใบเบิก {claim.ClaimNumber})",
+            docLines,
+            ProjectId: claim.ProjectId);
+
+        var doc = await _documentService.CreateDocumentAsync(
+            companyId, createReq, "system:expense-claim:no-receipt");
+
+        // Patch the §65 ทวิ-required fields directly on the entity since
+        // CreateDocumentRequest doesn't carry them. Field names match
+        // Document.cs lines 86-91.
+        var docEntity = await _db.Set<Document>()
+            .FirstOrDefaultAsync(d => d.Id == doc.Id && d.CompanyId == companyId);
+        if (docEntity != null)
+        {
+            docEntity.CertificateReason = claim.NoReceiptReason ?? claim.Description ?? claim.Title;
+            docEntity.CertifierName = approverName;
+            docEntity.CertifierPosition = "ผู้อนุมัติเบิกค่าใช้จ่าย";
+            docEntity.WitnessName = claim.WitnessName;
+            docEntity.WitnessPosition = claim.WitnessPosition;
+            docEntity.PaymentDate = claim.ExpenseDate.Date;
+            docEntity.UpdatedBy = "system:expense-claim:no-receipt";
+            await _db.SaveChangesAsync();
+        }
+
+        claim.CertificateInLieuDocumentId = doc.Id;
+        await _db.SaveChangesAsync();
     }
 
     public async Task<ExpenseClaimResponse> RejectAsync(Guid companyId, Guid claimId, Guid approverUserId, RejectExpenseClaimRequest request)
@@ -287,7 +446,8 @@ public class ExpenseClaimService : IExpenseClaimService
             var docLines = claim.Lines.OrderBy(l => l.LineOrder).Select(l =>
                 new DocumentLineRequest(
                     l.Description, 1m, null, l.Amount, 0m,
-                    l.VatRate, l.WithholdingTaxRate, l.AccountId)).ToList();
+                    l.VatRate, l.WithholdingTaxRate, l.AccountId,
+                    ProjectId: l.ProjectId ?? claim.ProjectId)).ToList();
 
             var createReq = new CreateDocumentRequest(
                 DocumentType.PaymentVoucher,
@@ -296,7 +456,8 @@ public class ExpenseClaimService : IExpenseClaimService
                 contactId,
                 claim.ClaimNumber,
                 $"เบิกค่าใช้จ่ายพนักงาน — {claim.Title}",
-                docLines);
+                docLines,
+                ProjectId: claim.ProjectId);
 
             var doc = await _documentService.CreateDocumentAsync(companyId, createReq, "system:expense-claim");
             await _documentService.ApproveDocumentAsync(companyId, doc.Id, "system:expense-claim");
@@ -557,5 +718,11 @@ public class ExpenseClaimService : IExpenseClaimService
             l.WithholdingTaxRate, l.WithholdingTaxAmount, l.NetAmount,
             l.AccountId, l.Account?.AccountName, l.Category, l.Reference)).ToList(),
         e.CreatedAt,
-        e.PaymentVoucherDocumentId);
+        e.PaymentVoucherDocumentId,
+        e.NoReceipt,
+        e.NoReceiptReason,
+        e.WitnessName,
+        e.WitnessPosition,
+        e.CertificateInLieuDocumentId,
+        e.CertificateInLieuDocument?.DocumentNumber);
 }

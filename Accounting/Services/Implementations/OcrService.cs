@@ -48,6 +48,7 @@ public class OcrService : IOcrService
     private readonly Ocr.VendorKnownGoodCorrector _knownGoodCorrector;
     private readonly Ocr.RdComplianceValidator? _rdComplianceValidator;
     private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
+    private readonly Services.Ai.IOcrAiAugmenter? _aiAugmenter;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -63,9 +64,11 @@ public class OcrService : IOcrService
         Ocr.AzureDiPatternLearner azureLearner,
         Ocr.VendorKnownGoodCorrector knownGoodCorrector,
         Ocr.RdComplianceValidator? rdComplianceValidator = null,
-        Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null)
+        Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null,
+        Services.Ai.IOcrAiAugmenter? aiAugmenter = null)
     {
         _docWorkflowLearner = docWorkflowLearner;
+        _aiAugmenter = aiAugmenter;
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -84,8 +87,15 @@ public class OcrService : IOcrService
         _rdComplianceValidator = rdComplianceValidator;
     }
 
-    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId)
+    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null)
     {
+        // Normalize the user's engine preference into one of three modes.
+        // "auto" = current cascade; "azure" = Tier 1 only (no local fallback
+        // when user explicitly wants Azure accuracy); "local" = skip Tier 1
+        // entirely. Tier 0 e-Tax XML always runs regardless.
+        var enginePref = (preferredEngine ?? "auto").Trim().ToLowerInvariant();
+        if (enginePref != "azure" && enginePref != "local") enginePref = "auto";
+
         var file = await _db.FileAttachments
             .FirstOrDefaultAsync(f => f.Id == fileAttachmentId && f.CompanyId == companyId)
             ?? throw new InvalidOperationException("File attachment not found.");
@@ -276,7 +286,15 @@ public class OcrService : IOcrService
                 _logger.LogInformation("Azure DI skipped for {Cid}: {Reason}", companyId, azureSkipReason);
             }
 
-            if (extractedData == null && azureEnabled && azureQuotaAllowed)
+            // Per-scan user preference: when the caller picked "local",
+            // bypass Tier 1 entirely so no Azure cost is incurred — even
+            // if Azure is enabled and has quota.
+            if (enginePref == "local")
+            {
+                azureSkipReason = "ผู้ใช้เลือก Local OCR — ข้าม Azure DI ตามคำสั่ง";
+            }
+
+            if (extractedData == null && azureEnabled && azureQuotaAllowed && enginePref != "local")
             {
                 var azureResult = await ExtractWithAzureDiAsync(companyId, file, siteSettings);
                 if (azureResult.Success)
@@ -329,9 +347,13 @@ public class OcrService : IOcrService
             }
             tierTrace.Add($"[Tier 1 Azure DI] {azureOutcome ?? "(not attempted)"}");
 
-            // Tier 2: Python local service (PaddleOCR+EasyOCR)
+            // Tier 2: Python local service (PaddleOCR+EasyOCR).
+            // When the user explicitly chose "azure", do NOT silently fall
+            // back to local — they wanted Azure-grade accuracy. The scan
+            // surfaces failure (Tier 3 still runs as a last-resort below
+            // only when azure isn't the explicit choice).
             string? pythonOutcome = null;
-            if (extractedData == null)
+            if (extractedData == null && enginePref != "azure")
             {
                 try
                 {
@@ -378,7 +400,11 @@ public class OcrService : IOcrService
             // ParseThaiDocument so both signals contribute to extraction.
             // Tesseract-alone still runs for images and PDFs without a
             // text layer.
-            if (extractedData == null)
+            //
+            // Skipped when user explicitly chose "azure" — they wanted
+            // Azure-grade accuracy, not noisy Tesseract output. Failure
+            // surfaces below as scan-status Failed so they know to retry.
+            if (extractedData == null && enginePref != "azure")
             {
                 var embeddedResult = await ExtractWithEmbeddedTesseractAsync(file);
 
@@ -453,7 +479,23 @@ public class OcrService : IOcrService
                         + $"\n[Azure DI ข้าม] {azureSkipReason}";
                 }
             }
-            tierTrace.Add($"[Tier 3 Local hybrid] {(ocrEngineUsed == "PdfTextLayer+Tesseract" ? "PDF text-layer + Tesseract" : ocrEngineUsed == "EmbeddedTesseract" ? "Tesseract only" : "not attempted")}");
+            tierTrace.Add($"[Tier 3 Local hybrid] {(ocrEngineUsed == "PdfTextLayer+Tesseract" ? "PDF text-layer + Tesseract" : ocrEngineUsed == "EmbeddedTesseract" ? "Tesseract only" : enginePref == "azure" ? "skipped (user เลือก Azure-only)" : "not attempted")}");
+
+            // Azure-only path that failed: no engine produced data. Surface
+            // an empty result with a Failed status so the user knows to
+            // either retry or switch engines. We refund quota in the
+            // controller via the OcrEngine == null / status != Completed gate.
+            if (extractedData == null)
+            {
+                extractedData = new OcrExtractedData { Confidence = 0m };
+                ocrEngineUsed = ocrEngineUsed ?? "None";
+                extractedData.ReasoningTrace.Add(
+                    enginePref == "azure"
+                        ? $"[Azure-only] ผู้ใช้เลือก Azure DI แต่สแกนไม่สำเร็จ — {lastError ?? azureSkipReason ?? "ไม่ทราบสาเหตุ"}. กรุณาลองอีกครั้งหรือเลือก Engine อื่น."
+                        : $"[ทุก Tier ล้มเหลว] {lastError ?? "ไม่มี engine ที่ทำงานได้"}");
+                scanResult.ScanStatus = "Failed";
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + extractedData.ReasoningTrace[^1];
+            }
 
             // Prepend the tier-outcome ledger to the reasoning trace so the
             // debug panel shows EVERY tier's status — no more silent
@@ -1123,6 +1165,68 @@ public class OcrService : IOcrService
                         extractedData.ReasoningTrace.Add(
                             $"[Fuzzy] จับคู่ผู้ติดต่อ '{best.Name}' similarity {best.Sim:P0}");
                     }
+                }
+            }
+
+            // ───── AI Augmentation: vendor canonicalisation ─────
+            // Runs only when local matchers (TaxId + substring + fuzzy
+            // ≥0.85) ALL missed. The augmenter sees the local pick
+            // (none, in this branch) + a fresh candidate list and may
+            // produce a match that fuzzy edit-distance couldn't (Thai
+            // ↔ English company names, abbreviation expansion, missing
+            // legal suffix, OCR-introduced character noise).
+            //
+            // ALL failure paths fall through cleanly — the local
+            // auto-create logic below still runs unchanged. AI down /
+            // disabled / over-budget = behave like AI wasn't there.
+            if (!scanResult.MatchedContactId.HasValue && _aiAugmenter != null
+                && (!string.IsNullOrEmpty(extractedData.VendorName)
+                    || !string.IsNullOrEmpty(extractedData.VendorTaxId)))
+            {
+                try
+                {
+                    using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var aiResult = await _aiAugmenter.CanonicaliseVendorAsync(
+                        companyId, scanResult.Id,
+                        extractedData.VendorName, extractedData.VendorTaxId,
+                        extractedData.VendorAddress,
+                        localBestContactId: null, localConfidence: 0m,
+                        aiCts.Token);
+                    if (aiResult.UsedAi
+                        && !string.IsNullOrEmpty(aiResult.Answer) && aiResult.Answer != "__NEW__"
+                        && (aiResult.Confidence ?? 0m) >= 0.70m
+                        && Guid.TryParse(aiResult.Answer, out var aiContactId))
+                    {
+                        // Verify the contact still exists + belongs to
+                        // the tenant — AI could hallucinate a GUID.
+                        var verified = await _db.Contacts.AsNoTracking()
+                            .AnyAsync(c => c.Id == aiContactId && c.CompanyId == companyId && !c.IsDeleted);
+                        if (verified)
+                        {
+                            scanResult.MatchedContactId = aiContactId;
+                            scanResult.AiSuggestedContactId = aiContactId;
+                            scanResult.AiSuggestionFeedbackId = aiResult.FeedbackId;
+                            extractedData.ReasoningTrace.Add(
+                                $"[AI] vendor canon → contact {aiContactId} ({aiResult.Confidence:P0})"
+                                + (string.IsNullOrEmpty(aiResult.Reasoning) ? "" : ": " + aiResult.Reasoning));
+                            foreach (var risk in aiResult.Risks)
+                                extractedData.ReasoningTrace.Add("[AI risk] " + risk);
+                        }
+                    }
+                    else if (!aiResult.UsedAi && aiResult.FeedbackId.HasValue)
+                    {
+                        // AI was attempted but unavailable — store the
+                        // feedback row id anyway so the UI shows "AI
+                        // tried, fell back to local" badge.
+                        scanResult.AiSuggestionFeedbackId = aiResult.FeedbackId;
+                    }
+                }
+                catch (Exception aiEx)
+                {
+                    // Belt-and-braces — augmenter catches internally,
+                    // but if anything else throws (DI / context-disposed
+                    // race) we still continue the OCR pipeline.
+                    _logger.LogWarning(aiEx, "AI vendor canon hook failed; continuing without AI suggestion");
                 }
             }
 
@@ -1830,7 +1934,10 @@ public class OcrService : IOcrService
             if (!data.DocumentDate.HasValue
                 && (keyLower.Contains("วันที่") || keyLower == "date" || keyLower.Contains("invoice date")))
             {
-                if (DateTime.TryParse(value, out var d)) data.DocumentDate = d;
+                if (DateTime.TryParse(value, out var d))
+                    // Pin Kind=Utc with same y/m/d — see BUGFIX note in
+                    // SmartFieldExtractor.ValidateAndNormalizeDate.
+                    data.DocumentDate = new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
                 continue;
             }
 
@@ -2007,8 +2114,15 @@ public class OcrService : IOcrService
                 ZoneSummary = root.TryGetProperty("ocr_engine", out var oe) ? $"Local OCR: {oe.GetString()}" : "Local OCR: paddleocr",
             };
 
-            if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr && DateTime.TryParse(dateStr, out var parsedDate))
-                data.DocumentDate = parsedDate;
+            if (root.TryGetProperty("document_date", out var dd) && dd.GetString() is string dateStr
+                && DateTime.TryParse(dateStr, out var parsedDate))
+            {
+                // Pin to Kind=Utc using the same y/m/d so JSON/DB
+                // round-trip doesn't shift to the previous calendar day
+                // (the "29 พค → 28 พค" bug). DocumentDate is a calendar
+                // date, not a moment in time.
+                data.DocumentDate = new DateTime(parsedDate.Year, parsedDate.Month, parsedDate.Day, 0, 0, 0, DateTimeKind.Utc);
+            }
 
             // ── Per-field confidence (parity with Azure DI) ──
             if (root.TryGetProperty("field_confidence", out var fc) && fc.ValueKind == System.Text.Json.JsonValueKind.Object)
@@ -2723,8 +2837,34 @@ public class OcrService : IOcrService
             data.TotalAmount = data.SubTotal + data.VatAmount;
         else if (data.TotalAmount > 0 && data.SubTotal == null && data.VatAmount == null && hasTaxInvoice)
         {
-            data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
-            data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
+            // BUGFIX (2025-05): Many Thai SMEs print "ใบเสร็จ/ใบกำกับภาษี"
+            // on a single template even when they are NOT VAT-registered
+            // and cannot issue a real tax invoice. Auto-splitting the
+            // TotalAmount as if it had 7% VAT in that case poisons the
+            // ledger with imaginary input-VAT receivable.
+            //
+            // Per ประมวลรัษฎากร §86, only persons registered for VAT
+            // (มี Tax ID 13 หลัก) may issue an invoice with VAT. Gate the
+            // back-calculation on a valid 13-digit vendor tax ID + a
+            // sanity rounding match. When in doubt, leave both fields
+            // null so the gateway flags it as low-confidence + the user
+            // sees the original total verbatim.
+            var vendorTaxIdValid = !string.IsNullOrEmpty(data.VendorTaxId)
+                && new string(data.VendorTaxId.Where(char.IsDigit).ToArray()).Length == 13;
+            if (vendorTaxIdValid)
+            {
+                data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
+                data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
+                data.ReasoningTrace.Add(
+                    "[VAT back-calc] vendor มี Tax ID 13 หลัก + เอกสารเป็น TaxInvoice → แยก VAT 7% จากยอดรวม");
+            }
+            else
+            {
+                data.ReasoningTrace.Add(
+                    "[VAT skip] เอกสารพูดถึง 'ใบกำกับภาษี' แต่ vendor ไม่มี Tax ID 13 หลัก " +
+                    "— ไม่สามารถ back-calc VAT ได้ (vendor ไม่จด VAT). " +
+                    "ใส่ TotalAmount ตามที่อ่านมา, SubTotal/VatAmount = null");
+            }
         }
 
         // GL account suggestions
@@ -2925,6 +3065,87 @@ public class OcrService : IOcrService
         return MapToResponse(result);
     }
 
+    public async Task SetExtractedLineProjectAsync(Guid companyId, Guid scanResultId,
+        int lineIndex, Guid? projectId, string? projectName)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+        if (string.IsNullOrEmpty(scan.ExtractedItemsJson))
+            throw new InvalidOperationException("Scan ไม่มีรายการสินค้าใน OCR result.");
+        if (lineIndex < 0)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex));
+
+        // Verify the project exists in this company when assigning.
+        if (projectId.HasValue)
+        {
+            var exists = await _db.Projects.AnyAsync(
+                p => p.Id == projectId.Value && p.CompanyId == companyId && !p.IsDeleted);
+            if (!exists) throw new InvalidOperationException("ไม่พบ project ที่ระบุ");
+        }
+
+        List<OcrExtractedLineItem> items;
+        try
+        {
+            items = System.Text.Json.JsonSerializer
+                .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+        }
+        catch
+        {
+            throw new InvalidOperationException("ExtractedItemsJson เสียหาย — ไม่สามารถ parse");
+        }
+        if (lineIndex >= items.Count)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex), "lineIndex เกินจำนวนรายการที่สแกนได้");
+
+        items[lineIndex].ProjectId = projectId;
+        items[lineIndex].ProjectName = projectName;
+        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task SetAllExtractedLineProjectsAsync(Guid companyId, Guid scanResultId,
+        Guid? projectId, string? projectName, bool onlyEmpty)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+        if (string.IsNullOrEmpty(scan.ExtractedItemsJson))
+            throw new InvalidOperationException("Scan ไม่มีรายการสินค้าใน OCR result.");
+
+        if (projectId.HasValue)
+        {
+            var exists = await _db.Projects.AnyAsync(
+                p => p.Id == projectId.Value && p.CompanyId == companyId && !p.IsDeleted);
+            if (!exists) throw new InvalidOperationException("ไม่พบ project ที่ระบุ");
+        }
+
+        List<OcrExtractedLineItem> items;
+        try
+        {
+            items = System.Text.Json.JsonSerializer
+                .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+        }
+        catch
+        {
+            throw new InvalidOperationException("ExtractedItemsJson เสียหาย — ไม่สามารถ parse");
+        }
+
+        // Preserve user's prior per-line overrides when onlyEmpty=true.
+        // The UI uses this when the user clicks "apply main" AFTER
+        // already overriding some rows individually — we don't want
+        // to clobber their work.
+        foreach (var item in items)
+        {
+            if (onlyEmpty && item.ProjectId.HasValue) continue;
+            item.ProjectId = projectId;
+            item.ProjectName = projectName;
+        }
+        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
     {
         var result = await _db.Set<OcrScanResult>()
@@ -3016,6 +3237,11 @@ public class OcrService : IOcrService
                     Amount = item.Amount ?? 0,
                     VatRate = scan.ExtractedVatAmount > 0 ? 7 : 0,
                     AccountId = lineAccountId,
+                    // Per-line project allocation from the OCR review UI —
+                    // user picks the project in /pages/ocr-review.html
+                    // before clicking "Create document". When set, this
+                    // line books costs against the right job/project.
+                    ProjectId = item.ProjectId,
                 });
             }
         }
@@ -3096,6 +3322,12 @@ public class OcrService : IOcrService
         if (scan.ScanStatus != "Completed")
             throw new InvalidOperationException("Scan ยังไม่เสร็จ — ไม่สามารถลงทะเบียนสินทรัพย์");
 
+        // Side-effect: if the user assigned a project to this line via
+        // the review UI (POST /line-project), promote it into the scope
+        // so RegisterAssetAsync (and any future per-line writer) can
+        // honour the allocation. Kept inline next to the resolver so
+        // the read+write path stays bookended.
+
         // Resolve the line item from the stored ExtractedItemsJson so we
         // can prefill PurchaseCost / Description when the request omits
         // them. The user may also edit any field via the request body.
@@ -3115,7 +3347,10 @@ public class OcrService : IOcrService
                         el.TryGetProperty("Quantity", out var q) && q.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)q.GetDouble() : null,
                         el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)u.GetDouble() : null,
                         el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)a.GetDouble() : null,
-                        el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null);
+                        el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null,
+                        el.TryGetProperty("ProjectId", out var pid) && pid.ValueKind == System.Text.Json.JsonValueKind.String
+                            && Guid.TryParse(pid.GetString(), out var pg) ? pg : null,
+                        el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null);
                 }
             }
             catch (Exception ex)
@@ -3361,7 +3596,8 @@ public class OcrService : IOcrService
             if (data.Items.Count > 0)
             {
                 items = data.Items.Select(i => new OcrLineItemDto(
-                    i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode)).ToList();
+                    i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
+                    i.ProjectId, i.ProjectName)).ToList();
             }
         }
 
@@ -3393,7 +3629,10 @@ public class OcrService : IOcrService
                     el.TryGetProperty("Quantity", out var q) && q.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)q.GetDouble() : null,
                     el.TryGetProperty("UnitPrice", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)u.GetDouble() : null,
                     el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)a.GetDouble() : null,
-                    el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null
+                    el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null,
+                    el.TryGetProperty("ProjectId", out var pid) && pid.ValueKind == System.Text.Json.JsonValueKind.String
+                        && Guid.TryParse(pid.GetString(), out var pg) ? pg : (Guid?)null,
+                    el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null
                 )).ToList();
             }
             catch { }
@@ -3569,4 +3808,9 @@ internal class OcrExtractedLineItem
     public decimal? UnitPrice { get; set; }
     public decimal? Amount { get; set; }
     public string? SuggestedAccountCode { get; set; }
+    /// <summary>Per-line project assignment captured in the review UI.
+    /// Persisted so re-opening the review after a crash preserves the
+    /// user's allocation work + auto-create uses it.</summary>
+    public Guid? ProjectId { get; set; }
+    public string? ProjectName { get; set; }
 }

@@ -45,6 +45,20 @@ public class Product : TenantEntity
     public decimal MinimumStock { get; set; }
     public bool TrackStock { get; set; } = false;
 
+    /// <summary>How COGS is calculated when this product moves OUT.
+    /// WeightedAverage is the Thai SME default — running average
+    /// updated on every receipt. FIFO requires layered cost history
+    /// and is used when valuation precision matters. Standard uses
+    /// CostPrice flat + posts variance to a variance account.</summary>
+    public CostingMethod CostingMethod { get; set; } = CostingMethod.WeightedAverage;
+
+    /// <summary>Live running average cost — updated by
+    /// InventoryCostingService on every IN movement. CurrentStock
+    /// is the running quantity; AverageUnitCost is the per-unit
+    /// figure that gets stamped onto outbound StockMovements'
+    /// UnitCost so the COGS posting matches the weighted average.</summary>
+    public decimal AverageUnitCost { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>POS multi-printer routing key — "Kitchen-Hot" / "Kitchen-Cold" /
@@ -130,6 +144,9 @@ public class StockCountLine : TenantEntity
     public decimal SystemQty { get; set; }
     public decimal CountedQty { get; set; }
     public decimal Variance { get; set; }       // CountedQty - SystemQty
+    /// <summary>Per-unit cost at count time (WAC snapshot) so the
+    /// adjustment JE can value variances correctly.</summary>
+    public decimal UnitCost { get; set; }
     public string? Notes { get; set; }
 }
 

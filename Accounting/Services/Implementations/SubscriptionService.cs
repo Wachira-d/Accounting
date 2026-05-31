@@ -356,6 +356,18 @@ public class SubscriptionService : ISubscriptionService
             }
         }
 
+        // Owner-level subtractive override — when the Owner has flipped
+        // off features in CompanySettings.OwnerDisabledFeatures, mask
+        // them out so the frontend sees only what the Owner has chosen
+        // to expose. SystemAdmin's Subscription assignment is still
+        // the upper bound; this is opt-out only.
+        var ownerDisabled = await _db.Set<CompanySettings>()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (FeatureFlags?)s.OwnerDisabledFeatures)
+            .FirstOrDefaultAsync() ?? FeatureFlags.None;
+        if (ownerDisabled != FeatureFlags.None)
+            features = features & ~ownerDisabled;
+
         return new SubscriptionResponse(
             sub.Id, sub.CompanyId, plan, status, sub.BillingCycle,
             sub.PricePerCycle, sub.StartDate, endDate, sub.NextBillingDate,

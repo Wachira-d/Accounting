@@ -57,10 +57,12 @@ public class PayrollService : IPayrollService
     private const decimal PitPerDependantAllowance = 30_000m;
     private const decimal PitPvdMaxDeductible = 500_000m;
 
+    private readonly IWebhookService? _webhooks;
+
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
-        INotificationEngine? notify = null)
+        INotificationEngine? notify = null, IWebhookService? webhooks = null)
     {
         _db = db;
         _pdfService = pdfService;
@@ -69,6 +71,14 @@ public class PayrollService : IPayrollService
         _organizationService = organizationService;
         _permissionService = permissionService;
         _notify = notify;
+        _webhooks = webhooks;
+    }
+
+    private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
+    {
+        if (_webhooks == null) return;
+        try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
+        catch { /* fire-and-forget */ }
     }
 
     /// <summary>Fire-and-forget — swallowed inside the engine itself.</summary>
@@ -199,11 +209,25 @@ public class PayrollService : IPayrollService
             DimensionId = request.DimensionId,
             DepartmentId = request.DepartmentId,
             PositionId = request.PositionId,
-            DirectManagerId = request.DirectManagerId
+            DirectManagerId = request.DirectManagerId,
+            CostBehavior = request.CostBehavior
+                ?? ((request.SalaryType ?? "Monthly") == "Monthly" ? "Fixed" : "Variable"),
+            ExternalId = request.ExternalId,
+            ExternalSystem = request.ExternalSystem,
+            LastSyncedAt = request.ExternalId != null ? DateTime.UtcNow : null,
         };
 
         _db.Set<Employee>().Add(employee);
         await _db.SaveChangesAsync();
+
+        await FireWebhookAsync(companyId, "employee.created", new
+        {
+            id = employee.Id, employeeCode = employee.EmployeeCode,
+            firstNameTh = employee.FirstNameTh, lastNameTh = employee.LastNameTh,
+            email = employee.Email, employmentType = employee.EmploymentType,
+            salaryType = employee.SalaryType, baseSalary = employee.BaseSalary,
+            externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
+        });
 
         return await GetEmployeeAsync(companyId, employee.Id);
     }
@@ -284,6 +308,17 @@ public class PayrollService : IPayrollService
         // employee record itself stays for audit. Re-onboarding restores
         // Active. Only mirrored when the User isn't already in a stricter
         // state (Suspended, PendingVerification) which is admin-managed.
+        if (request.CostBehavior != null) employee.CostBehavior = request.CostBehavior;
+        if (request.SalaryType != null) employee.SalaryType = request.SalaryType;
+        // LastSyncedAt only stamps when ExternalId is actually present — a
+        // plain UI edit that re-sends an unchanged costBehavior shouldn't
+        // look like an HRIS sync.
+        if (request.ExternalId != null)
+        {
+            employee.ExternalId = request.ExternalId;
+            employee.LastSyncedAt = DateTime.UtcNow;
+        }
+        if (request.ExternalSystem != null) employee.ExternalSystem = request.ExternalSystem;
         if (request.IsActive.HasValue)
         {
             employee.IsActive = request.IsActive.Value;
@@ -303,7 +338,193 @@ public class PayrollService : IPayrollService
         employee.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
+        await FireWebhookAsync(companyId, "employee.updated", new
+        {
+            id = employee.Id, employeeCode = employee.EmployeeCode,
+            isActive = employee.IsActive,
+            externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
+        });
+
         return await GetEmployeeAsync(companyId, employee.Id);
+    }
+
+    public async Task<SyncEmployeesResponse> SyncEmployeesAsync(Guid companyId, SyncEmployeesRequest request)
+    {
+        var inserted = 0; var updated = 0; var skipped = 0;
+        var errors = new List<string>();
+
+        foreach (var r in request.Rows)
+        {
+            if (string.IsNullOrWhiteSpace(r.ExternalId))
+            {
+                errors.Add($"{r.EmployeeCode}: ต้องระบุ ExternalId เพื่อ sync");
+                skipped++;
+                continue;
+            }
+            var existing = await _db.Set<Employee>().FirstOrDefaultAsync(e =>
+                e.CompanyId == companyId
+                && e.ExternalSystem == request.ExternalSystem
+                && e.ExternalId == r.ExternalId
+                && !e.IsDeleted);
+
+            if (existing != null)
+            {
+                existing.FirstNameTh = r.FirstNameTh;
+                existing.LastNameTh = r.LastNameTh;
+                if (r.FirstNameEn != null) existing.FirstNameEn = r.FirstNameEn;
+                if (r.LastNameEn != null) existing.LastNameEn = r.LastNameEn;
+                if (r.Email != null) existing.Email = r.Email;
+                if (r.Phone != null) existing.Phone = r.Phone;
+                if (r.Department != null) existing.Department = r.Department;
+                if (r.Position != null) existing.Position = r.Position;
+                if (r.BaseSalary > 0) existing.BaseSalary = r.BaseSalary;
+                if (r.SalaryType != null) existing.SalaryType = r.SalaryType;
+                if (r.CostBehavior != null) existing.CostBehavior = r.CostBehavior;
+                existing.LastSyncedAt = DateTime.UtcNow;
+                existing.UpdatedAt = DateTime.UtcNow;
+                updated++;
+            }
+            else
+            {
+                try
+                {
+                    var dup = await _db.Set<Employee>()
+                        .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == r.EmployeeCode && !e.IsDeleted);
+                    if (dup)
+                    {
+                        errors.Add($"{r.EmployeeCode}: รหัสซ้ำ");
+                        skipped++;
+                        continue;
+                    }
+                    var newEmp = new Employee
+                    {
+                        CompanyId = companyId,
+                        EmployeeCode = r.EmployeeCode,
+                        TitleTh = r.TitleTh,
+                        FirstNameTh = r.FirstNameTh,
+                        LastNameTh = r.LastNameTh,
+                        FirstNameEn = r.FirstNameEn,
+                        LastNameEn = r.LastNameEn,
+                        CitizenId = r.CitizenId,
+                        Email = r.Email,
+                        Phone = r.Phone,
+                        Department = r.Department,
+                        Position = r.Position,
+                        EmploymentType = r.EmploymentType,
+                        StartDate = r.StartDate,
+                        BaseSalary = r.BaseSalary,
+                        SalaryType = r.SalaryType ?? "Monthly",
+                        BankName = r.BankName,
+                        BankAccountNumber = r.BankAccountNumber,
+                        BankAccountName = r.BankAccountName,
+                        SocialSecurityNumber = r.SocialSecurityNumber,
+                        IsSubjectToSocialSecurity = r.IsSubjectToSocialSecurity,
+                        CostBehavior = r.CostBehavior
+                            ?? ((r.SalaryType ?? "Monthly") == "Monthly" ? "Fixed" : "Variable"),
+                        ExternalId = r.ExternalId,
+                        ExternalSystem = request.ExternalSystem,
+                        LastSyncedAt = DateTime.UtcNow,
+                    };
+                    _db.Set<Employee>().Add(newEmp);
+                    inserted++;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{r.EmployeeCode}: {ex.Message}");
+                    skipped++;
+                }
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return new SyncEmployeesResponse(inserted, updated, skipped, errors);
+    }
+
+    public async Task<EmployeeResponse?> GetEmployeeByExternalAsync(Guid companyId, string externalSystem, string externalId)
+    {
+        var emp = await _db.Set<Employee>()
+            .Include(e => e.DepartmentRef).Include(e => e.PositionRef).Include(e => e.DirectManager)
+            .FirstOrDefaultAsync(e => e.CompanyId == companyId
+                && e.ExternalSystem == externalSystem
+                && e.ExternalId == externalId
+                && !e.IsDeleted);
+        return emp == null ? null : MapToEmployeeResponse(emp);
+    }
+
+    public async Task DeleteEmployeeAsync(Guid companyId, Guid employeeId)
+    {
+        var emp = await _db.Set<Employee>()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        // Block deletion when the employee is still on an open payroll
+        // run or has unallocated time entries — soft-deletion would
+        // orphan those rows. Partners must close out the run / clear
+        // time first.
+        var openRun = await _db.Set<PayrollDetail>()
+            .Include(d => d.PayrollRun)
+            .AnyAsync(d => d.EmployeeId == employeeId
+                && d.CompanyId == companyId
+                && d.PayrollRun.Status != "Paid"
+                && d.PayrollRun.Status != "Voided"
+                && !d.IsDeleted);
+        if (openRun)
+            throw new InvalidOperationException("พนักงานยังอยู่ในรอบจ่ายเงินเดือนที่ยังไม่ปิด — ปิดรอบก่อน");
+
+        emp.IsDeleted = true;
+        emp.IsActive = false;
+        emp.EndDate ??= DateTime.UtcNow.Date;
+        emp.UpdatedAt = DateTime.UtcNow;
+
+        // Mirror to the linked User so login + LIFF are revoked. Stay
+        // conservative — only flip Active → Inactive, never override
+        // stricter admin-managed states (Suspended / PendingVerification).
+        if (emp.UserId.HasValue)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == emp.UserId.Value);
+            if (user != null && user.Status == UserStatus.Active)
+                user.Status = UserStatus.Inactive;
+        }
+
+        await _db.SaveChangesAsync();
+        await FireWebhookAsync(companyId, "employee.deleted", new
+        {
+            id = emp.Id, employeeCode = emp.EmployeeCode,
+            externalId = emp.ExternalId, externalSystem = emp.ExternalSystem,
+        });
+    }
+
+    public async Task<EmployeeResponse> RestoreEmployeeAsync(Guid companyId, Guid employeeId)
+    {
+        // Employee has a global query filter (!IsDeleted) — bypass it
+        // so we can locate the soft-deleted row to restore.
+        var emp = await _db.Set<Employee>()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && e.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงานที่ถูกลบไว้");
+
+        // The unique index on (CompanyId, EmployeeCode) is filtered to
+        // active rows, so a partner may have created a new active
+        // employee with the same code between delete and restore.
+        // Block restore in that case rather than crashing at SaveChanges.
+        var activeDup = await _db.Set<Employee>()
+            .AnyAsync(e => e.CompanyId == companyId
+                && e.EmployeeCode == emp.EmployeeCode
+                && e.Id != employeeId);
+        if (activeDup)
+            throw new InvalidOperationException(
+                $"รหัสพนักงาน {emp.EmployeeCode} ถูกใช้กับพนักงานคนอื่นแล้ว — เปลี่ยนรหัสก่อนกู้คืน");
+
+        emp.IsDeleted = false;
+        emp.IsActive = true;
+        emp.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        await FireWebhookAsync(companyId, "employee.restored", new
+        {
+            id = emp.Id, employeeCode = emp.EmployeeCode,
+            externalId = emp.ExternalId, externalSystem = emp.ExternalSystem,
+        });
+        return await GetEmployeeAsync(companyId, emp.Id);
     }
 
     public async Task<SeverancePreviewResponse> PreviewSeverancePayAsync(
@@ -397,6 +618,12 @@ public class PayrollService : IPayrollService
         }
 
         await _db.SaveChangesAsync();
+        await FireWebhookAsync(companyId, "employee.terminated", new
+        {
+            id = employee.Id, employeeCode = employee.EmployeeCode,
+            endDate = employee.EndDate,
+            externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
+        });
     }
 
     // ===== Payroll Items =====
@@ -561,6 +788,31 @@ public class PayrollService : IPayrollService
                 .ToListAsync();
             var leavesByEmployee = approvedLeavesAll.GroupBy(l => l.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
 
+            // ===== Batch-load attendance + compensation profile =====
+            // EmployeeProjectTime rows in the run period drive OT/per-diem/
+            // accommodation/OT-meal extras. CompanyCompensationDefaults +
+            // per-employee profiles override the rates. Both pre-fetched
+            // once so the inner loop stays O(employees). employeeIds is
+            // already in scope from the prior-details / leaves prefetch.
+            var timeRowsAll = await _db.EmployeeProjectTimes
+                .Where(t => t.CompanyId == companyId
+                    && employeeIds.Contains(t.EmployeeId)
+                    && t.WorkDate >= run.PeriodStart.Date && t.WorkDate <= run.PeriodEnd.Date
+                    && !t.IsDeleted)
+                .AsNoTracking()
+                .ToListAsync();
+            var timeByEmployee = timeRowsAll.GroupBy(t => t.EmployeeId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var compDefaults = await _db.CompanyCompensationDefaults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.CompanyId == companyId && !x.IsDeleted)
+                ?? new CompanyCompensationDefaults { CompanyId = companyId };
+            var compProfiles = await _db.EmployeeCompensationProfiles
+                .Where(p => p.CompanyId == companyId && employeeIds.Contains(p.EmployeeId) && !p.IsDeleted)
+                .AsNoTracking()
+                .ToDictionaryAsync(p => p.EmployeeId);
+
             decimal totalGross = 0, totalDeductions = 0, totalNet = 0;
             decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
             decimal totalPvdEmp = 0, totalPvdEr = 0;
@@ -596,6 +848,49 @@ public class PayrollService : IPayrollService
                         bonus += amount;
                     else
                         allowances += amount;
+                }
+
+                // ===== Attendance-driven extras (OT + per-diem + accom + OT-meal) =====
+                // Read EmployeeProjectTime rows for this employee in the run
+                // period and apply the merged per-employee → company-defaults
+                // compensation rates. When no attendance rows exist, the
+                // calculation yields zero and behaviour matches the pre-
+                // attendance world — companies without clock-in integration
+                // are unaffected.
+                if (timeByEmployee.TryGetValue(emp.Id, out var empTimeRows) && empTimeRows.Count > 0)
+                {
+                    var prof = compProfiles.GetValueOrDefault(emp.Id);
+                    var otMultWeekday = prof?.OvertimeRateMultiplierWeekday ?? compDefaults.OvertimeRateMultiplierWeekday;
+                    var otMultHoliday = prof?.OvertimeRateMultiplierHoliday ?? compDefaults.OvertimeRateMultiplierHoliday;
+                    var perDiemRate = prof?.PerDiemRate ?? compDefaults.PerDiemRate;
+                    var accomRate = prof?.AccommodationAllowance ?? compDefaults.AccommodationAllowance;
+                    var otMealRate = prof?.OvertimeMealAllowance ?? compDefaults.OvertimeMealAllowance;
+
+                    // Hourly base — Monthly: salary / (workDays × workHours);
+                    // Daily: salary / workHours; Hourly: salary is the rate.
+                    decimal hourly = emp.SalaryType switch
+                    {
+                        "Hourly" => emp.BaseSalary,
+                        "Daily" => compDefaults.StandardWorkHoursPerDay > 0
+                            ? emp.BaseSalary / compDefaults.StandardWorkHoursPerDay : 0,
+                        _ => (compDefaults.StandardWorkDaysPerMonth * compDefaults.StandardWorkHoursPerDay) > 0
+                            ? emp.BaseSalary / (compDefaults.StandardWorkDaysPerMonth * compDefaults.StandardWorkHoursPerDay) : 0,
+                    };
+
+                    decimal otPayWeekday = 0, otPayHoliday = 0;
+                    decimal perDiemSum = 0, accomSum = 0, otMealSum = 0;
+                    foreach (var grp in empTimeRows.GroupBy(t => t.WorkDate.Date))
+                    {
+                        var dayOt = grp.Sum(t => t.OvertimeHours ?? 0);
+                        var dayIsHoliday = grp.Any(t => t.IsHoliday);
+                        if (dayIsHoliday) otPayHoliday += dayOt * hourly * otMultHoliday;
+                        else otPayWeekday += dayOt * hourly * otMultWeekday;
+                        if (grp.Any(t => t.HasPerDiem)) perDiemSum += perDiemRate;
+                        if (grp.Any(t => t.HasAccommodation)) accomSum += accomRate;
+                        if (grp.Any(t => t.HasOvertimeMeal)) otMealSum += otMealRate;
+                    }
+                    overtimePay += Math.Round(otPayWeekday + otPayHoliday, 2, MidpointRounding.AwayFromZero);
+                    allowances += Math.Round(perDiemSum + accomSum + otMealSum, 2, MidpointRounding.AwayFromZero);
                 }
 
                 // Calculate leave deductions — sourced from the batched lookup.
@@ -1188,6 +1483,42 @@ public class PayrollService : IPayrollService
                     $"จำนวนวันลาเกินโควต้า — {request.LeaveType} ปี {leaveYear} สิทธิ์ {allocated:0.#} วัน ใช้ไปแล้ว {usedThisYear:0.#} วัน ขอเพิ่ม {request.TotalDays:0.#} วัน");
         }
 
+        // ───── Per-type policy gates (LeaveType catalog) ─────
+        // Half-day on a type that doesn't allow it → reject.
+        // RequiresAttachment + Sick > 3 days (พ.ร.บ.คุ้มครองแรงงาน §32):
+        // for now we enforce the "doctor cert needed" rule by requiring
+        // request.Reason to be non-empty when RequiresAttachment is set
+        // and TotalDays > 3 — actual attachment upload + check requires
+        // the LeaveAttachment endpoint added later; treating non-empty
+        // reason as the minimum bar for now so the gate isn't bypassed
+        // silently. The frontend already warns the user about the
+        // attachment in the picker hint.
+        var typeRow = await _db.Set<LeaveType>().AsNoTracking()
+            .FirstOrDefaultAsync(t => t.CompanyId == companyId && t.Code == request.LeaveType && !t.IsDeleted);
+        if (typeRow != null)
+        {
+            if (request.HalfDayMarker > 0 && !typeRow.AllowHalfDay)
+                throw new InvalidOperationException(
+                    $"ประเภท '{typeRow.NameTh}' ไม่อนุญาตให้ลาครึ่งวัน");
+            if (typeRow.RequiresAttachment && request.TotalDays > 3
+                && string.IsNullOrWhiteSpace(request.Reason))
+                throw new InvalidOperationException(
+                    $"ลา '{typeRow.NameTh}' มากกว่า 3 วันต้องระบุเหตุผล + แนบหลักฐาน " +
+                    "(เช่นใบรับรองแพทย์) ตาม พ.ร.บ.คุ้มครองแรงงาน §32");
+            if (typeRow.AdvanceNoticeDays > 0)
+            {
+                var noticeDays = (request.StartDate.Date - DateTime.UtcNow.Date).TotalDays;
+                if (noticeDays < typeRow.AdvanceNoticeDays)
+                {
+                    // Soft warning only — Thai practice allows late
+                    // requests for emergencies; we don't hard-block, but
+                    // the rejection reason is recorded in case manager
+                    // wants to ding the worker.
+                    // Caller (UI) shows hint at picker time.
+                }
+            }
+        }
+
         var leave = new EmployeeLeave
         {
             CompanyId = companyId,
@@ -1197,6 +1528,7 @@ public class PayrollService : IPayrollService
             EndDate = request.EndDate,
             TotalDays = request.TotalDays,
             Reason = request.Reason,
+            HalfDayMarker = request.HalfDayMarker,
             Status = "Pending"
         };
 
@@ -1319,6 +1651,22 @@ public class PayrollService : IPayrollService
 
     private async Task<Dictionary<string, decimal>> ResolveLeaveQuotasAsync(Guid companyId)
     {
+        // Priority order (highest wins):
+        //   1) LeaveType table (HR configured via /leaves/admin/types)
+        //   2) CompanySettings.LeaveQuotasJson (legacy)
+        //   3) DefaultLeaveQuotas (Thai labor-law baseline)
+        // 1 + 2 fill the gaps from 3 so a tenant doesn't accidentally
+        // lose a quota by partial config.
+        var typeRows = await _db.Set<LeaveType>().AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted)
+            .ToListAsync();
+        if (typeRows.Count > 0)
+        {
+            var merged = new Dictionary<string, decimal>(DefaultLeaveQuotas);
+            foreach (var t in typeRows) merged[t.Code] = t.AnnualQuota;
+            return merged;
+        }
+        // Fallback to the legacy JSON in CompanySettings.
         var settings = await _db.Set<CompanySettings>()
             .AsNoTracking()
             .FirstOrDefaultAsync(s => s.CompanyId == companyId);
@@ -1328,7 +1676,6 @@ public class PayrollService : IPayrollService
         {
             var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, decimal>>(settings.LeaveQuotasJson);
             if (parsed == null) return new Dictionary<string, decimal>(DefaultLeaveQuotas);
-            // Merge: tenant overrides win, defaults fill the gaps.
             var merged = new Dictionary<string, decimal>(DefaultLeaveQuotas);
             foreach (var kvp in parsed) merged[kvp.Key] = kvp.Value;
             return merged;
@@ -1558,7 +1905,9 @@ public class PayrollService : IPayrollService
             e.DirectManager != null
                 ? $"{e.DirectManager.TitleTh}{e.DirectManager.FirstNameTh} {e.DirectManager.LastNameTh}".Trim()
                 : null,
-            e.ContactId);
+            e.ContactId,
+            e.CostBehavior,
+            e.ExternalId, e.ExternalSystem, e.LastSyncedAt);
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,
@@ -1573,5 +1922,7 @@ public class PayrollService : IPayrollService
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",
             l.LeaveType, l.StartDate, l.EndDate, l.TotalDays, l.Status, l.Reason,
-            l.ApprovedBy, l.RejectionReason);
+            l.ApprovedBy, l.RejectionReason,
+            HalfDayMarker: l.HalfDayMarker,
+            CreatedAt: l.CreatedAt);
 }

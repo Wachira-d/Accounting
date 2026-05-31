@@ -53,6 +53,9 @@ public class AgingReportService : IAgingReportService
         if (request.ContactId.HasValue)
             query = query.Where(d => d.ContactId == request.ContactId.Value);
 
+        if (request.ProjectId.HasValue)
+            query = query.Where(d => d.ProjectId == request.ProjectId.Value);
+
         var documents = await query.ToListAsync();
 
         // Build contact details with aging

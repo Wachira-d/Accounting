@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เวลาทำงาน-โครงการ — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; }
+    .b-Billable { background:#dcfce7; color:#15803d; }
+    .b-NonBillable { background:#fef3c7; color:#92400e; }
+    .b-Admin { background:#ede9fe; color:#5b21b6; }
+    .b-Allocated { background:#dbeafe; color:#1e40af; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เวลาทำงาน-โครงการ</h2>
+        <p class="page-subtitle">บันทึก/sync ชั่วโมงทำงานของพนักงานต่อโครงการ → กระจาย labour cost ลง ProjectCostEntry · งาน admin ไปก้อน overhead</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.openAllocate()">⚖️ กระจาย Labour Cost</button>
+        <button class="btn btn-secondary" onclick="Page.openSync()">🔁 Sync (bulk)</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ บันทึกเวลา</button>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-bottom:14px">
+      <label>พนักงาน:</label>
+      <select id="filterEmployee" class="filter-select" onchange="Page.load()" style="min-width:200px"><option value="">— ทั้งหมด —</option></select>
+      <label>โครงการ:</label>
+      <select id="filterProject" class="filter-select" onchange="Page.load()" style="min-width:200px"><option value="">— ทั้งหมด —</option><option value="__admin">⌐ Admin / ไม่มีโครงการ</option></select>
+      <label>จาก:</label>
+      <input type="date" class="form-input" id="filterFrom" onchange="Page.load()" style="width:160px">
+      <label>ถึง:</label>
+      <input type="date" class="form-input" id="filterTo" onchange="Page.load()" style="width:160px">
+      <button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button>
+    </div>
+
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr>
+          <th>วันที่</th><th>พนักงาน</th><th>โครงการ</th>
+          <th style="text-align:right">ชั่วโมง</th><th>หมวด</th><th>คำอธิบาย</th>
+          <th>Sync</th><th>สถานะ</th><th></th>
+        </tr></thead>
+        <tbody id="tbody"><tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div id="pagination" style="margin-top:12px;text-align:center"></div>
+
+    <!-- Create / edit modal -->
+    <div class="modal-overlay" id="formModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title" id="formTitle">+ บันทึกเวลา</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="fId">
+          <div class="form-group"><label class="form-label">พนักงาน *</label>
+            <select class="form-select" id="fEmployee"></select>
+          </div>
+          <div class="form-group"><label class="form-label">โครงการ</label>
+            <select class="form-select" id="fProject"><option value="">— Admin / ไม่มีโครงการ —</option></select>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">💡 ปล่อยว่าง = งาน admin (ไม่ลง project cost)</div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
+            <div class="form-group"><label class="form-label">ชั่วโมง (รวม) *</label><input type="number" step="0.25" min="0.25" max="24" class="form-input" id="fHours"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชั่วโมง OT (รวมอยู่ในรวม)</label>
+              <input type="number" step="0.25" min="0" max="24" class="form-input" id="fOt" placeholder="เช่น 2">
+            </div>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:6px;padding-top:24px;font-size:13px">
+                <input type="checkbox" id="fHoliday"> วันหยุด (ใช้เรท OT วันหยุด)
+              </label>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label">หมวด</label>
+            <select class="form-select" id="fCategory">
+              <option value="Billable">Billable (รวมเป็นรายได้ลูกค้า)</option>
+              <option value="NonBillable">NonBillable</option>
+              <option value="Admin">Admin (overhead)</option>
+            </select>
+          </div>
+          <div style="padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px">สวัสดิการประจำวัน (optional)</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px">
+              <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="fPerDiem"> พักต่างจังหวัด (per-diem)</label>
+              <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="fAccom"> ค่าที่พัก</label>
+              <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="fOtMeal"> ค่าข้าว OT</label>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:6px">💡 ระบบจะคิดยอดอัตโนมัติจากเรทของพนักงานคนนี้</div>
+          </div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label>
+            <textarea rows="2" class="form-input" id="fDesc" placeholder="งานที่ทำ..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.save()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Allocate modal -->
+    <div class="modal-overlay" id="allocateModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header"><h3 class="modal-title">⚖️ กระจาย Labour Cost</h3><button class="modal-close" onclick="Layout.closeModal('allocateModal')">&times;</button></div>
+        <div class="modal-body">
+          <p style="color:#64748b;font-size:13px">เลือกรอบจ่ายเงินเดือน → ระบบจะคำนวณสัดส่วน hours/employee × gross salary
+          แล้วสร้าง ProjectCostEntry ลงทุกโครงการที่พนักงานทำงาน
+          (งาน admin/ไม่มีโครงการ → admin overhead bucket)</p>
+          <div class="form-group"><label class="form-label">เลือกรอบจ่าย</label>
+            <select class="form-select" id="allocRun"></select>
+          </div>
+          <div id="allocResult"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('allocateModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.runAllocate()">เริ่ม</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sync modal -->
+    <div class="modal-overlay" id="syncModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header"><h3 class="modal-title">🔁 Sync เวลาทำงานจากระบบภายนอก</h3><button class="modal-close" onclick="Layout.closeModal('syncModal')">&times;</button></div>
+        <div class="modal-body">
+          <p style="color:#64748b;font-size:13px">วาง JSON array (CreateEmployeeProjectTimeRequest[])
+          — upsert ตาม (CompanyId, ExternalSystem, ExternalId)</p>
+          <div class="form-group"><label class="form-label">External system</label>
+            <input type="text" class="form-input" id="syncSys" placeholder="เช่น Jibble, Hubstaff, Workday">
+          </div>
+          <div class="form-group"><label class="form-label">JSON rows</label>
+            <textarea class="form-input" id="syncRows" rows="10" style="font-family:monospace;font-size:12px" placeholder='[{"employeeId":"...","projectId":"...","workDate":"2026-05-30","hours":4,"description":"PR review","category":"Billable","externalId":"JI-9001"}]'></textarea>
+          </div>
+          <div id="syncResult"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('syncModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.doSync()">Sync</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _page: 1,
+      employees: [],
+      projects: [],
+      async init() {
+        if (!Layout.init('project-time')) return;
+        Layout.setTitle('เวลาทำงาน-โครงการ');
+        const today = new Date();
+        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        document.getElementById('filterFrom').value = Layout.toDateInput(monthStart);
+        document.getElementById('filterTo').value = Layout.toDateInput(today);
+        await Promise.all([this.loadEmployees(), this.loadProjects()]);
+        await this.load();
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      async loadEmployees() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/payroll/employees?pageSize=500`);
+          this.employees = r.data?.items || r.data || [];
+          const opt = this.employees.filter(e => e.isActive)
+            .map(e => `<option value="${e.id}">${e.employeeCode} · ${e.firstNameTh} ${e.lastNameTh}</option>`).join('');
+          document.getElementById('filterEmployee').innerHTML = '<option value="">— ทั้งหมด —</option>' + opt;
+          document.getElementById('fEmployee').innerHTML = opt;
+        } catch (e) { /* ignore */ }
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/projects?pageSize=200`);
+          this.projects = r.data?.items || r.data || [];
+          const opt = this.projects.map(p =>
+            `<option value="${p.id}">${(p.code || p.projectNumber || '')} · ${p.name || ''}</option>`).join('');
+          document.getElementById('filterProject').innerHTML =
+            '<option value="">— ทั้งหมด —</option><option value="__admin">⌐ Admin / ไม่มีโครงการ</option>' + opt;
+          document.getElementById('fProject').innerHTML =
+            '<option value="">— Admin / ไม่มีโครงการ —</option>' + opt;
+        } catch (e) { /* ignore */ }
+      },
+      async load() {
+        const tbody = document.getElementById('tbody');
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด...</td></tr>';
+        try {
+          const cid = Layout.getCompanyId();
+          const params = [`page=${this._page}`, 'pageSize=50'];
+          const eid = document.getElementById('filterEmployee').value;
+          const pid = document.getElementById('filterProject').value;
+          const from = document.getElementById('filterFrom').value;
+          const to = document.getElementById('filterTo').value;
+          if (eid) params.push(`employeeId=${eid}`);
+          if (pid && pid !== '__admin') params.push(`projectId=${pid}`);
+          if (from) params.push(`from=${from}`);
+          if (to) params.push(`to=${to}`);
+          const r = await API.get(`/api/companies/${cid}/hr/project-time?${params.join('&')}`);
+          let items = r.data?.items || r.data || [];
+          if (pid === '__admin') items = items.filter(t => !t.projectId);
+          if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ไม่มีข้อมูล</td></tr>';
+          } else {
+            tbody.innerHTML = items.map(t => {
+              const flags = [];
+              if (t.overtimeHours > 0) flags.push(`<span title="OT ${t.overtimeHours} ชม." style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">OT ${t.overtimeHours}</span>`);
+              if (t.isHoliday) flags.push(`<span title="วันหยุด" style="background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🏖️</span>`);
+              if (t.hasPerDiem) flags.push(`<span title="พักต่างจังหวัด" style="background:#dbeafe;color:#1e40af;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🏨</span>`);
+              if (t.hasAccommodation) flags.push(`<span title="ค่าที่พัก" style="background:#dbeafe;color:#1e40af;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🛏️</span>`);
+              if (t.hasOvertimeMeal) flags.push(`<span title="ค่าข้าว OT" style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🍱</span>`);
+              return `<tr>
+              <td>${new Date(t.workDate).toLocaleDateString('th-TH')}</td>
+              <td><b>${t.employeeCode}</b><div style="font-size:11px;color:#64748b">${t.employeeName || ''}</div></td>
+              <td>${t.projectId
+                ? ((t.projectNumber || '') + ' ' + (t.projectName || ''))
+                : '<span class="badge b-Admin">⌐ Admin</span>'}</td>
+              <td style="text-align:right">${this._fmt(t.hours)} ${flags.length ? '<div style="display:flex;gap:3px;justify-content:flex-end;margin-top:2px">' + flags.join('') + '</div>' : ''}</td>
+              <td><span class="badge b-${t.category}">${t.category}</span></td>
+              <td style="font-size:12px;color:#64748b">${t.description || ''}</td>
+              <td>${t.externalSystem ? `<span class="badge" style="background:#ede9fe;color:#5b21b6">${t.externalSystem}</span>` : '—'}</td>
+              <td>${t.isAllocated ? '<span class="badge b-Allocated">Allocated</span>' : '—'}</td>
+              <td>
+                ${!t.isAllocated ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${t.id}')">แก้ไข</button>
+                <button class="btn btn-sm btn-ghost text-danger" onclick="Page.del('${t.id}')">ลบ</button>` : ''}
+              </td>
+            </tr>`;
+            }).join('');
+          }
+          const total = r.data?.totalCount ?? r.data?.totalItems ?? items.length;
+          const totalPages = r.data?.totalPages || 1;
+          const sumHrs = items.reduce((s,t) => s + (t.hours || 0), 0);
+          document.getElementById('pagination').innerHTML =
+            `หน้า ${this._page}/${totalPages} · รวม ${total} รายการ · ${this._fmt(sumHrs)} ชม.` +
+            (this._page > 1 ? ` <button class="btn btn-sm btn-ghost" onclick="Page._page--;Page.load()">‹</button>` : '') +
+            (this._page < totalPages ? ` <button class="btn btn-sm btn-ghost" onclick="Page._page++;Page.load()">›</button>` : '');
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="9" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
+        }
+      },
+      openCreate() {
+        document.getElementById('formTitle').textContent = '+ บันทึกเวลา';
+        document.getElementById('fId').value = '';
+        document.getElementById('fEmployee').value = this.employees[0]?.id || '';
+        document.getElementById('fProject').value = '';
+        document.getElementById('fDate').value = Layout.toDateInput(new Date());
+        document.getElementById('fHours').value = '8';
+        document.getElementById('fOt').value = '';
+        document.getElementById('fHoliday').checked = false;
+        document.getElementById('fPerDiem').checked = false;
+        document.getElementById('fAccom').checked = false;
+        document.getElementById('fOtMeal').checked = false;
+        document.getElementById('fCategory').value = 'Billable';
+        document.getElementById('fDesc').value = '';
+        Layout.openModal('formModal');
+      },
+      async openEdit(id) {
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.get(`/api/companies/${cid}/hr/project-time/${id}`);
+          const row = r.data;
+          if (!row) { Layout.toast('ไม่พบรายการ', 'error'); return; }
+          document.getElementById('formTitle').textContent = 'แก้ไขรายการเวลา';
+          document.getElementById('fId').value = row.id;
+          document.getElementById('fEmployee').value = row.employeeId;
+          document.getElementById('fProject').value = row.projectId || '';
+          document.getElementById('fDate').value = Layout.toDateInput(new Date(row.workDate));
+          document.getElementById('fHours').value = row.hours;
+          document.getElementById('fOt').value = row.overtimeHours ?? '';
+          document.getElementById('fHoliday').checked = !!row.isHoliday;
+          document.getElementById('fPerDiem').checked = !!row.hasPerDiem;
+          document.getElementById('fAccom').checked = !!row.hasAccommodation;
+          document.getElementById('fOtMeal').checked = !!row.hasOvertimeMeal;
+          document.getElementById('fCategory').value = row.category;
+          document.getElementById('fDesc').value = row.description || '';
+          Layout.openModal('formModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async save() {
+        const id = document.getElementById('fId').value;
+        const cid = Layout.getCompanyId();
+        const body = {
+          employeeId: document.getElementById('fEmployee').value,
+          projectId: document.getElementById('fProject').value || null,
+          workDate: document.getElementById('fDate').value,
+          hours: parseFloat(document.getElementById('fHours').value),
+          category: document.getElementById('fCategory').value,
+          description: document.getElementById('fDesc').value.trim() || null,
+          overtimeHours: parseFloat(document.getElementById('fOt').value) || null,
+          isHoliday: document.getElementById('fHoliday').checked,
+          hasPerDiem: document.getElementById('fPerDiem').checked,
+          hasAccommodation: document.getElementById('fAccom').checked,
+          hasOvertimeMeal: document.getElementById('fOtMeal').checked,
+        };
+        if (!body.employeeId || !body.workDate || !body.hours) {
+          Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return;
+        }
+        try {
+          if (id) await API.put(`/api/companies/${cid}/hr/project-time/${id}`, body);
+          else await API.post(`/api/companies/${cid}/hr/project-time`, body);
+          Layout.closeModal('formModal');
+          Layout.toast(id ? 'แก้ไขสำเร็จ' : 'บันทึกสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async del(id) {
+        if (!confirm('ลบรายการเวลานี้?')) return;
+        try {
+          const cid = Layout.getCompanyId();
+          await API.delete(`/api/companies/${cid}/hr/project-time/${id}`);
+          Layout.toast('ลบสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openAllocate() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/payroll/runs?page=1&pageSize=50`);
+          const items = r.data?.items || r.data || [];
+          const opt = items.map(x => `<option value="${x.id}">${x.payrollNumber} · ${x.year}/${String(x.month).padStart(2,'0')} · ${x.status}</option>`).join('');
+          document.getElementById('allocRun').innerHTML = opt || '<option>(ไม่มีรอบจ่าย)</option>';
+          document.getElementById('allocResult').innerHTML = '';
+          Layout.openModal('allocateModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async runAllocate() {
+        const runId = document.getElementById('allocRun').value;
+        if (!runId) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/hr/payroll-runs/${runId}/allocate-labour`, {});
+          const d = r.data;
+          document.getElementById('allocResult').innerHTML = `
+            <div style="margin-top:12px;padding:12px;border-radius:6px;background:#f1f5f9">
+              <b>เสร็จสิ้น</b> · ${r.message || ''}
+              <div style="margin-top:8px">
+                ${(d.summary || []).map(s => `<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px dashed #cbd5e1">
+                  <span>${s.projectName || '⌐ Admin'}</span>
+                  <span><b>${this._fmt(s.allocatedAmount)}</b> · ${this._fmt(s.hours)} ชม.</span>
+                </div>`).join('')}
+              </div>
+            </div>`;
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      openSync() {
+        document.getElementById('syncSys').value = '';
+        document.getElementById('syncRows').value = '';
+        document.getElementById('syncResult').innerHTML = '';
+        Layout.openModal('syncModal');
+      },
+      async doSync() {
+        const sys = document.getElementById('syncSys').value.trim();
+        const text = document.getElementById('syncRows').value.trim();
+        if (!sys || !text) { Layout.toast('ใส่ system + JSON ให้ครบ', 'error'); return; }
+        let rows;
+        try { rows = JSON.parse(text); }
+        catch (e) { Layout.toast('JSON ไม่ valid: ' + e.message, 'error'); return; }
+        if (!Array.isArray(rows)) { Layout.toast('ต้องเป็น array', 'error'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/hr/project-time/sync`,
+            { externalSystem: sys, rows });
+          const d = r.data;
+          document.getElementById('syncResult').innerHTML = `
+            <div style="margin-top:12px;padding:10px;border-radius:6px;background:#f1f5f9">
+              <b>เสร็จสิ้น</b> · เพิ่ม ${d.inserted} · อัปเดต ${d.updated} · ข้าม ${d.skipped}
+              ${d.errors?.length ? '<ul style="color:#dc2626;margin-top:8px">' +
+                d.errors.map(e => '<li>' + e + '</li>').join('') + '</ul>' : ''}
+            </div>`;
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

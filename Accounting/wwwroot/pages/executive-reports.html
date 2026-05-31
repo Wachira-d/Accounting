@@ -338,8 +338,60 @@
         this.kpiCard('ระยะเวลา (วัน)', r.days),
       ].join('');
       const weeks = r.weeks.map(w => `<tr><td>W${w.weekNumber}</td><td>${w.weekStart.slice(0,10)}</td><td>${w.weekEnd.slice(0,10)}</td><td class="text-right">${fmt(w.openingBalance)}</td><td class="text-right" style="color:#10b981">+${fmt(w.expectedInflows)}</td><td class="text-right" style="color:#ef4444">-${fmt(w.expectedOutflows)}</td><td class="text-right">${fmt(w.netChange)}</td><td class="text-right">${fmt(w.closingBalance)}</td><td class="text-right">${fmtPct(w.confidenceLevel)}</td></tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>';
+
+      // ── Scenario block (best/expected/worst) — present when the
+      // backend's Holt-Winters fit had enough history to produce
+      // confidence bands. Falls back gracefully when missing.
+      let scenarioBlock = '';
+      if (r.scenarios && r.scenarios.weeks && r.scenarios.weeks.length > 0) {
+        const s = r.scenarios;
+        const riskColor = {
+          Low: '#16a34a', Moderate: '#d97706', High: '#dc2626', Critical: '#7f1d1d',
+        }[s.overallRisk] || '#64748b';
+        const riskBadge = `<span style="background:${riskColor};color:#fff;padding:3px 12px;border-radius:999px;font-size:12px;font-weight:700">${s.overallRisk}</span>`;
+        const factors = (s.keyRiskFactors || []).map(f => `<li style="margin-bottom:4px">${f}</li>`).join('');
+        const scenarioRows = s.weeks.map(w => {
+          // visual band — width proportional to risk; color by risk band
+          const bgColor = w.riskIndex >= 80 ? '#fee2e2' : w.riskIndex >= 50 ? '#fef3c7' : w.riskIndex >= 20 ? '#dbeafe' : '#dcfce7';
+          return `<tr style="background:${bgColor}">
+            <td>W${w.weekNumber}</td>
+            <td class="text-right" style="color:#15803d">${fmt(w.best)}</td>
+            <td class="text-right" style="font-weight:600">${fmt(w.expected)}</td>
+            <td class="text-right" style="color:#dc2626">${fmt(w.worst)}</td>
+            <td class="text-right">${w.riskIndex.toFixed(1)}</td>
+          </tr>`;
+        }).join('');
+        scenarioBlock = `
+        <div class="er-section">
+          <h3>สถานการณ์ (Best / Expected / Worst)
+            <span style="float:right;font-size:14px;font-weight:400">ระดับความเสี่ยง: ${riskBadge}</span>
+          </h3>
+          <div style="background:#f8fafc;padding:14px 18px;border-radius:10px;margin-bottom:14px">
+            <div style="display:flex;gap:30px;flex-wrap:wrap">
+              <div><div style="font-size:12px;color:#64748b">ยอดต่ำสุด (worst case)</div><div style="font-weight:700;font-size:18px;color:#dc2626">${fmt(s.minClosingBalance)}</div></div>
+              ${s.minClosingDate ? `<div><div style="font-size:12px;color:#64748b">วันที่ยอดต่ำสุด</div><div style="font-weight:700;font-size:16px">${s.minClosingDate.slice(0,10)}</div></div>` : ''}
+              <div><div style="font-size:12px;color:#64748b">ยอดสูงสุด (best case)</div><div style="font-weight:700;font-size:18px;color:#15803d">${fmt(s.maxClosingBalance)}</div></div>
+            </div>
+            ${factors ? `<div style="margin-top:12px"><div style="font-size:13px;font-weight:600;color:#475569;margin-bottom:6px">🚩 ปัจจัยเสี่ยงสำคัญ</div><ul style="margin:0;padding-left:20px;font-size:13px;color:#475569">${factors}</ul></div>` : ''}
+          </div>
+          <div class="table-container">
+            <table class="table er-table">
+              <thead><tr>
+                <th>สัปดาห์</th>
+                <th class="text-right">Best (AR เร็ว + AP ช้า)</th>
+                <th class="text-right">Expected</th>
+                <th class="text-right">Worst (AR ช้า + AP เร็ว)</th>
+                <th class="text-right">Risk Index</th>
+              </tr></thead>
+              <tbody>${scenarioRows}</tbody>
+            </table>
+          </div>
+        </div>`;
+      }
+
       c.innerHTML = `
         <div class="er-section"><h3>ภาพรวม (พยากรณ์ 90 วัน)</h3><div class="er-grid er-grid-4">${summary}</div></div>
+        ${scenarioBlock}
         <div class="er-section"><h3>ตามสัปดาห์</h3>
           <div class="table-container"><table class="table er-table"><thead><tr><th>สัปดาห์</th><th>เริ่ม</th><th>สิ้นสุด</th><th class="text-right">ยอดเริ่ม</th><th class="text-right">เข้า</th><th class="text-right">ออก</th><th class="text-right">สุทธิ</th><th class="text-right">ยอดปลาย</th><th class="text-right">ความมั่นใจ</th></tr></thead><tbody>${weeks}</tbody></table></div>
         </div>

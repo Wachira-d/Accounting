@@ -106,25 +106,30 @@
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
               <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <optgroup label="📥 ฝั่งรายรับ" id="fDocTypeRevenue">
-                  <option value="Quotation">ใบเสนอราคา</option>
-                  <option value="Invoice">ใบแจ้งหนี้</option>
-                  <option value="TaxInvoice">ใบกำกับภาษี</option>
-                  <option value="Receipt">ใบเสร็จรับเงิน</option>
-                  <option value="DeliveryNote">ใบส่งของ</option>
-                  <option value="BillingNote">ใบวางบิล</option>
-                  <option value="DebitNote">ใบเพิ่มหนี้</option>
-                  <option value="CreditNote">ใบลดหนี้</option>
-                  <option value="ReceiptVoucher">ใบสำคัญรับ</option>
+                  <option value="Quotation" title="เสนอราคาให้ลูกค้าก่อนซื้อขายจริง — ยังไม่ลง GL, ไม่มี VAT effect">ใบเสนอราคา</option>
+                  <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้ — เริ่มนับ aging">ใบแจ้งหนี้</option>
+                  <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้ + Cr Output VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
+                  <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR (หรือ Cr รายได้+VAT ถ้าจ่ายสด)">ใบเสร็จรับเงิน</option>
+                  <option value="DeliveryNote" title="ส่งของแล้วแต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL, เป็นเอกสารโลจิสติก">ใบส่งของ</option>
+                  <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL, เป็นเอกสารเรียกเก็บ">ใบวางบิล</option>
+                  <option value="DebitNote" title="เพิ่มยอดที่ลูกค้าต้องจ่าย (เช่นค่าปรับ, ค่าขนส่งเพิ่ม) — Dr AR / Cr รายได้/VAT">ใบเพิ่มหนี้</option>
+                  <option value="CreditNote" title="ลดยอดที่ลูกค้าต้องจ่าย (คืนสินค้า/ส่วนลด/ตัดหนี้สูญ) — §82/10, ต้องระบุเหตุผล">ใบลดหนี้</option>
+                  <option value="ReceiptVoucher" title="ใบสำคัญรับ (รับเงินที่ไม่ออกใบเสร็จเช่นรับเงินมัดจำ) — Dr Cash / Cr รายได้รับล่วงหน้า">ใบสำคัญรับ</option>
                 </optgroup>
                 <optgroup label="📤 ฝั่งรายจ่าย" id="fDocTypeExpense">
-                  <option value="PurchaseRequisition">ใบขอซื้อ</option>
-                  <option value="PurchaseOrder">ใบสั่งซื้อ</option>
-                  <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
-                  <option value="Expense">ค่าใช้จ่าย</option>
-                  <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
-                  <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+                  <option value="PurchaseRequisition" title="ใบขอซื้อภายใน (PR) — แผนกขออนุมัติซื้อ ก่อนสั่งจริง, ไม่ลง GL">ใบขอซื้อ (PR)</option>
+                  <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) ส่งให้ vendor — Commitment, ยังไม่ลง GL, ใช้ track ยอดสั่งซื้อ">ใบสั่งซื้อ (PO)</option>
+                  <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ที่ vendor ออกใบกำกับให้ — Dr Inventory/Asset + VAT / Cr AP, กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
+                  <option value="Expense" title="ค่าใช้จ่ายทั่วไป (ค่าน้ำ ค่าไฟ ค่าเช่า) — บริษัทจ่ายเอง — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
+                  <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ใช้ตอนชำระ PI / Expense ทีหลัง — Dr AP / Cr Cash — ตัดยอดเจ้าหนี้">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                  <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — ใช้เมื่อ vendor ออกใบเสร็จไม่ได้ (ตลาดสด, taxi, ผู้ขายไม่จด VAT) — บริษัทออกใบรับรองให้ตัวเอง">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
                 </optgroup>
               </select>
+              <!-- 💡 Live hint — updates on select-change from the title
+                   attribute of the currently-chosen option. Native browser
+                   tooltips on <option> are unreliable across browsers
+                   (Safari doesn't show them); this hint line is guaranteed. -->
+              <div id="docTypeHint" class="hint" style="margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5"></div>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
@@ -134,6 +139,30 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
+          </div>
+
+          <!-- Supplier-side tax-invoice metadata — only relevant on PI/CertInLieu/PV
+               where the partner issues the source invoice. JS toggles `.supplier-invoice-only`
+               based on docType (see togglePurchaseFields below). -->
+          <div class="form-row supplier-invoice-only" style="display:none">
+            <div class="form-group">
+              <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (ไม่ใช่เลขที่เอกสารของเรา) — ใช้กระทบกับ statement ของผู้ขายและเป็นหลักฐานเคลม VAT ในสรรพากร">เลขใบกำกับของผู้ขาย</label>
+              <input type="text" class="form-input" id="fSupplierInvoiceNumber" placeholder="เช่น INV-2026-0042">
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
+              <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
+            </div>
+          </div>
+          <div class="form-row supplier-invoice-only" style="display:none">
+            <div class="form-group">
+              <label class="form-label" data-help="จำนวนวันเครดิตที่ตกลง — ถ้ากรอกแต่ไม่ใส่ 'วันครบกำหนด' ระบบจะคำนวณให้อัตโนมัติ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
+              <input type="number" class="form-input" id="fCreditDays" min="0" max="365" placeholder="เช่น 30">
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-help="ข้อความบรรยายเทอมจ่าย ใช้พิมพ์บนเอกสาร เช่น Net 30 / 2/10 Net 30 / EOM+15">เทอมจ่าย (label)</label>
+              <input type="text" class="form-input" id="fPaymentTerms" placeholder="เช่น Net 30">
+            </div>
           </div>
           <div class="form-row advanced-only">
             <div class="form-group">
@@ -146,7 +175,14 @@
             <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
               <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
             </div>
-            <div class="form-group"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></label>
+            <div class="form-group">
+              <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+                <span>หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></span>
+                <button type="button" id="fExpenseCategoryAiBtn" onclick="Page.askAiExpenseCategory(event)"
+                        style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit">
+                  🤖 AI
+                </button>
+              </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
             </div>
           </div>
@@ -187,7 +223,16 @@
                Only "คืนสินค้า" restocks; the other 3 reasons are pure
                financial adjustments with no stock impact. -->
           <div id="creditNoteReasonSection" style="display:none;margin-bottom:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px">
-            <div style="font-weight:600;color:#991b1b;font-size:13px;margin-bottom:8px">เหตุผลการออกใบลดหนี้ *</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <div style="font-weight:600;color:#991b1b;font-size:13px">เหตุผลการออกใบลดหนี้ *</div>
+              <!-- 🤖 AI ขอความเห็นเลือก CN reason. ปรากฏเฉพาะตอนกำลังแก้
+                   CN ที่มีอยู่ (มี id) — สำหรับ CN ใหม่ที่ยังไม่ save ปุ่มจะ
+                   no-op เพราะ AI ต้องอ่าน lines + original invoice. -->
+              <button type="button" id="cnReasonAiBtn" onclick="Page.askAiCnReason(event)"
+                      style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">
+                🤖 ขอความเห็น AI
+              </button>
+            </div>
             <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
               <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
                 <input type="radio" name="fCreditNoteReason" value="Return" style="margin-top:3px">
@@ -268,7 +313,7 @@
             </div>
             <div class="table-container">
               <table class="table" id="linesTable" data-doc-side="revenue">
-                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th style="min-width:140px" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติ ระบบจะลงค่าใช้จ่ายเข้าโครงการนั้นๆ ให้อัตโนมัติ">โครงการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
               <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:4px">
@@ -356,21 +401,24 @@
             <label class="form-label">แปลงเป็นเอกสารประเภท</label>
             <select class="form-select" id="convertTarget" onchange="Page.onConvertTargetChange()">
               <optgroup label="📥 ฝั่งรายรับ">
-                <option value="Invoice">ใบแจ้งหนี้</option>
-                <option value="TaxInvoice">ใบกำกับภาษี</option>
-                <option value="Receipt">ใบเสร็จรับเงิน</option>
-                <option value="DeliveryNote">ใบส่งของ</option>
-                <option value="BillingNote">ใบวางบิล</option>
-                <option value="ReceiptVoucher">ใบสำคัญรับ</option>
+                <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้">ใบแจ้งหนี้</option>
+                <option value="TaxInvoice" title="เอกสาร VAT ขาย (§86) — Dr AR / Cr รายได้+VAT — เข้า ภพ.30">ใบกำกับภาษี</option>
+                <option value="Receipt" title="ยืนยันได้รับเงินแล้ว — Dr Cash / Cr AR">ใบเสร็จรับเงิน</option>
+                <option value="DeliveryNote" title="ส่งของแล้ว แต่ยังไม่ออกใบกำกับภาษี — ไม่ลง GL">ใบส่งของ</option>
+                <option value="BillingNote" title="ใบรวมยอด invoice หลายใบไปวางบิลครั้งเดียว — ไม่ลง GL">ใบวางบิล</option>
+                <option value="ReceiptVoucher" title="รับเงินที่ไม่ออกใบเสร็จ (มัดจำ) — Dr Cash / Cr รายได้รับล่วงหน้า">ใบสำคัญรับ</option>
               </optgroup>
               <optgroup label="📤 ฝั่งรายจ่าย">
-                <option value="PurchaseOrder">ใบสั่งซื้อ</option>
-                <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
-                <option value="Expense">ใบบันทึกค่าใช้จ่าย</option>
-                <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
-                <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+                <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) — commitment, ยังไม่ลง GL">ใบสั่งซื้อ (PO)</option>
+                <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ — Dr Inventory/Asset+VAT / Cr AP — กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
+                <option value="Expense" title="ค่าใช้จ่ายทั่วไป (บริษัทจ่ายเอง) — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
+                <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ชำระ PI/Expense ทีหลัง — Dr AP / Cr Cash">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — กรณี vendor ออกใบเสร็จไม่ได้">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
               </optgroup>
             </select>
+            <!-- Live hint for the convert target — same pattern as
+                 docTypeHint above the form select. -->
+            <div id="convertTargetHint" class="hint" style="margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5"></div>
           </div>
           <!-- Partial conversion: choose lines & quantities -->
           <div id="convertLinesWrap" style="display:none">
@@ -387,6 +435,7 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/ai-suggestion.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
@@ -571,6 +620,25 @@
           try { await this.openEdit(editDocId); }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
         }
+
+        // Deep-link from purchases.html (now a dashboard) — opens the
+        // create modal pre-set to the right side + document type. We do
+        // this AFTER the contacts/projects/payment-channels loads above
+        // because openCreate touches those.
+        const openCreate = params.get('openCreate');
+        if (openCreate === 'expense' || openCreate === 'revenue') {
+          this.openCreate(openCreate);
+          // Pre-select the requested document type if provided.
+          const wantType = params.get('type');
+          if (wantType) {
+            const sel = document.getElementById('fDocType');
+            const opt = sel?.querySelector(`option[value="${wantType}"]`);
+            if (opt && !opt.hidden) {
+              sel.value = wantType;
+              this.onDocTypeChange();
+            }
+          }
+        }
       },
 
       async _consumeScanHandoff() {
@@ -632,6 +700,9 @@
           const vatSel = row.querySelector('[data-f="vat"]');
           if (vatSel) vatSel.value = String(l.vatRate ?? 7);
           row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate ?? 0;
+          // OCR per-line project allocation (set by the OCR review modal).
+          const pSel = row.querySelector('[data-f="project"]');
+          if (pSel && l.projectId) pSel.value = l.projectId;
         });
         if (!document.querySelector('#linesBody tr')) this.addLine();
         this.calcSum();
@@ -733,11 +804,29 @@
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
-        const docType = document.getElementById('fDocType')?.value;
+        // 💡 Live tooltip — pull the `title` attribute from the
+        // currently-selected option into the hint line below the select.
+        // We do this rather than relying on browser-native option tooltips
+        // because Safari + several mobile browsers don't show those.
+        const sel = document.getElementById('fDocType');
+        const opt = sel?.options[sel.selectedIndex];
+        const hint = document.getElementById('docTypeHint');
+        if (hint && opt) {
+          hint.textContent = opt.title || '';
+          hint.style.display = opt.title ? '' : 'none';
+        }
+        const docType = sel?.value;
         // Show/hide expense category based on document type
         const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
         const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
         if (ecField) ecField.style.display = expenseTypes.includes(docType) ? '' : 'none';
+        // Supplier-side tax invoice metadata — only PI / Expense / CertInLieu
+        // (where partner issues source invoice). Hidden on PO / PR / PV
+        // since those don't carry a supplier's tax invoice number.
+        const supplierIssuedTypes = ['PurchaseInvoice', 'Expense', 'CertificateInLieu'];
+        document.querySelectorAll('.supplier-invoice-only').forEach(el => {
+          el.style.display = supplierIssuedTypes.includes(docType) ? '' : 'none';
+        });
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
@@ -974,6 +1063,21 @@
             const projectBadge = d.projectId
               ? `<span title="โครงการ: ${this.escapeHtml(d.projectName || '')} — บัญชีของเอกสารนี้จะถูกบันทึกเข้าโครงการนี้" style="margin-left:6px;padding:1px 6px;background:#6366f1;color:#fff;border-radius:6px;font-size:10px;font-weight:600">📁 ${this.escapeHtml(d.projectCode || d.projectName || '')}</span>`
               : '';
+            const pceBadge = d.hasProjectCostEntries
+              ? `<span title="ลงค่าใช้จ่ายเข้าโครงการแล้ว ${d.projectCostEntryCount} รายการ · ${Layout.money(d.projectCostBookedAmount)}" style="margin-left:6px;padding:1px 6px;background:#15803d;color:#fff;border-radius:6px;font-size:10px;font-weight:600">🏗️ ${d.projectCostEntryCount}</span>`
+              : '';
+            // Unified lifecycle badge — supersedes the per-signal patchwork
+            // (Status / ConversionStatus / BalanceDue) with one tag the user
+            // reads in 1 second. Colors mirror semantic intent.
+            const lifecycleColor = {
+              Done:           ['#dcfce7', '#15803d'],
+              PartiallyDone:  ['#fef3c7', '#92400e'],
+              Cancelled:      ['#f1f5f9', '#64748b'],
+              Open:           ['#dbeafe', '#1e40af'],
+            }[d.lifecycleStatus] || ['#f1f5f9', '#475569'];
+            const lifecycleBadge = d.lifecycleStatus
+              ? `<span title="${this.escapeHtml(d.lifecycleReason || '')}" style="margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700">${this.escapeHtml(d.lifecycleReason || d.lifecycleStatus)}</span>`
+              : '';
             // Aging badge — surfaced inline next to the document number.
             // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
             // the document detail for follow-up.
@@ -1008,7 +1112,7 @@
             }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${etaxBadge}${projectBadge}${agingBadge}${staleBadge}${rdBadge}</td>
+            <td class="font-medium">${d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
@@ -1032,8 +1136,17 @@
       addLine() {
         const i = this.lineCount++;
         const row = document.createElement('tr');
+        // Build per-line project options from the header dropdown so the
+        // user doesn't have to refetch — null = inherit header's project.
+        const headerProj = document.getElementById('fProject');
+        const projOptHtml = headerProj
+          ? '<option value="">— ตามหัวเอกสาร —</option>' +
+            Array.from(headerProj.options).filter(o => o.value).map(o =>
+              `<option value="${o.value}">${o.textContent}</option>`).join('')
+          : '<option value="">—</option>';
         row.innerHTML = `
           <td><input type="text" class="form-input" style="font-size:13px" data-f="desc" placeholder="พิมพ์ชื่อสินค้า/บริการ…"></td>
+          <td><select class="form-select" data-f="project" style="font-size:12px">${projOptHtml}</select></td>
           <td><input type="number" class="form-input text-right" value="1" min="1" step="1" data-f="qty" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></td>
@@ -1129,15 +1242,28 @@
         if (linesTbl) linesTbl.dataset.docSide = isExpense ? 'expense' : 'revenue';
         const sel = document.getElementById('fDocType');
         sel.disabled = false;
-        // Show only relevant optgroup
+        // BUGFIX: setting display:none on <optgroup> hides the GROUP LABEL
+        // but the <option> elements inside still render in the dropdown on
+        // Safari + some Chrome versions, so the user opening "+ เอกสารรายจ่าย"
+        // saw "ใบแจ้งหนี้", "ใบเสร็จ" etc. mixed in with the expense types.
+        // Set `hidden` on every option individually — that one is honored
+        // by every browser since HTML 5.1.
         const revGroup = document.getElementById('fDocTypeRevenue');
         const expGroup = document.getElementById('fDocTypeExpense');
-        if (revGroup) revGroup.style.display = isExpense ? 'none' : '';
-        if (expGroup) expGroup.style.display = isExpense ? '' : 'none';
+        if (revGroup) {
+          revGroup.style.display = isExpense ? 'none' : '';
+          revGroup.querySelectorAll('option').forEach(o => { o.hidden = isExpense; o.disabled = isExpense; });
+        }
+        if (expGroup) {
+          expGroup.style.display = isExpense ? '' : 'none';
+          expGroup.querySelectorAll('option').forEach(o => { o.hidden = !isExpense; o.disabled = !isExpense; });
+        }
         // Pre-select first option of the correct side
         sel.value = isExpense ? 'PurchaseRequisition' : 'Quotation';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDueDate').value = '';
+        ['fSupplierInvoiceNumber','fSupplierTaxInvoiceDate','fCreditDays','fPaymentTerms']
+          .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
         // Reset "ลูกค้าจ่ายเงินแล้ว" shortcut — a stale checked state from
@@ -1174,6 +1300,11 @@
         // the cleared subject/body when the user picks a contact.
         this._lastAutoSubject = '';
         this._lastAutoBody = '';
+        // Fire the change handler once so docTypeHint shows the
+        // explanation of the default-selected type immediately on modal
+        // open (otherwise user sees an empty hint until they touch
+        // the dropdown).
+        this.onDocTypeChange();
         Layout.openModal('formModal');
       },
       async openEdit(id) {
@@ -1195,6 +1326,14 @@
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
           document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
+          const fSin = document.getElementById('fSupplierInvoiceNumber');
+          if (fSin) fSin.value = d.supplierInvoiceNumber || '';
+          const fStd = document.getElementById('fSupplierTaxInvoiceDate');
+          if (fStd) fStd.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+          const fCd = document.getElementById('fCreditDays');
+          if (fCd) fCd.value = d.creditDays ?? '';
+          const fPt = document.getElementById('fPaymentTerms');
+          if (fPt) fPt.value = d.paymentTerms || '';
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
           document.getElementById('fCustomAppendix').value = d.customAppendix || '';
@@ -1237,6 +1376,9 @@
             // Carry the conversion-traceability link so editing this document
             // never breaks its partial-fulfilment accounting.
             if (l.sourceLineId) row.dataset.sourceLineId = l.sourceLineId;
+            // Per-line project — empty value means "inherit header's project".
+            const pSel = row.querySelector('[data-f="project"]');
+            if (pSel) pSel.value = l.projectId || '';
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
@@ -1244,6 +1386,10 @@
           // the user enables "send email" on this Edit session.
           this._lastAutoSubject = '';
           this._lastAutoBody = '';
+          // Refresh docTypeHint to reflect the doc's type even though
+          // the select is disabled in edit mode — useful context for
+          // the operator.
+          this.onDocTypeChange();
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -1275,6 +1421,11 @@
           // user-facing immutable identifier in DocumentLine.
           if (row.dataset.productCode) line.productCode = row.dataset.productCode;
           if (row.dataset.sourceLineId) line.sourceLineId = row.dataset.sourceLineId;
+          // Per-line project override (null = inherit header's project).
+          // Empty string means inherit; otherwise the GUID flows through to
+          // DocumentLine.ProjectId and feeds SyncProjectCostEntriesAsync.
+          const lineProj = row.querySelector('[data-f="project"]')?.value;
+          if (lineProj) line.projectId = lineProj;
           lines.push(line);
         });
         if (strict && strictViolators.length) {
@@ -1318,6 +1469,10 @@
           witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
           creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
+          supplierInvoiceNumber: document.getElementById('fSupplierInvoiceNumber')?.value.trim() || null,
+          supplierTaxInvoiceDate: document.getElementById('fSupplierTaxInvoiceDate')?.value || null,
+          creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
+          paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
         };
         try {
           let savedDocId = this.editingId;
@@ -1519,21 +1674,47 @@
           document.getElementById('detailContent').innerHTML = banners + `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
               <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
-              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}${d.lifecycleStatus ? ` <span style="margin-left:6px;padding:2px 8px;background:${({Done:'#dcfce7',PartiallyDone:'#fef3c7',Cancelled:'#f1f5f9',Open:'#dbeafe'}[d.lifecycleStatus]||'#f1f5f9')};color:${({Done:'#15803d',PartiallyDone:'#92400e',Cancelled:'#64748b',Open:'#1e40af'}[d.lifecycleStatus]||'#475569')};border-radius:8px;font-size:11px;font-weight:700">${this.escapeHtml(d.lifecycleReason || d.lifecycleStatus)}</span>` : ''}</div></div>
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${d.contact.name}</a>` : '-'}</div></div>
               ${d.contact?.taxId ? `<div><div class="text-xs text-gray-500">เลขผู้เสียภาษี</div><div>${d.contact.taxId}</div></div>` : ''}
               ${d.reference ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${d.reference}</div></div>` : ''}
+              ${d.supplierInvoiceNumber ? `<div><div class="text-xs text-gray-500">เลขใบกำกับผู้ขาย</div><div class="font-medium">${this.escapeHtml(d.supplierInvoiceNumber)}</div></div>` : ''}
+              ${d.supplierTaxInvoiceDate ? `<div><div class="text-xs text-gray-500">วันที่ใบกำกับผู้ขาย</div><div>${Layout.date(d.supplierTaxInvoiceDate)}</div></div>` : ''}
+              ${d.paymentTerms || d.creditDays ? `<div><div class="text-xs text-gray-500">เทอมจ่าย</div><div>${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ' (' + d.creditDays + ' วัน)' : ''}</div></div>` : ''}
               ${d.projectId ? `<div><div class="text-xs text-gray-500">โครงการ</div><div class="font-medium">📁 ${this.escapeHtml(d.projectCode || '')} ${this.escapeHtml(d.projectName || '')}</div></div>` : ''}
-              ${d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : ''}
+              ${d.relatedDocument ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocument.id}');return false" style="color:var(--primary);font-weight:600" title="${Layout.docTypeLabel(d.relatedDocument.documentType)} · ${Layout.money(d.relatedDocument.totalAmount)}">⬅ ${d.relatedDocument.documentNumber}</a></div></div>` : (d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : '')}
+              ${d.conversionStatus && d.conversionStatus !== 'None' ? `<div><div class="text-xs text-gray-500">สถานะการแปลง</div><div class="font-medium" style="color:${d.conversionStatus === 'Full' ? '#15803d' : '#92400e'}">${d.conversionStatus === 'Full' ? '✓ แปลงครบ' : `◐ แปลง ${(d.conversionCompletionPercent || 0).toFixed(0)}%`}</div></div>` : ''}
               ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
             </div>
+            ${(d.convertedToDocuments && d.convertedToDocuments.length) ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
+                <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:6px">📄 เอกสารต่อเนื่อง (ออกต่อจากใบนี้)</div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  ${d.convertedToDocuments.map(c => `<a href="#" onclick="Page.detail('${c.id}');return false" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:white;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;text-decoration:none;color:#1e40af" title="${Layout.money(c.totalAmount)}">${Layout.docTypeLabel(c.documentType)} <b>${c.documentNumber}</b></a>`).join('')}
+                </div>
+              </div>` : ''}
+            ${d.hasProjectCostEntries ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                  <div style="font-size:12px;font-weight:600;color:#15803d">🏗️ ลงค่าใช้จ่ายโครงการแล้ว · ${d.projectCostEntryCount} รายการ · ${Layout.money(d.projectCostBookedAmount)}</div>
+                  <div style="font-size:11px;color:#16a34a">auto-post on approval (idempotent)</div>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  ${(d.bookedProjects||[]).map(b => `<a href="/pages/projects.html?id=${b.projectId}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:white;border:1px solid #86efac;border-radius:6px;font-size:12px;text-decoration:none;color:#15803d"><b>${this.escapeHtml(b.projectCode || '')}</b> ${this.escapeHtml(b.projectName || '')} · ${b.entryCount} · ${Layout.money(b.amount)}</a>`).join('')}
+                </div>
+              </div>` : ''}
             <div id="docChain_${d.id}" style="margin-bottom:12px"></div>
             <div class="table-container">
-              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
-              <tbody>${(d.lines||[]).map(l => `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`).join('')}</tbody></table>
+              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th>โครงการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
+              <tbody>${(d.lines||[]).map(l => {
+                const projectCell = l.projectId
+                  ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px"><b>${this.escapeHtml(l.projectCode || '')}</b> ${this.escapeHtml(l.projectName || '')}${l.hasProjectCostEntry ? ' <span title="auto-posted to ProjectCostEntry" style="color:#15803d;font-weight:600">🏗️</span>' : ''}</span>`
+                  : '<span style="color:#cbd5e1">—</span>';
+                return `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td>${projectCell}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`;
+              }).join('')}</tbody></table>
             </div>
             <div id="docFulfillment_${d.id}" style="margin-top:14px"></div>
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
@@ -1672,7 +1853,10 @@
             await this.load();
           } catch (e) {
             if (e.status === 422 && e.body && e.body.data && Array.isArray(e.body.data.warnings)) {
-              this._showApprovalWarnings(id, e.body.data.warnings, () => tryApprove(true));
+              // aiHints[i] aligns with warnings[i] when AI augmentation
+              // is on at the server. Null/undefined when AI is disabled
+              // or unreachable — modal falls back to plain warning text.
+              this._showApprovalWarnings(id, e.body.data.warnings, e.body.data.aiHints, () => tryApprove(true));
               return;
             }
             Layout.toast(e.message, 'error');
@@ -1681,14 +1865,89 @@
         await tryApprove(false);
       },
 
-      _showApprovalWarnings(docId, warnings, onConfirm) {
+      // 🤖 Ask AI to suggest the GL expense category. Uses the document's
+      // existing fields (contact, totals, notes) — works whether the doc
+      // is saved or not because the AI sees the in-progress form values.
+      askAiExpenseCategory(ev) {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const contactSearchInput = document.getElementById('fContactSearch');
+        const vendorName = contactSearchInput?.value || '';
+        const lineDesc = document.getElementById('fNotes')?.value
+          || vendorName || 'ค่าใช้จ่ายทั่วไป';
+        const totalEl = document.getElementById('fTotal');
+        const amount = parseFloat(totalEl?.value || '0') || 0;
+        const currency = document.getElementById('fCurrency')?.value || 'THB';
+        const currentAccountId = document.getElementById('fExpenseCategory')?.value || null;
+        const currentAccountCode = currentAccountId
+          ? (this.expenseCategories.find(a => a.id === currentAccountId)?.accountCode || null)
+          : null;
+        // editingId is the source-invoice id when editing an existing doc;
+        // for a brand-new doc we pass Guid.Empty so the controller treats
+        // it as ad-hoc (no source-invoice grounding).
+        const sourceId = this.editingId || '00000000-0000-0000-0000-000000000000';
+        const btn = ev?.currentTarget;
+        AiSuggestion.show({
+          anchorEl: btn,
+          fetch: () => API.post(`/api/companies/${cid}/ai/payment-voucher/suggest-account`, {
+            sourceInvoiceId: sourceId,
+            lineDescription: lineDesc,
+            amount, currency, currentAccountCode,
+          }),
+          applyAnswer: (code) => {
+            // AI returns an account CODE; map to the option value (account id).
+            const match = this.expenseCategories.find(a => a.accountCode === code);
+            const sel = document.getElementById('fExpenseCategory');
+            if (match && sel) { sel.value = match.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+          },
+          answerToLabel: (code) => {
+            const m = this.expenseCategories.find(a => a.accountCode === code);
+            return m ? `${m.accountCode} - ${m.accountName}` : code;
+          },
+        });
+      },
+
+      // 🤖 Ask AI to classify the CN reason. Only valid when editing
+      // an EXISTING CN — AI needs the document's lines + linked invoice
+      // to give a useful answer. For a brand-new CN being composed
+      // we toast a hint instead of calling.
+      async askAiCnReason(ev) {
+        const id = this.editingId;
+        if (!id) {
+          Layout.toast('กรุณาบันทึก draft ก่อนเพื่อให้ AI อ่าน lines + อ้างอิงใบกำกับ', 'info');
+          return;
+        }
+        const currentReason = document.querySelector('input[name="fCreditNoteReason"]:checked')?.value || null;
+        // Look up original invoice from the form's reference field if user filled it.
+        const originalInvoiceId = (document.getElementById('fReferenceDocumentId') || {}).value || null;
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const btn = ev?.currentTarget;
+        AiSuggestion.show({
+          anchorEl: btn,
+          fetch: () => API.post(`/api/companies/${cid}/ai/credit-note/classify-reason`,
+            { creditNoteId: id, originalInvoiceId, currentReason }),
+          applyAnswer: (primary) => {
+            const radio = document.querySelector(`input[name="fCreditNoteReason"][value="${primary}"]`);
+            if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
+          },
+          answerToLabel: (v) => ({
+            Return: 'คืนสินค้า (Return)',
+            Discount: 'ส่วนลด / ลดราคา (Discount)',
+            Adjustment: 'ปรับยอด (Adjustment)',
+            Writeoff: 'ตัดยอด (Writeoff)',
+          })[v] || v,
+        });
+      },
+
+      _showApprovalWarnings(docId, warnings, aiHints, onConfirm) {
         let wrap = document.getElementById('approvalWarningsModal');
         if (!wrap) {
           wrap = document.createElement('div');
           wrap.id = 'approvalWarningsModal';
           wrap.className = 'modal-overlay';
           wrap.innerHTML = `
-            <div class="modal" style="max-width:560px">
+            <div class="modal" style="max-width:640px">
               <div class="modal-header" style="background:#fef3c7;border-bottom:1px solid #f59e0b">
                 <h3 class="modal-title" style="color:#92400e">⚠️ ตรวจรายการก่อนอนุมัติ</h3>
                 <button class="modal-close" onclick="document.getElementById('approvalWarningsModal').classList.remove('active')">&times;</button>
@@ -1698,7 +1957,7 @@
                   ระบบเจอจุดที่ <strong>ยังถูกตามหลักบัญชี</strong> แต่ผิดจากแบบที่พบบ่อย —
                   โปรดตรวจรายการด้านล่างก่อนยืนยันการอนุมัติ
                 </p>
-                <ul id="awList" style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px"></ul>
+                <ul id="awList" style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px"></ul>
               </div>
               <div class="modal-footer">
                 <button class="btn btn-secondary" id="awCancel">กลับไปแก้ไข</button>
@@ -1707,14 +1966,57 @@
             </div>`;
           document.body.appendChild(wrap);
         }
-        document.getElementById('awList').innerHTML = warnings.map(w =>
-          `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:8px 12px;font-size:13px;color:#713f12;line-height:1.6">⚠️ ${Layout.esc(w)}</li>`
-        ).join('');
+        // Render each warning with its AI hint (if available). AI hint
+        // shows: recommended action badge + reasoning + action checklist.
+        document.getElementById('awList').innerHTML = warnings.map((w, i) => {
+          const hint = aiHints && aiHints[i];
+          if (!hint || !hint.usedAi) {
+            return `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.6">
+              <div>⚠️ ${Layout.esc(w)}</div>
+              ${hint ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px">🤖 AI ไม่พร้อม — ดูข้อมูลข้างต้นเท่านั้น</div>' : ''}
+            </li>`;
+          }
+          const badgeColor = hint.primary === 'Block' ? '#dc2626' : (hint.primary === 'Edit' ? '#d97706' : '#16a34a');
+          const badgeBg = hint.primary === 'Block' ? '#fee2e2' : (hint.primary === 'Edit' ? '#fef3c7' : '#dcfce7');
+          const conf = Math.round((hint.confidence || 0) * 100);
+          const actions = (hint.suggestedActions || []).filter(Boolean);
+          const risks = (hint.risks || []).filter(Boolean);
+          const compliance = (hint.complianceFlags || []).filter(Boolean);
+          return `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:8px;padding:12px;font-size:13px;color:#713f12;line-height:1.6">
+            <div style="margin-bottom:8px">⚠️ ${Layout.esc(w)}</div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-top:8px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="background:${badgeBg};color:${badgeColor};padding:3px 10px;border-radius:9999px;font-size:11px;font-weight:700">🤖 AI: ${hint.primary}</span>
+                <span style="font-size:11px;color:#64748b">${conf}%</span>
+              </div>
+              ${hint.reasoning ? `<div style="font-size:12px;color:#334155;margin-bottom:6px">${Layout.esc(hint.reasoning)}</div>` : ''}
+              ${actions.length ? `<div style="font-size:12px;color:#1e293b"><b>แนะนำ:</b><ul style="margin:4px 0 0 18px;padding:0">${actions.map(a => `<li>${Layout.esc(a)}</li>`).join('')}</ul></div>` : ''}
+              ${risks.length ? `<div style="font-size:11px;color:#dc2626;margin-top:6px"><b>ความเสี่ยง:</b> ${risks.map(r => Layout.esc(r)).join('; ')}</div>` : ''}
+              ${compliance.length ? `<div style="font-size:11px;color:#7c3aed;margin-top:4px"><b>กฎภาษีไทย:</b> ${compliance.map(c => Layout.esc(c)).join('; ')}</div>` : ''}
+            </div>
+          </li>`;
+        }).join('');
         const cancelBtn = document.getElementById('awCancel');
         const confirmBtn = document.getElementById('awConfirm');
+        const companyId = Layout.getCompanyId();
         cancelBtn.onclick = () => wrap.classList.remove('active');
         confirmBtn.onclick = async () => {
           wrap.classList.remove('active');
+          // Record each user's "Acknowledge" pick as feedback so the
+          // local model can learn which warning categories the user
+          // typically dismisses (low-value warning → maybe demote).
+          if (aiHints && companyId) {
+            for (const h of aiHints) {
+              if (h && h.feedbackId) {
+                try {
+                  await API.post(`/api/companies/${companyId}/ai-feedback/record`, {
+                    feedbackId: h.feedbackId, chosenAnswer: 'Acknowledge',
+                    acceptedAi: h.primary === 'Acknowledge',
+                  });
+                } catch (e) { /* feedback record is fire-and-forget */ }
+              }
+            }
+          }
           await onConfirm();
         };
         wrap.classList.add('active');
@@ -2188,11 +2490,16 @@
       },
 
       async loadDocumentChain(currentId, parentId) {
+        // Skip — GetDocumentAsync now emits relatedDocument + convertedToDocuments
+        // server-side; the lineage strip rendered inline next to the detail
+        // header covers this. Function kept as a no-op so older code paths
+        // that still invoke it don't crash.
+        return;
+        // (legacy implementation removed — see history)
         const api = Layout.api(); if (!api) return;
         const container = document.getElementById('docChain_' + currentId);
         if (!container) return;
         try {
-          // Find children: documents whose relatedDocumentId === currentId
           const childrenRes = await api.getDocuments(`?relatedDocumentId=${currentId}&pageSize=20`);
           const children = childrenRes?.data?.items || [];
           let parentInfo = null;
@@ -2290,7 +2597,17 @@
 
       async onConvertTargetChange() {
         const id = document.getElementById('convertDocId').value;
-        const target = document.getElementById('convertTarget').value;
+        const targetSel = document.getElementById('convertTarget');
+        const target = targetSel.value;
+        // Live hint mirror — same as onDocTypeChange. Browser tooltips
+        // on <option> are unreliable so we surface the title attribute
+        // explicitly in a hint line.
+        const targetOpt = targetSel.options[targetSel.selectedIndex];
+        const targetHint = document.getElementById('convertTargetHint');
+        if (targetHint && targetOpt) {
+          targetHint.textContent = targetOpt.title || '';
+          targetHint.style.display = targetOpt.title ? '' : 'none';
+        }
         const wrap = document.getElementById('convertLinesWrap');
         const axis = this.convertAxis(target);
         if (!axis || !id) { wrap.style.display = 'none'; this._convertFulfillment = null; return; }
@@ -2457,7 +2774,27 @@
             }
           } catch (e) { console.warn('Failed to load GL entry for document print:', e); }
           document.getElementById('pdfTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
-          document.getElementById('pdfContent').innerHTML = this.generatePdfHtml(d, companyInfo, signature, glEntry);
+          // SERVER-RENDERED HTML — same code path as PDF generation so
+          // browser print preview + downloaded PDF look IDENTICAL. The
+          // server picks the default DocumentTemplate for this DocType,
+          // applies fonts/colors/logo/watermark/signature from template
+          // fields, and returns ready-to-render HTML. Fallback to the
+          // legacy client-side renderer only when the endpoint fails
+          // (e.g. older deploys without the /generate-html endpoint).
+          let renderedHtml = null;
+          try {
+            const cid = Layout.getCompanyId();
+            const token = localStorage.getItem('token');
+            const res = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ documentId: d.id, templateId: null,
+                watermarkOverride: null, copyNumber: null, language: null }),
+            });
+            if (res.ok) renderedHtml = await res.text();
+          } catch (_) { /* fall through to client render */ }
+          document.getElementById('pdfContent').innerHTML = renderedHtml
+            || this.generatePdfHtml(d, companyInfo, signature, glEntry);
           // Toggle etax-only UI: download button + green banner appear only when this
           // document has an associated EtaxInvoice (i.e. its XML has been generated).
           // Guard against empty-Guid sentinel which would otherwise pass !! truthy check.

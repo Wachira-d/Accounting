@@ -3,7 +3,11 @@ namespace Accounting.Models.DTOs.Budget;
 public record CreateBudgetRequest(
     string Name,
     int FiscalYear,
-    List<BudgetLineRequest> Lines);
+    List<BudgetLineRequest> Lines,
+    /// <summary>Optional project scope. When set, this budget tracks
+    /// ONE project only — variance pulls actuals filtered by
+    /// project. Null = company-wide budget (the default).</summary>
+    Guid? ProjectId = null);
 
 public record BudgetLineRequest(
     Guid AccountId,
@@ -24,7 +28,8 @@ public record BudgetResponse(
     bool IsActive,
     decimal TotalBudget,
     List<BudgetLineResponse> Lines,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? ProjectId = null);
 
 public record BudgetLineResponse(
     Guid Id,

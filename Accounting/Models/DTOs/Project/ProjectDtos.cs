@@ -6,12 +6,19 @@ public record CreateProjectRequest(
     DateTime StartDate, DateTime? EndDate,
     decimal BudgetAmount, decimal ContractAmount,
     string BillingMethod, string RevenueRecognitionMethod,
-    Guid? DimensionId);
+    Guid? DimensionId,
+    // External-system linkage at creation time — partner can both
+    // create + claim the external id in one POST instead of needing
+    // a follow-up /external-link call.
+    string? ExternalId = null,
+    string? ExternalSystem = null,
+    string? ExternalUrl = null);
 
 public record UpdateProjectRequest(
     string? Name, string? Description, DateTime? EndDate,
     decimal? BudgetAmount, decimal? ContractAmount,
-    decimal? CompletionPercent, string? Status);
+    decimal? CompletionPercent, string? Status,
+    string? ExternalUrl = null);
 
 public record ProjectResponse(
     Guid Id, string Code, string Name, string? Description,
@@ -19,7 +26,11 @@ public record ProjectResponse(
     string Status, decimal BudgetAmount, decimal ContractAmount,
     decimal ActualCost, decimal ActualRevenue,
     decimal CompletionPercent, string BillingMethod,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? ExternalId = null,
+    string? ExternalSystem = null,
+    string? ExternalUrl = null,
+    DateTime? LastSyncedAt = null);
 
 public record CreateProjectTaskRequest(
     string Name, string? Description, Guid? ParentTaskId,
@@ -41,12 +52,52 @@ public record ProjectTaskResponse(
 public record CreateProjectCostEntryRequest(
     Guid? ProjectTaskId, DateTime EntryDate, string CostType,
     string Description, decimal Quantity, decimal UnitCost,
-    Guid? EmployeeId, bool IsBillable);
+    Guid? EmployeeId, bool IsBillable,
+    string CostBehavior = "Variable");
+
+public record UpdateProjectCostEntryRequest(
+    DateTime? EntryDate = null,
+    string? CostType = null,
+    string? Description = null,
+    decimal? Quantity = null,
+    decimal? UnitCost = null,
+    bool? IsBillable = null,
+    string? CostBehavior = null);
 
 public record ProjectCostEntryResponse(
     Guid Id, Guid ProjectId, DateTime EntryDate, string CostType,
     string Description, decimal Quantity, decimal UnitCost,
-    decimal Amount, bool IsBillable, bool IsBilled);
+    decimal Amount, bool IsBillable, bool IsBilled,
+    string CostBehavior = "Variable");
+
+/// <summary>Per-employee labour breakdown for one project over a date
+/// window. Answers the question "ค่าแรงพนักงานไปลงโครงการไหน บ้าง"
+/// — for project X, who contributed how many hours and how much
+/// salary cost was allocated.</summary>
+public record ProjectLabourBreakdown(
+    Guid ProjectId,
+    string ProjectCode,
+    string ProjectName,
+    DateTime? From,
+    DateTime? To,
+    decimal TotalHours,
+    decimal TotalAmount,
+    int EmployeeCount,
+    List<ProjectLabourByEmployee> ByEmployee);
+
+public record ProjectLabourByEmployee(
+    Guid EmployeeId,
+    string EmployeeCode,
+    string EmployeeName,
+    string? Department,
+    string? Position,
+    decimal Hours,
+    decimal Amount,
+    decimal AverageRate,           // amount / hours
+    string CostBehavior,           // Fixed / Variable (employee-level default)
+    int PayrollRunCount,           // how many runs allocated to this employee on this project
+    int BillableHours,
+    int NonBillableHours);
 
 public record ProjectProfitabilityResponse(
     Guid ProjectId, string ProjectName, decimal ContractAmount,

@@ -80,6 +80,40 @@ public class ApiKeyMiddleware
             }
         }
 
+        // Per-API-key rate limiting — ApiKey.RateLimitPerMinute (when
+        // set) is enforced HERE before the global RateLimitMiddleware
+        // because key-specific limits are usually MORE restrictive
+        // than the platform-wide cap. State held in-process via a
+        // static sliding-window counter (good enough for single-node;
+        // upgrade to Redis when scaling out).
+        if (apiKey.RateLimitPerMinute > 0)
+        {
+            var now = DateTime.UtcNow;
+            var window = _windows.GetOrAdd(apiKey.Id, _ => new ApiKeyRateWindow());
+            lock (window.Lock)
+            {
+                // Trim entries older than 60s + count remaining
+                while (window.Hits.Count > 0 && now - window.Hits[0] > TimeSpan.FromSeconds(60))
+                    window.Hits.RemoveAt(0);
+                if (window.Hits.Count >= apiKey.RateLimitPerMinute)
+                {
+                    context.Response.StatusCode = 429;
+                    context.Response.Headers["Retry-After"] = "60";
+                    context.Response.Headers["X-RateLimit-Limit"] = apiKey.RateLimitPerMinute.ToString();
+                    context.Response.Headers["X-RateLimit-Remaining"] = "0";
+                    context.Response.WriteAsJsonAsync(new
+                    {
+                        success = false,
+                        message = $"API key rate limit exceeded ({apiKey.RateLimitPerMinute}/min). Retry in 60s.",
+                    }).GetAwaiter().GetResult();
+                    return;
+                }
+                window.Hits.Add(now);
+                context.Response.Headers["X-RateLimit-Limit"] = apiKey.RateLimitPerMinute.ToString();
+                context.Response.Headers["X-RateLimit-Remaining"] = (apiKey.RateLimitPerMinute - window.Hits.Count).ToString();
+            }
+        }
+
         // Update last used
         apiKey.LastUsedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
@@ -105,5 +139,15 @@ public class ApiKeyMiddleware
         context.Items["IsApiKeyAuth"] = true;
 
         await _next(context);
+    }
+
+    /// <summary>Sliding-window counter held in-process. Acceptable
+    /// for single-node; replace with Redis sorted set when scaling out.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, ApiKeyRateWindow> _windows = new();
+
+    private sealed class ApiKeyRateWindow
+    {
+        public readonly object Lock = new();
+        public readonly List<DateTime> Hits = new();
     }
 }

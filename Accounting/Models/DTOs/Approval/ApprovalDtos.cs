@@ -8,7 +8,10 @@ public record CreateApprovalRuleRequest(
     DocumentType? DocumentType,
     decimal? MinAmount,
     decimal? MaxAmount,
-    List<ApprovalStepRequest> Steps);
+    List<ApprovalStepRequest> Steps,
+    /// <summary>Optional project scope. When set, the rule only fires for
+    /// documents tagged with this project. Null = applies to all projects.</summary>
+    Guid? ProjectId = null);
 
 public record ApprovalStepRequest(
     int StepOrder,
@@ -23,7 +26,8 @@ public record ApprovalRuleResponse(
     decimal? MinAmount,
     decimal? MaxAmount,
     bool IsActive,
-    List<ApprovalStepResponse> Steps);
+    List<ApprovalStepResponse> Steps,
+    Guid? ProjectId = null);
 
 public record ApprovalStepResponse(
     int StepOrder,

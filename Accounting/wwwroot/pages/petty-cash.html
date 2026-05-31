@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เงินสดย่อย — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เงินสดย่อย</h2>
+        <p class="page-subtitle">imprest system — เปิดเงินสดย่อย → จ่าย → top-up กลับ imprest</p>
+      </div>
+      <button class="btn btn-primary" onclick="Page.openCreate()">+ เปิดกองทุนใหม่</button>
+    </div>
+
+    <div id="funds"></div>
+
+    <div id="createModal" class="modal-overlay" style="display:none">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">เปิดเงินสดย่อยใหม่</h3>
+        <label>ชื่อกองทุน</label>
+        <input id="fName" class="form-input" placeholder="เช่น Office Bangkok">
+        <label>Imprest amount</label>
+        <input id="fImprest" type="number" class="form-input" placeholder="5000">
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeCreate()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.createFund()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="disburseModal" class="modal-overlay" style="display:none">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">เบิกเงินสดย่อย</h3>
+        <label>จำนวนเงิน</label>
+        <input id="dAmount" type="number" step="0.01" min="0" class="form-input">
+        <label>คำอธิบาย</label>
+        <input id="dDesc" class="form-input">
+        <label>เลขที่ใบเสร็จ (optional)</label>
+        <input id="dReceipt" class="form-input">
+        <label>บัญชีค่าใช้จ่าย (ใส่เพื่อโพสต์ JE อัตโนมัติ)</label>
+        <select id="dExpense" class="form-input"><option value="">— ไม่โพสต์ JE —</option></select>
+        <label>โครงการ (optional)</label>
+        <select id="dProject" class="form-input"><option value="">— ไม่ระบุ —</option></select>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeDisburse()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitDisburse()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _activeFundId: null,
+      async init() {
+        if (!Layout.init('petty-cash')) return;
+        Layout.setTitle('เงินสดย่อย');
+        await this.loadProjects();
+        await this.loadExpenseAccounts();
+        await this.load();
+      },
+      async loadExpenseAccounts() {
+        try {
+          const api = Layout.api(); if (!api) return;
+          const res = await api.getAccounts('?pageSize=1000');
+          const list = res.data?.items || res.data || [];
+          const expenses = list.filter(a => a.accountType === 'Expense' && a.isActive !== false);
+          const opts = expenses.map(a =>
+            `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+          document.getElementById('dExpense').innerHTML =
+            '<option value="">— ไม่โพสต์ JE —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          const items = r.data?.items || r.data || [];
+          const sel = document.getElementById('dProject');
+          const opts = items.map(p =>
+            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+          sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
+        } catch (e) { /* ignore */ }
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      async load() {
+        const el = document.getElementById('funds');
+        el.innerHTML = '<div style="padding:40px;text-align:center;color:#94a3b8">กำลังโหลด...</div>';
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/sme/petty-cash/funds`);
+          const funds = r.data || [];
+          if (funds.length === 0) {
+            el.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:#94a3b8">ยังไม่มีเงินสดย่อย — กด "เปิดกองทุนใหม่"</div>';
+            return;
+          }
+          el.innerHTML = funds.map(f => `
+            <div class="card" style="margin-bottom:14px">
+              <div style="display:flex;justify-content:space-between;align-items:start">
+                <div>
+                  <h3 style="margin:0 0 4px">${f.name}</h3>
+                  <div style="font-size:12px;color:#64748b">Imprest ${this._fmt(f.imprestAmount)} · คงเหลือ <b style="color:${f.currentBalance < f.imprestAmount * 0.2 ? '#dc2626' : '#1e293b'}">${this._fmt(f.currentBalance)}</b></div>
+                </div>
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-sm btn-warning" onclick="Page.disburse('${f.id}')">เบิก</button>
+                  <button class="btn btn-sm btn-success" onclick="Page.replenish('${f.id}', ${f.imprestAmount - f.currentBalance})">Top-up</button>
+                </div>
+              </div>
+            </div>`).join('');
+        } catch (e) {
+          el.innerHTML = `<div class="card" style="padding:40px;text-align:center;color:#dc2626">${e.message}</div>`;
+        }
+      },
+      openCreate() { document.getElementById('createModal').style.display = 'flex'; },
+      closeCreate() { document.getElementById('createModal').style.display = 'none'; },
+      async createFund() {
+        const name = document.getElementById('fName').value.trim();
+        const imprest = +document.getElementById('fImprest').value;
+        if (!name || !imprest) { Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          await API.post(`/api/companies/${cid}/sme/petty-cash/funds`,
+            { name, custodianUserId: null, imprestAmount: imprest, linkedAccountId: null });
+          this.closeCreate();
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      disburse(fundId) {
+        this._activeFundId = fundId;
+        document.getElementById('dAmount').value = '';
+        document.getElementById('dDesc').value = '';
+        document.getElementById('dReceipt').value = '';
+        document.getElementById('dExpense').value = '';
+        document.getElementById('dProject').value = '';
+        document.getElementById('disburseModal').style.display = 'flex';
+      },
+      closeDisburse() { document.getElementById('disburseModal').style.display = 'none'; },
+      async submitDisburse() {
+        const amount = +document.getElementById('dAmount').value;
+        const desc = document.getElementById('dDesc').value.trim();
+        const receipt = document.getElementById('dReceipt').value.trim() || null;
+        const projectId = document.getElementById('dProject').value || null;
+        const expenseAccountId = document.getElementById('dExpense').value || null;
+        if (!amount || !desc) { Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/disburse`,
+            { amount, description: desc, expenseAccountId, receiptReference: receipt,
+              txnDate: new Date().toISOString(), projectId });
+          this.closeDisburse();
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async replenish(fundId, suggested) {
+        const amount = +(prompt('จำนวนเติม', suggested.toFixed(2)) || 0);
+        if (!amount) return;
+        try {
+          const cid = Layout.getCompanyId();
+          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${fundId}/replenish`,
+            { amount, notes: null, txnDate: new Date().toISOString() });
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

@@ -50,7 +50,10 @@ public record AgingTotals(
 public record AgingReportRequest(
     DateTime? AsOfDate = null,
     Guid? ContactId = null,
-    int[]? CustomBuckets = null);
+    int[]? CustomBuckets = null,
+    /// <summary>Optional project scope. When set, the aging report only
+    /// includes documents tagged with this project.</summary>
+    Guid? ProjectId = null);
 
 public enum AgingReportType
 {

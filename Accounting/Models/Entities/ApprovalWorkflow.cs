@@ -17,6 +17,13 @@ public class ApprovalRule : TenantEntity
     public decimal? MinAmount { get; set; }               // จำนวนเงินขั้นต่ำที่ต้องขออนุมัติ
     public decimal? MaxAmount { get; set; }
 
+    /// <summary>Optional project scope. When set, the rule only fires for
+    /// documents tagged with this project — letting a company route project
+    /// X spend through PM Alice and project Y through PM Bob even at the
+    /// same amount tier. Null = applies to all projects.</summary>
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+
     // Approvers: ลำดับผู้อนุมัติ
     public ICollection<ApprovalStep> Steps { get; set; } = new List<ApprovalStep>();
 }

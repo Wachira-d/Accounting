@@ -34,4 +34,8 @@ public record AssignCustomRoleRequest(
 public record MyPermissionsResponse(
     string RoleName,
     bool IsOwnerOrAdmin,
-    List<string> AllowedMenuIds);
+    List<string> AllowedMenuIds,
+    // Owner-level menu hide list — applies to EVERYONE in this company
+    // regardless of their role. Subtracted from the rendered sidebar
+    // by layout.js. Owner controls via /pages/settings-features.html.
+    List<string>? OwnerHiddenMenuIds = null);

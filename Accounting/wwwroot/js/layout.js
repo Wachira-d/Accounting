@@ -265,7 +265,10 @@ const Layout = {
     if (uiMode === 'simple') {
       html.push(`<a class="nav-item" href="/simple.html"><span class="icon">🏠</span><span class="label">หน้าหลัก (โหมดง่าย)</span></a>`);
       html.push(`<a class="nav-item" href="/pages/quick-sale.html"><span class="icon">⚡</span><span class="label">ขายเร็ว</span></a>`);
-      html.push(`<a class="nav-item" href="/pages/quick-expense.html"><span class="icon">🧾</span><span class="label">จ่ายเร็ว</span></a>`);
+      // quick-expense was removed 2026 — it bypassed VAT controls,
+      // vendor linkage, and approval workflow. Field-bookkeeping
+      // routes through expense.html (มี/ไม่มี ใบเสร็จ §65 ทวิ) or
+      // documents.html → ค่าใช้จ่าย which both enforce proper accounting.
       html.push(`<div style="height:1px;background:#e2e8f0;margin:10px 12px;"></div>`);
     }
 
@@ -464,8 +467,19 @@ const Layout = {
     return `nextacc_hiddenMenu_${cid}`;
   },
   getHiddenMenuItems() {
-    try { return JSON.parse(localStorage.getItem(this._menuKey()) || '[]'); }
-    catch { return []; }
+    // Union of two sources:
+    //   1) Per-user localStorage list — controlled by the user via the
+    //      sidebar's "ซ่อน" toggle. Personal preference.
+    //   2) Server-loaded Owner company-wide hide list (in
+    //      this.myPermissions.ownerHiddenMenuIds) — the Owner has
+    //      hidden these for EVERYONE in the company via
+    //      /pages/settings-features.html.
+    let local = [];
+    try { local = JSON.parse(localStorage.getItem(this._menuKey()) || '[]'); }
+    catch { local = []; }
+    const ownerHidden = this.myPermissions?.ownerHiddenMenuIds || [];
+    if (!ownerHidden.length) return local;
+    return Array.from(new Set([...local, ...ownerHidden]));
   },
   setHiddenMenuItems(ids) {
     localStorage.setItem(this._menuKey(), JSON.stringify(ids || []));
@@ -620,15 +634,37 @@ const Layout = {
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition',
       description: 'ASC 606 / TFRS 15 — รับรู้รายได้ตาม performance obligation' },
 
-    { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'บันทึกการซื้อ ค่าใช้จ่าย ใบสำคัญจ่าย ชำระเงิน' },
+    { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'PR → PO → GRN → ใบกำกับ → ชำระ — full procurement chain' },
     { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine', _i18nKey: 'nav.purchases',
-      description: 'ใบสั่งซื้อ · ใบรับสินค้า · ใบกำกับภาษีซื้อ' },
-    { id: 'expense', label: 'บันทึกค่าใช้จ่าย', icon: '🧾', href: '/pages/expense.html', feature: 'ExpenseManagement', _i18nKey: 'nav.expense',
-      description: 'บันทึกใบเสร็จค่าใช้จ่าย — มี OCR สแกนช่วยกรอกอัตโนมัติ' },
+      description: 'PR → PO → ใบรับสินค้า (GRN) → ใบกำกับภาษีซื้อ — partial fulfilment support' },
     { id: 'expense-docs', label: 'เอกสารฝั่งจ่าย', icon: '📋', href: '/pages/documents.html?side=expense', feature: 'DocumentEngine', _i18nKey: 'nav.expenseDocs',
       description: 'ใบสำคัญจ่าย · ใบเสร็จรับเงินจากผู้ขาย · ใบลดหนี้/เพิ่มหนี้ฝั่งซื้อ' },
     { id: 'payments', label: 'ชำระเงิน / รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine', _i18nKey: 'nav.payments',
-      description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว' },
+      description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว · cheque payment' },
+    { id: 'cheques', label: 'จัดการเช็ค', icon: '✍️', href: '/pages/cheques.html', feature: 'DocumentEngine',
+      description: 'เปิดเล่มเช็ค · ออกเช็ค · บันทึกเช็คคืน · ติดตามเช็คคงค้าง — Issued / Cleared / Bounced / Voided' },
+
+    // ───── 👥 พนักงาน (Self-Service) ─────
+    // Self-service flows the EMPLOYEE initiates (not the accountant).
+    // Distinct from HR/เงินเดือน below which is manager-side. Grouped
+    // here so the employee menu is one section away — they don't have
+    // to hunt through accounting submenus to file a claim. The "ไม่มี
+    // ใบเสร็จ" entry deep-links into expense.html?noReceipt=1 which
+    // toggles the §65 ทวิ form mode (reason + optional witness).
+    { section: 'พนักงาน (Self-Service)', icon: '🙋', description: 'เบิกค่าใช้จ่าย · ขอลา · ดู payslip · งานที่พนักงานทำเอง' },
+    { id: 'expense', label: 'เบิกค่าใช้จ่าย (มีใบเสร็จ)', icon: '🧾', href: '/pages/expense.html', feature: 'ExpenseManagement', _i18nKey: 'nav.expense',
+      description: 'พนักงานออกเงินก่อน → ส่ง manager อนุมัติ → บริษัทคืนเงิน' },
+    { id: 'expense-no-receipt', label: 'เบิกค่าใช้จ่าย (ไม่มีใบเสร็จ)', icon: '📝', href: '/pages/expense.html?noReceipt=1', feature: 'ExpenseManagement',
+      description: '§65 ทวิ — กรณี vendor ออกใบเสร็จไม่ได้ (ตลาดสด · taxi · ใบเสร็จหาย) → อนุมัติแล้วระบบสร้างใบรับรองแทนใบเสร็จให้อัตโนมัติ' },
+    { id: 'leave-my', label: 'ขอลา / ดูสิทธิ์ลา', icon: '🏖️', href: '/pages/leave.html', feature: 'Payroll',
+      description: 'ดูโควต้าลาคงเหลือ · ขอลาใหม่ · ดูประวัติของฉัน · รองรับครึ่งวัน' },
+    { id: 'mobile-expense', label: 'เบิกค่าใช้จ่าย (มือถือ)', icon: '📱', href: '/mobile-expense.html', feature: 'ExpenseManagement',
+      description: 'หน้าเบิกค่าใช้จ่ายแบบ mobile — ถ่ายรูปใบเสร็จ + กรอกยอด + ส่งจากภาคสนาม' },
+    // quick-expense was removed 2026 — bypassed VAT controls, vendor
+    // linkage, approval workflow; created data that failed audit. All
+    // field expenses now go through expense.html (มี/ไม่มี ใบเสร็จ)
+    // which enforces §65 ทวิ when no receipt + creates a proper
+    // ExpenseClaim with HR audit trail.
 
     { section: 'POS หน้าร้าน', icon: '🏪', description: 'ระบบหน้าขาย Point of Sale + แพ็คเกจบริการ + รายงาน' },
     { id: 'pos', label: 'หน้าขาย POS', icon: '🖥️', href: '/pages/pos.html', feature: 'DocumentEngine', _i18nKey: 'nav.pos',
@@ -651,6 +687,10 @@ const Layout = {
       description: 'Stock card · Aging stock · Movement · Valuation' },
     { id: 'supplies', label: 'วัสดุสิ้นเปลือง', icon: '🧹', href: '/pages/supplies.html', feature: 'Inventory', _i18nKey: 'nav.supplies',
       description: 'ของใช้ในออฟฟิศ — เบิกตามต้องการ ไม่ตัดสต็อกขาย' },
+    { id: 'production', label: 'งานผลิต & BOM', icon: '🏭', href: '/pages/production.html', feature: 'Inventory',
+      description: 'Bill of Materials · production order · backflush components → finished goods at WAC' },
+    { id: 'consignment', label: 'สินค้าฝากขาย / รับฝาก', icon: '📦', href: '/pages/consignment.html', feature: 'Inventory',
+      description: 'Inbound (ของ vendor วางที่เรา จ่ายเมื่อใช้) · Outbound (ของเราอยู่ที่ลูกค้า รับรู้รายได้เมื่อขาย)' },
 
     { section: 'การเงิน / ธนาคาร', icon: '🏦', description: 'บัญชีธนาคาร กระทบยอด สินเชื่อ สกุลเงินต่างประเทศ' },
     { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html', feature: 'BankReconciliation', _i18nKey: 'nav.bank',
@@ -658,7 +698,9 @@ const Layout = {
     { id: 'loans', label: 'สินเชื่อ / เงินกู้', icon: '💰', href: '/pages/loans.html', feature: 'LoanManagement', _i18nKey: 'nav.loans',
       description: 'จัดการเงินกู้ — ผ่อนต้น+ดอกเบี้ย · ตารางผ่อน · สรุปดอกจ่าย' },
     { id: 'multi-currency', label: 'สกุลเงินต่างประเทศ', icon: '💱', href: '/pages/multi-currency.html', feature: 'MultiCurrency', _i18nKey: 'nav.multiCurrency',
-      description: 'อัตราแลกเปลี่ยน · กำไร/ขาดทุนจากอัตราแลกเปลี่ยน · revaluation' },
+      description: 'อัตราแลกเปลี่ยน · กำไร/ขาดทุนจากอัตราแลกเปลี่ยน · period-end revaluation' },
+    { id: 'petty-cash', label: 'เงินสดย่อย', icon: '🪙', href: '/pages/petty-cash.html', feature: 'BasicAccounting',
+      description: 'เปิดเงินสดย่อยตามคน · disbursement · top-up · ตรวจนับ — imprest system' },
 
     { section: 'บัญชี', icon: '📚', description: 'ผังบัญชี สมุดรายวัน บัญชีแยกประเภท งวด สินทรัพย์ ปิดสิ้นปี' },
     { id: 'accounts', label: 'ผังบัญชี', icon: '📋', href: '/pages/accounts.html', feature: 'BasicAccounting', _i18nKey: 'nav.accounts',
@@ -686,13 +728,25 @@ const Layout = {
     { id: 'etax', label: 'e-Tax Invoice', icon: '🧾', href: '/pages/etax.html', feature: 'EtaxInvoice', _i18nKey: 'nav.etax',
       description: 'ใบกำกับภาษีอิเล็กทรอนิกส์ — PDF/A-3 + XML ฝัง · ส่งกรมสรรพากร' },
     { id: 'tax-export', label: 'Export ยื่นภาษี / SSO', icon: '📤', href: '/pages/tax-export.html', feature: 'TaxManagement', _i18nKey: 'nav.taxExport',
-      description: 'ไฟล์ TXT ตามรูปแบบกรมสรรพากร + ประกันสังคม' },
+      description: 'ไฟล์ TXT ตามรูปแบบกรมสรรพากร + ประกันสังคม · ภงด.91 รายปี · RD ACK tracking' },
+    { id: 'stamp-duty', label: 'อากรแสตมป์', icon: '🏷️', href: '/pages/stamp-duty.html', feature: 'TaxManagement',
+      description: 'ตามประมวลรัษฎากร §103-105 — สัญญาเช่า · กู้ยืม · รับเหมา · มอบอำนาจ · เช็คต่างประเทศ' },
 
     { section: 'HR / เงินเดือน', icon: '👤', description: 'โครงสร้างองค์กร · เงินเดือน · ลา · เงินทดรอง · คอมมิชชัน' },
     { id: 'organization', label: 'โครงสร้างองค์กร', icon: '🏢', href: '/pages/organization.html', feature: 'Payroll', _i18nKey: 'nav.organization',
       description: 'แผนก · ตำแหน่ง · ผู้บังคับบัญชา · org chart · routing การอนุมัติ' },
+    { id: 'employees', label: 'พนักงาน (HR Master)', icon: '👥', href: '/pages/employees.html', feature: 'Payroll',
+      description: 'สร้าง · จัดการรายละเอียด · ตั้งฐานเงินเดือน/วัน/ชั่วโมง · sync 2 ทางกับ HRIS ภายนอก' },
+    { id: 'project-time', label: 'เวลาทำงาน-โครงการ', icon: '🕒', href: '/pages/project-time.html', feature: 'ProjectAccounting',
+      description: 'บันทึก/sync ชั่วโมงทำงานของพนักงานต่อโครงการ · ใช้กระจาย labour cost ลงโปรเจค' },
+    { id: 'cost-report', label: 'Fix-Variable Cost', icon: '📊', href: '/pages/cost-report.html', feature: 'AdvancedReporting',
+      description: 'รายงานต้นทุนคงที่ vs ผันแปร รายเดือนและรายโครงการ' },
     { id: 'payroll', label: 'ระบบเงินเดือน & ลา', icon: '💵', href: '/pages/payroll.html', feature: 'Payroll', _i18nKey: 'nav.payroll',
       description: 'พนักงาน · รอบจ่าย · ภงด.1 · ประกันสังคม · กองทุน · ลาหยุด' },
+    { id: 'leave-types', label: 'ตั้งค่าประเภทลา + วันหยุด', icon: '📅', href: '/pages/leave-types.html', feature: 'Payroll',
+      description: 'HR Admin · กำหนดประเภทการลา · โควต้า · ปฏิทินวันหยุดประจำปี' },
+    { id: 'leave-calendar', label: 'ปฏิทินการลา (HR view)', icon: '🗓️', href: '/pages/leave-calendar.html', feature: 'Payroll',
+      description: 'ดูทุกคนลาช่วงไหน + วันหยุดประจำปี · วางแผนกำลังคน' },
     { id: 'salary-advance', label: 'เงินทดรองจ่ายพนักงาน', icon: '💰', href: '/pages/salary-advance.html', feature: 'Payroll', _i18nKey: 'nav.salaryAdvance',
       description: 'เงินยืม-เคลียร์ · workflow อนุมัติ · หักจากเงินเดือนอัตโนมัติ' },
     { id: 'commission', label: 'คอมมิชชัน', icon: '💸', href: '/pages/commission.html', feature: 'Commission', _i18nKey: 'nav.commission',
@@ -705,8 +759,14 @@ const Layout = {
       description: 'งบทดลอง · งบดุล · งบกำไรขาดทุน · กระแสเงินสด · งบแสดงการเปลี่ยนแปลงส่วนของเจ้าของ' },
     { id: 'budget', label: 'งบประมาณ', icon: '🎯', href: '/pages/budget.html', feature: 'BudgetManagement', _i18nKey: 'nav.budget',
       description: 'ตั้งงบประมาณรายเดือน · เปรียบเทียบ actual vs budget · variance' },
+    { id: 'risk', label: 'ความเสี่ยงลูกค้า / ผู้ขาย', icon: '🎯', href: '/pages/risk.html', feature: 'AdvancedReporting',
+      description: 'คะแนนความเสี่ยงผู้ติดต่อ — ลูกค้าจ่ายช้า · vendor void สูง · price volatility' },
     { id: 'aging', label: 'อายุลูกหนี้ / เจ้าหนี้', icon: '⏳', href: '/pages/aging.html', feature: 'AgingReport', _i18nKey: 'nav.aging',
       description: 'แยกตามอายุ 30/60/90/120 วัน · alert ค้างชำระ · auto-refresh ทุก 6 ชม.' },
+    { id: 'cash-forecast', label: 'คาดการณ์กระแสเงินสด', icon: '💰', href: '/pages/cash-forecast.html', feature: 'AdvancedReporting',
+      description: 'รายวัน 30/60/90 วัน · เงินเข้า-ออก · ติดลบเมื่อไหร่ · risk alerts · ลูกหนี้/เจ้าหนี้ top' },
+    { id: 'fx-reval', label: 'FX Revaluation', icon: '💱', href: '/pages/fx-reval.html', feature: 'MultiCurrency',
+      description: 'Period-end revalue AR/AP FCY → post JE กำไร/ขาดทุน · idempotent ต่องวด' },
     { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',
       description: 'DSO · DPO · cycle time · ลูกค้า top-N · เจ้าหนี้ top-N' },
     { id: 'fpa', label: 'วิเคราะห์การเงิน (FP&A)', icon: '📉', href: '/pages/fpa.html', feature: 'FPA', _i18nKey: 'nav.fpa',
@@ -724,7 +784,7 @@ const Layout = {
     { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html', feature: 'Consolidation', _i18nKey: 'nav.consolidation',
       description: 'รวมงบทุกบริษัทในเครือ · FX translation · NCI · elimination entries' },
 
-    { section: 'ออนไลน์ & เครื่องมือ', icon: '🌐', description: 'เว็บไซต์ลูกค้า · Portal · AI · OCR สแกน · นำเข้า/ส่งออก' },
+    { section: 'ขายออนไลน์ & ลูกค้า', icon: '🌐', description: 'เว็บไซต์ · e-commerce · booking · sales funnel · ลูกค้า/vendor portal' },
     { id: 'cms-sites', label: 'เว็บไซต์ของฉัน (CMS)', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
       description: 'สร้างเว็บไซต์ multi-site · e-commerce · booking · เชื่อม ERP อัตโนมัติ' },
     { id: 'cms-orders', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders',
@@ -735,26 +795,40 @@ const Layout = {
       description: 'RFQ · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ขอใบเสนอราคา — sales funnel ครบ' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
       description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
+    { id: 'vendor-portal-admin', label: 'Vendor Portal — ออก token', icon: '🤝', href: '/pages/vendor-portal-admin.html', feature: 'MultiUser',
+      description: 'AP ออก magic-link ให้ vendor เข้าดู PO + invoice + status + อัปโหลด invoice ใหม่ — ไม่ต้องมี user' },
+
+    { section: 'AI & เครื่องมือเอกสาร', icon: '🤖', description: 'AI augmentation · OCR · scan · learn from feedback' },
     { id: 'ai-tools', label: 'AI อัจฉริยะ', icon: '🤖', href: '/pages/ai-tools.html', feature: 'AI_Features', _i18nKey: 'nav.aiTools',
-      description: 'auto-categorize · ตรวจจับ anomaly · พยากรณ์ cash flow · vendor learning' },
+      description: 'auto-categorize · anomaly · cash-flow forecast · vendor canon · GL suggestion' },
     { id: 'document-scan', label: 'สแกนเอกสาร (OCR)', icon: '📸', href: '/pages/document-scan.html', feature: 'AI_Features', _i18nKey: 'nav.documentScan',
       description: 'สแกนใบเสร็จ-ใบกำกับด้วยกล้อง · Azure DI + Tesseract · RD compliance check' },
+
+    { section: 'นำเข้า/ส่งออก · แจ้งเตือน · PDPA', icon: '📥', description: 'Import · export · notification · ความเป็นส่วนตัว' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📥', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'นำเข้า Excel ทีละ batch · ส่งออกข้อมูลเป็น CSV/Excel · backup' },
+    { id: 'migrate-competitor', label: 'ย้ายจาก Express/PEAK/FlowAccount', icon: '🔁', href: '/pages/migrate-competitor.html', feature: 'BulkImport',
+      description: 'sniff รูปแบบไฟล์ + preview + dry-run import — ลูกค้าจากระบบบัญชีอื่นย้ายมาง่าย' },
     { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications',
       description: 'Matrix ตั้งค่าแจ้งเตือนต่อ event/role · System · Email · LINE · per-user preferences' },
+    { id: 'pdpa', label: 'PDPA — สิทธิ์เจ้าของข้อมูล', icon: '🛡️', href: '/pages/pdpa.html', adminOnly: true,
+      description: 'พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล §32 — รับคำขอ Access/Erasure/Rectification + ติดตาม DPO + erasure impact' },
 
     { section: 'ตั้งค่า & ผู้ใช้', icon: '⚙️', description: 'ผู้ใช้ · role · ตั้งค่าบริษัท · workflow อนุมัติ · ลายเซ็น' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings',
       description: 'ข้อมูลบริษัท · logo · เลขผู้เสียภาษี · default บัญชี · เลขเอกสาร · SMTP' },
+    { id: 'settings-features', label: 'ฟีเจอร์ & เมนู (Owner)', icon: '🧩', href: '/pages/settings-features.html', adminOnly: true,
+      description: 'เจ้าของกิจการเลือกเปิด/ปิดฟีเจอร์ + ซ่อนเมนูที่ไม่ใช้ ใช้ได้ทุกคนในบริษัท' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team',
       description: 'เชิญสมาชิก · กำหนด role ต่อคน · เปิด/ปิดสิทธิ์' },
     { id: 'roles', label: 'จัดการ Role / สิทธิ์', icon: '🔐', href: '/pages/roles.html', feature: 'MultiUser', _i18nKey: 'nav.roles',
-      description: 'สร้าง role · เลือกเมนู + perm:* keys ที่อนุญาต · seed defaults' },
+      description: 'สร้าง role · template (POS Cashier / Inventory Clerk / etc.) · ติ๊ก perm:* keys' },
     { id: 'approval', label: 'การอนุมัติ (Workflow)', icon: '✅', href: '/pages/approval.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.approval',
       description: 'workflow อนุมัติเอกสาร · กำหนดผู้อนุมัติแต่ละขั้น · เงื่อนไขตามจำนวนเงิน' },
     { id: 'signatures', label: 'ลายเซ็นและอนุมัติ', icon: '✍️', href: '/pages/signatures.html', feature: 'ApprovalWorkflow', _i18nKey: 'nav.signatures',
       description: 'ลายเซ็นดิจิทัล · ผู้จัดทำ-ผู้อนุมัติ · stamp บน PDF อัตโนมัติ' },
+    { id: 'document-templates', label: 'เทมเพลตเอกสาร PDF', icon: '🎨', href: '/pages/document-templates.html', feature: 'DocumentEngine',
+      description: 'ปรับ logo · สี · font · header · footer · watermark · ลายเซ็น — preview สด · per-document-type' },
 
     { section: 'Developer / API', icon: '🔧', description: 'เชื่อมต่อระบบภายนอก · API key · webhook · TaketTime / external ERP' },
     { id: 'integrations', label: 'เชื่อมต่อระบบ', icon: '🔗', href: '/pages/integrations.html', feature: 'APIAccess', _i18nKey: 'nav.integrations',
@@ -888,8 +962,11 @@ const Layout = {
           <a class="fab-item" href="/pages/quick-sale.html" title="ขายเร็ว">
             <span class="fab-ic">💰</span><span class="fab-lbl">ขายเร็ว</span>
           </a>
-          <a class="fab-item" href="/pages/quick-expense.html" title="จ่ายเร็ว">
-            <span class="fab-ic">🧾</span><span class="fab-lbl">จ่ายเร็ว</span>
+          <a class="fab-item" href="/pages/expense.html?noReceipt=1" title="เบิกค่าใช้จ่ายไม่มีใบเสร็จ">
+            <span class="fab-ic">📝</span><span class="fab-lbl">เบิกไม่มีบิล</span>
+          </a>
+          <a class="fab-item" href="/pages/expense.html" title="เบิกค่าใช้จ่ายมีใบเสร็จ">
+            <span class="fab-ic">🧾</span><span class="fab-lbl">เบิก (มีบิล)</span>
           </a>
           <a class="fab-item" href="/pages/document-scan.html" title="ถ่ายรูปบิล">
             <span class="fab-ic">📸</span><span class="fab-lbl">ถ่ายรูปบิล</span>
@@ -907,7 +984,7 @@ const Layout = {
         bn.innerHTML = `
           <a href="/simple.html"><span>🏠</span><span>หน้าหลัก</span></a>
           <a href="/pages/quick-sale.html"><span>💰</span><span>ขาย</span></a>
-          <a href="/pages/quick-expense.html"><span>🧾</span><span>จ่าย</span></a>
+          <a href="/pages/expense.html"><span>🧾</span><span>เบิก</span></a>
           <a href="/pages/bank.html"><span>🏦</span><span>เงิน</span></a>
           <a href="/pages/tax-calendar.html"><span>🏛️</span><span>ภาษี</span></a>`;
         document.body.appendChild(bn);

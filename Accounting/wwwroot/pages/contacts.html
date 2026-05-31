@@ -117,6 +117,43 @@
             <div class="form-group"><label class="form-label" data-i18n="common.email">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
           </div>
           <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="text" class="form-input" id="fContactPerson"></div>
+
+          <!-- ───── ตั้งค่าการบันทึกบัญชี ─────
+               Per-contact GL overrides. Defaults pull from the system
+               (first level-4+ account starting with 113 / 212 / 212305).
+               When this contact behaves differently from the company
+               default — e.g. employee receivable should go to 1132 not
+               1131, or a specific supplier needs its own AP sub-ledger
+               — the operator pins the right account here and every
+               document that posts for this contact uses the pinned
+               account instead. Leave at "(ใช้ค่าเริ่มต้นของระบบ)" to
+               keep system behaviour. -->
+          <div style="margin-top:16px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
+            <div style="font-weight:600;color:#1e293b;margin-bottom:10px">⚙️ ตั้งค่าการบันทึกบัญชี</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี</label>
+                <select class="form-input" id="fDefaultArAccount">
+                  <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
+                </select>
+                <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 113xxx — ลูกหนี้การค้า</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี</label>
+                <select class="form-input" id="fDefaultApAccount">
+                  <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
+                </select>
+                <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212xxx — เจ้าหนี้การค้า</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)</label>
+              <select class="form-input" id="fDefaultIrGrAccount">
+                <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
+              </select>
+              <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212305 — ค่าใช้จ่ายค้างจ่ายอื่น (Invoice/Goods Received-Not-Invoiced clearing)</div>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -176,10 +213,48 @@
         if (!Layout.init('contacts')) return;
         Layout.setTitle('ผู้ติดต่อ');
         this._attachDbd();
+        // Preload chart of accounts so the GL-override dropdowns are
+        // populated on first modal open. Filter to AR/AP/clearing-style
+        // accounts only to keep the dropdown manageable — anything
+        // starting with 1 (asset), 2 (liability) qualifies.
+        await this._loadAccountDropdowns();
         await this.load();
         const params = new URLSearchParams(window.location.search);
         const openId = params.get('id');
         if (openId) this.openEdit(openId);
+      },
+
+      // ตั้งค่าการบันทึกบัญชี — load chart of accounts ONCE on init,
+      // populate the 3 dropdowns. Defaults marked with [ค่าเริ่มต้น].
+      async _loadAccountDropdowns() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts('?pageSize=500');
+          const all = (res?.data?.items || res?.data || []);
+          this._accounts = all;
+          const arCandidates = all.filter(a => (a.accountCode||'').startsWith('1') && (a.accountType === 'Asset' || a.accountType === 'CurrentAsset' || a.accountType == null));
+          const apCandidates = all.filter(a => (a.accountCode||'').startsWith('2') && (a.accountType === 'Liability' || a.accountType === 'CurrentLiability' || a.accountType == null));
+          // IR/GR clearing — accrued liability sub-ledger, typically 2123xx.
+          const grirCandidates = all.filter(a => (a.accountCode||'').startsWith('212') || (a.accountCode||'').startsWith('21'));
+          const fillSelect = (id, candidates, defaultPrefix) => {
+            const sel = document.getElementById(id);
+            if (!sel) return;
+            // Mark the system-default option with a star so user knows
+            // which one fires when "(ใช้ค่าเริ่มต้นของระบบ)" is chosen.
+            const sysDef = candidates.find(a => (a.accountCode || '').startsWith(defaultPrefix) && (a.level || 0) >= 4);
+            const sysDefLabel = sysDef ? ` — ระบบจะใช้ ${sysDef.accountCode} ${sysDef.accountName}` : '';
+            sel.innerHTML = `<option value="">(ใช้ค่าเริ่มต้นของระบบ${sysDefLabel})</option>` +
+              candidates.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+          };
+          fillSelect('fDefaultArAccount', arCandidates, '113');
+          fillSelect('fDefaultApAccount', apCandidates, '212');
+          fillSelect('fDefaultIrGrAccount', grirCandidates, '212305');
+        } catch (e) {
+          // Soft fail — dropdowns stay with the placeholder; user can
+          // still save the contact, just can't pin a custom account
+          // until accounts load.
+          console.warn('Account dropdown load failed', e);
+        }
       },
       setFilter(type, el) {
         this.filterType = type; this.page = 1;
@@ -328,6 +403,12 @@
         document.getElementById('fContactType').value = '2';
         document.getElementById('fIsCustomer').checked = true;
         document.getElementById('fIsSupplier').checked = false;
+        // Reset GL override dropdowns to "ใช้ค่าเริ่มต้นของระบบ" — a
+        // stale selection from a previous open would silently pin the
+        // new contact to a specific account.
+        ['fDefaultArAccount','fDefaultApAccount','fDefaultIrGrAccount'].forEach(id => {
+          const el = document.getElementById(id); if (el) el.value = '';
+        });
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = 'none';
         this.onContactTypeChange();
         Layout.openModal('formModal');
@@ -372,6 +453,14 @@
         document.getElementById('fPhone').value = c.phone || '';
         document.getElementById('fEmail').value = c.email || '';
         document.getElementById('fContactPerson').value = c.contactPerson || '';
+        // ตั้งค่าการบันทึกบัญชี — restore per-contact overrides; empty
+        // value means "use system default" (113/212/212305 prefix).
+        const arSel = document.getElementById('fDefaultArAccount');
+        if (arSel) arSel.value = c.defaultArAccountId || '';
+        const apSel = document.getElementById('fDefaultApAccount');
+        if (apSel) apSel.value = c.defaultApAccountId || '';
+        const grirSel = document.getElementById('fDefaultIrGrAccount');
+        if (grirSel) grirSel.value = c.defaultIrGrAccountId || '';
         document.getElementById('fJuristicId').value = '';
         document.getElementById('fJuristicType').value = '';
         document.getElementById('fRegisteredCapital').value = '';
@@ -469,6 +558,12 @@
           phone: document.getElementById('fPhone').value || null,
           email: document.getElementById('fEmail').value || null,
           contactPerson: document.getElementById('fContactPerson').value || null,
+          // GL overrides — empty string maps to null on Create (skips
+          // pinning) and to Guid.Empty on Update (explicitly clears
+          // the existing pin per the UpdateContactAsync semantics).
+          defaultArAccountId: document.getElementById('fDefaultArAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
+          defaultApAccountId: document.getElementById('fDefaultApAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
+          defaultIrGrAccountId: document.getElementById('fDefaultIrGrAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
         };
         try {
           if (id) await api.updateContact(id, data); else await api.createContact(data);

@@ -129,13 +129,14 @@
         </div>
       </div>
 
-      <div class="sm-task" onclick="window.location.href='/pages/quick-expense.html'" role="link" tabindex="0">
+      <div class="sm-task" onclick="window.location.href='/pages/expense.html'" role="link" tabindex="0">
         <div class="icon">🧾</div>
         <div>
           <h3>จ่ายเงิน — บันทึกค่าใช้จ่าย</h3>
-          <p>ถ่ายรูปใบเสร็จให้ AI อ่าน หรือเลือกหมวด + กรอกจำนวนใน 30 วินาที</p>
+          <p>เลือกประเภทเบิก — มีใบเสร็จ ปกติ / ไม่มีใบเสร็จ (§65 ทวิ) / ถ่ายรูปบิลให้ AI อ่าน</p>
           <div class="quick">
-            <a href="/pages/quick-expense.html" onclick="event.stopPropagation()">⚡ จ่ายเร็ว (แนะนำ)</a>
+            <a href="/pages/expense.html" onclick="event.stopPropagation()">🧾 เบิก (มีบิล)</a>
+            <a href="/pages/expense.html?noReceipt=1" onclick="event.stopPropagation()">📝 เบิก (ไม่มีบิล §65 ทวิ)</a>
             <a href="/pages/document-scan.html" onclick="event.stopPropagation()">📸 ถ่ายรูปบิล (AI)</a>
             <a href="/pages/purchases.html?create=PurchaseInvoice" onclick="event.stopPropagation()">🛒 ซื้อสินค้า</a>
           </div>
@@ -271,7 +272,7 @@
             <div style="font-weight:700;font-size:16px;margin-bottom:6px;">ยินดีต้อนรับสู่ Next Acc</div>
             <div style="font-size:13px;line-height:1.5;color:#cbd5e1;margin-bottom:10px;">
               4 การ์ดด้านบนครอบคลุมงานประจำวันทั้งหมด · กดเข้าได้เลย<br>
-              ปุ่ม <strong>＋</strong> เขียวที่มุมขวาล่าง — ขาย/จ่ายเร็วจากหน้าไหนก็ได้
+              ปุ่ม <strong>＋</strong> เขียวที่มุมขวาล่าง — ขาย/เบิกจากหน้าไหนก็ได้
             </div>
             <div style="display:flex;gap:8px;">
               <a href="/pages/getting-started.html" style="background:#16a34a;color:#fff;padding:6px 12px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:600;">🚀 ตั้งค่าระบบก่อน</a>

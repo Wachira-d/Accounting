@@ -344,6 +344,23 @@
       </button>
     </div>
 
+    <!-- Engine selector — populated from GET /ocr/engines at page load.
+         Best-available engine pre-selected; engines that are exhausted or
+         not configured are disabled so they can't be picked client-side.
+         Persisted to localStorage so the user's preference sticks. -->
+    <div id="engineChooser" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:12px;display:none">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label for="engineSelect" style="font-weight:600;color:#334155;font-size:13px;margin:0">
+          &#x2699;&#xFE0F; OCR Engine:
+        </label>
+        <select id="engineSelect" onchange="Page.onEngineChanged()"
+                style="flex:0 0 auto;min-width:240px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;background:white;font-size:13px;font-weight:500;cursor:pointer">
+          <option value="auto">กำลังโหลด...</option>
+        </select>
+        <span id="engineHint" style="color:#64748b;font-size:12px;flex:1"></span>
+      </div>
+    </div>
+
     <!-- Upload Zone — <label for="fileInput"> means clicking anywhere inside the
          zone opens the file picker via the browser's native label-input link.
          No JS click handler needed → no "must click twice" bug. -->
@@ -425,6 +442,8 @@
         </div>
         <div class="modal-footer" id="reviewFooter">
           <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
+          <!-- 🤖 AI Tier-4 review: re-asks AI with full context (raw text + company + vendor history) and applies corrections + Thai compliance flags inline. -->
+          <button class="btn btn-outline" id="reviewAiBtn" onclick="Page.aiReviewScan()" style="background:#fef3c7;color:#92400e;border-color:#fde047" title="ส่งข้อมูลทั้งหมดให้ AI ตรวจสอบอีกครั้ง + ใส่ค่าให้ถูกต้อง + เลือกประเภทเอกสารที่จะสร้าง">🤖 AI ตรวจสอบ + เสนอเอกสาร</button>
           <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
           <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
           <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว ระบบเดาปลายทางและสร้างให้อัตโนมัติ">📦 นำเข้าสินค้า / สินทรัพย์</button>
@@ -497,6 +516,8 @@
         this.bindUpload();
         this.loadScans();
         this.loadQuota();
+        this.loadEngines();
+        this.loadProjects();
         // Deep-link from /review-queue or /pages/documents.html →
         // ?reviewScan=<id> opens that scan's review modal once the list
         // loads. ?stockImport=1 (paired with reviewScan) jumps the user
@@ -508,6 +529,142 @@
         if (reviewScanId) {
           setTimeout(() => this.openReview(reviewScanId, { stockImport: wantStockImport }), 400);
         }
+      },
+
+      // ==================== Engine Selector ====================
+      // Three modes user can pick per scan:
+      //   • auto  → server cascade (Azure ➜ Local). Default when both up.
+      //   • azure → Tier-1 only; surfaces failure instead of silent fallback
+      //             so the user knows when their explicit choice didn't work.
+      //   • local → skip Tier 1 entirely; doesn't consume Azure credit.
+      // Disabled engines come back from the server with `available:false`
+      // + a Thai reason; we render them dimmed in the <option> so the user
+      // can SEE the reason rather than just "why isn't this clickable?".
+      projects: [],
+
+      /// Load project list ONCE so the OCR review modal can populate
+      /// per-line project pickers without hitting the API per row.
+      async loadProjects() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
+          this.projects = r.data?.items || r.data || [];
+        } catch (e) { this.projects = []; }
+      },
+
+      _projectOptionsHtml(selectedId) {
+        const optNone = `<option value=""${!selectedId ? ' selected' : ''}>— ไม่ระบุ —</option>`;
+        const opts = this.projects.map(p =>
+          `<option value="${p.id}"${p.id === selectedId ? ' selected' : ''}>${(p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+        return optNone + opts;
+      },
+
+      /// User picked / cleared a project on one OCR line. Persists via
+      /// POST /line-project so the value flows to DocumentLine.ProjectId
+      /// when "Create document" runs.
+      async setLineProject(scanId, lineIndex, projectId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const p = this.projects.find(p => p.id === projectId);
+          await API.post(`/api/companies/${cid}/ocr/${scanId}/line-project`, {
+            lineIndex, projectId: projectId || null,
+            projectName: p ? (p.projectNumber + ' ' + p.name) : null,
+          });
+          // No reload — keep the rest of the modal state; user can keep editing.
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /// Find the project that already appears on the most lines.
+      /// Used to pre-select the "main project" picker so when user
+      /// re-opens a partially-allocated review, the picker shows the
+      /// majority project rather than blank.
+      _detectMainProjectId(items) {
+        if (!items || items.length === 0) return null;
+        const counts = new Map();
+        for (const it of items) {
+          if (!it.projectId) continue;
+          counts.set(it.projectId, (counts.get(it.projectId) || 0) + 1);
+        }
+        if (counts.size === 0) return null;
+        let bestId = null, bestN = 0;
+        for (const [id, n] of counts) {
+          if (n > bestN) { bestId = id; bestN = n; }
+        }
+        return bestId;
+      },
+
+      /// Bulk apply — set the main-picker's project on every line
+      /// in ONE round trip. When onlyEmpty=true, lines that already
+      /// have a project keep it (preserves the user's prior
+      /// overrides — useful when they applied main, edited 2 rows,
+      /// then realised a NEW row was added and want to fill it in).
+      async applyMainProject(scanId, onlyEmpty) {
+        try {
+          const cid = Layout.getCompanyId();
+          const picker = document.getElementById(`mainProjectPicker-${scanId}`);
+          const projectId = picker?.value || null;
+          const p = projectId ? this.projects.find(p => p.id === projectId) : null;
+          await API.post(`/api/companies/${cid}/ocr/${scanId}/lines-project`, {
+            projectId: projectId || null,
+            projectName: p ? (p.projectNumber + ' ' + p.name) : null,
+            onlyEmpty,
+          });
+          // Update every per-row select inline without re-fetching
+          // the entire scan — keeps modal scroll/state intact.
+          document.querySelectorAll(`select[data-line-project]`).forEach(sel => {
+            if (onlyEmpty && sel.value) return;
+            sel.value = projectId || '';
+          });
+          Layout.toast(onlyEmpty
+            ? (projectId ? 'เติม project ให้บรรทัดที่ว่างแล้ว' : 'ไม่มีอะไรเปลี่ยน')
+            : (projectId ? 'ตั้ง project ทุกบรรทัดแล้ว' : 'ล้าง project ทุกบรรทัดแล้ว'));
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadEngines() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const res = await API.get(`/api/companies/${cid}/ocr/engines`);
+          if (!res?.success || !res.data) return;
+          const data = res.data;
+          const sel = document.getElementById('engineSelect');
+          if (!sel) return;
+          // Honor the user's last choice if it's still available; otherwise
+          // fall back to the server-recommended default.
+          const saved = localStorage.getItem('ocrPreferredEngine');
+          const savedStillOk = saved && data.engines.some(e => e.key === saved && e.available);
+          const initial = savedStillOk ? saved : data.recommendedDefault;
+          sel.innerHTML = data.engines.map(e => {
+            const star = e.tierBadge || '';
+            const tail = e.available ? '' : ` — ${e.disabledReason || 'ใช้งานไม่ได้'}`;
+            return `<option value="${e.key}" ${e.available ? '' : 'disabled'} data-desc="${(e.description || '').replace(/"/g,'&quot;')}">${star} ${e.label}${tail}</option>`;
+          }).join('');
+          sel.value = initial || 'auto';
+          document.getElementById('engineChooser').style.display = '';
+          this.onEngineChanged();
+        } catch (e) {
+          // Selector is optional — if it fails to load we keep the prior
+          // "auto" behavior. Don't pop an alert; the upload still works.
+          console.warn('loadEngines failed', e);
+        }
+      },
+
+      onEngineChanged() {
+        const sel = document.getElementById('engineSelect');
+        if (!sel) return;
+        const val = sel.value || 'auto';
+        localStorage.setItem('ocrPreferredEngine', val);
+        const opt = sel.options[sel.selectedIndex];
+        document.getElementById('engineHint').textContent = opt?.dataset?.desc || '';
+      },
+
+      _currentEngine() {
+        const sel = document.getElementById('engineSelect');
+        // null skips the query param entirely → server treats as "auto"
+        // (same as the legacy behavior pre-selector).
+        return sel && sel.value && sel.value !== 'auto' ? sel.value : null;
       },
 
       async loadQuota() {
@@ -722,7 +879,7 @@
           if (!api) return;
 
           progressEl.style.width = '60%';
-          const res = await api.ocrUploadAndScan(formData);
+          const res = await api.ocrUploadAndScan(formData, this._currentEngine());
           progressEl.style.width = '100%';
 
           if (res.success === false) {
@@ -1551,10 +1708,29 @@
               ${scan.paymentTermsDays ? `<div class="review-field"><label>เงื่อนไขชำระ</label><span class="form-input" style="background:var(--gray-50)">${scan.paymentTermsDays} วัน</span></div>` : ''}
               ${scan.extractedItems && scan.extractedItems.length > 0 ? `
               <div style="margin-top:8px">
-                <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">รายการที่สกัดได้ (${scan.extractedItems.length} รายการ)</div>
+                <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">
+                  รายการที่สกัดได้ (${scan.extractedItems.length} รายการ)
+                </div>
+                <!-- ── Main project picker — applies to every row in
+                     one click. The most common shortcut: an entire
+                     invoice belongs to one project. User then only
+                     touches the rows that override. -->
+                <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span style="font-size:12px;font-weight:600;color:#3730a3">📌 โครงการหลัก:</span>
+                  <select id="mainProjectPicker-${scan.id}" style="flex:1;min-width:240px;padding:5px 8px;border:1px solid #a5b4fc;border-radius:6px;font-size:12px;background:#fff">
+                    ${this._projectOptionsHtml(this._detectMainProjectId(scan.extractedItems))}
+                  </select>
+                  <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.applyMainProject('${scan.id}', false)">
+                    ✓ apply ทุกบรรทัด
+                  </button>
+                  <button class="btn btn-sm" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3" onclick="Page.applyMainProject('${scan.id}', true)" title="ใส่ project นี้เฉพาะบรรทัดที่ยังไม่มี project (preserve overrides)">
+                    🩹 เติมเฉพาะที่ว่าง
+                  </button>
+                  <span style="font-size:11px;color:#4f46e5">เลือกแล้วค่อยแก้เฉพาะบรรทัดที่ไม่ตรง</span>
+                </div>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
-                  <tr style="background:var(--gray-100)"><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px">บัญชี</th></tr>
-                  ${scan.extractedItems.map(it => `<tr style="border-bottom:1px solid var(--gray-100)"><td style="padding:4px 6px">${Layout.esc(it.description || '-')}</td><td style="padding:4px 6px;text-align:right">${it.quantity || '-'}</td><td style="padding:4px 6px;text-align:right">${it.unitPrice != null ? Layout.money(it.unitPrice) : '-'}</td><td style="padding:4px 6px;text-align:right">${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td></tr>`).join('')}
+                  <tr style="background:var(--gray-100)"><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 6px">${Layout.esc(it.description || '-')}</td><td style="padding:4px 6px;text-align:right">${it.quantity || '-'}</td><td style="padding:4px 6px;text-align:right">${it.unitPrice != null ? Layout.money(it.unitPrice) : '-'}</td><td style="padding:4px 6px;text-align:right">${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;color:var(--primary)">${it.suggestedAccountCode || '-'}</td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${scan.id}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
               </div>` : ''}
             </div>
@@ -1983,6 +2159,113 @@
         }
       },
 
+      // 🤖 AI Tier-4 review of the current scan. Runs in parallel:
+      //   1) Full-field review (corrections + Thai compliance flags)
+      //   2) Target-document-type conversion suggestion
+      // When AI returns, applies corrections to the form fields,
+      // surfaces flags + suggested actions, and pre-selects the
+      // recommended target doc type for "เปิดในฟอร์มเอกสาร".
+      // Safety: AI down → toast + keep the form as-is.
+      async aiReviewScan() {
+        if (!this._reviewScan) return;
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const scanId = this._reviewScan.id;
+        const btn = document.getElementById('reviewAiBtn');
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '🤖 กำลังถาม AI...';
+        try {
+          const [reviewRes, convRes] = await Promise.all([
+            API.post(`/api/companies/${cid}/ai/ocr/${scanId}/ai-review`).catch(e => ({ data: null, err: e })),
+            API.post(`/api/companies/${cid}/ai/ocr/${scanId}/conversion-suggestions`).catch(e => ({ data: null, err: e })),
+          ]);
+          const review = reviewRes && reviewRes.data ? reviewRes.data : null;
+          const conv = convRes && convRes.data ? convRes.data : null;
+          if (!review && !conv) {
+            Layout.toast('AI ไม่ตอบ — ใช้ข้อมูลเดิมต่อ', 'warning');
+            return;
+          }
+          // Apply corrections: parse review.structured (JSON string of
+          // the full AI response) — corrections field carries the field-
+          // level overrides. Apply them to the visible form inputs.
+          let corrections = null;
+          if (review && review.structured) {
+            try {
+              const parsed = JSON.parse(review.structured);
+              corrections = parsed.corrections || null;
+              this._lastAiReview = parsed;
+            } catch (e) { /* tolerate malformed */ }
+          }
+          if (corrections) this._applyAiCorrections(corrections);
+          // Show flags + suggested target type as a yellow tip inside
+          // the review modal so the operator sees AI's verdict before
+          // clicking "สร้างเอกสาร".
+          this._renderAiVerdict(review, conv);
+          Layout.toast('🤖 AI ตรวจสอบเสร็จ — ตรวจรายการก่อนสร้างเอกสาร');
+        } catch (err) {
+          Layout.toast('AI failed: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      },
+
+      _applyAiCorrections(c) {
+        // Apply each correction to the corresponding form field. The
+        // review-modal IDs use the rev* prefix (see line 1538+
+        // renderReviewForm). Buyer-name/tax-id fields aren't in the
+        // current review form — when AI returns them we surface as
+        // a note in the verdict panel instead of writing them.
+        const set = (id, val) => {
+          const el = document.getElementById(id);
+          if (el && val != null && String(val).trim() !== '') {
+            el.value = val;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        };
+        set('revDocNumber', c.document_number);
+        set('revDate', c.document_date);
+        set('revVendorName', c.vendor_name);
+        set('revVendorTaxId', c.vendor_tax_id);
+        set('revSubTotal', c.sub_total);
+        set('revVatAmount', c.vat_amount);
+        set('revTotalAmount', c.total_amount);
+        if (c.our_role === 'Seller' || c.our_role === 'Buyer') {
+          // our_role decides which TargetDocumentType is sensible.
+          // The select dropdown's values match enum names so we set
+          // a sane default when AI is confident.
+        }
+      },
+
+      _renderAiVerdict(review, conv) {
+        let panel = document.getElementById('aiVerdictPanel');
+        if (!panel) {
+          panel = document.createElement('div');
+          panel.id = 'aiVerdictPanel';
+          panel.style.cssText = 'margin-top:10px;padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:13px;line-height:1.55';
+          document.getElementById('reviewBody').appendChild(panel);
+        }
+        const flags = [...(review?.complianceFlags || []), ...(conv?.complianceFlags || [])];
+        const actions = [...(review?.suggestedActions || []), ...(conv?.suggestedActions || [])];
+        const risks = [...(review?.risks || []), ...(conv?.risks || [])];
+        let targets = [];
+        if (conv && conv.structured) {
+          try { targets = (JSON.parse(conv.structured).targets) || []; } catch (e) { }
+        }
+        panel.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:6px">
+            <strong style="color:#9a3412">🤖 AI ตรวจสอบ</strong>
+            <button onclick="document.getElementById('aiVerdictPanel').remove()" style="background:none;border:none;color:#94a3b8;cursor:pointer">×</button>
+          </div>
+          ${review?.reasoning ? `<div style="color:#7c2d12;margin-bottom:6px"><b>สรุป:</b> ${Layout.esc(review.reasoning)}</div>` : ''}
+          ${targets.length ? `<div style="margin-bottom:6px"><b>แนะนำให้สร้าง:</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            ${targets.map(t => `<button class="btn btn-sm btn-outline" onclick="Page.openInDocumentForm('${Layout.esc(t.target_type)}')" title="${Layout.esc(t.rationale || '')}">${Layout.esc(t.target_type)}</button>`).join('')}
+          </div></div>` : ''}
+          ${flags.length ? `<div style="color:#7c3aed;margin-bottom:6px"><b>กฎภาษีไทย:</b> ${flags.map(f => Layout.esc(f)).join(' · ')}</div>` : ''}
+          ${actions.length ? `<div style="color:#0f766e;margin-bottom:6px"><b>แนะนำ:</b><ul style="margin:4px 0 0 18px;padding:0">${actions.map(a => `<li>${Layout.esc(a)}</li>`).join('')}</ul></div>` : ''}
+          ${risks.length ? `<div style="color:#dc2626"><b>ความเสี่ยง:</b> ${risks.map(r => Layout.esc(r)).join(' · ')}</div>` : ''}`;
+      },
+
       async saveCorrection() {
         if (!this._reviewScan) return;
         const api = Layout.api();
@@ -2059,6 +2342,69 @@
        * so the NEXT receipt from that vendor matches the same wording
        * instantly without re-prompting.
        */
+      // 🤖 Ask AI for stock decisions on every line: CreateNew vs
+      // UpdateExisting vs MatchUncertain + category + semantic equiv-
+      // alence note. Lazy — fires once per scan + caches in
+      // this._lastAiStockDecision so re-opening the modal doesn't
+      // re-bill. User overrides anything they disagree with; the
+      // override gets posted as feedback.
+      async aiStockDecisions() {
+        if (!this._reviewScan) return;
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const scanId = this._reviewScan.id;
+        if (this._lastAiStockDecision && this._lastAiStockDecision.scanId === scanId) {
+          this._applyAiStockDecisions(this._lastAiStockDecision.payload);
+          return;
+        }
+        const btn = document.getElementById('aiStockBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '🤖 กำลังถาม AI...'; }
+        try {
+          const res = await API.post(`/api/companies/${cid}/ai/ocr/${scanId}/stock-decisions`);
+          if (res && res.data && res.data.structured) {
+            const payload = JSON.parse(res.data.structured);
+            this._lastAiStockDecision = { scanId, payload };
+            this._applyAiStockDecisions(payload);
+            Layout.toast('🤖 AI ตัดสินใจให้แล้ว — กรุณาตรวจรายการก่อนยืนยัน');
+          } else {
+            Layout.toast('AI ไม่ตอบ — ใช้การจับคู่เดิม', 'warning');
+          }
+        } catch (e) {
+          Layout.toast('AI failed: ' + e.message, 'warning');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = '🤖 ให้ AI ตัดสินใจให้'; }
+        }
+      },
+
+      _applyAiStockDecisions(payload) {
+        const lines = payload?.lines || [];
+        lines.forEach(ln => {
+          // Each line has line_index — find the matching row in the
+          // modal and update its category dropdown / matched-product
+          // select / equivalence note based on AI's decision.
+          const row = document.querySelector(`#stockImportBody [data-line-index="${ln.line_index}"]`);
+          if (!row) return;
+          const catSel = row.querySelector('[data-f="category"]');
+          if (catSel && ln.category) catSel.value = ln.category;
+          const prodSel = row.querySelector('[data-f="matchedProductId"]');
+          if (prodSel && ln.matched_product_id) {
+            const opt = prodSel.querySelector(`option[value="${ln.matched_product_id}"]`);
+            if (opt) prodSel.value = ln.matched_product_id;
+          }
+          // Surface equivalence note inline so user sees WHY the AI
+          // thinks two differently-named items are the same.
+          if (ln.equivalence_note) {
+            const noteEl = row.querySelector('[data-ai-note]') || (() => {
+              const div = document.createElement('div');
+              div.setAttribute('data-ai-note', '1');
+              div.style.cssText = 'font-size:11px;color:#7c2d12;background:#fff7ed;padding:4px 8px;border-radius:4px;margin-top:4px';
+              row.appendChild(div);
+              return div;
+            })();
+            noteEl.textContent = '🤖 ' + ln.equivalence_note;
+          }
+        });
+      },
+
       async openStockImport() {
         const scan = this._reviewScan;
         if (!scan) return;
@@ -2072,6 +2418,7 @@
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-right:auto;color:var(--gray-700)">
             <input type="checkbox" id="stockImportLearn" checked> เรียนรู้ชื่อสินค้าตามผู้ขายนี้
           </label>
+          <button class="btn btn-outline" id="aiStockBtn" onclick="Page.aiStockDecisions()" style="background:#fef3c7;color:#92400e;border-color:#fde047" title="ส่งทุกบรรทัด + product catalog ให้ AI ตัดสินใจ Create/Update/Match + Inventory/Supply/FixedAsset/Service พร้อมจับคู่ของที่ชื่อต่างแต่เป็นตัวเดียวกัน">🤖 ให้ AI ตัดสินใจให้</button>
           <span style="font-size:11px;color:var(--gray-500);font-style:italic">เลือกปลายทาง (📦 / 🧻 / 🏢) ในแต่ละแถว — ระบบเดาให้แล้ว</span>
           <button class="btn btn-secondary" onclick="Layout.closeModal('stockImportModal')">ยกเลิก</button>
           <button class="btn btn-primary" id="stockImportConfirmBtn" onclick="Page.confirmStockImport()">✓ ยืนยันนำเข้า</button>`;
@@ -2231,7 +2578,7 @@
         }
 
         return `
-        <tr data-line-idx="${idx}" data-will-create="${willCreate ? '1' : '0'}" data-dest="${defaultDest}" style="border-bottom:1px solid var(--gray-200)">
+        <tr data-line-idx="${idx}" data-line-index="${idx}" data-will-create="${willCreate ? '1' : '0'}" data-dest="${defaultDest}" style="border-bottom:1px solid var(--gray-200)">
           <td style="padding:8px 6px;vertical-align:top">
             <div style="font-weight:500;color:var(--gray-900)">${Layout.esc(line.description || '-')}</div>
             <div style="font-size:11px;color:var(--gray-500);margin-top:2px">

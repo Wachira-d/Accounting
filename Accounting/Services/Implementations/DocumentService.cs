@@ -27,6 +27,7 @@ public class DocumentService : IDocumentService
     private readonly ITaxService? _taxService;
     private readonly IBotExchangeRateService? _fxRates;
     private readonly ISensitivityService? _sensitivity;
+    private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -38,7 +39,9 @@ public class DocumentService : IDocumentService
         IBankService? bankService = null,
         ITaxService? taxService = null,
         IBotExchangeRateService? fxRates = null,
-        ISensitivityService? sensitivity = null)
+        ISensitivityService? sensitivity = null,
+        Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null,
+        IWebhookService? webhooks = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -54,6 +57,86 @@ public class DocumentService : IDocumentService
         _bankService = bankService;
         _taxService = taxService;
         _fxRates = fxRates;
+        _aiAugmenter = aiAugmenter;
+        _webhooks = webhooks;
+    }
+
+    private readonly IWebhookService? _webhooks;
+
+    /// <summary>Fire an outbound webhook. Wrapped in try/catch so a
+    /// slow / failed delivery NEVER blocks the parent API call from
+    /// returning. WebhookService handles retry-with-backoff internally.</summary>
+    private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
+    {
+        if (_webhooks == null) return;
+        try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Webhook {Event} fire-and-forget failed", eventType); }
+    }
+
+    /// <summary>Auto-populate ProjectCostEntry from an approved
+    /// expense-side document. Cost-bearing types only — Sales-side
+    /// docs feed Project.ActualRevenue separately. Idempotent on
+    /// DocumentLineId so re-running on the same doc doesn't
+    /// duplicate.</summary>
+    private async Task SyncProjectCostEntriesAsync(Guid companyId, Document doc)
+    {
+        var costTypes = new[] {
+            DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
+        };
+        if (!costTypes.Contains(doc.DocumentType)) return;
+        if (doc.Lines == null || doc.Lines.Count == 0) return;
+
+        // Snapshot the lines that already have a PCE so we skip them
+        // in O(1) rather than running an exists-query per line.
+        var lineIds = doc.Lines.Select(l => l.Id).ToList();
+        var alreadyBookedLineIds = await _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId
+                && !c.IsDeleted
+                && c.DocumentLineId.HasValue
+                && lineIds.Contains(c.DocumentLineId.Value))
+            .Select(c => c.DocumentLineId!.Value)
+            .ToListAsync();
+
+        // Cache projects we touch so we update each one's ActualCost
+        // exactly once across the doc's lines (some PIs split a single
+        // project across many lines; we'd otherwise hit the DB per line).
+        var touchedProjects = new Dictionary<Guid, decimal>();
+
+        foreach (var line in doc.Lines)
+        {
+            // Per-line projectId wins; header is the fallback so users
+            // can tag the doc once and still have individual lines
+            // override (e.g. one PO with 90% Project A + 10% Project B).
+            var projectId = line.ProjectId ?? doc.ProjectId;
+            if (!projectId.HasValue) continue;
+            if (alreadyBookedLineIds.Contains(line.Id)) continue;
+            _db.ProjectCostEntries.Add(new ProjectCostEntry
+            {
+                CompanyId = companyId,
+                ProjectId = projectId.Value,
+                EntryDate = doc.DocumentDate,
+                CostType = "Material",         // generic; could classify on AccountType later
+                Description = $"{line.Description} [auto from {doc.DocumentNumber}]",
+                Quantity = line.Quantity,
+                UnitCost = line.UnitPrice,
+                Amount = line.Amount,
+                DocumentId = doc.Id,
+                DocumentLineId = line.Id,
+                IsBillable = false,
+            });
+            touchedProjects[projectId.Value] = touchedProjects.GetValueOrDefault(projectId.Value) + line.Amount;
+        }
+        if (touchedProjects.Count > 0)
+        {
+            var ids = touchedProjects.Keys.ToList();
+            var projects = await _db.Projects
+                .Where(p => p.CompanyId == companyId && ids.Contains(p.Id))
+                .ToListAsync();
+            foreach (var p in projects)
+                p.ActualCost += touchedProjects[p.Id];
+        }
+        await _db.SaveChangesAsync();
     }
 
     /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
@@ -102,6 +185,7 @@ public class DocumentService : IDocumentService
         };
         var purchaseDocTypes = new[] {
             DocumentType.PurchaseRequisition, DocumentType.PurchaseOrder,
+            DocumentType.GoodsReceiptNote,
             DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher,
             DocumentType.CertificateInLieu
         };
@@ -216,8 +300,21 @@ public class DocumentService : IDocumentService
                 CreditNoteReason = request.DocumentType == DocumentType.CreditNote
                     ? request.CreditNoteReason
                     : null,
+                // Counterparty tax-invoice metadata — only meaningful for
+                // supplier-issued doc types (PurchaseInvoice, CertificateInLieu).
+                // Stored unconditionally though so partner sync can round-trip.
+                SupplierInvoiceNumber = request.SupplierInvoiceNumber,
+                SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate,
+                CreditDays = request.CreditDays,
+                PaymentTerms = request.PaymentTerms,
                 CreatedBy = createdBy
             };
+
+            // Auto-fill DueDate from CreditDays when caller didn't provide one
+            // explicitly. Keeps DSO/DPO reports working even when the partner
+            // API only sends credit terms.
+            if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value > 0)
+                doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
 
             // Auto-link Revenue Contract via Project when not explicitly provided.
             // If document is tagged to a project that has exactly one active
@@ -287,7 +384,9 @@ public class DocumentService : IDocumentService
 
             await transaction.CommitAsync();
 
-            return await GetDocumentAsync(companyId, doc.Id);
+            var created = await GetDocumentAsync(companyId, doc.Id);
+            await FireWebhookAsync(companyId, "document.created", created);
+            return created;
         }
         catch
         {
@@ -300,7 +399,7 @@ public class DocumentService : IDocumentService
     {
         var doc = await _db.Documents
             .Include(d => d.Contact)
-            .Include(d => d.Lines)
+            .Include(d => d.Lines).ThenInclude(l => l.Project)
             .Include(d => d.Project)
             .Include(d => d.BankAccount)
             .Include(d => d.PaymentAccount)
@@ -309,7 +408,85 @@ public class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         var etax = await GetLatestEtaxAsync(companyId, new[] { documentId });
-        return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId));
+
+        // Conversion lineage — populate both directions so the detail
+        // modal can show "แปลงมาจาก X" + "เอกสารต่อเนื่อง: Y, Z".
+        DocumentBrief? upstream = null;
+        if (doc.RelatedDocumentId.HasValue)
+        {
+            upstream = await _db.Documents
+                .Where(p => p.Id == doc.RelatedDocumentId.Value && p.CompanyId == companyId)
+                .Select(p => new DocumentBrief(p.Id, p.DocumentNumber, p.DocumentType,
+                    p.Status, p.DocumentDate, p.TotalAmount))
+                .FirstOrDefaultAsync();
+        }
+        var downstream = await _db.Documents
+            .Where(c => c.RelatedDocumentId == documentId && c.CompanyId == companyId)
+            .OrderBy(c => c.DocumentDate).ThenBy(c => c.CreatedAt)
+            .Select(c => new DocumentBrief(c.Id, c.DocumentNumber, c.DocumentType,
+                c.Status, c.DocumentDate, c.TotalAmount))
+            .ToListAsync();
+
+        var (pct, status) = await ComputeConversionStatusAsync(companyId, doc);
+
+        // Project-cost booking summary — pull every PCE auto-spawned from
+        // this doc (DocumentId or per-line DocumentLineId) and aggregate
+        // by project so the UI can flag the doc "🏗️ ลงโครงการแล้ว 3 รายการ".
+        var lineIds = doc.Lines.Select(l => l.Id).ToList();
+        var pceRows = await _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId
+                && !c.IsDeleted
+                && (c.DocumentId == documentId
+                    || (c.DocumentLineId.HasValue && lineIds.Contains(c.DocumentLineId.Value))))
+            .Select(c => new {
+                c.Id, c.ProjectId, c.DocumentLineId, c.Amount,
+                ProjectCode = c.Project.Code,
+                ProjectName = c.Project.Name,
+            })
+            .ToListAsync();
+
+        var bookedByProject = pceRows
+            .GroupBy(r => r.ProjectId)
+            .Select(g => new ProjectCostBrief(
+                g.Key, g.First().ProjectCode, g.First().ProjectName,
+                g.Count(), g.Sum(r => r.Amount)))
+            .OrderByDescending(b => b.Amount)
+            .ToList();
+        var pceByLine = pceRows
+            .Where(r => r.DocumentLineId.HasValue)
+            .GroupBy(r => r.DocumentLineId!.Value)
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        return MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId),
+            upstream, downstream, pct, status,
+            pceRows.Count > 0, pceRows.Count, pceRows.Sum(r => r.Amount), bookedByProject,
+            pceByLine);
+    }
+
+    /// <summary>Compute completion percent across child docs for the
+    /// source doc passed in. Returns null when the doc has no source
+    /// lines (i.e. nothing consumable) so the UI can hide the badge.
+    /// </summary>
+    private async Task<(decimal? Pct, string? Status)> ComputeConversionStatusAsync(Guid companyId, Document source)
+    {
+        if (source.Lines == null || source.Lines.Count == 0) return (null, null);
+        var sourceLineIds = source.Lines.Select(l => l.Id).ToList();
+        var totalSourceQty = source.Lines.Sum(l => l.Quantity);
+        if (totalSourceQty <= 0) return (null, null);
+        var consumed = await _db.DocumentLines
+            .Where(l => l.SourceLineId.HasValue && sourceLineIds.Contains(l.SourceLineId.Value))
+            .Where(l => !l.Document.IsDeleted
+                && l.Document.Status != DocumentStatus.Voided
+                && l.Document.Status != DocumentStatus.Rejected)
+            .SumAsync(l => (decimal?)l.Quantity) ?? 0;
+        var pct = Math.Min(100, Math.Round((consumed / totalSourceQty) * 100, 1, MidpointRounding.AwayFromZero));
+        var status = pct switch
+        {
+            >= 100 => "Full",
+            > 0 => "Partial",
+            _ => "None",
+        };
+        return (pct, status);
     }
 
     public async Task<DocumentResponse> GetDocumentForUserAsync(Guid companyId, Guid documentId, Guid userId)
@@ -431,8 +608,26 @@ public class DocumentService : IDocumentService
 
         var etaxByDoc = await GetLatestEtaxAsync(companyId, items.Select(i => i.Id));
 
+        // Batch-flag "ลงโครงการแล้ว" so the list view can show a 🏗️
+        // badge without per-row roundtrips. Only top-level counts +
+        // amount; the per-line + per-project breakdown is rendered
+        // only on detail-view to keep the list payload small.
+        var ids = items.Select(i => i.Id).ToList();
+        var pceSummary = await _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId
+                && !c.IsDeleted
+                && c.DocumentId.HasValue
+                && ids.Contains(c.DocumentId!.Value))
+            .GroupBy(c => c.DocumentId!.Value)
+            .Select(g => new { DocId = g.Key, Count = g.Count(), Amount = g.Sum(c => c.Amount) })
+            .ToDictionaryAsync(g => g.DocId, g => (g.Count, g.Amount));
+
         return new PagedResponse<DocumentResponse>(
-            items.Select(d => MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id))).ToList(),
+            items.Select(d => {
+                var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
+                return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
+                    hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount);
+            }).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -486,6 +681,10 @@ public class DocumentService : IDocumentService
         if (request.CustomTermsAndConditions != null) doc.CustomTermsAndConditions = request.CustomTermsAndConditions;
         if (request.RevenueContractId.HasValue) doc.RevenueContractId = request.RevenueContractId.Value;
         if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
+        if (request.SupplierInvoiceNumber != null) doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
+        if (request.SupplierTaxInvoiceDate.HasValue) doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
+        if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
+        if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -566,7 +765,9 @@ public class DocumentService : IDocumentService
         }
 
         await _db.SaveChangesAsync();
-        return await GetDocumentAsync(companyId, documentId);
+        var updated = await GetDocumentAsync(companyId, documentId);
+        await FireWebhookAsync(companyId, "document.updated", updated);
+        return updated;
     }
 
     public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
@@ -580,8 +781,8 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        if (doc.Status != DocumentStatus.Draft)
-            throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
+        if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
+            throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
         // Soft warnings — legal/correct but unusual patterns the operator
         // should eyeball before approving. Hard errors still throw below.
@@ -590,7 +791,52 @@ public class DocumentService : IDocumentService
         // so the UI can prompt for explicit confirmation.
         var warnings = await CollectApprovalWarningsAsync(companyId, doc);
         if (warnings.Count > 0 && !acknowledgeWarnings)
-            throw new DocumentApprovalWarningsException(warnings);
+        {
+            // Enrich each warning with an AI-suggested fix when augmenter
+            // is wired AND online. Done in parallel with a short overall
+            // budget (8s) so the approval dialog isn't laggy. Each call
+            // falls back to local on its own — overall request still
+            // throws the 422 regardless of whether AI ran.
+            IReadOnlyList<DocumentApprovalAiHint>? hints = null;
+            if (_aiAugmenter != null && warnings.Count > 0)
+            {
+                try
+                {
+                    using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                    var snapshot = new
+                    {
+                        doc.Id, doc.DocumentNumber, doc.DocumentType, doc.DocumentDate,
+                        doc.TotalAmount, doc.SubTotal, doc.VatAmount,
+                        WhtAmount = doc.WithholdingTaxAmount,
+                        doc.Currency, doc.BalanceDue, doc.ContactId,
+                        ContactName = doc.Contact?.Name,
+                        ContactTaxId = doc.Contact?.TaxId,
+                        LineCount = doc.Lines?.Count ?? 0,
+                    };
+                    // Single BULK call covering every warning — AI can
+                    // see "warning 1 + warning 2 share a root cause"
+                    // patterns the previous per-warning fan-out missed.
+                    // Cost drops from N× to 1×.
+                    var bulk = await _aiAugmenter.SuggestApprovalWarningFixesBulkAsync(
+                        companyId, doc.Id, warnings, snapshot, null, aiCts.Token);
+                    hints = bulk.Hints.Select(r => new DocumentApprovalAiHint(
+                        Primary: r.Answer ?? "Acknowledge",
+                        Confidence: r.Confidence ?? 0.5m,
+                        Reasoning: r.Reasoning,
+                        SuggestedActions: r.SuggestedActions,
+                        Risks: r.Risks,
+                        ComplianceFlags: r.ComplianceFlags,
+                        FeedbackId: r.FeedbackId,
+                        UsedAi: r.UsedAi)).ToList();
+                }
+                catch (Exception aiEx)
+                {
+                    // AI failure must not block the warning surfacing.
+                    _logger.LogWarning(aiEx, "Approval-warning AI augmentation failed; surfacing raw warnings");
+                }
+            }
+            throw new DocumentApprovalWarningsException(warnings, hints);
+        }
 
         // CreditNote must declare its reason — per ประมวลรัษฎากร §82/10 the
         // CN reason distinguishes whether goods physically returned (restocks)
@@ -645,7 +891,7 @@ public class DocumentService : IDocumentService
                     .Where(d => d.Id == documentId && d.CompanyId == companyId)
                     .Select(d => d.Status)
                     .FirstAsync();
-                if (lockedStatus != DocumentStatus.Draft)
+                if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
 
                 // Idempotency guard INSIDE transaction to prevent race condition
@@ -739,7 +985,27 @@ public class DocumentService : IDocumentService
             }
         }
 
-        return await GetDocumentAsync(companyId, documentId);
+        var approved = await GetDocumentAsync(companyId, documentId);
+
+        // Auto-feed ProjectCostEntry when an approved EXPENSE-side
+        // document carries a ProjectId. Closes the loop the audit
+        // flagged: ProjectCostEntry was manual-only, so approved cost
+        // documents bypassed the project P&L roll-up. Each ProjectId-
+        // bearing line becomes a ProjectCostEntry row, idempotent on
+        // (DocumentLineId) — re-approving the same doc doesn't
+        // duplicate entries.
+        try
+        {
+            await SyncProjectCostEntriesAsync(companyId, doc);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Project cost entry sync failed for doc {DocId}", documentId);
+        }
+
+        await FireWebhookAsync(companyId, "document.status_changed",
+            new { document = approved, from = "Draft", to = approved.Status });
+        return approved;
     }
 
     /// <summary>
@@ -947,6 +1213,17 @@ public class DocumentService : IDocumentService
             }
             catch (Exception ex) { _logger.LogWarning(ex, "DocumentVoided notification failed for {DocId}", documentId); }
         }
+
+        // Webhook — DocumentVoided fires last so partners observe a
+        // fully-settled state (linked payments already reversed, JE
+        // already gone, bank-group already unwound).
+        await FireWebhookAsync(companyId, "document.voided", new
+        {
+            documentId = doc.Id,
+            documentNumber = doc.DocumentNumber,
+            documentType = doc.DocumentType.ToString(),
+            voidedAt = DateTime.UtcNow,
+        });
     }
 
     /// <summary>
@@ -1233,7 +1510,7 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ไม่พบบัญชี 'หนี้สูญ' (64000) ในผังบัญชี กรุณาเพิ่มบัญชีก่อน");
 
-        var arAcc = await FindAccountAsync(companyId, "113")
+        var arAcc = await FindAccountAsync(companyId, "113", doc.Contact)
             ?? throw new InvalidOperationException("ไม่พบบัญชี 'ลูกหนี้การค้า' (113) ในผังบัญชี");
 
         var writeOffAmount = doc.BalanceDue;
@@ -1628,11 +1905,23 @@ public class DocumentService : IDocumentService
         {
             DocumentType.Receipt, DocumentType.ReceiptVoucher
         },
-        // Purchase side
+        // Purchase side — full PR → PO → GRN → Invoice → Payment chain.
+        // GRN inserted between PO and PurchaseInvoice so partial receipts
+        // are tracked + 3-way match can validate billing against actual
+        // receipt quantities.
         [DocumentType.PurchaseRequisition] = new[] { DocumentType.PurchaseOrder },
         [DocumentType.PurchaseOrder] = new[]
         {
-            DocumentType.PurchaseInvoice, DocumentType.Expense
+            DocumentType.GoodsReceiptNote,        // partial GRN against PO
+            DocumentType.PurchaseInvoice,         // skip GRN when buying services
+            DocumentType.Expense,
+        },
+        [DocumentType.GoodsReceiptNote] = new[]
+        {
+            // From GRN, AP creates the bill. SourceLineId on the new
+            // invoice line points back to the GRN line so 3-way match
+            // can verify "billed qty ≤ received qty".
+            DocumentType.PurchaseInvoice, DocumentType.Expense,
         },
         [DocumentType.PurchaseInvoice] = new[]
         {
@@ -1676,7 +1965,13 @@ public class DocumentService : IDocumentService
 
     private static FulfillmentAxis GetFulfillmentAxis(DocumentType type) => type switch
     {
-        DocumentType.DeliveryNote => FulfillmentAxis.Delivery,
+        // Delivery-axis children — track "how much was physically moved":
+        //   • DeliveryNote on the sales side.
+        //   • GoodsReceiptNote on the purchase side (received qty from
+        //     the PO; multiple partial GRNs are normal).
+        DocumentType.DeliveryNote or DocumentType.GoodsReceiptNote
+            => FulfillmentAxis.Delivery,
+        // Billing-axis children — track "how much was invoiced":
         DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.BillingNote
             or DocumentType.PurchaseInvoice or DocumentType.Expense
             or DocumentType.PurchaseOrder => FulfillmentAxis.Billing,
@@ -2191,7 +2486,11 @@ public class DocumentService : IDocumentService
             CountryCode = request.CountryCode ?? "TH",
             Phone = request.Phone,
             Email = request.Email,
-            ContactPerson = request.ContactPerson
+            ContactPerson = request.ContactPerson,
+            // Per-contact GL overrides — null = use system default.
+            DefaultArAccountId = request.DefaultArAccountId,
+            DefaultApAccountId = request.DefaultApAccountId,
+            DefaultIrGrAccountId = request.DefaultIrGrAccountId,
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -2220,7 +2519,13 @@ public class DocumentService : IDocumentService
 
     public async Task<ContactResponse> GetContactAsync(Guid companyId, Guid contactId)
     {
-        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
+        var contact = await _db.Contacts
+            // Include GL-override nav properties so the UI can show the
+            // account codes/names alongside the FKs.
+            .Include(c => c.DefaultArAccount)
+            .Include(c => c.DefaultApAccount)
+            .Include(c => c.DefaultIrGrAccount)
+            .FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
         return MapContactToResponse(contact);
     }
@@ -2308,9 +2613,21 @@ public class DocumentService : IDocumentService
         if (request.Email != null) contact.Email = request.Email;
         if (request.ContactPerson != null) contact.ContactPerson = request.ContactPerson;
         if (request.IsActive.HasValue) contact.IsActive = request.IsActive.Value;
+        // Per-contact GL overrides — record.Nullable<Guid> can't tell
+        // "unset" from "explicitly clear to default", so we treat null
+        // as "no change". To clear an override the UI POSTs
+        // Guid.Empty which we map back to null below.
+        if (request.DefaultArAccountId.HasValue)
+            contact.DefaultArAccountId = request.DefaultArAccountId == Guid.Empty ? null : request.DefaultArAccountId;
+        if (request.DefaultApAccountId.HasValue)
+            contact.DefaultApAccountId = request.DefaultApAccountId == Guid.Empty ? null : request.DefaultApAccountId;
+        if (request.DefaultIrGrAccountId.HasValue)
+            contact.DefaultIrGrAccountId = request.DefaultIrGrAccountId == Guid.Empty ? null : request.DefaultIrGrAccountId;
 
         await _db.SaveChangesAsync();
-        return MapContactToResponse(contact);
+        // Reload with nav properties so MapContactToResponse can emit
+        // the AR/AP/IR-GR account codes for the UI labels.
+        return await GetContactAsync(companyId, contactId);
     }
 
     public async Task<ContactSmartDefaults> GetContactSmartDefaultsAsync(Guid companyId, Guid contactId)
@@ -2449,6 +2766,11 @@ public class DocumentService : IDocumentService
                 BankAccountId = request.OverrideBankAccountId ?? doc.BankAccountId,
                 OverrideBankAccountId = request.OverrideBankAccountId,
                 WithholdingTaxAmount = paymentWht,
+                // Per-payment ProjectId override — when null, the JE
+                // posting still falls back to doc.ProjectId so the
+                // common case "all of an invoice's payments hit one
+                // project" needs no extra input.
+                ProjectId = request.ProjectId,
                 Notes = request.Notes,
                 CreatedBy = createdBy
             };
@@ -2518,6 +2840,32 @@ public class DocumentService : IDocumentService
             }
             catch { /* best-effort notification */ }
 
+            // Webhooks — payment.received (always) + document.paid
+            // (when BalanceDue is now zero). Both fire outside the
+            // commit so partners get a settled view + a slow webhook
+            // delivery never blocks the API return.
+            await FireWebhookAsync(companyId, "payment.received", new
+            {
+                paymentId = payment.Id,
+                paymentNumber = payment.PaymentNumber,
+                documentId = payment.DocumentId,
+                documentNumber = doc.DocumentNumber,
+                amount = payment.Amount,
+                method = payment.PaymentMethod.ToString(),
+                paymentDate = payment.PaymentDate,
+            });
+            if (doc.BalanceDue <= 0.01m)
+            {
+                await FireWebhookAsync(companyId, "document.paid", new
+                {
+                    documentId = doc.Id,
+                    documentNumber = doc.DocumentNumber,
+                    documentType = doc.DocumentType.ToString(),
+                    totalAmount = doc.TotalAmount,
+                    paidAt = DateTime.UtcNow,
+                });
+            }
+
             return new PaymentResponse(
                 payment.Id, payment.PaymentNumber, payment.DocumentId,
                 payment.PaymentDate, payment.Amount, payment.PaymentMethod,
@@ -2530,6 +2878,239 @@ public class DocumentService : IDocumentService
             throw;
         }
         }); // end ExecutionStrategy
+    }
+
+    /// <summary>Multi-document payment — one Payment row settles many
+    /// Documents pro-rata to caller-specified AllocatedAmount per row.
+    /// Each allocation triggers the same per-doc settlement (PaidAmount
+    /// roll, status flip, WHT slice, per-doc JE) the legacy
+    /// single-doc path uses, so existing accounting invariants stay
+    /// intact. Bank balance is updated ONCE at the total.
+    ///
+    /// Validation:
+    ///   • Every allocation amount must be ≤ that doc's BalanceDue
+    ///   • SUM(allocations) ≤ Amount; the remainder is reported as
+    ///     UnappliedCredit (operator can attach later via PUT)
+    ///   • All target docs must be Approved / PartiallyPaid / Sent
+    ///   • Documents must share the same Contact (mixing customers in
+    ///     one cheque is almost always a data-entry error)
+    ///   • Multiple bank accounts across docs are tolerated — the bank
+    ///     balance hits the OverrideBankAccountId or the FIRST doc's
+    ///     BankAccountId in that order.
+    /// </summary>
+    public async Task<PaymentResponse> CreateMultiDocPaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
+    {
+        if (request.Allocations == null || request.Allocations.Count == 0)
+            throw new InvalidOperationException("Allocations ต้องมีอย่างน้อย 1 รายการ");
+        if (request.Amount <= 0)
+            throw new InvalidOperationException("จำนวนเงินชำระต้องมากกว่า 0");
+        if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
+            throw new InvalidOperationException("วันที่ชำระเงินต้องไม่เป็นวันที่ในอนาคต");
+
+        var allocSum = request.Allocations.Sum(a => a.AllocatedAmount);
+        if (request.Allocations.Any(a => a.AllocatedAmount <= 0))
+            throw new InvalidOperationException("AllocatedAmount ของทุกแถวต้องมากกว่า 0");
+        if (allocSum > request.Amount + 0.01m)
+            throw new InvalidOperationException(
+                $"รวม allocation ({allocSum:N2}) เกินจำนวนเงินชำระ ({request.Amount:N2})");
+
+        var docIds = request.Allocations.Select(a => a.DocumentId).Distinct().ToList();
+        if (docIds.Count != request.Allocations.Count)
+            throw new InvalidOperationException("แต่ละ Document จัดสรรได้แค่ครั้งเดียวต่อ payment");
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            // Lock all target docs in one go — sort by Id to avoid deadlock
+            // when two concurrent multi-doc payments overlap on the same
+            // docs in different orders.
+            var docs = await _db.Documents
+                .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = ANY({0}) AND \"CompanyId\" = {1} ORDER BY \"Id\" FOR UPDATE",
+                    docIds.ToArray(), companyId)
+                .ToListAsync();
+            if (docs.Count != docIds.Count)
+                throw new KeyNotFoundException("ไม่พบเอกสารบางรายการ");
+
+            var contacts = docs.Select(d => d.ContactId).Distinct().ToList();
+            if (contacts.Count > 1)
+                throw new InvalidOperationException(
+                    "เอกสารทั้งหมดในการชำระครั้งเดียวต้องเป็นของลูกค้า/ผู้ขายรายเดียวกัน");
+
+            var docMap = docs.ToDictionary(d => d.Id);
+            foreach (var alloc in request.Allocations)
+            {
+                var d = docMap[alloc.DocumentId];
+                if (d.Status != DocumentStatus.Approved && d.Status != DocumentStatus.PartiallyPaid && d.Status != DocumentStatus.Sent)
+                    throw new InvalidOperationException(
+                        $"เอกสาร {d.DocumentNumber} สถานะ {d.Status} ไม่สามารถชำระได้");
+                if (alloc.AllocatedAmount > d.BalanceDue + 0.01m)
+                    throw new InvalidOperationException(
+                        $"จัดสรร {alloc.AllocatedAmount:N2} ของ {d.DocumentNumber} เกินยอดค้าง ({d.BalanceDue:N2})");
+            }
+
+            await using var transaction = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                // ===== Create the parent Payment =====
+                var payYearMonth = DateTime.UtcNow.ToString("yyyyMM");
+                var payPrefix = $"PAY-{payYearMonth}-";
+                var maxPayNum = await _db.Payments
+                    .IgnoreQueryFilters()
+                    .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(payPrefix))
+                    .Select(p => p.PaymentNumber)
+                    .MaxAsync() as string;
+                var paySeq = 1;
+                if (maxPayNum != null && int.TryParse(maxPayNum.Substring(payPrefix.Length), out var parsed))
+                    paySeq = parsed + 1;
+
+                var firstDoc = docMap[request.Allocations[0].DocumentId];
+                var payment = new Payment
+                {
+                    CompanyId = companyId,
+                    PaymentNumber = $"{payPrefix}{paySeq:D4}",
+                    // Primary DocumentId = first allocation's doc (back-compat).
+                    DocumentId = firstDoc.Id,
+                    PaymentDate = request.PaymentDate,
+                    Amount = request.Amount,
+                    PaymentMethod = request.PaymentMethod,
+                    Reference = request.Reference,
+                    BankAccount = request.BankAccount,
+                    BankAccountId = request.OverrideBankAccountId ?? firstDoc.BankAccountId,
+                    OverrideBankAccountId = request.OverrideBankAccountId,
+                    WithholdingTaxAmount = 0,  // accumulated below from allocations
+                    ProjectId = request.ProjectId,
+                    Notes = request.Notes,
+                    CreatedBy = createdBy,
+                };
+                _db.Payments.Add(payment);
+                await _db.SaveChangesAsync();
+
+                // ===== Per-doc settlement + WHT split + JE =====
+                decimal totalWht = 0;
+                var allocIndex = 0;
+                foreach (var alloc in request.Allocations)
+                {
+                    allocIndex++;
+                    var d = docMap[alloc.DocumentId];
+
+                    // WHT slice — explicit override per allocation OR
+                    // proportional to AllocatedAmount / d.TotalAmount.
+                    decimal whtSlice = 0;
+                    if (d.WithholdingTaxAmount > 0)
+                    {
+                        if (alloc.WithholdingTaxAmount.HasValue)
+                        {
+                            whtSlice = Math.Round(alloc.WithholdingTaxAmount.Value, 2, MidpointRounding.AwayFromZero);
+                        }
+                        else
+                        {
+                            var alreadyWht = await _db.Payments.AsNoTracking()
+                                .Where(p => p.DocumentId == d.Id && !p.IsDeleted && p.Id != payment.Id)
+                                .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+                            var remainingCap = Math.Max(0m, d.WithholdingTaxAmount - alreadyWht);
+                            var isFinal = alloc.AllocatedAmount + 0.01m >= d.BalanceDue;
+                            whtSlice = isFinal
+                                ? remainingCap
+                                : Math.Min(remainingCap,
+                                    d.TotalAmount > 0
+                                        ? Math.Round(alloc.AllocatedAmount * d.WithholdingTaxAmount / d.TotalAmount,
+                                            2, MidpointRounding.AwayFromZero)
+                                        : 0);
+                        }
+                    }
+
+                    _db.PaymentAllocations.Add(new PaymentAllocation
+                    {
+                        CompanyId = companyId,
+                        PaymentId = payment.Id,
+                        DocumentId = d.Id,
+                        AllocatedAmount = alloc.AllocatedAmount,
+                        WithholdingTaxAmount = whtSlice,
+                        Note = alloc.Note,
+                        CreatedBy = createdBy,
+                    });
+                    totalWht += whtSlice;
+
+                    // Settle the document
+                    d.PaidAmount += alloc.AllocatedAmount;
+                    d.BalanceDue = d.TotalAmount - d.PaidAmount;
+                    d.Status = d.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+                    if (d.Status == DocumentStatus.Paid)
+                    {
+                        d.AgingDays = null;
+                        d.AgingLastEvaluatedAt = DateTime.UtcNow;
+                    }
+
+                    // Per-doc journal — synthesize a non-tracked Payment
+                    // scoped to this allocation row. CreatePaymentJournalAsync
+                    // reads only Amount / WithholdingTaxAmount / PaymentNumber
+                    // / PaymentDate / ProjectId off the param; never
+                    // touches Id and never adds to DbContext. Allocation-
+                    // specific PaymentNumber tag lets the JE Reference
+                    // distinguish multiple JEs from the same parent payment.
+                    var virtualPayment = new Payment
+                    {
+                        CompanyId = companyId,
+                        PaymentNumber = $"{payment.PaymentNumber}/{allocIndex}",
+                        DocumentId = d.Id,
+                        PaymentDate = payment.PaymentDate,
+                        Amount = alloc.AllocatedAmount,
+                        PaymentMethod = payment.PaymentMethod,
+                        Reference = payment.Reference,
+                        BankAccount = payment.BankAccount,
+                        BankAccountId = payment.BankAccountId,
+                        OverrideBankAccountId = payment.OverrideBankAccountId,
+                        WithholdingTaxAmount = whtSlice,
+                        ProjectId = payment.ProjectId,
+                        Notes = payment.Notes,
+                        CreatedBy = createdBy,
+                    };
+                    await CreatePaymentJournalAsync(companyId, d, virtualPayment, createdBy);
+                }
+
+                payment.WithholdingTaxAmount = totalWht;
+                await _db.SaveChangesAsync();
+
+                // ===== Bank-balance sync (once at total) =====
+                if (payment.BankAccountId.HasValue)
+                {
+                    var isInflow = firstDoc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
+                        or DocumentType.Receipt or DocumentType.ReceiptVoucher
+                        or DocumentType.DebitNote or DocumentType.BillingNote;
+                    var delta = isInflow ? request.Amount : -request.Amount;
+                    await _db.BankAccounts
+                        .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + delta));
+                }
+
+                await transaction.CommitAsync();
+
+                // Re-load PaymentAllocation rows to pick up generated Ids,
+                // then enrich with the docMap (resolved client-side).
+                var rawAllocs = await _db.PaymentAllocations
+                    .Where(pa => pa.PaymentId == payment.Id && !pa.IsDeleted)
+                    .Select(pa => new { pa.Id, pa.PaymentId, pa.DocumentId,
+                        pa.AllocatedAmount, pa.WithholdingTaxAmount, pa.Note })
+                    .ToListAsync();
+                var persistedAllocs = rawAllocs.Select(pa => new PaymentAllocationResponse(
+                    pa.Id, pa.PaymentId, pa.DocumentId,
+                    docMap[pa.DocumentId].DocumentNumber,
+                    docMap[pa.DocumentId].DocumentType,
+                    pa.AllocatedAmount, pa.WithholdingTaxAmount, pa.Note)).ToList();
+
+                return new PaymentResponse(
+                    payment.Id, payment.PaymentNumber, payment.DocumentId,
+                    payment.PaymentDate, payment.Amount, payment.PaymentMethod,
+                    payment.Reference, payment.BankAccount, payment.BankAccountId,
+                    payment.Notes, payment.CreatedAt,
+                    persistedAllocs, request.Amount - allocSum);
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null)
@@ -2549,10 +3130,33 @@ public class DocumentService : IDocumentService
 
     /// <summary>
     /// ค้นหาบัญชีจากรหัส — exact match ก่อน แล้ว prefix match (level 4)
-    /// เช่น "113" จะ match "11310" (ลูกหนี้การค้า)
+    /// เช่น "113" จะ match "11310" (ลูกหนี้การค้า).
+    /// When contactOverride is set the contact's per-contact GL pin
+    /// wins (e.g. ลูกหนี้พนักงาน vs ลูกหนี้การค้า depending on contact).
+    /// codePrefix selects which override applies: "113" → AR, "212"
+    /// → AP, "212305" → IR/GR clearing.
     /// </summary>
-    private async Task<ChartOfAccount?> FindAccountAsync(Guid companyId, string codePrefix)
+    private async Task<ChartOfAccount?> FindAccountAsync(
+        Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
+        if (contactOverride != null)
+        {
+            Guid? overrideId = codePrefix switch
+            {
+                "113" => contactOverride.DefaultArAccountId,
+                "212" => contactOverride.DefaultApAccountId,
+                "212305" => contactOverride.DefaultIrGrAccountId,
+                _ => null,
+            };
+            if (overrideId.HasValue)
+            {
+                var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
+                if (pinned != null) return pinned;
+                // The override points at a deleted/inactive account —
+                // fall through to the system default rather than throw.
+            }
+        }
         return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts
@@ -2773,7 +3377,7 @@ public class DocumentService : IDocumentService
             // On Cash basis the AR balance is GROSS (full amount) and WHT
             // isn't recognized here — it's recognized when the customer
             // actually pays and withholds (Receipt path below).
-            var arAccount = await FindAccountAsync(companyId, "113");
+            var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
             var arAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
                 ? doc.TotalAmount + doc.WithholdingTaxAmount
                 : doc.TotalAmount;
@@ -2976,7 +3580,7 @@ public class DocumentService : IDocumentService
             // (we'll withhold when we pay). On Cash the AP carries GROSS
             // (full amount we owe before deducting the WHT we'll withhold
             // when actually paying).
-            var apAccount = await FindAccountAsync(companyId, "212");
+            var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
             var apAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
                 ? doc.TotalAmount + doc.WithholdingTaxAmount
                 : doc.TotalAmount;
@@ -3027,7 +3631,7 @@ public class DocumentService : IDocumentService
                 // balance. Pull the WHT amount from the source so we always
                 // match what was actually withheld, not whatever the operator
                 // typed on the Receipt.
-                var arAccount = await FindAccountAsync(companyId, "113");
+                var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     // For partial / installment receipts, use the WHT
@@ -3099,7 +3703,7 @@ public class DocumentService : IDocumentService
 
             if (doc.RelatedDocumentId.HasValue)
             {
-                var apAccount = await FindAccountAsync(companyId, "212");
+                var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     // Cash basis: PI booked AP at GROSS, skipped the WHT
@@ -3321,7 +3925,7 @@ public class DocumentService : IDocumentService
                 if (whtAccount != null)
                     pendingLines.Add((whtAccount.Id, thbWht, 0, $"WHT (ถูกหัก) งวด {payment.PaymentNumber}"));
             }
-            var arAccount = await FindAccountAsync(companyId, "113");
+            var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
             if (arAccount != null)
             {
                 var arClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
@@ -3330,7 +3934,7 @@ public class DocumentService : IDocumentService
         }
         else
         {
-            var apAccount = await FindAccountAsync(companyId, "212");
+            var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
             if (apAccount != null)
             {
                 var apClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
@@ -3381,9 +3985,12 @@ public class DocumentService : IDocumentService
             IsAutoGenerated = true,
             SourceDocumentId = doc.Id,
             FiscalPeriodId = period?.Id,
-            // Inherit project tag from the source document so payment JEs roll up
-            // into per-project P&L (cash collection on a project's invoice).
-            ProjectId = doc.ProjectId
+            // Inherit project tag — payment-level override wins so an
+            // installment booked to a different project than the parent
+            // invoice (advance on Project A → final on Project B) lands
+            // in the right P&L. Falls back to doc.ProjectId when no
+            // override.
+            ProjectId = payment.ProjectId ?? doc.ProjectId
         };
 
         _db.JournalEntries.Add(entry);
@@ -3399,12 +4006,20 @@ public class DocumentService : IDocumentService
                 CreditAmount = line.Credit,
                 Description = line.Description,
                 LineOrder = order++,
-                ProjectId = doc.ProjectId
+                ProjectId = payment.ProjectId ?? doc.ProjectId
             });
         }
     }
 
-    private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null) => new(
+    private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null,
+        DocumentBrief? upstream = null, List<DocumentBrief>? downstream = null,
+        decimal? conversionPercent = null, string? conversionStatus = null,
+        bool hasPce = false, int pceCount = 0, decimal pceAmount = 0,
+        List<ProjectCostBrief>? bookedProjects = null,
+        Dictionary<Guid, Guid>? pceByLine = null)
+    {
+        var (lifecycle, reason) = ComputeLifecycle(d, conversionPercent, downstream);
+        return new(
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
@@ -3417,7 +4032,11 @@ public class DocumentService : IDocumentService
             AccountId: l.AccountId,
             ProjectId: l.ProjectId,
             ProductCode: l.ProductCode,
-            SourceLineId: l.SourceLineId)).ToList(),
+            SourceLineId: l.SourceLineId,
+            ProjectCode: l.Project != null ? l.Project.Code : null,
+            ProjectName: l.Project != null ? l.Project.Name : null,
+            ProjectCostEntryId: pceByLine != null && pceByLine.TryGetValue(l.Id, out var pceId) ? pceId : (Guid?)null,
+            HasProjectCostEntry: pceByLine != null && pceByLine.ContainsKey(l.Id))).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,
@@ -3452,7 +4071,22 @@ public class DocumentService : IDocumentService
         Currency: d.Currency,
         ExchangeRate: d.ExchangeRate,
         Sensitivity: d.Sensitivity,
-        CreditNoteReason: d.CreditNoteReason);
+        CreditNoteReason: d.CreditNoteReason,
+        SupplierInvoiceNumber: d.SupplierInvoiceNumber,
+        SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
+        CreditDays: d.CreditDays,
+        PaymentTerms: d.PaymentTerms,
+        RelatedDocument: upstream,
+        ConvertedToDocuments: downstream,
+        ConversionCompletionPercent: conversionPercent,
+        ConversionStatus: conversionStatus,
+        HasProjectCostEntries: hasPce,
+        ProjectCostEntryCount: pceCount,
+        ProjectCostBookedAmount: pceAmount,
+        BookedProjects: bookedProjects,
+        LifecycleStatus: lifecycle,
+        LifecycleReason: reason);
+    }
 
     /// <summary>Build the redacted stub returned to API consumers who lack
     /// permission to see a sensitive record. Keeps the Id, DocumentNumber, and
@@ -3474,6 +4108,78 @@ public class DocumentService : IDocumentService
     /// the stale threshold — null when fresh or in a terminal status.
     /// Terminal = Paid / Voided / Rejected.</summary>
     private const int StaleThresholdDays = 60;
+    /// <summary>Derive the unified lifecycle state from the doc's
+    /// status + conversion % + balance + downstream settlement docs.
+    /// Per-doc-type rules so a fully-converted PO surfaces "Done"
+    /// even though Status is still "Approved", and a fully-paid PI
+    /// surfaces "Done" even when ConversionStatus is null. Pure
+    /// function — no DB access — so it can be reused server- and
+    /// client-side.</summary>
+    private static (string Status, string Reason) ComputeLifecycle(
+        Document d, decimal? conversionPercent, List<DocumentBrief>? downstream)
+    {
+        // Voided / Rejected always win — purpose terminated.
+        if (d.Status == DocumentStatus.Voided)
+            return ("Cancelled", "× ยกเลิกแล้ว");
+        if (d.Status == DocumentStatus.Rejected)
+            return ("Cancelled", "× ถูกปฏิเสธ");
+
+        // Draft / WaitingApproval — still being prepared. Reason mirrors status.
+        if (d.Status == DocumentStatus.Draft)
+            return ("Open", "⏳ ฉบับร่าง");
+        if (d.Status == DocumentStatus.WaitingApproval)
+            return ("Open", "⏳ รออนุมัติ");
+
+        // Per-type rules.
+        switch (d.DocumentType)
+        {
+            // Settlement-bearing receivable / payable.
+            case DocumentType.Invoice:
+            case DocumentType.TaxInvoice:
+            case DocumentType.BillingNote:
+            case DocumentType.PurchaseInvoice:
+            case DocumentType.Expense:
+            {
+                if (d.BalanceDue <= 0.01m) return ("Done", "✓ ชำระครบแล้ว");
+                if (d.Status == DocumentStatus.PartiallyPaid)
+                    return ("PartiallyDone", $"◐ ชำระบางส่วน · เหลือ {d.BalanceDue:N2}");
+                if (d.Status == DocumentStatus.Overdue)
+                    return ("Open", $"⚠ เกินกำหนด · ค้าง {d.BalanceDue:N2}");
+                return ("Open", $"⏳ รอจ่าย/รับชำระ · {d.BalanceDue:N2}");
+            }
+
+            // Conversion-bearing — purpose fulfilled when downstream consumes it.
+            case DocumentType.Quotation:
+            case DocumentType.PurchaseRequisition:
+            case DocumentType.PurchaseOrder:
+            case DocumentType.GoodsReceiptNote:
+            case DocumentType.DeliveryNote:
+            {
+                var nextLabel = downstream?.FirstOrDefault()?.DocumentNumber;
+                if (conversionPercent.HasValue && conversionPercent.Value >= 100m)
+                    return ("Done", nextLabel != null ? $"✓ แปลงเป็น {nextLabel}" : "✓ ดำเนินการครบแล้ว");
+                if (conversionPercent.HasValue && conversionPercent.Value > 0m)
+                    return ("PartiallyDone", $"◐ แปลงไป {conversionPercent.Value:F0}%");
+                return ("Open", "⏳ รอดำเนินการต่อ");
+            }
+
+            // One-shot terminal docs — Approved/Sent is the end of the line.
+            case DocumentType.Receipt:
+            case DocumentType.ReceiptVoucher:
+            case DocumentType.PaymentVoucher:
+            case DocumentType.CertificateInLieu:
+            case DocumentType.CreditNote:
+            case DocumentType.DebitNote:
+                return ("Done", "✓ บันทึกเรียบร้อย");
+
+            default:
+                // Unknown type — fall back to status.
+                return d.Status == DocumentStatus.Paid
+                    ? ("Done", "✓ ชำระแล้ว")
+                    : ("Open", "⏳ ดำเนินการ");
+        }
+    }
+
     private static int? ComputeStaleDays(Document d)
     {
         if (d.Status is DocumentStatus.Paid or DocumentStatus.Voided or DocumentStatus.Rejected)
@@ -3497,7 +4203,16 @@ public class DocumentService : IDocumentService
         CountryCode: c.CountryCode,
         LoyaltyPoints: c.LoyaltyPoints,
         LastVisitAt: c.LastVisitAt,
-        TotalVisitCount: c.TotalVisitCount);
+        TotalVisitCount: c.TotalVisitCount,
+        DefaultArAccountId: c.DefaultArAccountId,
+        DefaultArAccountCode: c.DefaultArAccount?.AccountCode,
+        DefaultArAccountName: c.DefaultArAccount?.AccountName,
+        DefaultApAccountId: c.DefaultApAccountId,
+        DefaultApAccountCode: c.DefaultApAccount?.AccountCode,
+        DefaultApAccountName: c.DefaultApAccount?.AccountName,
+        DefaultIrGrAccountId: c.DefaultIrGrAccountId,
+        DefaultIrGrAccountCode: c.DefaultIrGrAccount?.AccountCode,
+        DefaultIrGrAccountName: c.DefaultIrGrAccount?.AccountName);
 
     // ==================== Smart Defaults ====================
 
@@ -3691,9 +4406,33 @@ public class DocumentService : IDocumentService
 public class DocumentApprovalWarningsException : Exception
 {
     public IReadOnlyList<string> Warnings { get; }
-    public DocumentApprovalWarningsException(IReadOnlyList<string> warnings)
+
+    /// <summary>AI-enriched per-warning suggestions. NULL when AI is
+    /// disabled / unreachable. Each item corresponds to Warnings[i] by
+    /// index — pair them in the UI.</summary>
+    public IReadOnlyList<DocumentApprovalAiHint>? AiHints { get; }
+
+    public DocumentApprovalWarningsException(
+        IReadOnlyList<string> warnings,
+        IReadOnlyList<DocumentApprovalAiHint>? aiHints = null)
         : base("เอกสารมีจุดที่ต้องตรวจก่อนยืนยันการอนุมัติ (" + warnings.Count + " รายการ)")
     {
         Warnings = warnings;
+        AiHints = aiHints;
     }
 }
+
+/// <summary>
+/// AI-generated per-warning hint. Surfaced alongside the warning text
+/// in the approval-confirmation modal so the user sees "Acknowledge / Edit
+/// / Block" + suggested actions per item.
+/// </summary>
+public sealed record DocumentApprovalAiHint(
+    string Primary,                         // "Acknowledge" | "Edit" | "Block"
+    decimal Confidence,
+    string? Reasoning,
+    IReadOnlyList<string> SuggestedActions,
+    IReadOnlyList<string> Risks,
+    IReadOnlyList<string> ComplianceFlags,
+    Guid? FeedbackId,
+    bool UsedAi);

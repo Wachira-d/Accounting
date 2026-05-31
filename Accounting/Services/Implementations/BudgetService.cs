@@ -24,6 +24,7 @@ public class BudgetService : IBudgetService
             CompanyId = companyId,
             Name = request.Name,
             FiscalYear = request.FiscalYear,
+            ProjectId = request.ProjectId,
             CreatedBy = createdBy
         };
 
@@ -156,13 +157,24 @@ public class BudgetService : IBudgetService
         var startDate = new DateTime(budget.FiscalYear, 1, 1);
         var endDate = new DateTime(budget.FiscalYear, 12, 31);
 
-        // Calculate actual amounts per month from journal entries
-        var actualAmounts = await _db.JournalEntryLines
+        // Calculate actual amounts per month from journal entries.
+        // When the budget is project-scoped, filter actuals to JE lines
+        // tagged with that project (or whose JE header tags it) — same
+        // pattern as cash flow / GL summary uses to honour both
+        // line-level and header-level project allocation.
+        var lineQuery = _db.JournalEntryLines
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
                 && l.JournalEntry.EntryDate >= startDate
-                && l.JournalEntry.EntryDate <= endDate)
+                && l.JournalEntry.EntryDate <= endDate);
+        if (budget.ProjectId.HasValue)
+        {
+            var pid = budget.ProjectId.Value;
+            lineQuery = lineQuery.Where(l => l.ProjectId == pid
+                || l.JournalEntry.ProjectId == pid);
+        }
+        var actualAmounts = await lineQuery
             .GroupBy(l => l.AccountId)
             .Select(g => new { AccountId = g.Key, Actual = g.Sum(l => l.DebitAmount - l.CreditAmount) })
             .ToListAsync();
@@ -222,5 +234,6 @@ public class BudgetService : IBudgetService
                 l.Month1, l.Month2, l.Month3, l.Month4, l.Month5, l.Month6,
                 l.Month7, l.Month8, l.Month9, l.Month10, l.Month11, l.Month12,
                 l.TotalBudget)).ToList(),
-            b.CreatedAt);
+            b.CreatedAt,
+            b.ProjectId);
 }

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FX Revaluation — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">FX Revaluation</h2>
+        <p class="page-subtitle">Period-end revalue AR/AP สกุลเงินต่างประเทศ → post JE กำไร/ขาดทุน (Revenue Code §65(2))</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <div style="padding:18px">
+        <p style="color:#64748b;font-size:13px;margin-bottom:14px">ใส่ <b>closing rate</b> ปลายงวด — ระบบจะเทียบกับ rate ที่ booked ตอนออกเอกสาร → ส่วนต่างเป็น unrealised gain/loss</p>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">วันที่ปิดงวด *</label>
+            <input type="date" class="form-input" id="asOf">
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <label class="form-label" style="margin-bottom:6px;display:block">อัตราแลกเปลี่ยนปิดงวด (THB ต่อ 1 หน่วย)</label>
+          <div id="ratesBody"></div>
+          <button class="btn btn-sm btn-secondary" style="margin-top:6px" onclick="Page.addRate()">+ เพิ่มสกุลเงิน</button>
+        </div>
+      </div>
+      <div style="padding:0 18px 18px;display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="Page.propose()">📊 คำนวณ (ดูตัวอย่าง)</button>
+        <button class="btn btn-primary" onclick="Page.post()">📌 Post JE</button>
+      </div>
+    </div>
+
+    <div id="resultBox"></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      async init() {
+        if (!Layout.init('fx-reval')) return;
+        Layout.setTitle('FX Revaluation');
+        const today = new Date();
+        document.getElementById('asOf').value = Layout.toDateInput(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+        this.addRate('USD');
+      },
+      _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      addRate(cur) {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-row';
+        wrap.style.marginBottom = '6px';
+        wrap.innerHTML = `
+          <div class="form-group"><input type="text" class="form-input rate-cur" value="${cur || ''}" placeholder="USD" maxlength="3" style="text-transform:uppercase"></div>
+          <div class="form-group"><input type="number" step="0.0001" class="form-input rate-val" placeholder="36.50"></div>
+          <div class="form-group"><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('.form-row').remove()">✕</button></div>`;
+        document.getElementById('ratesBody').appendChild(wrap);
+      },
+      _collectRates() {
+        const rates = {};
+        document.querySelectorAll('#ratesBody .form-row').forEach(r => {
+          const cur = r.querySelector('.rate-cur').value.trim().toUpperCase();
+          const val = parseFloat(r.querySelector('.rate-val').value);
+          if (cur && val > 0) rates[cur] = val;
+        });
+        return rates;
+      },
+      async _call(endpoint) {
+        const rates = this._collectRates();
+        if (Object.keys(rates).length === 0) {
+          Layout.toast('ใส่อัตราแลกเปลี่ยนอย่างน้อย 1 สกุล', 'error'); return null;
+        }
+        const cid = Layout.getCompanyId();
+        const body = { asOf: document.getElementById('asOf').value, closingRates: rates };
+        try { return await API.post(`/api/companies/${cid}/sme/fx-revaluation/${endpoint}`, body); }
+        catch (e) { Layout.toast(e.message, 'error'); return null; }
+      },
+      async propose() {
+        const r = await this._call('propose');
+        if (!r) return;
+        const d = r.data;
+        this._renderProposal(d, false);
+      },
+      async post() {
+        if (!confirm('Post JE? — รายการนี้จะเข้า GL ทันที (idempotent ต่องวด)')) return;
+        const r = await this._call('post');
+        if (!r) return;
+        const d = r.data;
+        this._renderProposal(d.proposal, true, d);
+      },
+      _renderProposal(p, posted, postResult) {
+        const lines = p.lines || [];
+        const rows = lines.map(l => `
+          <tr>
+            <td>${l.currency}</td>
+            <td><span class="badge" style="background:${l.direction==='AR'?'#dbeafe':'#fef3c7'};color:${l.direction==='AR'?'#1e40af':'#92400e'};padding:2px 8px;border-radius:6px;font-size:11px">${l.direction}</span></td>
+            <td style="text-align:right">${this._fmt(l.originalFcyAmount)}</td>
+            <td style="text-align:right">${this._fmt(l.bookedThbValue)}</td>
+            <td style="text-align:right">${this._fmt(l.currentThbValue)}</td>
+            <td style="text-align:right;color:${l.variance>=0?'#15803d':'#dc2626'};font-weight:600">${l.variance >= 0 ? '+' : ''}${this._fmt(l.variance)}</td>
+          </tr>`).join('');
+        const banner = posted
+          ? `<div style="padding:14px;border-radius:10px;background:${postResult.outcome === 'Posted' ? '#dcfce7' : '#fef3c7'};border:1px solid ${postResult.outcome === 'Posted' ? '#86efac' : '#fde047'};margin-bottom:14px"><b>${postResult.outcome === 'Posted' ? '✓ Posted' : postResult.outcome}</b> — ${postResult.message || ''} ${postResult.journalNumber ? `· JE <a href="/pages/journals.html?id=${postResult.journalEntryId}" style="color:#1e40af;font-weight:600">${postResult.journalNumber}</a>` : ''}</div>`
+          : '<div style="padding:10px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;margin-bottom:14px;color:#1e40af;font-size:13px">📊 ตัวอย่าง — ยังไม่ post · กดปุ่ม "Post JE" เพื่อบันทึก</div>';
+        document.getElementById('resultBox').innerHTML = `
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">ผลการคำนวณ ณ ${new Date(p.asOf).toLocaleDateString('th-TH')}</h3></div>
+            <div style="padding:18px">
+              ${banner}
+              <div class="grid gap-4" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
+                <div style="padding:14px;border-radius:10px;background:#dcfce7;border:1px solid #86efac"><div style="font-size:11px;color:#15803d;font-weight:600">รวมกำไร</div><div style="font-size:22px;font-weight:700">${this._fmt(p.totalGain)}</div></div>
+                <div style="padding:14px;border-radius:10px;background:#fee2e2;border:1px solid #fca5a5"><div style="font-size:11px;color:#991b1b;font-weight:600">รวมขาดทุน</div><div style="font-size:22px;font-weight:700">${this._fmt(p.totalLoss)}</div></div>
+                <div style="padding:14px;border-radius:10px;background:${p.netEffect>=0?'#dcfce7':'#fee2e2'};border:1px solid ${p.netEffect>=0?'#86efac':'#fca5a5'}"><div style="font-size:11px;font-weight:600">สุทธิ</div><div style="font-size:22px;font-weight:700;color:${p.netEffect>=0?'#15803d':'#dc2626'}">${p.netEffect >= 0 ? '+' : ''}${this._fmt(p.netEffect)}</div></div>
+              </div>
+              <table class="data-table" style="font-size:13px">
+                <thead><tr><th>สกุล</th><th>ฝั่ง</th><th style="text-align:right">FCY</th><th style="text-align:right">Booked THB</th><th style="text-align:right">Current THB</th><th style="text-align:right">ส่วนต่าง</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px">ไม่มี FCY balance ที่ต้อง revalue</td></tr>'}</tbody>
+              </table>
+              ${(p.warnings || []).length ? `<div style="margin-top:12px;padding:10px;background:#fef3c7;border:1px solid #fde047;border-radius:8px;font-size:13px"><b>⚠ คำเตือน:</b><ul style="margin:6px 0 0 18px">${p.warnings.map(w => '<li>' + w + '</li>').join('')}</ul></div>` : ''}
+            </div>
+          </div>`;
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

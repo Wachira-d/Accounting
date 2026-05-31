@@ -40,7 +40,18 @@ public record CreateDocumentRequest(
     SensitivityKind Sensitivity = SensitivityKind.None,
     // CreditNote reason — required when DocumentType=CreditNote. Determines
     // whether stock restocks (Return only) vs pure financial adjustment.
-    CreditNoteReason? CreditNoteReason = null);
+    CreditNoteReason? CreditNoteReason = null,
+    // ===== Supplier-side tax invoice metadata (PurchaseInvoice / supplier-issued docs) =====
+    // SupplierInvoiceNumber = partner's own running number (distinct from
+    // our DocumentNumber) — needed for VAT-audit reconciliation against
+    // the supplier statement. SupplierTaxInvoiceDate = the date on the
+    // partner's tax invoice; controls the VAT claim period (Revenue
+    // Code §82/4) when we book a bill late. CreditDays / PaymentTerms
+    // capture the agreed payment window for DSO/DPO + DueDate auto-fill.
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    int? CreditDays = null,
+    string? PaymentTerms = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -83,7 +94,11 @@ public record UpdateDocumentRequest(
     string? CertifierPosition = null,
     string? WitnessName = null,
     string? WitnessPosition = null,
-    DateTime? PaymentDate = null);
+    DateTime? PaymentDate = null,
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    int? CreditDays = null,
+    string? PaymentTerms = null);
 
 public record DocumentResponse(
     Guid Id,
@@ -155,7 +170,67 @@ public record DocumentResponse(
     // CreditNote reason — set when DocumentType=CreditNote so the UI can
     // display "ลดราคา" / "คืนสินค้า" etc. Drives whether ApplyStockMovements
     // restocks on approval (only Return does).
-    CreditNoteReason? CreditNoteReason = null);
+    CreditNoteReason? CreditNoteReason = null,
+    // Supplier-side tax invoice metadata for PurchaseInvoice rows.
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    int? CreditDays = null,
+    string? PaymentTerms = null,
+    // ===== Conversion lineage =====
+    // Source-side view (this doc was converted from another): RelatedDocumentId
+    // already carries the upstream id; the populated brief lets the UI render
+    // "แปลงมาจาก QT-0042" without a second round-trip.
+    DocumentBrief? RelatedDocument = null,
+    // Target-side view (other docs created from this one): list of children
+    // spawned via ConvertCoreAsync — populated server-side from the
+    // (CompanyId, RelatedDocumentId) index so the source doc can render
+    // "ใบที่ออกต่อจากเอกสารนี้" without N+1.
+    List<DocumentBrief>? ConvertedToDocuments = null,
+    // 0..100 — share of source quantity consumed by child docs across
+    // all axes (Delivery + Billing). Null when this doc has no source
+    // lines. Used to badge "✓ Fully converted" / "◐ 60% converted".
+    decimal? ConversionCompletionPercent = null,
+    // Convenience aggregate of the above — "None" / "Partial" / "Full" — so
+    // the UI can pick a badge color without computing thresholds itself.
+    string? ConversionStatus = null,
+    // ===== Project-cost booking summary =====
+    // Populated by GetDocumentAsync from the (DocumentId, DocumentLineId)
+    // links on ProjectCostEntry — lets the UI show "🏗️ ลงโครงการแล้ว
+    // 3 รายการ / ฿15,400" and the per-project breakdown without an extra
+    // round-trip.
+    bool HasProjectCostEntries = false,
+    int ProjectCostEntryCount = 0,
+    decimal ProjectCostBookedAmount = 0,
+    List<ProjectCostBrief>? BookedProjects = null,
+    // ===== Lifecycle =====
+    // Unified "what's the state of this doc's purpose?" view, derived
+    // from Status + ConversionStatus + BalanceDue. Lets the UI show a
+    // single clear badge per doc instead of asking the user to mentally
+    // combine 3 signals. Values:
+    //   • "Open"            — still has work to do
+    //   • "PartiallyDone"   — converted or settled in part
+    //   • "Done"            — purpose fulfilled (paid / fully converted / approved one-shot)
+    //   • "Cancelled"       — voided / rejected
+    string? LifecycleStatus = null,
+    // Short Thai phrase explaining the lifecycle state in context, e.g.
+    // "✓ จ่ายแล้ว", "✓ แปลงเป็น PI-001", "◐ แปลงไป 60%", "× ยกเลิก".
+    // Picked up directly by the badge tooltip + list column.
+    string? LifecycleReason = null);
+
+public record ProjectCostBrief(
+    Guid ProjectId,
+    string ProjectCode,
+    string ProjectName,
+    int EntryCount,
+    decimal Amount);
+
+public record DocumentBrief(
+    Guid Id,
+    string DocumentNumber,
+    DocumentType DocumentType,
+    DocumentStatus Status,
+    DateTime DocumentDate,
+    decimal TotalAmount);
 
 public record DocumentLineResponse(
     Guid Id,
@@ -174,7 +249,14 @@ public record DocumentLineResponse(
     Guid? AccountId = null,
     Guid? ProjectId = null,
     string? ProductCode = null,
-    Guid? SourceLineId = null);
+    Guid? SourceLineId = null,
+    string? ProjectCode = null,
+    string? ProjectName = null,
+    // Set when this line has been auto-spawned into a ProjectCostEntry on
+    // approval (via SyncProjectCostEntriesAsync). UI flags the line
+    // "🏗️ ลงโครงการแล้ว" so the user knows the cost has been booked.
+    Guid? ProjectCostEntryId = null,
+    bool HasProjectCostEntry = false);
 
 // ===== Flexible / partial document conversion =====
 
@@ -226,7 +308,26 @@ public record ApproveDocumentRequest(string? Notes, bool AcknowledgeWarnings = f
 /// list and retries with AcknowledgeWarnings=true to proceed. Hard errors
 /// (data corruption / illegal state) still throw inline — they're never
 /// surfaced as warnings.</summary>
-public record ApprovalWarningsResponse(IReadOnlyList<string> Warnings);
+public record ApprovalWarningsResponse(
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<ApprovalWarningAiHintDto>? AiHints = null);
+
+/// <summary>
+/// AI-generated hint for one approval warning. Paired with Warnings[i]
+/// by index. Surfaced in the UI alongside the warning text — operator
+/// sees Primary recommendation + actions + risks without needing to
+/// think through the warning from scratch. NULL when AI is disabled
+/// or unreachable.
+/// </summary>
+public record ApprovalWarningAiHintDto(
+    string Primary,
+    decimal Confidence,
+    string? Reasoning,
+    IReadOnlyList<string> SuggestedActions,
+    IReadOnlyList<string> Risks,
+    IReadOnlyList<string> ComplianceFlags,
+    Guid? FeedbackId,
+    bool UsedAi);
 
 // ===== Contact =====
 public record CreateContactRequest(
@@ -250,7 +351,12 @@ public record CreateContactRequest(
     string? District = null,
     string? Province = null,
     string? PostalCode = null,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    // ตั้งค่าการบันทึกบัญชี — per-contact GL overrides. Null leaves the
+    // system default in effect (FindAccountAsync "113" / "212" prefix).
+    Guid? DefaultArAccountId = null,
+    Guid? DefaultApAccountId = null,
+    Guid? DefaultIrGrAccountId = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -273,7 +379,10 @@ public record UpdateContactRequest(
     string? District = null,
     string? Province = null,
     string? PostalCode = null,
-    string? CountryCode = null);
+    string? CountryCode = null,
+    Guid? DefaultArAccountId = null,
+    Guid? DefaultApAccountId = null,
+    Guid? DefaultIrGrAccountId = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -311,7 +420,18 @@ public record ContactResponse(
     string? CountryCode = "TH",
     int LoyaltyPoints = 0,
     DateTime? LastVisitAt = null,
-    int TotalVisitCount = 0);
+    int TotalVisitCount = 0,
+    // Per-contact GL overrides — null means "use system default
+    // (113/212 prefix)". UI shows the account labels too for display.
+    Guid? DefaultArAccountId = null,
+    string? DefaultArAccountCode = null,
+    string? DefaultArAccountName = null,
+    Guid? DefaultApAccountId = null,
+    string? DefaultApAccountCode = null,
+    string? DefaultApAccountName = null,
+    Guid? DefaultIrGrAccountId = null,
+    string? DefaultIrGrAccountCode = null,
+    string? DefaultIrGrAccountName = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);
@@ -359,7 +479,37 @@ public record CreatePaymentRequest(
     /// (e.g. they withhold the full amount on the first installment).
     /// Cumulative WHT across all payments must not exceed the source's
     /// WithholdingTaxAmount.</summary>
-    decimal? WithholdingTaxAmount = null);
+    decimal? WithholdingTaxAmount = null,
+    /// <summary>Optional — overrides the source document's ProjectId
+    /// for THIS payment. Used when one document is split across
+    /// project payments (advance booked to Project A; final to
+    /// Project B). The auto-posted JE picks this up first; falls
+    /// back to Document.ProjectId.</summary>
+    Guid? ProjectId = null,
+    /// <summary>Multi-document allocation — when set with 1+ rows,
+    /// the legacy DocumentId field is ignored and the payment is
+    /// split across these target documents. SUM(AllocatedAmount) must
+    /// be ≤ Amount; the remainder lands as UnappliedCredit on the
+    /// response. WHT is allocated proportionally when individual
+    /// rows omit WithholdingTaxAmount. Each AllocatedAmount must be
+    /// ≤ the target document's current BalanceDue.</summary>
+    List<PaymentAllocationRequest>? Allocations = null);
+
+public record PaymentAllocationRequest(
+    Guid DocumentId,
+    decimal AllocatedAmount,
+    decimal? WithholdingTaxAmount = null,
+    string? Note = null);
+
+public record PaymentAllocationResponse(
+    Guid Id,
+    Guid PaymentId,
+    Guid DocumentId,
+    string DocumentNumber,
+    DocumentType DocumentType,
+    decimal AllocatedAmount,
+    decimal WithholdingTaxAmount,
+    string? Note);
 
 public record PaymentResponse(
     Guid Id,
@@ -372,7 +522,17 @@ public record PaymentResponse(
     string? BankAccount,
     Guid? BankAccountId,
     string? Notes,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    /// <summary>Multi-document allocation rows. Empty for legacy
+    /// single-doc payments (and the legacy DocumentId then carries
+    /// the settled doc id).</summary>
+    List<PaymentAllocationResponse>? Allocations = null,
+    /// <summary>Amount − SUM(Allocations.AllocatedAmount). Positive
+    /// when the customer overpaid (carry-forward credit); zero
+    /// otherwise. Doesn't itself create a credit-note; the operator
+    /// can later attach the unapplied amount to a new invoice via
+    /// /payments/{id}/allocations.</summary>
+    decimal UnappliedCredit = 0);
 
 
 public record WriteOffBadDebtRequest(string? Reason);

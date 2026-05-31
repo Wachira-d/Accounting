@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Expense;
 using Accounting.Models.Enums;
@@ -38,9 +39,26 @@ public class ExpenseClaimController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<ExpenseClaimResponse>>>> GetAll(
-        Guid companyId, [FromQuery] ExpenseClaimStatus? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        Guid companyId, [FromQuery] ExpenseClaimStatus? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromServices] IPermissionService? permissions = null)
     {
-        var result = await _expenseService.GetAllAsync(companyId, status, new PagedRequest(page, pageSize));
+        // Row-level data-scope policy:
+        //   Owner / SystemAdmin → see all (existing behaviour)
+        //   perm:Expense.Approve OR perm:HR.Admin → see all (HR/manager view)
+        //   anyone else → forced filter to their own SubmittedByUserId
+        // Without this gate, a plain Employee role could read every
+        // claim in the company because the controller only required
+        // [Authorize] (any logged-in user). Auditors flagged this as a
+        // material data leak.
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        Guid? restrictToUserId = null;
+        if (permissions != null)
+        {
+            var canSeeAll = await permissions.HasPermissionAsync(companyId, userId, PermissionKeys.HrAdmin)
+                         || await permissions.HasPermissionAsync(companyId, userId, PermissionKeys.ExpenseApprove);
+            if (!canSeeAll) restrictToUserId = userId;
+        }
+        var result = await _expenseService.GetAllAsync(companyId, status, new PagedRequest(page, pageSize), restrictToUserId);
         return Ok(new ApiResponse<PagedResponse<ExpenseClaimResponse>>(true, result));
     }
 

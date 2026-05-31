@@ -252,6 +252,19 @@
           <strong>S0 (Standard)</strong> รองรับ 15 TPS analyze + 50 TPS poll (ปรับเพิ่มได้ผ่าน support).
           ตั้ง concurrent=10 และ poll=200ms ได้สบายๆ
         </div>
+
+        <!-- Monthly usage widget — sums Subscription.CurrentMonthAzureOcrPages
+             across every active tenant so the operator can see system-wide
+             Azure DI burn before the bill arrives. Live forecast extrapolates
+             linearly so a "we used 800 pages by day 10" trend becomes
+             "projecting 2,400/mo at current rate" → ~$120 → ~฿4,380. -->
+        <div id="azureUsageWidget" style="margin-top:14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;padding:14px;font-size:13px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap">
+            <div style="font-weight:700;color:#0f172a">📊 การใช้งาน Azure DI เดือนนี้ (ทั้งระบบ)</div>
+            <button class="btn-secondary" type="button" onclick="loadAzureUsage()" style="font-size:11px;padding:4px 10px">รีเฟรช</button>
+          </div>
+          <div id="azureUsageContent" style="color:#475569">กำลังโหลด...</div>
+        </div>
         <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center">
           <button class="btn-secondary" onclick="testAzure()"
                   title="ตรวจ endpoint + API key (ฟรี — แค่ ping /info)">
@@ -864,6 +877,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         populateSummary(summaryRes.data);
         populatePendingCredits(creditsRes.data);
         populateAccuracy(accuracyRes.data);
+        loadAzureUsage();
       } catch (err) {
         console.error('Error loading OCR config:', err);
       }
@@ -1102,6 +1116,71 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
+      }
+    }
+
+    /**
+     * Pull the system-wide Azure DI usage summary from /admin/ocr/azure-usage
+     * and render the burn-rate widget. Runs on page load (after loadConfig)
+     * + on manual refresh button.
+     */
+    async function loadAzureUsage() {
+      const el = document.getElementById('azureUsageContent');
+      if (!el) return;
+      el.innerHTML = '<span style="color:#94a3b8">กำลังโหลด...</span>';
+      try {
+        const r = await AdminAPI.get('/ocr/azure-usage');
+        const d = r.data;
+        const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+        const pct = d.daysInMonth > 0 ? Math.round(d.daysElapsed / d.daysInMonth * 100) : 0;
+        const top = (d.topCompanies || []).slice(0, 10).map((c, i) =>
+          `<tr><td style="padding:4px 8px;color:#64748b">${i + 1}</td>
+               <td style="padding:4px 8px">${(c.companyName || '').replace(/</g, '&lt;')}</td>
+               <td style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600">${fmt(c.azurePages)}</td>
+               <td style="padding:4px 8px;text-align:right;color:#475569">${fmt(c.localPages)}</td></tr>`).join('');
+        const topTable = top ? `
+          <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">
+            <thead><tr style="background:#e2e8f0;color:#0f172a">
+              <th style="padding:5px 8px;text-align:left;width:40px">#</th>
+              <th style="padding:5px 8px;text-align:left">บริษัท</th>
+              <th style="padding:5px 8px;text-align:right">Azure (หน้า)</th>
+              <th style="padding:5px 8px;text-align:right">Local (หน้า)</th>
+            </tr></thead><tbody>${top}</tbody>
+          </table>` : '<div style="color:#94a3b8;font-size:12px;margin-top:8px">ยังไม่มีบริษัทไหนใช้ Azure DI เดือนนี้</div>';
+        el.innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:#64748b">เดือน ${d.month} (วัน ${d.daysElapsed}/${d.daysInMonth} · ${pct}%)</div>
+              <div style="font-size:22px;font-weight:700;color:#0369a1;margin-top:2px">${fmt(d.totalAzurePages)} <span style="font-size:12px;color:#64748b;font-weight:400">หน้า Azure</span></div>
+              <div style="font-size:11px;color:#64748b">+ Local ${fmt(d.totalLocalPages)} หน้า · รวม ${fmt(d.totalAllPages)}</div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:#64748b">ค่า Azure DI ที่ใช้ไปแล้ว</div>
+              <div style="font-size:22px;font-weight:700;color:#dc2626;margin-top:2px">฿${fmt(d.pricing.currentMonthCostThb)}</div>
+              <div style="font-size:11px;color:#64748b">≈ $${fmt(d.pricing.currentMonthCostUsd)} · เรท $${d.pricing.usdToThb}/USD</div>
+            </div>
+            <div style="background:#fff;border:1px solid #fde047;border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:#854d0e">คาดการณ์เต็มเดือน (linear)</div>
+              <div style="font-size:22px;font-weight:700;color:#a16207;margin-top:2px">฿${fmt(d.pricing.forecastFullMonthCostThb)}</div>
+              <div style="font-size:11px;color:#854d0e">~${fmt(d.pricing.forecastFullMonthPages)} หน้า · เผื่อเติมเครดิตล่วงหน้า</div>
+            </div>
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:#64748b">อัตราใช้งานเฉลี่ย</div>
+              <div style="font-size:18px;font-weight:600;color:#0f172a;margin-top:2px">${fmt(d.burnRate.pagesPerDay)} <span style="font-size:11px;color:#64748b;font-weight:400">หน้า/วัน Azure</span></div>
+              <div style="font-size:11px;color:#64748b">${fmt(d.burnRate.pagesPerDayLocal)} หน้า/วัน Local · ${d.activeSubscriptionsTracked} sub active</div>
+            </div>
+          </div>
+          <details style="margin-top:6px">
+            <summary style="cursor:pointer;font-size:12px;color:#475569;font-weight:600">Top ${top ? (d.topCompanies?.length || 0) : 0} บริษัทที่ใช้ Azure เยอะสุดเดือนนี้</summary>
+            ${topTable}
+            <div style="font-size:11px;color:#94a3b8;margin-top:6px">
+              💡 ราคา default ใช้ Azure DI S0 prebuilt-invoice = $0.05/หน้า เรท 36.5 THB/USD —
+              ปรับด้วย <code>?pricePerPageUsd=0.04&amp;usdToThb=37</code> ที่ endpoint
+              <code>/api/admin/ocr/azure-usage</code> ถ้า rate ของคุณต่างจาก list price
+            </div>
+          </details>`;
+      } catch (e) {
+        el.innerHTML = `<div style="color:#dc2626">โหลดข้อมูลการใช้งานไม่สำเร็จ: ${(e.message || '').replace(/</g, '&lt;')}</div>`;
       }
     }
 

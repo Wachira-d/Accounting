@@ -15,7 +15,15 @@ public record CreateEmployeeRequest(
     Guid? BranchId, Guid? DimensionId,
     // Org structure (preferred over the legacy string Department/Position)
     Guid? DepartmentId = null, Guid? PositionId = null,
-    Guid? DirectManagerId = null);
+    Guid? DirectManagerId = null,
+    /// <summary>"Fixed" (salaried — cost incurred whether they work or not)
+    /// or "Variable" (paid per day/hour worked). Defaults from SalaryType:
+    /// Monthly→Fixed, Daily/Hourly→Variable.</summary>
+    string? CostBehavior = null,
+    /// <summary>External HR system identifier — enables 2-way sync without
+    /// name-matching. ExternalSystem labels the source.</summary>
+    string? ExternalId = null,
+    string? ExternalSystem = null);
 
 public record UpdateEmployeeRequest(
     string? Position, string? Department, string? Phone,
@@ -29,7 +37,11 @@ public record UpdateEmployeeRequest(
     Guid? DirectManagerId = null,
     // Onboarding / offboarding toggle (preserves all historical HR + GL
     // records — does NOT delete the employee).
-    bool? IsActive = null);
+    bool? IsActive = null,
+    string? CostBehavior = null,
+    string? ExternalId = null,
+    string? ExternalSystem = null,
+    string? SalaryType = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -42,7 +54,25 @@ public record EmployeeResponse(
     Guid? DepartmentId = null, string? DepartmentName = null,
     Guid? PositionId = null, string? PositionTitle = null,
     Guid? DirectManagerId = null, string? DirectManagerName = null,
-    Guid? ContactId = null);
+    Guid? ContactId = null,
+    string CostBehavior = "Fixed",
+    string? ExternalId = null,
+    string? ExternalSystem = null,
+    DateTime? LastSyncedAt = null);
+
+/// <summary>Bulk-sync envelope for employees from an external HRIS. Each
+/// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows
+/// with no ExternalId are skipped (sync requires the external ID for
+/// dedupe — use CreateEmployee for blind insert).</summary>
+public record SyncEmployeesRequest(
+    string ExternalSystem,
+    List<CreateEmployeeRequest> Rows);
+
+public record SyncEmployeesResponse(
+    int Inserted,
+    int Updated,
+    int Skipped,
+    List<string> Errors);
 
 public record CreatePayrollItemRequest(
     string Code, string Name, string? NameEn,
@@ -83,14 +113,42 @@ public record PayslipResponse(
 public record CreateLeaveRequest(
     Guid EmployeeId, string LeaveType,
     DateTime StartDate, DateTime EndDate,
-    decimal TotalDays, string? Reason);
+    decimal TotalDays, string? Reason,
+    // Half-day support — 0=full, 1=morning, 2=afternoon. TotalDays
+    // should be 0.5 when marker > 0; server validates.
+    int HalfDayMarker = 0);
 
 public record LeaveResponse(
     Guid Id, Guid EmployeeId, string EmployeeName,
     string LeaveType, DateTime StartDate, DateTime EndDate,
     decimal TotalDays, string Status, string? Reason,
     string? ApprovedBy = null,
-    string? RejectionReason = null);
+    string? RejectionReason = null,
+    int HalfDayMarker = 0,
+    DateTime? CreatedAt = null);
+
+// HR config — leave-type catalog CRUD.
+public record LeaveTypeRequest(
+    string Code, string NameTh, string? NameEn,
+    decimal AnnualQuota, bool IsPaid, bool AllowHalfDay,
+    bool CarryForward, decimal? CarryForwardCap,
+    int AdvanceNoticeDays, bool RequiresAttachment,
+    int SortOrder, bool IsActive, string Color, string? Icon);
+
+public record LeaveTypeResponse(
+    Guid Id, string Code, string NameTh, string? NameEn,
+    decimal AnnualQuota, bool IsPaid, bool AllowHalfDay,
+    bool CarryForward, decimal? CarryForwardCap,
+    int AdvanceNoticeDays, bool RequiresAttachment,
+    int SortOrder, bool IsActive, string Color, string? Icon);
+
+public record PublicHolidayRequest(
+    DateTime Date, string NameTh, string? NameEn,
+    string Category, bool IsSubstitute);
+
+public record PublicHolidayResponse(
+    Guid Id, DateTime Date, string NameTh, string? NameEn,
+    string Category, bool IsSubstitute);
 
 public record RejectLeaveRequest(string Reason);
 

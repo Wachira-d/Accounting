@@ -37,4 +37,39 @@ public class Payment : TenantEntity
     /// Amount — enforced inline. Drives the per-receipt Dr WHT-Asset / Cr
     /// WHT-Payable line on the cash-basis GL.</summary>
     public decimal WithholdingTaxAmount { get; set; }
+
+    /// <summary>Project allocation — when set, overrides the parent
+    /// document's project for THIS payment. Useful when one document
+    /// is split across multiple project payments (advance on Project A
+    /// followed by final on Project B). Null = inherit from
+    /// Document.ProjectId.</summary>
+    public Guid? ProjectId { get; set; }
+
+    /// <summary>Per-document allocation lines — populated when ONE
+    /// payment settles MULTIPLE documents (e.g. a single ฿15,000
+    /// cheque that pays invoice A 5K + B 6K + C 4K). When this list
+    /// is empty, the legacy single-doc path applies via DocumentId +
+    /// Amount (the original 1:1 model is preserved for back-compat).
+    /// Sum of AllocatedAmount must be ≤ Amount; the remainder is
+    /// surfaced as UnappliedCredit on the response.</summary>
+    public ICollection<PaymentAllocation> Allocations { get; set; } = new List<PaymentAllocation>();
+}
+
+/// <summary>One row per (Payment, Document) — splits a payment
+/// across multiple invoices. WHT is allocated proportionally so per-
+/// document GL stays balanced. When a Payment has zero PaymentAllocation
+/// rows the legacy Payment.DocumentId path drives settlement (existing
+/// data is unchanged on migration).</summary>
+public class PaymentAllocation : TenantEntity
+{
+    public Guid PaymentId { get; set; }
+    public Payment Payment { get; set; } = null!;
+    public Guid DocumentId { get; set; }
+    public Document Document { get; set; } = null!;
+    public decimal AllocatedAmount { get; set; }
+    /// <summary>WHT carved out of this allocation row — sums across
+    /// all allocations on the parent Payment should equal
+    /// Payment.WithholdingTaxAmount.</summary>
+    public decimal WithholdingTaxAmount { get; set; }
+    public string? Note { get; set; }
 }

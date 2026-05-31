@@ -695,7 +695,36 @@ const API = {
       createForecast: (d) => API.post(`${base}/ai/forecast`, d),
       getForecasts: () => API.get(`${base}/ai/forecasts`),
       // OCR
-      ocrUploadAndScan: (formData) => fetch(`${base}/ocr/upload`, { method: 'POST', headers: { 'Authorization': `Bearer ${API.token}` }, body: formData }).then(r => r.json()),
+      ocrUploadAndScan: (formData, preferredEngine) => {
+        const qs = preferredEngine ? `?preferredEngine=${encodeURIComponent(preferredEngine)}` : '';
+        return fetch(`${base}/ocr/upload${qs}`, { method: 'POST', headers: { 'Authorization': `Bearer ${API.token}` }, body: formData }).then(r => r.json());
+      },
+      getOcrEngines: () => API.get(`${base}/ocr/engines`),
+
+      // AI suggestion endpoints — called when the UI wants AI's
+      // opinion on a decision (every endpoint returns a feedbackId
+      // that should be posted back via aiFeedbackRecord after the
+      // user makes their final choice, so the answer becomes a
+      // training signal).
+      aiSuggestPaymentVoucherAccount: (sourceInvoiceId, lineDescription, amount, currency, currentAccountCode) =>
+        API.post(`${base}/ai/payment-voucher/suggest-account`,
+          { sourceInvoiceId, lineDescription, amount, currency, currentAccountCode }),
+      aiInferWhtCategory: (documentId, vendorName, vendorTaxId, vendorType, lineDescription, amount, currentCode) =>
+        API.post(`${base}/ai/wht/infer-category`,
+          { documentId, vendorName, vendorTaxId, vendorType, lineDescription, amount, currentCode }),
+      aiClassifyCreditNoteReason: (creditNoteId, originalInvoiceId, currentReason) =>
+        API.post(`${base}/ai/credit-note/classify-reason`,
+          { creditNoteId, originalInvoiceId, currentReason }),
+      aiSuggestBankMatch: (bankTransactionId, currentMatchedDocId) =>
+        API.post(`${base}/ai/bank/suggest-match`,
+          { bankTransactionId, currentMatchedDocId }),
+      aiFeedbackRecord: (feedbackId, chosenAnswer, acceptedAi) =>
+        API.post(`${base}/ai-feedback/record`,
+          { feedbackId, chosenAnswer, acceptedAi }),
+      aiExplainAnomaly: (anomalyId, force) =>
+        API.post(`${base}/ai/anomalies/${anomalyId}/explain${force ? '?force=true' : ''}`),
+      aiBatchSuggestPvAccounts: (sourceInvoiceId) =>
+        API.post(`${base}/ai/payment-voucher/suggest-all-accounts`, { sourceInvoiceId }),
       ocrScan: (fileId) => API.post(`${base}/ocr/scan/${fileId}`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),

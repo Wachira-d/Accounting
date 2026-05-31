@@ -42,6 +42,7 @@ public class AccountingDbContext : DbContext
     public DbSet<DocumentLine> DocumentLines => Set<DocumentLine>();
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<PaymentAllocation> PaymentAllocations => Set<PaymentAllocation>();
 
     // Tax
     public DbSet<TaxReport> TaxReports => Set<TaxReport>();
@@ -95,6 +96,17 @@ public class AccountingDbContext : DbContext
     public DbSet<ReconciliationGroup> ReconciliationGroups => Set<ReconciliationGroup>();
     public DbSet<ReconciliationGroupItem> ReconciliationGroupItems => Set<ReconciliationGroupItem>();
     public DbSet<BankReconciliationPattern> BankReconciliationPatterns => Set<BankReconciliationPattern>();
+    public DbSet<ChequeBook> ChequeBooks => Set<ChequeBook>();
+    public DbSet<Cheque> Cheques => Set<Cheque>();
+    public DbSet<StampDutyRecord> StampDutyRecords => Set<StampDutyRecord>();
+    public DbSet<PettyCashFund> PettyCashFunds => Set<PettyCashFund>();
+    public DbSet<PettyCashTransaction> PettyCashTransactions => Set<PettyCashTransaction>();
+    public DbSet<PdpaDataSubjectRequest> PdpaDataSubjectRequests => Set<PdpaDataSubjectRequest>();
+    public DbSet<BillOfMaterials> BillsOfMaterials => Set<BillOfMaterials>();
+    public DbSet<BomLine> BomLines => Set<BomLine>();
+    public DbSet<ConsignmentRecord> ConsignmentRecords => Set<ConsignmentRecord>();
+    public DbSet<VendorPortalToken> VendorPortalTokens => Set<VendorPortalToken>();
+    public DbSet<ProductionOrder> ProductionOrders => Set<ProductionOrder>();
 
     // ERP upgrade — Task 1 (periods, year-end, migration) + Task 4 (VAT deferral, e-Filing)
     // + Task 5 (OCR compliance log)
@@ -163,6 +175,9 @@ public class AccountingDbContext : DbContext
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ProjectTask> ProjectTasks => Set<ProjectTask>();
     public DbSet<ProjectCostEntry> ProjectCostEntries => Set<ProjectCostEntry>();
+    public DbSet<EmployeeProjectTime> EmployeeProjectTimes => Set<EmployeeProjectTime>();
+    public DbSet<EmployeeCompensationProfile> EmployeeCompensationProfiles => Set<EmployeeCompensationProfile>();
+    public DbSet<CompanyCompensationDefaults> CompanyCompensationDefaults => Set<CompanyCompensationDefaults>();
 
     // Warehouse Management
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
@@ -212,6 +227,9 @@ public class AccountingDbContext : DbContext
     public DbSet<PayrollRun> PayrollRuns => Set<PayrollRun>();
     public DbSet<PayrollDetail> PayrollDetails => Set<PayrollDetail>();
     public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
+    public DbSet<LeaveType> LeaveTypes => Set<LeaveType>();
+    public DbSet<PublicHoliday> PublicHolidays => Set<PublicHoliday>();
+    public DbSet<EmployeeLeaveBalance> EmployeeLeaveBalances => Set<EmployeeLeaveBalance>();
     public DbSet<PayrollItem> PayrollItems => Set<PayrollItem>();
     public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();
     public DbSet<Department> Departments => Set<Department>();
@@ -296,6 +314,15 @@ public class AccountingDbContext : DbContext
 
     // Site Settings (global, singleton)
     public DbSet<SiteSettings> SiteSettings => Set<SiteSettings>();
+
+    // AI Integration — provider registry, per-call feedback (training set),
+    // prompt cache, per-feature local-model health, and daily usage rollup.
+    public DbSet<AiProviderConfig> AiProviderConfigs => Set<AiProviderConfig>();
+    public DbSet<AiSuggestionFeedback> AiSuggestionFeedbacks => Set<AiSuggestionFeedback>();
+    public DbSet<AiResponseCache> AiResponseCaches => Set<AiResponseCache>();
+    public DbSet<LocalModelHealth> LocalModelHealths => Set<LocalModelHealth>();
+    public DbSet<AiFeatureRoutingConfig> AiFeatureRoutingConfigs => Set<AiFeatureRoutingConfig>();
+    public DbSet<AiUsageDaily> AiUsageDailies => Set<AiUsageDaily>();
 
     // External Integration
     public DbSet<ExternalIntegration> ExternalIntegrations => Set<ExternalIntegration>();
@@ -671,6 +698,17 @@ public class AccountingDbContext : DbContext
         {
             e.Property(c => c.Name).HasMaxLength(500);
             e.Property(c => c.TaxId).HasMaxLength(13);
+            // Per-contact GL account overrides — SetNull on delete so
+            // deleting an account doesn't cascade-orphan the contact.
+            e.HasOne(c => c.DefaultArAccount).WithMany()
+                .HasForeignKey(c => c.DefaultArAccountId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(c => c.DefaultApAccount).WithMany()
+                .HasForeignKey(c => c.DefaultApAccountId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(c => c.DefaultIrGrAccount).WithMany()
+                .HasForeignKey(c => c.DefaultIrGrAccountId)
+                .OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(c => !c.IsDeleted);
         });
 
@@ -1060,6 +1098,16 @@ public class AccountingDbContext : DbContext
             e.HasOne(ec => ec.SubmittedByUser).WithMany().HasForeignKey(ec => ec.SubmittedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.ApprovedByUser).WithMany().HasForeignKey(ec => ec.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(ec => ec.PaymentVoucherDocument).WithMany().HasForeignKey(ec => ec.PaymentVoucherDocumentId).OnDelete(DeleteBehavior.SetNull);
+            // Auto-generated CertificateInLieu (§65 ทวิ) — SetNull on the
+            // claim row when the document is deleted; the certificate
+            // entity owns its own GL posting, the claim is just an HR
+            // claim record that references it.
+            e.HasOne(ec => ec.CertificateInLieuDocument).WithMany()
+                .HasForeignKey(ec => ec.CertificateInLieuDocumentId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.Property(ec => ec.NoReceiptReason).HasMaxLength(500);
+            e.Property(ec => ec.WitnessName).HasMaxLength(200);
+            e.Property(ec => ec.WitnessPosition).HasMaxLength(200);
             e.HasQueryFilter(ec => !ec.IsDeleted);
         });
 
@@ -1173,7 +1221,15 @@ public class AccountingDbContext : DbContext
         // ===== Employee =====
         modelBuilder.Entity<Employee>(e =>
         {
-            e.HasIndex(emp => new { emp.CompanyId, emp.EmployeeCode }).IsUnique();
+            // Unique-per-active scope: a soft-deleted row keeps the slot
+            // when modelled at the plain index level, so partners can't
+            // recreate (or restore-after-create-collision) a code. The
+            // filtered unique index lets soft-deleted EmployeeCode rows
+            // coexist with a new active one. Restore must check + bail
+            // when an active duplicate already exists.
+            e.HasIndex(emp => new { emp.CompanyId, emp.EmployeeCode })
+                .IsUnique()
+                .HasFilter("\"IsDeleted\" = false");
             e.Property(emp => emp.EmployeeCode).HasMaxLength(50);
             e.Property(emp => emp.TitleTh).HasMaxLength(20);
             e.Property(emp => emp.FirstNameTh).HasMaxLength(200);
@@ -2200,6 +2256,73 @@ public class AccountingDbContext : DbContext
             e.Property(s => s.ServicesJson).HasColumnType("jsonb");
         });
 
+        // ===== AI Integration =====
+        modelBuilder.Entity<AiProviderConfig>(e =>
+        {
+            // Partial unique index — only one row at a time may be active.
+            // PostgreSQL filter expression enforces "at most one active
+            // provider" without complicating the read path.
+            e.HasIndex(p => p.IsActive)
+                .HasFilter(@"""IsActive"" = true")
+                .HasDatabaseName("IX_AiProviderConfigs_OneActive")
+                .IsUnique();
+            e.HasIndex(p => p.ProviderType).HasDatabaseName("IX_AiProviderConfigs_ProviderType");
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiSuggestionFeedback>(e =>
+        {
+            // Per-feature accuracy reporting + retrain selection.
+            e.HasIndex(f => new { f.CompanyId, f.FeatureKey, f.CreatedAt })
+                .HasDatabaseName("IX_AiSuggestionFeedbacks_Company_Feature_Date");
+            // Lookup by prompt hash for cache-bypass debugging.
+            e.HasIndex(f => f.PromptHash).HasDatabaseName("IX_AiSuggestionFeedbacks_PromptHash");
+            // Find unreviewed rows (UserChosenAt NULL, older than 7d → discard).
+            e.HasIndex(f => new { f.FeatureKey, f.UserChosenAt })
+                .HasDatabaseName("IX_AiSuggestionFeedbacks_Feature_UserChosen");
+            e.Property(f => f.PromptJson).HasColumnType("jsonb");
+            e.Property(f => f.ResponseJson).HasColumnType("jsonb");
+            e.HasQueryFilter(f => !f.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiResponseCache>(e =>
+        {
+            // Hot lookup — every AI-augmented call site hashes the prompt
+            // and queries this index before invoking the provider.
+            e.HasIndex(c => new { c.PromptHash, c.CompanyId })
+                .HasDatabaseName("IX_AiResponseCaches_Hash_Company")
+                .IsUnique();
+            e.HasIndex(c => c.ExpiresAt).HasDatabaseName("IX_AiResponseCaches_ExpiresAt");
+            e.Property(c => c.ResponseJson).HasColumnType("jsonb");
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        modelBuilder.Entity<LocalModelHealth>(e =>
+        {
+            e.HasIndex(h => h.FeatureKey)
+                .HasDatabaseName("IX_LocalModelHealths_FeatureKey")
+                .IsUnique();
+            e.HasQueryFilter(h => !h.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiFeatureRoutingConfig>(e =>
+        {
+            e.HasIndex(c => c.FeatureKey)
+                .HasDatabaseName("IX_AiFeatureRoutingConfigs_FeatureKey")
+                .IsUnique();
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiUsageDaily>(e =>
+        {
+            // Composite unique — one row per (day, provider, feature).
+            e.HasIndex(u => new { u.UsageDate, u.ProviderType, u.FeatureKey })
+                .HasDatabaseName("IX_AiUsageDailies_Day_Provider_Feature")
+                .IsUnique();
+            e.HasIndex(u => u.UsageDate).HasDatabaseName("IX_AiUsageDailies_UsageDate");
+            e.HasQueryFilter(u => !u.IsDeleted);
+        });
+
         // External Integration
         modelBuilder.Entity<ExternalIntegration>(e =>
         {
@@ -2866,6 +2989,16 @@ public class AccountingDbContext : DbContext
             e.HasOne(c => c.Contact).WithMany().HasForeignKey(c => c.ContactId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(c => !c.IsDeleted);
         });
+
+        // ===== Soft-delete filters for entities created via raw-SQL
+        //       migration (no other EF config beyond the DbSet). Without
+        //       these, eager-loaded nav properties on Payment.Allocations
+        //       and Employee.CompensationProfile would surface soft-
+        //       deleted rows.
+        modelBuilder.Entity<PaymentAllocation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<EmployeeProjectTime>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<EmployeeCompensationProfile>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CompanyCompensationDefaults>().HasQueryFilter(e => !e.IsDeleted);
 
         // ===== SiteCustomerAddress =====
         modelBuilder.Entity<SiteCustomerAddress>(e =>

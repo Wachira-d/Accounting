@@ -77,11 +77,25 @@ public class DocumentController : ControllerBase
         [FromQuery] Guid? projectId = null, [FromQuery] Guid? contactId = null,
         [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
         [FromQuery] Guid? relatedDocumentId = null, [FromQuery] Guid? revenueContractId = null,
-        [FromQuery] bool staleOnly = false)
+        [FromQuery] bool staleOnly = false,
+        // "Open" | "PartiallyDone" | "Done" | "Cancelled" — derived field;
+        // post-filtered after mapping. Lets partner ERPs sync only "still
+        // has work" docs without parsing Status+BalanceDue+conversion %
+        // separately.
+        [FromQuery] string? lifecycle = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly);
+        if (!string.IsNullOrWhiteSpace(lifecycle))
+        {
+            var filtered = result.Items
+                .Where(d => string.Equals(d.LifecycleStatus, lifecycle, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            result = new PagedResponse<DocumentResponse>(filtered, filtered.Count,
+                result.Page, result.PageSize,
+                (int)Math.Ceiling(filtered.Count / (double)result.PageSize));
+        }
         return Ok(new ApiResponse<PagedResponse<DocumentResponse>>(true, result));
     }
 
@@ -145,9 +159,14 @@ public class DocumentController : ControllerBase
             // 422 Unprocessable Entity — semantically "request is well-
             // formed but content violates a pre-condition". Frontend
             // recognises the shape, prompts the operator with the warning
-            // list, and re-submits with AcknowledgeWarnings=true.
+            // list, and re-submits with AcknowledgeWarnings=true. When
+            // AI augmentation is online, AiHints[i] aligns with Warnings[i]
+            // so the UI can render the suggested fix next to each warning.
+            var aiHints = ex.AiHints?.Select(h => new ApprovalWarningAiHintDto(
+                h.Primary, h.Confidence, h.Reasoning, h.SuggestedActions,
+                h.Risks, h.ComplianceFlags, h.FeedbackId, h.UsedAi)).ToList();
             return StatusCode(422, new ApiResponse<object>(false,
-                new ApprovalWarningsResponse(ex.Warnings),
+                new ApprovalWarningsResponse(ex.Warnings, aiHints),
                 ex.Message));
         }
     }
@@ -359,8 +378,15 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<PaymentResponse>>> CreatePayment(Guid companyId, [FromBody] CreatePaymentRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _documentService.CreatePaymentAsync(companyId, request, userId);
-        return StatusCode(201, new ApiResponse<PaymentResponse>(true, result, "บันทึกการชำระเงินสำเร็จ"));
+        // Single endpoint, two paths: when Allocations is non-empty the
+        // multi-doc settler runs; otherwise legacy 1:1 settler.
+        var result = (request.Allocations != null && request.Allocations.Count > 0)
+            ? await _documentService.CreateMultiDocPaymentAsync(companyId, request, userId)
+            : await _documentService.CreatePaymentAsync(companyId, request, userId);
+        var msg = (request.Allocations != null && request.Allocations.Count > 0)
+            ? $"บันทึกการชำระสำเร็จ — กระจายเป็น {request.Allocations.Count} เอกสาร"
+            : "บันทึกการชำระเงินสำเร็จ";
+        return StatusCode(201, new ApiResponse<PaymentResponse>(true, result, msg));
     }
 
     /// <summary>

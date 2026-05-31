@@ -12,6 +12,7 @@ public class BankFeedService : IBankFeedService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<BankFeedService> _logger;
     private readonly ISecretProtector _secrets;
+    private readonly Accounting.Services.Ai.IBankAiAugmenter? _aiAugmenter;
 
     private static readonly Dictionary<string, string> BankApiEndpoints = new()
     {
@@ -24,12 +25,14 @@ public class BankFeedService : IBankFeedService
     };
 
     public BankFeedService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
-        ILogger<BankFeedService> logger, ISecretProtector secrets)
+        ILogger<BankFeedService> logger, ISecretProtector secrets,
+        Accounting.Services.Ai.IBankAiAugmenter? aiAugmenter = null)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _secrets = secrets;
+        _aiAugmenter = aiAugmenter;
     }
 
     public async Task<BankFeedConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankFeedConnectionRequest request)
@@ -302,6 +305,46 @@ public class BankFeedService : IBankFeedService
         {
             txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Matched;
             return true;
+        }
+
+        // ── AI fallback when exact heuristic missed ──
+        // Local matcher is strict (exact amount + same matchTypes +
+        // memo contains DocNumber/Reference). When it misses, fire AI
+        // augmenter against open docs in a ±15% / ±14d window. AI may
+        // see a match the strict heuristic couldn't (memo says
+        // "settlement for INV2025-0312" even though we strip-matched
+        // wrong, or amount differs by bank fee). Reports the match as
+        // a "suggested" status — user still has to confirm in the
+        // bank reconciliation UI before it's auto-applied.
+        if (_aiAugmenter == null) return false;
+        try
+        {
+            using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var memo = string.IsNullOrEmpty(txn.Reference) ? txn.Description : $"{txn.Reference} {txn.Description}";
+            var aiResult = await _aiAugmenter.SuggestStatementMatchAsync(
+                companyId, txn.Id, memo, txn.TransactionDate, txn.Amount, "THB",
+                txn.TransactionType, localBestDocumentId: null, localConfidence: 0m,
+                aiCts.Token);
+            if (aiResult.UsedAi
+                && !string.IsNullOrEmpty(aiResult.Answer) && aiResult.Answer != "__NEW__"
+                && (aiResult.Confidence ?? 0m) >= 0.75m
+                && Guid.TryParse(aiResult.Answer, out var aiMatchedId))
+            {
+                var verified = await _db.Documents.AnyAsync(d => d.Id == aiMatchedId
+                    && d.CompanyId == companyId && !d.IsDeleted
+                    && d.Status != Models.Enums.DocumentStatus.Voided);
+                if (verified)
+                {
+                    txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Suggested;
+                    _logger.LogInformation("Bank txn {Txn} → AI-suggested match {Doc} ({Conf:P0})",
+                        txn.Id, aiMatchedId, aiResult.Confidence ?? 0m);
+                    return true;
+                }
+            }
+        }
+        catch (Exception aiEx)
+        {
+            _logger.LogWarning(aiEx, "AI bank-match fallback failed for txn {Id} — leaving Unmatched", txn.Id);
         }
 
         return false;
