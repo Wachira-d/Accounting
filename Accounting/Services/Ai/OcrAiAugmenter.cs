@@ -133,10 +133,10 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             // ── Prior match count per candidate (signal for AI) ──
             var candidateIds = candidates.Select(c => c.Id).ToList();
             var priorCounts = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && d.ContactId != null
-                            && candidateIds.Contains(d.ContactId.Value)
+                .Where(d => d.CompanyId == companyId
+                            && candidateIds.Contains(d.ContactId)
                             && !d.IsDeleted)
-                .GroupBy(d => d.ContactId!.Value)
+                .GroupBy(d => d.ContactId)
                 .Select(g => new { ContactId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.ContactId, x => x.Count, ct);
 
@@ -203,8 +203,7 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             var candidates = await _db.ChartOfAccounts.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                     && (a.AccountType == AccountType.Expense
-                        || a.AccountType == AccountType.Asset
-                        || a.AccountType == AccountType.CostOfGoodsSold))
+                        || a.AccountType == AccountType.Asset))
                 .OrderBy(a => a.AccountCode)
                 .Take(40)
                 .Select(a => new GlAccountPrompt.AccountCandidate(

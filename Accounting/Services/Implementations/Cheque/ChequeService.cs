@@ -80,7 +80,7 @@ public class ChequeService : IChequeService
     {
         if (endNumber < startNumber)
             throw new ArgumentException("EndChequeNumber must be ≥ StartChequeNumber.");
-        var book = new ChequeEntityBook
+        var book = new ChequeBook
         {
             CompanyId = companyId,
             BankAccountId = bankAccountId,
@@ -161,7 +161,7 @@ public class ChequeService : IChequeService
         DateTime clearedAt, CancellationToken ct = default)
     {
         var cheque = await _db.Cheques
-            .Include(c => c.ChequeBook).ThenInclude(b => b.BankAccount)
+            .Include(c => c.ChequeBook).ThenInclude(b => b!.BankAccount)
             .Include(c => c.DepositBankAccount)
             .FirstOrDefaultAsync(c => c.Id == chequeId && c.CompanyId == companyId, ct);
         if (cheque == null) throw new InvalidOperationException("Cheque not found.");

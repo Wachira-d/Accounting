@@ -350,7 +350,7 @@ public class LeaveController : ControllerBase
 
         var employees = await _db.Employees.AsNoTracking()
             .Where(e => e.CompanyId == companyId && !e.IsDeleted
-                        && (e.TerminationDate == null || e.TerminationDate.Value.Year >= req.ToYear))
+                        && (e.EndDate == null || e.EndDate.Value.Year >= req.ToYear))
             .Select(e => new { e.Id, FullName = e.FirstNameTh + " " + e.LastNameTh })
             .ToListAsync(ct);
 

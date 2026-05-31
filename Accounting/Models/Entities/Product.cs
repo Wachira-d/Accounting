@@ -132,6 +132,10 @@ public class StockCount : TenantEntity
     public string Status { get; set; } = "Draft";  // Draft, InProgress, Completed, Cancelled
     public string? Notes { get; set; }
     public Guid? WarehouseId { get; set; }
+    /// <summary>"Full" | "Cycle" | "Partial" — tracking mode used by the
+    /// count session. Defaults to Full so legacy rows (no value) read
+    /// consistently.</summary>
+    public string CountType { get; set; } = "Full";
     public ICollection<StockCountLine> Lines { get; set; } = new List<StockCountLine>();
 }
 
