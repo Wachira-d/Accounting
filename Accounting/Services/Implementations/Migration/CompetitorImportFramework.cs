@@ -12,12 +12,14 @@ namespace Accounting.Services.Implementations.Migration;
 /// Express / PEAK / FlowAccount. Each adapter handles ONE competitor
 /// format and exposes the same canonical pipeline:
 ///
-///   1. ParsePreview(stream) — sniff column shape + return first 50
-///      rows + detected ContactType / DocumentType so admin can
-///      confirm-or-correct the mapping before commit.
-///   2. ImportChunk(stream, options) — actually create Contact /
-///      Product / Document rows, idempotent on external_ref so
-///      re-running the same file doesn't double-create.
+///   1. PreviewAsync(companyId, stream) — sniff column shape, return
+///      first 50 rows AND detect conflicts (rows whose TaxId matches an
+///      existing contact but with different Name/Phone/Email/Address).
+///      Admin sees the diff before committing.
+///   2. ImportAsync(companyId, stream, options) — actually create
+///      Contact rows. For each conflict the caller picks an action
+///      (Skip / Overwrite / Merge); rows without an explicit decision
+///      fall back to options.DefaultConflictAction.
 ///
 /// The adapter interface lets us extend to BeeAccount, AccRevo, etc.
 /// later by dropping in another class — no framework changes needed.
@@ -36,11 +38,36 @@ public interface ICompetitorImportAdapter
     /// signature and returns true if THIS adapter can parse it.</summary>
     bool CanHandle(string fileContent, string filename);
 
-    Task<ImportPreview> PreviewAsync(string fileContent, CancellationToken ct);
+    Task<ImportPreview> PreviewAsync(Guid companyId, string fileContent, CancellationToken ct);
 
     Task<ImportResult> ImportAsync(Guid companyId, string fileContent,
         ImportOptions options, CancellationToken ct);
 }
+
+/// <summary>How to resolve a row whose key (TaxId) matches an existing
+/// contact but with different field values.</summary>
+public enum ConflictAction
+{
+    /// <summary>Keep the existing DB row untouched, ignore the import row.</summary>
+    Skip = 0,
+    /// <summary>Replace existing row's fields with the import row's values
+    /// (only non-empty incoming fields overwrite).</summary>
+    Overwrite = 1,
+    /// <summary>Existing values win; import only fills in blanks (sensible
+    /// default — protects manual edits while enriching sparse rows).</summary>
+    Merge = 2,
+}
+
+/// <summary>One row that already exists in the DB and differs from the
+/// import file. UI shows the user a side-by-side diff and asks for a
+/// per-row ConflictAction.</summary>
+public sealed record ContactConflict(
+    string Key,                            // TaxId (the join key)
+    string ExistingName,
+    string IncomingName,
+    IReadOnlyDictionary<string, string?> Existing,   // field → current value
+    IReadOnlyDictionary<string, string?> Incoming,   // field → file value
+    IReadOnlyList<string> DiffFields);                // names of fields that differ
 
 public sealed record ImportPreview(
     string SourceSystem,
@@ -48,125 +75,286 @@ public sealed record ImportPreview(
     IReadOnlyList<string> Columns,
     IReadOnlyList<IReadOnlyDictionary<string, string>> SampleRows,
     int TotalRows,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<ContactConflict> Conflicts,         // ← NEW
+    int NewRowCount,                                  // ← NEW: count of rows without a DB match
+    int DuplicateExactCount);                         // ← NEW: rows whose TaxId matches AND every field is identical (auto-skip, no UI prompt)
 
 public sealed record ImportOptions(
     bool DryRun,
-    bool SkipDuplicates,
-    string? SourceTag);                 // appended to CreatedBy for audit
+    bool SkipDuplicates,                              // legacy: when true and no per-row decision, behaves like Skip
+    string? SourceTag,                                // appended to CreatedBy for audit
+    IReadOnlyDictionary<string, ConflictAction>? Resolutions = null,   // key (TaxId) → user's pick
+    ConflictAction DefaultConflictAction = ConflictAction.Skip);       // fallback when key not in Resolutions
 
 public sealed record ImportResult(
     string SourceSystem,
     int RowsRead,
-    int RowsImported,
+    int RowsImported,         // brand-new inserts
+    int RowsUpdated,          // matched a conflict and Overwrite/Merge applied
     int RowsSkipped,
     int RowsFailed,
     IReadOnlyList<string> Errors);
 
 /// <summary>
-/// Express format — CSV with Thai headers: รหัส, ชื่อ, เลขประจำตัว
-/// ผู้เสียภาษี, ที่อยู่. Express exports tab-separated by default;
-/// adapter sniffs separator.
+/// Normalised contact row — what every adapter must produce after
+/// parsing its own CSV dialect. Conflict detection + write logic
+/// lives in the shared base class so we don't repeat ourselves.
 /// </summary>
-public class ExpressContactsAdapter : ICompetitorImportAdapter
+internal sealed record IncomingContact(
+    string Name,
+    string TaxId,
+    string? Phone,
+    string? Email,
+    string? Address);
+
+/// <summary>
+/// Base class with the shared contact-import pipeline. Adapters only
+/// need to implement <see cref="CanHandle"/> and <see cref="ParseRows"/>.
+/// Conflict detection, resolution, dedup, audit tagging — all here.
+/// </summary>
+public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
 {
-    private readonly AccountingDbContext _db;
-    public ExpressContactsAdapter(AccountingDbContext db) { _db = db; }
+    protected readonly AccountingDbContext _db;
+    protected ContactImportAdapterBase(AccountingDbContext db) { _db = db; }
 
-    public string SourceSystem => "Express";
+    public abstract string SourceSystem { get; }
     public string EntityKind => "Contacts";
+    public abstract bool CanHandle(string fileContent, string filename);
 
-    public bool CanHandle(string fileContent, string filename)
-    {
-        if (filename.Contains("express", StringComparison.OrdinalIgnoreCase)) return true;
-        var head = fileContent.Length > 1000 ? fileContent[..1000] : fileContent;
-        // Express exports usually have "รหัสลูกค้า" or "รหัสผู้จัด" as
-        // a distinctive header token.
-        return head.Contains("รหัสลูกค้า") || head.Contains("รหัสผู้จัด")
-            || head.Contains("เลขประจำตัวผู้เสียภาษี");
-    }
+    /// <summary>Parse raw CSV/TSV into normalised contact rows. Also
+    /// fill <paramref name="columns"/> for preview display and
+    /// <paramref name="rawSample"/> with up to 50 raw rows (for the
+    /// UI's preview table).</summary>
+    protected abstract List<IncomingContact> ParseRows(
+        string content,
+        out List<string> columns,
+        out List<Dictionary<string, string>> rawSample,
+        out List<string> warnings);
 
-    public Task<ImportPreview> PreviewAsync(string fileContent, CancellationToken ct)
+    public async Task<ImportPreview> PreviewAsync(Guid companyId, string fileContent, CancellationToken ct)
     {
-        var rows = ParseRows(fileContent, out var cols, out var sep, out var warnings);
-        var sample = rows.Take(50).Select(r => (IReadOnlyDictionary<string, string>)r).ToList();
-        return Task.FromResult(new ImportPreview(SourceSystem, EntityKind, cols, sample, rows.Count, warnings));
+        var rows = ParseRows(fileContent, out var cols, out var rawSample, out var warnings);
+        var (conflicts, newCount, exactDupCount) = await DetectConflictsAsync(companyId, rows, ct);
+        var sample = rawSample.Take(50).Select(r => (IReadOnlyDictionary<string, string>)r).ToList();
+        return new ImportPreview(SourceSystem, EntityKind, cols, sample,
+            rows.Count, warnings, conflicts, newCount, exactDupCount);
     }
 
     public async Task<ImportResult> ImportAsync(Guid companyId, string fileContent,
         ImportOptions options, CancellationToken ct)
     {
         var rows = ParseRows(fileContent, out _, out _, out var warnings);
-        int imported = 0, skipped = 0, failed = 0;
+        int imported = 0, updated = 0, skipped = 0, failed = 0;
         var errors = new List<string>(warnings);
+        var resolutions = options.Resolutions ?? new Dictionary<string, ConflictAction>();
+
+        // Preload all existing contacts that might match — avoids N round-trips.
+        var taxIds = rows.Select(r => r.TaxId).Where(t => !string.IsNullOrEmpty(t)).Distinct().ToList();
+        var existingByTaxId = await _db.Contacts
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted && taxIds.Contains(c.TaxId!))
+            .ToDictionaryAsync(c => c.TaxId!, ct);
+
+        int rowIdx = 0;
         foreach (var row in rows)
         {
+            rowIdx++;
             if (ct.IsCancellationRequested) break;
-            var taxId = FirstNonEmpty(row, "เลขประจำตัวผู้เสียภาษี", "TaxId", "TAX_ID");
-            var name = FirstNonEmpty(row, "ชื่อลูกค้า", "ชื่อผู้จัดจำหน่าย", "ชื่อ", "Name");
-            if (string.IsNullOrEmpty(name)) { skipped++; continue; }
-            // Idempotency: skip if taxId-based contact already exists.
-            if (!string.IsNullOrEmpty(taxId))
-            {
-                var exists = await _db.Contacts.AnyAsync(
-                    c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted, ct);
-                if (exists) { skipped++; continue; }
-            }
+            if (string.IsNullOrWhiteSpace(row.Name)) { skipped++; continue; }
+
             try
             {
-                if (!options.DryRun)
+                Contact? existing = null;
+                if (!string.IsNullOrEmpty(row.TaxId))
+                    existingByTaxId.TryGetValue(row.TaxId, out existing);
+
+                if (existing == null)
                 {
-                    _db.Contacts.Add(new Contact
+                    // Brand-new contact.
+                    if (!options.DryRun)
                     {
-                        CompanyId = companyId,
-                        Name = name,
-                        TaxId = taxId ?? "",
-                        ContactType = ContactType.JuristicPerson,
-                        IsCustomer = true,
-                        IsSupplier = true,
-                        Address = FirstNonEmpty(row, "ที่อยู่", "Address"),
-                        Phone = FirstNonEmpty(row, "โทรศัพท์", "Phone"),
-                        Email = FirstNonEmpty(row, "อีเมล", "Email"),
-                        CreatedBy = $"Migrate:Express:{options.SourceTag ?? "manual"}",
-                    });
+                        _db.Contacts.Add(new Contact
+                        {
+                            CompanyId = companyId,
+                            Name = row.Name,
+                            TaxId = row.TaxId,
+                            ContactType = ContactType.JuristicPerson,
+                            IsCustomer = true,
+                            IsSupplier = true,
+                            Phone = row.Phone,
+                            Email = row.Email,
+                            Address = row.Address,
+                            CreatedBy = $"Migrate:{SourceSystem}:{options.SourceTag ?? "manual"}",
+                        });
+                    }
+                    imported++;
+                    continue;
                 }
-                imported++;
+
+                // Existing match — is it an exact dup (skip silently) or a real conflict?
+                if (IsExactMatch(existing, row)) { skipped++; continue; }
+
+                // Pick an action: explicit per-row > default > legacy SkipDuplicates flag.
+                var key = row.TaxId ?? "";
+                var action = resolutions.TryGetValue(key, out var picked)
+                    ? picked
+                    : options.DefaultConflictAction;
+
+                if (options.SkipDuplicates && action == ConflictAction.Skip)
+                {
+                    skipped++; continue;
+                }
+
+                switch (action)
+                {
+                    case ConflictAction.Skip:
+                        skipped++;
+                        break;
+
+                    case ConflictAction.Overwrite:
+                        if (!options.DryRun) ApplyOverwrite(existing, row, options.SourceTag);
+                        updated++;
+                        break;
+
+                    case ConflictAction.Merge:
+                        if (!options.DryRun) ApplyMerge(existing, row, options.SourceTag);
+                        updated++;
+                        break;
+                }
             }
             catch (Exception ex)
             {
                 failed++;
-                errors.Add($"Row {imported + skipped + failed}: {ex.Message}");
+                errors.Add($"Row {rowIdx} ({row.Name}): {ex.Message}");
             }
         }
-        if (!options.DryRun && imported > 0) await _db.SaveChangesAsync(ct);
-        return new ImportResult(SourceSystem, rows.Count, imported, skipped, failed, errors);
+
+        if (!options.DryRun && (imported > 0 || updated > 0))
+            await _db.SaveChangesAsync(ct);
+
+        return new ImportResult(SourceSystem, rows.Count, imported, updated, skipped, failed, errors);
     }
 
-    private static List<Dictionary<string, string>> ParseRows(string content,
-        out List<string> columns, out char separator, out List<string> warnings)
+    // ─────────── conflict detection ───────────
+
+    private async Task<(List<ContactConflict>, int newCount, int exactDupCount)>
+        DetectConflictsAsync(Guid companyId, List<IncomingContact> rows, CancellationToken ct)
     {
-        warnings = new();
-        columns = new();
-        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0) { separator = ','; return new(); }
-        // Sniff: try tab first (Express default), fall back to comma.
-        separator = lines[0].Contains('\t') ? '\t' : ',';
-        columns = lines[0].TrimEnd('\r').Split(separator).Select(c => c.Trim()).ToList();
-        var rows = new List<Dictionary<string, string>>(lines.Length - 1);
-        for (int i = 1; i < lines.Length; i++)
+        var taxIds = rows.Select(r => r.TaxId).Where(t => !string.IsNullOrEmpty(t)).Distinct().ToList();
+        var existing = await _db.Contacts
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted && taxIds.Contains(c.TaxId!))
+            .ToDictionaryAsync(c => c.TaxId!, ct);
+
+        var conflicts = new List<ContactConflict>();
+        int newCount = 0, exactDupCount = 0;
+        var seenKeys = new HashSet<string>();
+
+        foreach (var row in rows)
         {
-            var raw = lines[i].TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var cells = raw.Split(separator);
-            var d = new Dictionary<string, string>(columns.Count);
-            for (int c = 0; c < columns.Count && c < cells.Length; c++)
-                d[columns[c]] = cells[c].Trim();
-            rows.Add(d);
+            if (string.IsNullOrWhiteSpace(row.Name)) continue;
+            if (string.IsNullOrEmpty(row.TaxId)
+                || !existing.TryGetValue(row.TaxId, out var ex))
+            {
+                newCount++;
+                continue;
+            }
+
+            if (IsExactMatch(ex, row)) { exactDupCount++; continue; }
+
+            // Avoid listing the same TaxId twice if it appears multiple times in the file.
+            if (!seenKeys.Add(row.TaxId)) continue;
+
+            var diff = new List<string>();
+            void cmp(string label, string? a, string? b)
+            {
+                if (!StringEquals(a, b)) diff.Add(label);
+            }
+            cmp("Name", ex.Name, row.Name);
+            cmp("Phone", ex.Phone, row.Phone);
+            cmp("Email", ex.Email, row.Email);
+            cmp("Address", ex.Address, row.Address);
+
+            conflicts.Add(new ContactConflict(
+                Key: row.TaxId,
+                ExistingName: ex.Name,
+                IncomingName: row.Name,
+                Existing: new Dictionary<string, string?>
+                {
+                    ["Name"] = ex.Name,
+                    ["Phone"] = ex.Phone,
+                    ["Email"] = ex.Email,
+                    ["Address"] = ex.Address,
+                },
+                Incoming: new Dictionary<string, string?>
+                {
+                    ["Name"] = row.Name,
+                    ["Phone"] = row.Phone,
+                    ["Email"] = row.Email,
+                    ["Address"] = row.Address,
+                },
+                DiffFields: diff));
         }
-        return rows;
+
+        return (conflicts, newCount, exactDupCount);
     }
 
-    private static string? FirstNonEmpty(IDictionary<string, string> row, params string[] keys)
+    private static bool IsExactMatch(Contact ex, IncomingContact row)
+        => StringEquals(ex.Name, row.Name)
+        && StringEquals(ex.Phone, row.Phone)
+        && StringEquals(ex.Email, row.Email)
+        && StringEquals(ex.Address, row.Address);
+
+    private static bool StringEquals(string? a, string? b)
+    {
+        var na = string.IsNullOrWhiteSpace(a) ? "" : a.Trim();
+        var nb = string.IsNullOrWhiteSpace(b) ? "" : b.Trim();
+        return string.Equals(na, nb, StringComparison.Ordinal);
+    }
+
+    private void ApplyOverwrite(Contact existing, IncomingContact row, string? sourceTag)
+    {
+        // Only non-empty incoming fields overwrite — protects user from
+        // a file with blank columns wiping out real data.
+        if (!string.IsNullOrWhiteSpace(row.Name)) existing.Name = row.Name;
+        if (!string.IsNullOrWhiteSpace(row.Phone)) existing.Phone = row.Phone;
+        if (!string.IsNullOrWhiteSpace(row.Email)) existing.Email = row.Email;
+        if (!string.IsNullOrWhiteSpace(row.Address)) existing.Address = row.Address;
+        existing.UpdatedAt = DateTime.UtcNow;
+        existing.UpdatedBy = $"Migrate:{SourceSystem}:{sourceTag ?? "manual"}:overwrite";
+    }
+
+    private void ApplyMerge(Contact existing, IncomingContact row, string? sourceTag)
+    {
+        // Existing wins; new fills blanks only.
+        if (string.IsNullOrWhiteSpace(existing.Phone) && !string.IsNullOrWhiteSpace(row.Phone))
+            existing.Phone = row.Phone;
+        if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(row.Email))
+            existing.Email = row.Email;
+        if (string.IsNullOrWhiteSpace(existing.Address) && !string.IsNullOrWhiteSpace(row.Address))
+            existing.Address = row.Address;
+        existing.UpdatedAt = DateTime.UtcNow;
+        existing.UpdatedBy = $"Migrate:{SourceSystem}:{sourceTag ?? "manual"}:merge";
+    }
+
+    // ─────────── shared CSV helpers ───────────
+
+    protected static List<string> SplitCsvLine(string line)
+    {
+        // RFC4180-lite — honours quotes for embedded commas.
+        var cells = new List<string>();
+        var sb = new StringBuilder();
+        bool inQuotes = false;
+        foreach (var ch in line)
+        {
+            if (ch == '"') inQuotes = !inQuotes;
+            else if (ch == ',' && !inQuotes) { cells.Add(sb.ToString()); sb.Clear(); }
+            else sb.Append(ch);
+        }
+        cells.Add(sb.ToString());
+        return cells;
+    }
+
+    protected static string? FirstNonEmpty(IDictionary<string, string> row, params string[] keys)
     {
         foreach (var k in keys)
             if (row.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v))
@@ -176,82 +364,89 @@ public class ExpressContactsAdapter : ICompetitorImportAdapter
 }
 
 /// <summary>
-/// PEAK format — exports as CSV with English camelCase headers:
+/// Express format — CSV/TSV with Thai headers: รหัส, ชื่อ, เลขประจำตัว
+/// ผู้เสียภาษี, ที่อยู่. Express exports tab-separated by default;
+/// adapter sniffs separator.
+/// </summary>
+public class ExpressContactsAdapter : ContactImportAdapterBase
+{
+    public ExpressContactsAdapter(AccountingDbContext db) : base(db) { }
+    public override string SourceSystem => "Express";
+
+    public override bool CanHandle(string fileContent, string filename)
+    {
+        if (filename.Contains("express", StringComparison.OrdinalIgnoreCase)) return true;
+        var head = fileContent.Length > 1000 ? fileContent[..1000] : fileContent;
+        return head.Contains("รหัสลูกค้า") || head.Contains("รหัสผู้จัด")
+            || head.Contains("เลขประจำตัวผู้เสียภาษี");
+    }
+
+    protected override List<IncomingContact> ParseRows(
+        string content,
+        out List<string> columns,
+        out List<Dictionary<string, string>> rawSample,
+        out List<string> warnings)
+    {
+        warnings = new();
+        rawSample = new();
+        columns = new();
+        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length == 0) return new();
+        var sep = lines[0].Contains('\t') ? '\t' : ',';
+        columns = lines[0].TrimEnd('\r').Split(sep).Select(c => c.Trim()).ToList();
+        var rows = new List<IncomingContact>(lines.Length - 1);
+        for (int i = 1; i < lines.Length; i++)
+        {
+            var raw = lines[i].TrimEnd('\r');
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var cells = raw.Split(sep);
+            var d = new Dictionary<string, string>(columns.Count);
+            for (int c = 0; c < columns.Count && c < cells.Length; c++)
+                d[columns[c]] = cells[c].Trim();
+            if (rawSample.Count < 50) rawSample.Add(d);
+
+            var name = FirstNonEmpty(d, "ชื่อลูกค้า", "ชื่อผู้จัดจำหน่าย", "ชื่อ", "Name");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            rows.Add(new IncomingContact(
+                Name: name!,
+                TaxId: FirstNonEmpty(d, "เลขประจำตัวผู้เสียภาษี", "TaxId", "TAX_ID") ?? "",
+                Phone: FirstNonEmpty(d, "โทรศัพท์", "Phone"),
+                Email: FirstNonEmpty(d, "อีเมล", "Email"),
+                Address: FirstNonEmpty(d, "ที่อยู่", "Address")));
+        }
+        return rows;
+    }
+}
+
+/// <summary>
+/// PEAK format — CSV with English camelCase headers:
 /// "contactCode", "contactName", "taxNumber", "address", "phone".
 /// </summary>
-public class PeakContactsAdapter : ICompetitorImportAdapter
+public class PeakContactsAdapter : ContactImportAdapterBase
 {
-    private readonly AccountingDbContext _db;
-    public PeakContactsAdapter(AccountingDbContext db) { _db = db; }
+    public PeakContactsAdapter(AccountingDbContext db) : base(db) { }
+    public override string SourceSystem => "PEAK";
 
-    public string SourceSystem => "PEAK";
-    public string EntityKind => "Contacts";
-
-    public bool CanHandle(string fileContent, string filename)
+    public override bool CanHandle(string fileContent, string filename)
     {
         if (filename.Contains("peak", StringComparison.OrdinalIgnoreCase)) return true;
         var head = fileContent.Length > 1000 ? fileContent[..1000] : fileContent;
         return head.Contains("contactCode") || head.Contains("taxNumber");
     }
 
-    public async Task<ImportPreview> PreviewAsync(string fileContent, CancellationToken ct)
+    protected override List<IncomingContact> ParseRows(
+        string content,
+        out List<string> columns,
+        out List<Dictionary<string, string>> rawSample,
+        out List<string> warnings)
     {
-        var rows = ParseCsv(fileContent, out var cols);
-        return await Task.FromResult(new ImportPreview(SourceSystem, EntityKind, cols,
-            rows.Take(50).Select(r => (IReadOnlyDictionary<string, string>)r).ToList(),
-            rows.Count, Array.Empty<string>()));
-    }
-
-    public async Task<ImportResult> ImportAsync(Guid companyId, string fileContent,
-        ImportOptions options, CancellationToken ct)
-    {
-        var rows = ParseCsv(fileContent, out _);
-        int imported = 0, skipped = 0, failed = 0;
-        var errors = new List<string>();
-        foreach (var row in rows)
-        {
-            var taxId = row.GetValueOrDefault("taxNumber") ?? row.GetValueOrDefault("TaxNumber");
-            var name = row.GetValueOrDefault("contactName") ?? row.GetValueOrDefault("ContactName");
-            if (string.IsNullOrEmpty(name)) { skipped++; continue; }
-            if (!string.IsNullOrEmpty(taxId))
-            {
-                var exists = await _db.Contacts.AnyAsync(
-                    c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted, ct);
-                if (exists) { skipped++; continue; }
-            }
-            try
-            {
-                if (!options.DryRun)
-                {
-                    _db.Contacts.Add(new Contact
-                    {
-                        CompanyId = companyId,
-                        Name = name,
-                        TaxId = taxId ?? "",
-                        ContactType = ContactType.JuristicPerson,
-                        IsCustomer = true,
-                        IsSupplier = true,
-                        Address = row.GetValueOrDefault("address"),
-                        Phone = row.GetValueOrDefault("phone"),
-                        Email = row.GetValueOrDefault("email"),
-                        CreatedBy = $"Migrate:PEAK:{options.SourceTag ?? "manual"}",
-                    });
-                }
-                imported++;
-            }
-            catch (Exception ex) { failed++; errors.Add(ex.Message); }
-        }
-        if (!options.DryRun && imported > 0) await _db.SaveChangesAsync(ct);
-        return new ImportResult(SourceSystem, rows.Count, imported, skipped, failed, errors);
-    }
-
-    private static List<Dictionary<string, string>> ParseCsv(string content, out List<string> columns)
-    {
+        warnings = new();
+        rawSample = new();
         columns = new();
         var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length == 0) return new();
         columns = lines[0].TrimEnd('\r').Split(',').Select(c => c.Trim('"').Trim()).ToList();
-        var rows = new List<Dictionary<string, string>>(lines.Length - 1);
+        var rows = new List<IncomingContact>(lines.Length - 1);
         for (int i = 1; i < lines.Length; i++)
         {
             var raw = lines[i].TrimEnd('\r');
@@ -260,25 +455,18 @@ public class PeakContactsAdapter : ICompetitorImportAdapter
             var d = new Dictionary<string, string>(columns.Count);
             for (int c = 0; c < columns.Count && c < cells.Count; c++)
                 d[columns[c]] = cells[c].Trim('"').Trim();
-            rows.Add(d);
+            if (rawSample.Count < 50) rawSample.Add(d);
+
+            var name = FirstNonEmpty(d, "contactName", "ContactName");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            rows.Add(new IncomingContact(
+                Name: name!,
+                TaxId: FirstNonEmpty(d, "taxNumber", "TaxNumber") ?? "",
+                Phone: FirstNonEmpty(d, "phone", "Phone"),
+                Email: FirstNonEmpty(d, "email", "Email"),
+                Address: FirstNonEmpty(d, "address", "Address")));
         }
         return rows;
-    }
-
-    private static List<string> SplitCsvLine(string line)
-    {
-        // RFC4180-lite — honour quotes for embedded commas.
-        var cells = new List<string>();
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        foreach (var ch in line)
-        {
-            if (ch == '"') inQuotes = !inQuotes;
-            else if (ch == ',' && !inQuotes) { cells.Add(sb.ToString()); sb.Clear(); }
-            else sb.Append(ch);
-        }
-        cells.Add(sb.ToString());
-        return cells;
     }
 }
 
@@ -286,15 +474,12 @@ public class PeakContactsAdapter : ICompetitorImportAdapter
 /// FlowAccount format — CSV with Thai-English mixed headers:
 /// "code", "name (TH)", "name (EN)", "tax id".
 /// </summary>
-public class FlowAccountContactsAdapter : ICompetitorImportAdapter
+public class FlowAccountContactsAdapter : ContactImportAdapterBase
 {
-    private readonly AccountingDbContext _db;
-    public FlowAccountContactsAdapter(AccountingDbContext db) { _db = db; }
+    public FlowAccountContactsAdapter(AccountingDbContext db) : base(db) { }
+    public override string SourceSystem => "FlowAccount";
 
-    public string SourceSystem => "FlowAccount";
-    public string EntityKind => "Contacts";
-
-    public bool CanHandle(string fileContent, string filename)
+    public override bool CanHandle(string fileContent, string filename)
     {
         if (filename.Contains("flow", StringComparison.OrdinalIgnoreCase)) return true;
         var head = fileContent.Length > 1000 ? fileContent[..1000] : fileContent;
@@ -302,97 +487,39 @@ public class FlowAccountContactsAdapter : ICompetitorImportAdapter
             || head.Contains("FlowAccount");
     }
 
-    public Task<ImportPreview> PreviewAsync(string fileContent, CancellationToken ct)
-        => PeakContactsAdapter_PreviewHelper(fileContent, SourceSystem, EntityKind);
-
-    public async Task<ImportResult> ImportAsync(Guid companyId, string fileContent,
-        ImportOptions options, CancellationToken ct)
+    protected override List<IncomingContact> ParseRows(
+        string content,
+        out List<string> columns,
+        out List<Dictionary<string, string>> rawSample,
+        out List<string> warnings)
     {
-        var rows = PeakContactsAdapter_ParseCsv(fileContent);
-        int imported = 0, skipped = 0, failed = 0;
-        var errors = new List<string>();
-        foreach (var row in rows)
-        {
-            var taxId = row.GetValueOrDefault("tax id") ?? row.GetValueOrDefault("Tax ID");
-            var name = row.GetValueOrDefault("name (TH)")
-                ?? row.GetValueOrDefault("name (EN)")
-                ?? row.GetValueOrDefault("Name");
-            if (string.IsNullOrEmpty(name)) { skipped++; continue; }
-            if (!string.IsNullOrEmpty(taxId))
-            {
-                var exists = await _db.Contacts.AnyAsync(
-                    c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted, ct);
-                if (exists) { skipped++; continue; }
-            }
-            try
-            {
-                if (!options.DryRun)
-                {
-                    _db.Contacts.Add(new Contact
-                    {
-                        CompanyId = companyId,
-                        Name = name,
-                        TaxId = taxId ?? "",
-                        ContactType = ContactType.JuristicPerson,
-                        IsCustomer = true,
-                        IsSupplier = true,
-                        Phone = row.GetValueOrDefault("phone"),
-                        Email = row.GetValueOrDefault("email"),
-                        CreatedBy = $"Migrate:FlowAccount:{options.SourceTag ?? "manual"}",
-                    });
-                }
-                imported++;
-            }
-            catch (Exception ex) { failed++; errors.Add(ex.Message); }
-        }
-        if (!options.DryRun && imported > 0) await _db.SaveChangesAsync(ct);
-        return new ImportResult(SourceSystem, rows.Count, imported, skipped, failed, errors);
-    }
-
-    // Shared CSV helpers reused from the PEAK adapter — kept private static
-    // so a future refactor can extract to a base class.
-    internal static Task<ImportPreview> PeakContactsAdapter_PreviewHelper(string content,
-        string system, string kind)
-    {
-        var rows = PeakContactsAdapter_ParseCsv(content);
-        var cols = rows.Count > 0 ? rows[0].Keys.ToList() : new List<string>();
-        return Task.FromResult(new ImportPreview(system, kind, cols,
-            rows.Take(50).Select(r => (IReadOnlyDictionary<string, string>)r).ToList(),
-            rows.Count, Array.Empty<string>()));
-    }
-
-    internal static List<Dictionary<string, string>> PeakContactsAdapter_ParseCsv(string content)
-    {
+        warnings = new();
+        rawSample = new();
+        columns = new();
         var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length == 0) return new();
-        var cols = lines[0].TrimEnd('\r').Split(',').Select(c => c.Trim('"').Trim()).ToList();
-        var rows = new List<Dictionary<string, string>>(lines.Length - 1);
+        columns = lines[0].TrimEnd('\r').Split(',').Select(c => c.Trim('"').Trim()).ToList();
+        var rows = new List<IncomingContact>(lines.Length - 1);
         for (int i = 1; i < lines.Length; i++)
         {
             var raw = lines[i].TrimEnd('\r');
             if (string.IsNullOrWhiteSpace(raw)) continue;
             var cells = SplitCsvLine(raw);
-            var d = new Dictionary<string, string>(cols.Count);
-            for (int c = 0; c < cols.Count && c < cells.Count; c++)
-                d[cols[c]] = cells[c].Trim('"').Trim();
-            rows.Add(d);
+            var d = new Dictionary<string, string>(columns.Count);
+            for (int c = 0; c < columns.Count && c < cells.Count; c++)
+                d[columns[c]] = cells[c].Trim('"').Trim();
+            if (rawSample.Count < 50) rawSample.Add(d);
+
+            var name = FirstNonEmpty(d, "name (TH)", "name (EN)", "Name");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            rows.Add(new IncomingContact(
+                Name: name!,
+                TaxId: FirstNonEmpty(d, "tax id", "Tax ID", "taxId") ?? "",
+                Phone: FirstNonEmpty(d, "phone", "Phone"),
+                Email: FirstNonEmpty(d, "email", "Email"),
+                Address: FirstNonEmpty(d, "address", "Address")));
         }
         return rows;
-    }
-
-    private static List<string> SplitCsvLine(string line)
-    {
-        var cells = new List<string>();
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        foreach (var ch in line)
-        {
-            if (ch == '"') inQuotes = !inQuotes;
-            else if (ch == ',' && !inQuotes) { cells.Add(sb.ToString()); sb.Clear(); }
-            else sb.Append(ch);
-        }
-        cells.Add(sb.ToString());
-        return cells;
     }
 }
 
@@ -403,7 +530,7 @@ public class FlowAccountContactsAdapter : ICompetitorImportAdapter
 public interface ICompetitorImportCoordinator
 {
     Task<(ICompetitorImportAdapter? Adapter, ImportPreview? Preview)> PreviewAsync(
-        string fileContent, string filename, CancellationToken ct);
+        Guid companyId, string fileContent, string filename, CancellationToken ct);
 
     Task<ImportResult?> ImportAsync(Guid companyId, string fileContent, string filename,
         ImportOptions options, CancellationToken ct);
@@ -419,11 +546,11 @@ public class CompetitorImportCoordinator : ICompetitorImportCoordinator
     { _adapters = adapters; _logger = logger; }
 
     public async Task<(ICompetitorImportAdapter? Adapter, ImportPreview? Preview)> PreviewAsync(
-        string fileContent, string filename, CancellationToken ct)
+        Guid companyId, string fileContent, string filename, CancellationToken ct)
     {
         var adapter = _adapters.FirstOrDefault(a => a.CanHandle(fileContent, filename));
         if (adapter == null) return (null, null);
-        var preview = await adapter.PreviewAsync(fileContent, ct);
+        var preview = await adapter.PreviewAsync(companyId, fileContent, ct);
         return (adapter, preview);
     }
 
