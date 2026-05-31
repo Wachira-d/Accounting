@@ -11,14 +11,20 @@ public class ApprovalService : IApprovalService
 {
     private readonly AccountingDbContext _db;
     private readonly INotificationService _notificationService;
+    /// <summary>Resolved lazily to avoid the circular ctor dependency
+    /// IDocumentService ↔ IApprovalService (DocumentService may also want
+    /// to call SubmitForApprovalAsync in the future).</summary>
+    private readonly IServiceProvider _services;
 
     // Escalation timeout in hours
     private const int EscalationTimeoutHours = 48;
 
-    public ApprovalService(AccountingDbContext db, INotificationService notificationService)
+    public ApprovalService(AccountingDbContext db, INotificationService notificationService,
+        IServiceProvider services)
     {
         _db = db;
         _notificationService = notificationService;
+        _services = services;
     }
 
     // ==================== Rules ====================
@@ -210,6 +216,20 @@ public class ApprovalService : IApprovalService
             });
         }
 
+        // Flip the underlying entity into WaitingApproval so the UI
+        // surfaces "รออนุมัติ" and ApproveDocumentAsync's status guard
+        // recognises the document as already-routed. Only Document is
+        // wired today; other entity types stay untouched.
+        if (entityType == "Document")
+        {
+            var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == entityId && d.CompanyId == companyId);
+            if (doc != null && doc.Status == DocumentStatus.Draft)
+            {
+                doc.Status = DocumentStatus.WaitingApproval;
+                doc.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
         await _db.SaveChangesAsync();
 
         // Notify first approver
@@ -275,6 +295,19 @@ public class ApprovalService : IApprovalService
         {
             request.OverallStatus = ApprovalStatus.Rejected;
 
+            // Bounce the underlying entity back to Draft so the requester
+            // can fix + resubmit. Only Document wired today.
+            if (request.EntityType == "Document")
+            {
+                var doc = await _db.Documents.FirstOrDefaultAsync(d =>
+                    d.Id == request.EntityId && d.CompanyId == companyId);
+                if (doc != null && doc.Status == DocumentStatus.WaitingApproval)
+                {
+                    doc.Status = DocumentStatus.Draft;
+                    doc.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+
             await _notificationService.SendAsync(request.RequestedByUserId, companyId,
                 NotificationType.ApprovalRequired,
                 "คำขออนุมัติถูกปฏิเสธ",
@@ -314,7 +347,55 @@ public class ApprovalService : IApprovalService
         }
 
         await _db.SaveChangesAsync();
+
+        // After the approval-side state is persisted, finalize the
+        // underlying entity (e.g. push a Document from WaitingApproval
+        // through ApproveDocumentAsync → JE post + stock + cost feed).
+        // Done outside the SaveChanges window so a finalize failure
+        // doesn't roll back the approval audit trail; the failure logs
+        // and the document just sits at WaitingApproval for manual
+        // intervention.
+        if (request.OverallStatus == ApprovalStatus.Approved)
+        {
+            await TryFinalizeApprovedEntityAsync(companyId, request.EntityType, request.EntityId, actionRequest);
+        }
+
         return MapRequestToResponse(request);
+    }
+
+    /// <summary>Dispatch to the entity-specific approval gateway when an
+    /// ApprovalRequest reaches OverallStatus = Approved. Today only
+    /// "Document" is wired — JournalEntry / Payment / ExpenseClaim /
+    /// SalaryAdvance hooks are stubs and can be added later by
+    /// resolving the appropriate service. Errors are caught + logged
+    /// (via console for now) so a failed downstream finalize never
+    /// blocks the approval state save.</summary>
+    private async Task TryFinalizeApprovedEntityAsync(Guid companyId, string entityType, Guid entityId,
+        SubmitApprovalActionRequest actionRequest)
+    {
+        try
+        {
+            switch (entityType)
+            {
+                case "Document":
+                {
+                    var docSvc = _services.GetService(typeof(IDocumentService)) as IDocumentService;
+                    if (docSvc == null) return;
+                    // Use the last approver's display as the audit "approvedBy" —
+                    // pulled from the action's comment when blank.
+                    var who = $"approval-rule:{actionRequest.Comments ?? "auto"}";
+                    await docSvc.ApproveDocumentAsync(companyId, entityId, who, acknowledgeWarnings: true);
+                    break;
+                }
+                // Future hooks: case "JournalEntry": ...
+                //               case "ExpenseClaim": ...
+                //               case "SalaryAdvance": ...
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ApprovalService] Auto-finalize failed for {entityType} {entityId}: {ex.Message}");
+        }
     }
 
     // ==================== Escalation (called by background job) ====================

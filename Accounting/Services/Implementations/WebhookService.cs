@@ -237,6 +237,10 @@ public class WebhookService : IWebhookService
                 JsonSerializer.Serialize(new { @event = "project_time.deleted", data = new { id = Guid.Empty } })),
             new("payroll.labour_allocated", "Fired when a payroll run's labour cost is allocated to projects.",
                 JsonSerializer.Serialize(new { @event = "payroll.labour_allocated", data = new { payrollRunId = Guid.Empty, year = 2026, month = 5, costEntriesCreated = 12, totalAllocated = 145000.00m, unallocatedAdmin = 35000.00m } })),
+            new("cheque.cleared", "Fired when a cheque (inbound or outbound) clears at the bank — bank balance updated.",
+                JsonSerializer.Serialize(new { @event = "cheque.cleared", data = new { id = Guid.Empty, chequeNumber = 1234567L, amount = 50000.00m, isInbound = false, clearedAt = DateTime.UtcNow, bankBalanceAfter = 250000.00m } })),
+            new("cheque.bounced", "Fired when a cheque bounces (NSF, signature mismatch, etc.).",
+                JsonSerializer.Serialize(new { @event = "cheque.bounced", data = new { id = Guid.Empty, chequeNumber = 1234567L, amount = 50000.00m, isInbound = false, reason = "Insufficient funds" } })),
             new("webhook.test", "Test event fired when you use the test endpoint.",
                 JsonSerializer.Serialize(new { @event = "webhook.test", data = new { message = "Hello from Accounting!" } }))
         };

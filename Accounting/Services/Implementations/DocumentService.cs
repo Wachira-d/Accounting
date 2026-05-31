@@ -781,8 +781,8 @@ public class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        if (doc.Status != DocumentStatus.Draft)
-            throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft เท่านั้น");
+        if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
+            throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
         // Soft warnings — legal/correct but unusual patterns the operator
         // should eyeball before approving. Hard errors still throw below.
@@ -891,7 +891,7 @@ public class DocumentService : IDocumentService
                     .Where(d => d.Id == documentId && d.CompanyId == companyId)
                     .Select(d => d.Status)
                     .FirstAsync();
-                if (lockedStatus != DocumentStatus.Draft)
+                if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
 
                 // Idempotency guard INSIDE transaction to prevent race condition

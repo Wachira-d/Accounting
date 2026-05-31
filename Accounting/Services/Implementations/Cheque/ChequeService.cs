@@ -52,9 +52,18 @@ public class ChequeService : IChequeService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<ChequeService> _logger;
+    private readonly Accounting.Services.Interfaces.IWebhookService? _webhooks;
 
-    public ChequeService(AccountingDbContext db, ILogger<ChequeService> logger)
-    { _db = db; _logger = logger; }
+    public ChequeService(AccountingDbContext db, ILogger<ChequeService> logger,
+        Accounting.Services.Interfaces.IWebhookService? webhooks = null)
+    { _db = db; _logger = logger; _webhooks = webhooks; }
+
+    private async Task FireAsync(Guid companyId, string eventType, object payload)
+    {
+        if (_webhooks == null) return;
+        try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
+        catch { /* fire-and-forget */ }
+    }
 
     public async Task<ChequeBook> OpenChequeBookAsync(Guid companyId, Guid bankAccountId,
         string bookNumber, long startNumber, long endNumber, CancellationToken ct = default)
@@ -139,29 +148,71 @@ public class ChequeService : IChequeService
     public async Task<Cheque> MarkClearedAsync(Guid companyId, Guid chequeId,
         DateTime clearedAt, CancellationToken ct = default)
     {
-        var cheque = await _db.Cheques.FirstOrDefaultAsync(c => c.Id == chequeId
-            && c.CompanyId == companyId, ct);
+        var cheque = await _db.Cheques
+            .Include(c => c.ChequeBook).ThenInclude(b => b.BankAccount)
+            .FirstOrDefaultAsync(c => c.Id == chequeId && c.CompanyId == companyId, ct);
         if (cheque == null) throw new InvalidOperationException("Cheque not found.");
         if (cheque.Status != ChequeStatus.Issued && cheque.Status != ChequeStatus.DepositedPending)
             throw new InvalidOperationException($"Cheque {cheque.Status} cannot be cleared.");
         cheque.Status = ChequeStatus.Cleared;
         cheque.ClearedAt = clearedAt;
+
+        // Float settles — move money. Outbound (we issued) debits cash;
+        // Inbound (customer cheque deposited) credits cash. Re-clearing is
+        // blocked by the status guard above so this is idempotent on its own.
+        var bank = cheque.ChequeBook?.BankAccount;
+        if (bank != null)
+        {
+            if (cheque.IsInbound) bank.CurrentBalance += cheque.Amount;
+            else                  bank.CurrentBalance -= cheque.Amount;
+        }
+
         await _db.SaveChangesAsync(ct);
+        await FireAsync(companyId, "cheque.cleared", new
+        {
+            id = cheque.Id, chequeNumber = cheque.ChequeNumber,
+            amount = cheque.Amount, isInbound = cheque.IsInbound,
+            clearedAt = cheque.ClearedAt,
+            bankBalanceAfter = bank?.CurrentBalance,
+        });
         return cheque;
     }
 
     public async Task<Cheque> MarkBouncedAsync(Guid companyId, Guid chequeId,
         string reason, CancellationToken ct = default)
     {
-        var cheque = await _db.Cheques.FirstOrDefaultAsync(c => c.Id == chequeId
-            && c.CompanyId == companyId, ct);
+        var cheque = await _db.Cheques
+            .Include(c => c.ChequeBook).ThenInclude(b => b.BankAccount)
+            .FirstOrDefaultAsync(c => c.Id == chequeId && c.CompanyId == companyId, ct);
         if (cheque == null) throw new InvalidOperationException("Cheque not found.");
         if (cheque.Status == ChequeStatus.Cleared)
             throw new InvalidOperationException("Cleared cheque cannot be bounced.");
+        var wasCleared = cheque.Status == ChequeStatus.Cleared;
         cheque.Status = ChequeStatus.Bounced;
         cheque.BounceReason = reason;
+
+        // If the bounce happens AFTER clearing (rare — usually bounces
+        // before clear, but bank can claw back), reverse the balance.
+        // wasCleared is always false today because the guard above blocks
+        // it — kept for defensive symmetry with VoidAsync.
+        if (wasCleared)
+        {
+            var bank = cheque.ChequeBook?.BankAccount;
+            if (bank != null)
+            {
+                if (cheque.IsInbound) bank.CurrentBalance -= cheque.Amount;
+                else                  bank.CurrentBalance += cheque.Amount;
+            }
+        }
+
         await _db.SaveChangesAsync(ct);
         _logger.LogWarning("Cheque {Id} bounced: {Reason}", chequeId, reason);
+        await FireAsync(companyId, "cheque.bounced", new
+        {
+            id = cheque.Id, chequeNumber = cheque.ChequeNumber,
+            amount = cheque.Amount, isInbound = cheque.IsInbound,
+            reason = cheque.BounceReason,
+        });
         return cheque;
     }
 
