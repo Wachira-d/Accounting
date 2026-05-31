@@ -109,9 +109,9 @@ public class FxRevaluationService : IFxRevaluationService
                 if (desc.StartsWith("Reval AR ")) { direction = "AR"; currency = desc.Substring(9, 3); }
                 else if (desc.StartsWith("Reval AP ")) { direction = "AP"; currency = desc.Substring(9, 3); }
                 if (currency == null || direction == null) continue;
-                var net = line.DebitAmount - line.CreditAmount;
+                var lineNet = line.DebitAmount - line.CreditAmount;
                 var key = (currency, direction);
-                priorVariance[key] = priorVariance.GetValueOrDefault(key) + net;
+                priorVariance[key] = priorVariance.GetValueOrDefault(key) + lineNet;
             }
         }
 

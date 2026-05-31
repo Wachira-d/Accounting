@@ -149,10 +149,10 @@ public class ProjectController : ControllerBase
             profit,
             cashFlow = new
             {
-                operating = cashFlow.NetCashFromOperating,
-                investing = cashFlow.NetCashFromInvesting,
-                financing = cashFlow.NetCashFromFinancing,
-                netChange = cashFlow.NetChangeInCash,
+                operating = cashFlow.OperatingActivities.SubTotal,
+                investing = cashFlow.InvestingActivities.SubTotal,
+                financing = cashFlow.FinancingActivities.SubTotal,
+                netChange = cashFlow.NetCashChange,
                 period = new { from, to },
             },
             outstanding = new

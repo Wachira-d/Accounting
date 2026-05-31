@@ -908,6 +908,7 @@ public static class DatabaseMigrationHelper
             // StockCount table already exists from prior schema; just
             // add the UnitCost column on the line we need for variance JE.
             """ALTER TABLE "StockCountLines" ADD COLUMN IF NOT EXISTS "UnitCost" decimal(18,4) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "StockCounts" ADD COLUMN IF NOT EXISTS "CountType" varchar(20) NOT NULL DEFAULT 'Full';""",
 
             // ===== PDPA + BOM + Consignment (Tier 3) =====
             """

@@ -54,7 +54,7 @@ public sealed class OnnxSentenceEmbeddingService : IEmbeddingService, IDisposabl
         // execution provider is the default; on machines with multiple
         // cores, intra-op threads = core count gives us batch parallelism
         // for free without configuration.
-        var opts = new SessionOptions
+        var opts = new Microsoft.ML.OnnxRuntime.SessionOptions
         {
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
             InterOpNumThreads = 1,
