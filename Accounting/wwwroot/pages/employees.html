@@ -23,6 +23,7 @@
         <p class="page-subtitle">สร้าง · จัดการรายละเอียด · ตั้งฐานเงินเดือนรายเดือน/รายวัน/รายชั่วโมง · sync กับระบบ HR ภายนอก</p>
       </div>
       <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="Page.openCompDefaults()">⚙️ ค่าจ้างมาตรฐานบริษัท</button>
         <button class="btn btn-secondary" onclick="Page.openSync()">🔁 Sync จากระบบ HR</button>
         <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มพนักงาน</button>
       </div>
@@ -166,6 +167,90 @@
         </div>
       </div>
     </div>
+
+    <!-- Company compensation defaults modal -->
+    <div class="modal-overlay" id="compDefaultsModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header"><h3 class="modal-title">⚙️ ค่าจ้าง / สวัสดิการมาตรฐานบริษัท</h3><button class="modal-close" onclick="Layout.closeModal('compDefaultsModal')">&times;</button></div>
+        <div class="modal-body">
+          <p style="color:#64748b;font-size:13px">ใช้เป็นค่าเริ่มต้น เมื่อพนักงานคนใดไม่ได้ตั้งค่าเฉพาะ ระบบจะใช้ค่าตรงนี้</p>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">OT วันธรรมดา (× ค่าแรง/ชม.)</label>
+              <input type="number" step="0.1" class="form-input" id="cdOtWd" placeholder="1.5"></div>
+            <div class="form-group"><label class="form-label">OT วันหยุด (× ค่าแรง/ชม.)</label>
+              <input type="number" step="0.1" class="form-input" id="cdOtHd" placeholder="3.0"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ค่าพักต่างจังหวัด (฿/วัน)</label>
+              <input type="number" step="1" class="form-input" id="cdPerDiem" placeholder="500"></div>
+            <div class="form-group"><label class="form-label">ค่าที่พัก (฿/คืน)</label>
+              <input type="number" step="1" class="form-input" id="cdAccom" placeholder="800"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ค่าข้าว OT (฿/วันที่มี OT)</label>
+              <input type="number" step="1" class="form-input" id="cdOtMeal" placeholder="30"></div>
+            <div class="form-group"></div>
+          </div>
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-200)">
+            <div class="text-xs text-gray-500" style="margin-bottom:8px;font-weight:600">การคำนวณค่าแรงต่อชั่วโมง (Monthly salary)</div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ชม.มาตรฐาน/วัน</label>
+                <input type="number" step="1" class="form-input" id="cdHpd" placeholder="8"></div>
+              <div class="form-group"><label class="form-label">วันมาตรฐาน/เดือน</label>
+                <input type="number" step="1" class="form-input" id="cdDpm" placeholder="30"></div>
+            </div>
+            <div style="font-size:11px;color:#64748b">💡 ค่าแรง/ชม. = ฐานเดือน ÷ (วัน × ชม.) — ใช้คำนวณ OT</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('compDefaultsModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.saveCompDefaults()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Per-employee compensation profile modal -->
+    <div class="modal-overlay" id="compProfileModal">
+      <div class="modal" style="max-width:680px">
+        <div class="modal-header"><h3 class="modal-title" id="compTitle">💰 ค่าจ้าง / สวัสดิการเฉพาะบุคคล</h3><button class="modal-close" onclick="Layout.closeModal('compProfileModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="cpEmpId">
+          <p style="color:#64748b;font-size:13px">เว้นว่างไว้ = ใช้ค่ามาตรฐานบริษัท · ใส่ค่า = override เฉพาะคนนี้</p>
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:14px">
+            <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:6px">ค่าที่ใช้จริง (effective rates)</div>
+            <div id="cpEffective" style="font-size:12px;color:#475569">—</div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">OT วันธรรมดา ×</label>
+              <input type="number" step="0.1" class="form-input" id="cpOtWd" placeholder="ตามมาตรฐาน"></div>
+            <div class="form-group"><label class="form-label">OT วันหยุด ×</label>
+              <input type="number" step="0.1" class="form-input" id="cpOtHd" placeholder="ตามมาตรฐาน"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ค่าพักต่างจังหวัด (฿/วัน)</label>
+              <input type="number" step="1" class="form-input" id="cpPerDiem" placeholder="ตามมาตรฐาน"></div>
+            <div class="form-group"><label class="form-label">ค่าที่พัก (฿/คืน)</label>
+              <input type="number" step="1" class="form-input" id="cpAccom" placeholder="ตามมาตรฐาน"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ค่าข้าว OT (฿/วัน OT)</label>
+              <input type="number" step="1" class="form-input" id="cpOtMeal" placeholder="ตามมาตรฐาน"></div>
+            <div class="form-group"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">สวัสดิการเพิ่มเติม (JSON — optional)</label>
+            <textarea rows="3" class="form-input" id="cpCustom" style="font-family:monospace;font-size:12px"
+              placeholder='[{"code":"CAR","name":"ค่ารถ","amount":3000,"trigger":"PerPayrollRun"}]'></textarea>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">trigger: PerPayrollRun / PerWorkDay / PerOvertimeDay</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Page.resetComp()" title="ลบค่า override → กลับใช้ค่ามาตรฐาน">รีเซ็ต</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('compProfileModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.saveComp()">บันทึก</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -222,6 +307,7 @@
                 <td><span class="badge b-${e.isActive ? 'Active' : 'Inactive'}">${e.isActive ? 'Active' : 'Inactive'}</span></td>
                 <td>
                   <button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${e.id}')">แก้ไข</button>
+                  <button class="btn btn-sm btn-ghost" onclick="Page.openComp('${e.id}')" title="ตั้งเรท OT / ค่าพักต่างจังหวัด / ค่าข้าว OT รายบุคคล">💰 ค่าจ้าง</button>
                   ${e.isActive ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.toggleActive('${e.id}', false)">ปิด</button>`
                               : `<button class="btn btn-sm btn-ghost text-success" onclick="Page.toggleActive('${e.id}', true)">เปิด</button>`}
                 </td>
@@ -390,6 +476,95 @@
                 d.errors.map(e => '<li>' + e + '</li>').join('') + '</ul>' : ''}
             </div>`;
           await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Compensation defaults (company-wide) =====
+      async openCompDefaults() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/hr/compensation/defaults`);
+          const d = r.data;
+          document.getElementById('cdOtWd').value = d.overtimeRateMultiplierWeekday;
+          document.getElementById('cdOtHd').value = d.overtimeRateMultiplierHoliday;
+          document.getElementById('cdPerDiem').value = d.perDiemRate;
+          document.getElementById('cdAccom').value = d.accommodationAllowance;
+          document.getElementById('cdOtMeal').value = d.overtimeMealAllowance;
+          document.getElementById('cdHpd').value = d.standardWorkHoursPerDay;
+          document.getElementById('cdDpm').value = d.standardWorkDaysPerMonth;
+          Layout.openModal('compDefaultsModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async saveCompDefaults() {
+        const body = {
+          overtimeRateMultiplierWeekday: parseFloat(document.getElementById('cdOtWd').value) || null,
+          overtimeRateMultiplierHoliday: parseFloat(document.getElementById('cdOtHd').value) || null,
+          perDiemRate: parseFloat(document.getElementById('cdPerDiem').value) || null,
+          accommodationAllowance: parseFloat(document.getElementById('cdAccom').value) || null,
+          overtimeMealAllowance: parseFloat(document.getElementById('cdOtMeal').value) || null,
+          standardWorkHoursPerDay: parseFloat(document.getElementById('cdHpd').value) || null,
+          standardWorkDaysPerMonth: parseFloat(document.getElementById('cdDpm').value) || null,
+        };
+        try {
+          const cid = Layout.getCompanyId();
+          await API.put(`/api/companies/${cid}/hr/compensation/defaults`, body);
+          Layout.closeModal('compDefaultsModal');
+          Layout.toast('บันทึกค่ามาตรฐานแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== Per-employee compensation profile =====
+      async openComp(employeeId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/hr/compensation/employees/${employeeId}`);
+          const d = r.data;
+          document.getElementById('cpEmpId').value = employeeId;
+          document.getElementById('compTitle').textContent = `💰 ค่าจ้าง / สวัสดิการ — ${d.employeeCode} ${d.employeeName}`;
+          document.getElementById('cpOtWd').value = d.overtimeRateMultiplierWeekday ?? '';
+          document.getElementById('cpOtHd').value = d.overtimeRateMultiplierHoliday ?? '';
+          document.getElementById('cpPerDiem').value = d.perDiemRate ?? '';
+          document.getElementById('cpAccom').value = d.accommodationAllowance ?? '';
+          document.getElementById('cpOtMeal').value = d.overtimeMealAllowance ?? '';
+          document.getElementById('cpCustom').value = d.customBenefitsJson || '';
+          const eff = d.effective;
+          document.getElementById('cpEffective').innerHTML =
+            `OT วันธรรมดา <b>${eff.overtimeRateMultiplierWeekday}×</b> · OT วันหยุด <b>${eff.overtimeRateMultiplierHoliday}×</b> · พักต่างจังหวัด <b>${this._fmt(eff.perDiemRate)}</b>/วัน · ที่พัก <b>${this._fmt(eff.accommodationAllowance)}</b>/คืน · ค่าข้าว OT <b>${this._fmt(eff.overtimeMealAllowance)}</b>/วัน OT<br><span style="color:#94a3b8">ค่าแรง/ชม. = ฐาน ÷ (${eff.standardWorkDaysPerMonth} วัน × ${eff.standardWorkHoursPerDay} ชม.)</span>`;
+          Layout.openModal('compProfileModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async saveComp() {
+        const empId = document.getElementById('cpEmpId').value;
+        const v = id => { const x = document.getElementById(id).value.trim(); return x ? parseFloat(x) : null; };
+        const customRaw = document.getElementById('cpCustom').value.trim();
+        let customJson = null;
+        if (customRaw) {
+          try { JSON.parse(customRaw); customJson = customRaw; }
+          catch (e) { Layout.toast('JSON สวัสดิการเพิ่มเติมไม่ valid: ' + e.message, 'error'); return; }
+        }
+        const body = {
+          overtimeRateMultiplierWeekday: v('cpOtWd'),
+          overtimeRateMultiplierHoliday: v('cpOtHd'),
+          perDiemRate: v('cpPerDiem'),
+          accommodationAllowance: v('cpAccom'),
+          overtimeMealAllowance: v('cpOtMeal'),
+          customBenefitsJson: customJson,
+        };
+        try {
+          const cid = Layout.getCompanyId();
+          await API.put(`/api/companies/${cid}/hr/compensation/employees/${empId}`, body);
+          Layout.closeModal('compProfileModal');
+          Layout.toast('บันทึกค่าจ้างเฉพาะบุคคลแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async resetComp() {
+        if (!confirm('ลบค่า override ทั้งหมด → กลับใช้ค่ามาตรฐานบริษัท?')) return;
+        const empId = document.getElementById('cpEmpId').value;
+        try {
+          const cid = Layout.getCompanyId();
+          await API.delete(`/api/companies/${cid}/hr/compensation/employees/${empId}`);
+          Layout.closeModal('compProfileModal');
+          Layout.toast('รีเซ็ตแล้ว');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
     };

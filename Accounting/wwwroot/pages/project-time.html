@@ -68,7 +68,17 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="fDate"></div>
-            <div class="form-group"><label class="form-label">ชั่วโมง *</label><input type="number" step="0.25" min="0.25" max="24" class="form-input" id="fHours"></div>
+            <div class="form-group"><label class="form-label">ชั่วโมง (รวม) *</label><input type="number" step="0.25" min="0.25" max="24" class="form-input" id="fHours"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชั่วโมง OT (รวมอยู่ในรวม)</label>
+              <input type="number" step="0.25" min="0" max="24" class="form-input" id="fOt" placeholder="เช่น 2">
+            </div>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:6px;padding-top:24px;font-size:13px">
+                <input type="checkbox" id="fHoliday"> วันหยุด (ใช้เรท OT วันหยุด)
+              </label>
+            </div>
           </div>
           <div class="form-group"><label class="form-label">หมวด</label>
             <select class="form-select" id="fCategory">
@@ -76,6 +86,15 @@
               <option value="NonBillable">NonBillable</option>
               <option value="Admin">Admin (overhead)</option>
             </select>
+          </div>
+          <div style="padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px">สวัสดิการประจำวัน (optional)</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px">
+              <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="fPerDiem"> พักต่างจังหวัด (per-diem)</label>
+              <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="fAccom"> ค่าที่พัก</label>
+              <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="fOtMeal"> ค่าข้าว OT</label>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:6px">💡 ระบบจะคิดยอดอัตโนมัติจากเรทของพนักงานคนนี้</div>
           </div>
           <div class="form-group"><label class="form-label">คำอธิบาย</label>
             <textarea rows="2" class="form-input" id="fDesc" placeholder="งานที่ทำ..."></textarea>
@@ -195,13 +214,20 @@
           if (items.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ไม่มีข้อมูล</td></tr>';
           } else {
-            tbody.innerHTML = items.map(t => `<tr>
+            tbody.innerHTML = items.map(t => {
+              const flags = [];
+              if (t.overtimeHours > 0) flags.push(`<span title="OT ${t.overtimeHours} ชม." style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">OT ${t.overtimeHours}</span>`);
+              if (t.isHoliday) flags.push(`<span title="วันหยุด" style="background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🏖️</span>`);
+              if (t.hasPerDiem) flags.push(`<span title="พักต่างจังหวัด" style="background:#dbeafe;color:#1e40af;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🏨</span>`);
+              if (t.hasAccommodation) flags.push(`<span title="ค่าที่พัก" style="background:#dbeafe;color:#1e40af;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🛏️</span>`);
+              if (t.hasOvertimeMeal) flags.push(`<span title="ค่าข้าว OT" style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:600">🍱</span>`);
+              return `<tr>
               <td>${new Date(t.workDate).toLocaleDateString('th-TH')}</td>
               <td><b>${t.employeeCode}</b><div style="font-size:11px;color:#64748b">${t.employeeName || ''}</div></td>
               <td>${t.projectId
                 ? ((t.projectNumber || '') + ' ' + (t.projectName || ''))
                 : '<span class="badge b-Admin">⌐ Admin</span>'}</td>
-              <td style="text-align:right">${this._fmt(t.hours)}</td>
+              <td style="text-align:right">${this._fmt(t.hours)} ${flags.length ? '<div style="display:flex;gap:3px;justify-content:flex-end;margin-top:2px">' + flags.join('') + '</div>' : ''}</td>
               <td><span class="badge b-${t.category}">${t.category}</span></td>
               <td style="font-size:12px;color:#64748b">${t.description || ''}</td>
               <td>${t.externalSystem ? `<span class="badge" style="background:#ede9fe;color:#5b21b6">${t.externalSystem}</span>` : '—'}</td>
@@ -210,7 +236,8 @@
                 ${!t.isAllocated ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${t.id}')">แก้ไข</button>
                 <button class="btn btn-sm btn-ghost text-danger" onclick="Page.del('${t.id}')">ลบ</button>` : ''}
               </td>
-            </tr>`).join('');
+            </tr>`;
+            }).join('');
           }
           const total = r.data?.totalCount ?? r.data?.totalItems ?? items.length;
           const totalPages = r.data?.totalPages || 1;
@@ -230,6 +257,11 @@
         document.getElementById('fProject').value = '';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fHours').value = '8';
+        document.getElementById('fOt').value = '';
+        document.getElementById('fHoliday').checked = false;
+        document.getElementById('fPerDiem').checked = false;
+        document.getElementById('fAccom').checked = false;
+        document.getElementById('fOtMeal').checked = false;
         document.getElementById('fCategory').value = 'Billable';
         document.getElementById('fDesc').value = '';
         Layout.openModal('formModal');
@@ -246,6 +278,11 @@
           document.getElementById('fProject').value = row.projectId || '';
           document.getElementById('fDate').value = Layout.toDateInput(new Date(row.workDate));
           document.getElementById('fHours').value = row.hours;
+          document.getElementById('fOt').value = row.overtimeHours ?? '';
+          document.getElementById('fHoliday').checked = !!row.isHoliday;
+          document.getElementById('fPerDiem').checked = !!row.hasPerDiem;
+          document.getElementById('fAccom').checked = !!row.hasAccommodation;
+          document.getElementById('fOtMeal').checked = !!row.hasOvertimeMeal;
           document.getElementById('fCategory').value = row.category;
           document.getElementById('fDesc').value = row.description || '';
           Layout.openModal('formModal');
@@ -261,6 +298,11 @@
           hours: parseFloat(document.getElementById('fHours').value),
           category: document.getElementById('fCategory').value,
           description: document.getElementById('fDesc').value.trim() || null,
+          overtimeHours: parseFloat(document.getElementById('fOt').value) || null,
+          isHoliday: document.getElementById('fHoliday').checked,
+          hasPerDiem: document.getElementById('fPerDiem').checked,
+          hasAccommodation: document.getElementById('fAccom').checked,
+          hasOvertimeMeal: document.getElementById('fOtMeal').checked,
         };
         if (!body.employeeId || !body.workDate || !body.hours) {
           Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return;

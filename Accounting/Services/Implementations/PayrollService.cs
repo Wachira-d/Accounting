@@ -788,6 +788,31 @@ public class PayrollService : IPayrollService
                 .ToListAsync();
             var leavesByEmployee = approvedLeavesAll.GroupBy(l => l.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
 
+            // ===== Batch-load attendance + compensation profile =====
+            // EmployeeProjectTime rows in the run period drive OT/per-diem/
+            // accommodation/OT-meal extras. CompanyCompensationDefaults +
+            // per-employee profiles override the rates. Both pre-fetched
+            // once so the inner loop stays O(employees).
+            var employeeIds = employees.Select(e => e.Id).ToList();
+            var timeRowsAll = await _db.EmployeeProjectTimes
+                .Where(t => t.CompanyId == companyId
+                    && employeeIds.Contains(t.EmployeeId)
+                    && t.WorkDate >= run.PeriodStart.Date && t.WorkDate <= run.PeriodEnd.Date
+                    && !t.IsDeleted)
+                .AsNoTracking()
+                .ToListAsync();
+            var timeByEmployee = timeRowsAll.GroupBy(t => t.EmployeeId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var compDefaults = await _db.CompanyCompensationDefaults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.CompanyId == companyId && !x.IsDeleted)
+                ?? new CompanyCompensationDefaults { CompanyId = companyId };
+            var compProfiles = await _db.EmployeeCompensationProfiles
+                .Where(p => p.CompanyId == companyId && employeeIds.Contains(p.EmployeeId) && !p.IsDeleted)
+                .AsNoTracking()
+                .ToDictionaryAsync(p => p.EmployeeId);
+
             decimal totalGross = 0, totalDeductions = 0, totalNet = 0;
             decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
             decimal totalPvdEmp = 0, totalPvdEr = 0;
@@ -823,6 +848,49 @@ public class PayrollService : IPayrollService
                         bonus += amount;
                     else
                         allowances += amount;
+                }
+
+                // ===== Attendance-driven extras (OT + per-diem + accom + OT-meal) =====
+                // Read EmployeeProjectTime rows for this employee in the run
+                // period and apply the merged per-employee → company-defaults
+                // compensation rates. When no attendance rows exist, the
+                // calculation yields zero and behaviour matches the pre-
+                // attendance world — companies without clock-in integration
+                // are unaffected.
+                if (timeByEmployee.TryGetValue(emp.Id, out var empTimeRows) && empTimeRows.Count > 0)
+                {
+                    var prof = compProfiles.GetValueOrDefault(emp.Id);
+                    var otMultWeekday = prof?.OvertimeRateMultiplierWeekday ?? compDefaults.OvertimeRateMultiplierWeekday;
+                    var otMultHoliday = prof?.OvertimeRateMultiplierHoliday ?? compDefaults.OvertimeRateMultiplierHoliday;
+                    var perDiemRate = prof?.PerDiemRate ?? compDefaults.PerDiemRate;
+                    var accomRate = prof?.AccommodationAllowance ?? compDefaults.AccommodationAllowance;
+                    var otMealRate = prof?.OvertimeMealAllowance ?? compDefaults.OvertimeMealAllowance;
+
+                    // Hourly base — Monthly: salary / (workDays × workHours);
+                    // Daily: salary / workHours; Hourly: salary is the rate.
+                    decimal hourly = emp.SalaryType switch
+                    {
+                        "Hourly" => emp.BaseSalary,
+                        "Daily" => compDefaults.StandardWorkHoursPerDay > 0
+                            ? emp.BaseSalary / compDefaults.StandardWorkHoursPerDay : 0,
+                        _ => (compDefaults.StandardWorkDaysPerMonth * compDefaults.StandardWorkHoursPerDay) > 0
+                            ? emp.BaseSalary / (compDefaults.StandardWorkDaysPerMonth * compDefaults.StandardWorkHoursPerDay) : 0,
+                    };
+
+                    decimal otPayWeekday = 0, otPayHoliday = 0;
+                    decimal perDiemSum = 0, accomSum = 0, otMealSum = 0;
+                    foreach (var grp in empTimeRows.GroupBy(t => t.WorkDate.Date))
+                    {
+                        var dayOt = grp.Sum(t => t.OvertimeHours ?? 0);
+                        var dayIsHoliday = grp.Any(t => t.IsHoliday);
+                        if (dayIsHoliday) otPayHoliday += dayOt * hourly * otMultHoliday;
+                        else otPayWeekday += dayOt * hourly * otMultWeekday;
+                        if (grp.Any(t => t.HasPerDiem)) perDiemSum += perDiemRate;
+                        if (grp.Any(t => t.HasAccommodation)) accomSum += accomRate;
+                        if (grp.Any(t => t.HasOvertimeMeal)) otMealSum += otMealRate;
+                    }
+                    overtimePay += Math.Round(otPayWeekday + otPayHoliday, 2, MidpointRounding.AwayFromZero);
+                    allowances += Math.Round(perDiemSum + accomSum + otMealSum, 2, MidpointRounding.AwayFromZero);
                 }
 
                 // Calculate leave deductions — sourced from the batched lookup.
