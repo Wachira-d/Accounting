@@ -299,7 +299,11 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         var entriesCreated = 0;
         decimal totalAllocated = 0m;
         decimal unallocatedAdmin = 0m;
-        var perProject = new Dictionary<Guid?, (decimal Hours, decimal Amount)>();
+        // Guid.Empty stands in for the admin / null-project bucket so
+        // the dictionary key stays non-nullable (Guid? trips C#'s NRT
+        // CS8714). Translated back to Guid? on the summary projection
+        // below.
+        var perProject = new Dictionary<Guid, (decimal Hours, decimal Amount)>();
 
         foreach (var det in details)
         {
@@ -325,10 +329,11 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
                 var share = grp.Hours / totalHours;
                 var alloc = Math.Round(gross * share, 2, MidpointRounding.AwayFromZero);
 
-                if (!perProject.ContainsKey(grp.ProjectId))
-                    perProject[grp.ProjectId] = (0m, 0m);
-                var cur = perProject[grp.ProjectId];
-                perProject[grp.ProjectId] = (cur.Hours + grp.Hours, cur.Amount + alloc);
+                var projectKey = grp.ProjectId ?? Guid.Empty;
+                if (!perProject.ContainsKey(projectKey))
+                    perProject[projectKey] = (0m, 0m);
+                var cur = perProject[projectKey];
+                perProject[projectKey] = (cur.Hours + grp.Hours, cur.Amount + alloc);
 
                 if (grp.ProjectId.HasValue)
                 {
@@ -373,8 +378,11 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
 
         var summary = perProject
             .Select(kv => new PayrollLabourAllocationLine(
-                kv.Key,
-                kv.Key.HasValue && projects.TryGetValue(kv.Key.Value, out var pn) ? pn : null,
+                // Guid.Empty in the dictionary is the admin/null-project
+                // bucket → emit as null on the response so consumers can
+                // distinguish "labor on a real project" from "admin time".
+                kv.Key == Guid.Empty ? (Guid?)null : kv.Key,
+                kv.Key != Guid.Empty && projects.TryGetValue(kv.Key, out var pn) ? pn : null,
                 kv.Value.Hours,
                 0m, // share filled by caller using total; not critical
                 kv.Value.Amount,

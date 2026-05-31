@@ -63,7 +63,7 @@ public class IdempotencyMiddleware
             ?? ctx.User?.Identity?.Name ?? "anon";
         var cacheKey = $"idem:{subject}:{method}:{path}:{key}";
 
-        if (cache.TryGetValue<CachedResponse>(cacheKey, out var cached))
+        if (cache.TryGetValue<CachedResponse>(cacheKey, out var cached) && cached != null)
         {
             _logger.LogInformation("Idempotency replay key={Key}", key);
             ctx.Response.StatusCode = cached.StatusCode;
