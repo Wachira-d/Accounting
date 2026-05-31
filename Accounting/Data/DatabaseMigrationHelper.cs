@@ -3687,7 +3687,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "AttendanceMetadataJson" text NULL;""",
 
             // Per-employee + company-wide compensation profile tables.
-            """CREATE TABLE IF NOT EXISTS "EmployeeCompensationProfiles" (
+            """
+            CREATE TABLE IF NOT EXISTS "EmployeeCompensationProfiles" (
                 "Id" uuid PRIMARY KEY,
                 "CompanyId" uuid NOT NULL,
                 "EmployeeId" uuid NOT NULL,
@@ -3702,10 +3703,12 @@ public static class DatabaseMigrationHelper
                 "CreatedBy" varchar(100) NULL,
                 "UpdatedBy" varchar(100) NULL,
                 "IsDeleted" boolean NOT NULL DEFAULT false
-            );""",
+            );
+            """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeCompProfile_Employee" ON "EmployeeCompensationProfiles" ("CompanyId", "EmployeeId") WHERE "IsDeleted" = false;""",
 
-            """CREATE TABLE IF NOT EXISTS "CompanyCompensationDefaults" (
+            """
+            CREATE TABLE IF NOT EXISTS "CompanyCompensationDefaults" (
                 "Id" uuid PRIMARY KEY,
                 "CompanyId" uuid NOT NULL,
                 "OvertimeRateMultiplierWeekday" decimal(6,3) NOT NULL DEFAULT 1.5,
@@ -3720,13 +3723,15 @@ public static class DatabaseMigrationHelper
                 "CreatedBy" varchar(100) NULL,
                 "UpdatedBy" varchar(100) NULL,
                 "IsDeleted" boolean NOT NULL DEFAULT false
-            );""",
+            );
+            """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyCompDefaults_Company" ON "CompanyCompensationDefaults" ("CompanyId") WHERE "IsDeleted" = false;""",
 
             // PaymentAllocation — one Payment may settle many Documents.
             // Existing Payment rows stay valid (legacy 1:1 path); new
             // multi-doc payments insert one row per target document.
-            """CREATE TABLE IF NOT EXISTS "PaymentAllocations" (
+            """
+            CREATE TABLE IF NOT EXISTS "PaymentAllocations" (
                 "Id" uuid PRIMARY KEY,
                 "CompanyId" uuid NOT NULL,
                 "PaymentId" uuid NOT NULL,
@@ -3739,7 +3744,8 @@ public static class DatabaseMigrationHelper
                 "CreatedBy" varchar(100) NULL,
                 "UpdatedBy" varchar(100) NULL,
                 "IsDeleted" boolean NOT NULL DEFAULT false
-            );""",
+            );
+            """,
             """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Payment" ON "PaymentAllocations" ("PaymentId") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_PaymentAllocations_Document" ON "PaymentAllocations" ("CompanyId", "DocumentId") WHERE "IsDeleted" = false;""",
 
@@ -3779,7 +3785,8 @@ public static class DatabaseMigrationHelper
 
             // Employee project time allocation — feeds payroll → ProjectCostEntry
             // labor allocation. Sync-friendly (external attendance systems).
-            """CREATE TABLE IF NOT EXISTS "EmployeeProjectTimes" (
+            """
+            CREATE TABLE IF NOT EXISTS "EmployeeProjectTimes" (
                 "Id" uuid PRIMARY KEY,
                 "CompanyId" uuid NOT NULL,
                 "EmployeeId" uuid NOT NULL,
@@ -3800,7 +3807,8 @@ public static class DatabaseMigrationHelper
                 "CreatedBy" varchar(100) NULL,
                 "UpdatedBy" varchar(100) NULL,
                 "IsDeleted" boolean NOT NULL DEFAULT false
-            );""",
+            );
+            """,
             """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Employee_Date" ON "EmployeeProjectTimes" ("CompanyId", "EmployeeId", "WorkDate") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Project_Date" ON "EmployeeProjectTimes" ("CompanyId", "ProjectId", "WorkDate") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeProjectTimes_ExternalSync" ON "EmployeeProjectTimes" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
