@@ -792,8 +792,8 @@ public class PayrollService : IPayrollService
             // EmployeeProjectTime rows in the run period drive OT/per-diem/
             // accommodation/OT-meal extras. CompanyCompensationDefaults +
             // per-employee profiles override the rates. Both pre-fetched
-            // once so the inner loop stays O(employees).
-            var employeeIds = employees.Select(e => e.Id).ToList();
+            // once so the inner loop stays O(employees). employeeIds is
+            // already in scope from the prior-details / leaves prefetch.
             var timeRowsAll = await _db.EmployeeProjectTimes
                 .Where(t => t.CompanyId == companyId
                     && employeeIds.Contains(t.EmployeeId)
