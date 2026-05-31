@@ -70,6 +70,12 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
             Hours = req.Hours,
             Description = req.Description,
             Category = req.Category,
+            OvertimeHours = req.OvertimeHours,
+            IsHoliday = req.IsHoliday,
+            HasPerDiem = req.HasPerDiem,
+            HasAccommodation = req.HasAccommodation,
+            HasOvertimeMeal = req.HasOvertimeMeal,
+            AttendanceMetadataJson = req.AttendanceMetadataJson,
             ExternalId = req.ExternalId,
             ExternalSystem = req.ExternalSystem,
             LastSyncedAt = req.ExternalId != null ? DateTime.UtcNow : null,
@@ -125,6 +131,12 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         }
         if (req.Description != null) row.Description = req.Description;
         if (req.Category != null) row.Category = req.Category;
+        if (req.OvertimeHours.HasValue) row.OvertimeHours = req.OvertimeHours.Value;
+        if (req.IsHoliday.HasValue) row.IsHoliday = req.IsHoliday.Value;
+        if (req.HasPerDiem.HasValue) row.HasPerDiem = req.HasPerDiem.Value;
+        if (req.HasAccommodation.HasValue) row.HasAccommodation = req.HasAccommodation.Value;
+        if (req.HasOvertimeMeal.HasValue) row.HasOvertimeMeal = req.HasOvertimeMeal.Value;
+        if (req.AttendanceMetadataJson != null) row.AttendanceMetadataJson = req.AttendanceMetadataJson;
         await _db.SaveChangesAsync(ct);
         await FireWebhookAsync(companyId, "project_time.updated", new
         {
@@ -214,6 +226,12 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
                 existing.Hours = r.Hours;
                 existing.Description = r.Description;
                 existing.Category = r.Category;
+                existing.OvertimeHours = r.OvertimeHours;
+                existing.IsHoliday = r.IsHoliday;
+                existing.HasPerDiem = r.HasPerDiem;
+                existing.HasAccommodation = r.HasAccommodation;
+                existing.HasOvertimeMeal = r.HasOvertimeMeal;
+                existing.AttendanceMetadataJson = r.AttendanceMetadataJson;
                 existing.LastSyncedAt = DateTime.UtcNow;
                 updated++;
             }
@@ -229,6 +247,12 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
                     Hours = r.Hours,
                     Description = r.Description,
                     Category = r.Category,
+                    OvertimeHours = r.OvertimeHours,
+                    IsHoliday = r.IsHoliday,
+                    HasPerDiem = r.HasPerDiem,
+                    HasAccommodation = r.HasAccommodation,
+                    HasOvertimeMeal = r.HasOvertimeMeal,
+                    AttendanceMetadataJson = r.AttendanceMetadataJson,
                     ExternalId = r.ExternalId,
                     ExternalSystem = req.ExternalSystem,
                     LastSyncedAt = !string.IsNullOrEmpty(r.ExternalId) ? DateTime.UtcNow : null,
@@ -534,5 +558,7 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
             t.ProjectTaskId,
             t.WorkDate, t.Hours, t.Description, t.Category,
             t.IsAllocated, t.AllocatedPayrollRunId, t.ProjectCostEntryId,
-            t.ExternalId, t.ExternalSystem, t.LastSyncedAt);
+            t.ExternalId, t.ExternalSystem, t.LastSyncedAt,
+            t.OvertimeHours, t.IsHoliday, t.HasPerDiem, t.HasAccommodation,
+            t.HasOvertimeMeal, t.AttendanceMetadataJson);
 }

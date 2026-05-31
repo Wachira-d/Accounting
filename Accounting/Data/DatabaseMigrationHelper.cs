@@ -3676,6 +3676,53 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_ProjectCostEntries_DocumentLine" ON "ProjectCostEntries" ("DocumentLineId") WHERE "DocumentLineId" IS NOT NULL AND "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_ProjectCostEntries_Document" ON "ProjectCostEntries" ("CompanyId", "DocumentId") WHERE "DocumentId" IS NOT NULL AND "IsDeleted" = false;""",
 
+            // Attendance metadata on EmployeeProjectTime — optional
+            // fields synced from clock-in / attendance systems. If
+            // never set, payroll calc behaves exactly as before.
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "OvertimeHours" decimal(8,2) NULL;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "IsHoliday" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "HasPerDiem" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "HasAccommodation" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "HasOvertimeMeal" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EmployeeProjectTimes" ADD COLUMN IF NOT EXISTS "AttendanceMetadataJson" text NULL;""",
+
+            // Per-employee + company-wide compensation profile tables.
+            """CREATE TABLE IF NOT EXISTS "EmployeeCompensationProfiles" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "OvertimeRateMultiplierWeekday" decimal(6,3) NULL,
+                "OvertimeRateMultiplierHoliday" decimal(6,3) NULL,
+                "PerDiemRate" decimal(18,2) NULL,
+                "AccommodationAllowance" decimal(18,2) NULL,
+                "OvertimeMealAllowance" decimal(18,2) NULL,
+                "CustomBenefitsJson" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeCompProfile_Employee" ON "EmployeeCompensationProfiles" ("CompanyId", "EmployeeId") WHERE "IsDeleted" = false;""",
+
+            """CREATE TABLE IF NOT EXISTS "CompanyCompensationDefaults" (
+                "Id" uuid PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "OvertimeRateMultiplierWeekday" decimal(6,3) NOT NULL DEFAULT 1.5,
+                "OvertimeRateMultiplierHoliday" decimal(6,3) NOT NULL DEFAULT 3.0,
+                "PerDiemRate" decimal(18,2) NOT NULL DEFAULT 500,
+                "AccommodationAllowance" decimal(18,2) NOT NULL DEFAULT 800,
+                "OvertimeMealAllowance" decimal(18,2) NOT NULL DEFAULT 30,
+                "StandardWorkHoursPerDay" decimal(6,2) NOT NULL DEFAULT 8,
+                "StandardWorkDaysPerMonth" decimal(6,2) NOT NULL DEFAULT 30,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" varchar(100) NULL,
+                "UpdatedBy" varchar(100) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyCompDefaults_Company" ON "CompanyCompensationDefaults" ("CompanyId") WHERE "IsDeleted" = false;""",
+
             // Employee EmployeeCode uniqueness is now scoped to active
             // (non-soft-deleted) rows so partners can recreate / restore
             // an employee code after deletion. Drop the legacy unique

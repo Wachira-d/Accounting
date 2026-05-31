@@ -21,13 +21,87 @@ public class HrAllocationController : ControllerBase
     private readonly IEmployeeProjectTimeService _time;
     private readonly IFixVariableCostReportService _report;
     private readonly ISensitivityService _sensitivity;
+    private readonly ICompensationProfileService _compensation;
 
     public HrAllocationController(IEmployeeProjectTimeService time,
-        IFixVariableCostReportService report, ISensitivityService sensitivity)
+        IFixVariableCostReportService report, ISensitivityService sensitivity,
+        ICompensationProfileService compensation)
     {
         _time = time;
         _report = report;
         _sensitivity = sensitivity;
+        _compensation = compensation;
+    }
+
+    // ===== Compensation defaults + per-employee profile =====
+
+    [HttpGet("compensation/defaults")]
+    public async Task<ActionResult<ApiResponse<CompanyCompensationDefaultsResponse>>> GetCompDefaults(
+        Guid companyId, CancellationToken ct) =>
+        Ok(new ApiResponse<CompanyCompensationDefaultsResponse>(true,
+            await _compensation.GetDefaultsAsync(companyId, ct)));
+
+    [HttpPut("compensation/defaults")]
+    public async Task<ActionResult<ApiResponse<CompanyCompensationDefaultsResponse>>> UpdateCompDefaults(
+        Guid companyId, [FromBody] CompanyCompensationDefaultsRequest req, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<CompanyCompensationDefaultsResponse>(true,
+            await _compensation.UpdateDefaultsAsync(companyId, req, ct),
+            "อัปเดตค่าเริ่มต้นเรียบร้อย"));
+    }
+
+    [HttpGet("compensation/employees/{employeeId:guid}")]
+    public async Task<ActionResult<ApiResponse<CompensationProfileResponse>>> GetCompProfile(
+        Guid companyId, Guid employeeId, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(new ApiResponse<CompensationProfileResponse>(true,
+                await _compensation.GetProfileAsync(companyId, employeeId, ct)));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    [HttpPut("compensation/employees/{employeeId:guid}")]
+    public async Task<ActionResult<ApiResponse<CompensationProfileResponse>>> UpsertCompProfile(
+        Guid companyId, Guid employeeId, [FromBody] CompensationProfileRequest req, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            return Ok(new ApiResponse<CompensationProfileResponse>(true,
+                await _compensation.UpsertProfileAsync(companyId, employeeId, req, ct),
+                "อัปเดตค่าจ้าง/สวัสดิการเฉพาะบุคคลแล้ว"));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    [HttpDelete("compensation/employees/{employeeId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteCompProfile(
+        Guid companyId, Guid employeeId, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        await _compensation.DeleteProfileAsync(companyId, employeeId, ct);
+        return Ok(new ApiResponse<bool>(true, true, "รีเซ็ตกลับใช้ค่าเริ่มต้นบริษัทแล้ว"));
+    }
+
+    /// <summary>Preview the attendance-driven pay extras for an employee
+    /// over a date window — OT pay + per-diem + accommodation + OT-meal.
+    /// Read-only; doesn't post. Used by the HR review screen to sanity-
+    /// check before running the actual payroll calc.</summary>
+    [HttpGet("compensation/employees/{employeeId:guid}/preview-attendance-pay")]
+    public async Task<ActionResult<ApiResponse<AttendancePayPreview>>> PreviewAttendancePay(
+        Guid companyId, Guid employeeId,
+        [FromQuery] DateTime from, [FromQuery] DateTime to, CancellationToken ct)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            return Ok(new ApiResponse<AttendancePayPreview>(true,
+                await _compensation.PreviewAttendancePayAsync(companyId, employeeId, from, to, ct)));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
     /// <summary>Gate write/allocate endpoints behind the Payroll sensitivity

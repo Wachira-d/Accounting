@@ -11,7 +11,17 @@ public record CreateEmployeeProjectTimeRequest(
     string Category = "Billable",
     Guid? ProjectTaskId = null,
     string? ExternalId = null,
-    string? ExternalSystem = null);
+    string? ExternalSystem = null,
+    // ===== Attendance metadata (optional) =====
+    // Drives auto-computed OT pay, per-diem, accommodation, and OT-meal
+    // allowances in payroll calc. Default values keep behaviour identical
+    // to the pre-attendance world when an external system isn't pushing.
+    decimal? OvertimeHours = null,
+    bool IsHoliday = false,
+    bool HasPerDiem = false,
+    bool HasAccommodation = false,
+    bool HasOvertimeMeal = false,
+    string? AttendanceMetadataJson = null);
 
 public record UpdateEmployeeProjectTimeRequest(
     Guid? ProjectId = null,
@@ -19,7 +29,13 @@ public record UpdateEmployeeProjectTimeRequest(
     decimal? Hours = null,
     string? Description = null,
     string? Category = null,
-    Guid? ProjectTaskId = null);
+    Guid? ProjectTaskId = null,
+    decimal? OvertimeHours = null,
+    bool? IsHoliday = null,
+    bool? HasPerDiem = null,
+    bool? HasAccommodation = null,
+    bool? HasOvertimeMeal = null,
+    string? AttendanceMetadataJson = null);
 
 public record EmployeeProjectTimeResponse(
     Guid Id,
@@ -39,7 +55,103 @@ public record EmployeeProjectTimeResponse(
     Guid? ProjectCostEntryId,
     string? ExternalId,
     string? ExternalSystem,
-    DateTime? LastSyncedAt);
+    DateTime? LastSyncedAt,
+    decimal? OvertimeHours = null,
+    bool IsHoliday = false,
+    bool HasPerDiem = false,
+    bool HasAccommodation = false,
+    bool HasOvertimeMeal = false,
+    string? AttendanceMetadataJson = null);
+
+// ===== Compensation profile DTOs =====
+
+public record CompensationProfileRequest(
+    decimal? OvertimeRateMultiplierWeekday = null,
+    decimal? OvertimeRateMultiplierHoliday = null,
+    decimal? PerDiemRate = null,
+    decimal? AccommodationAllowance = null,
+    decimal? OvertimeMealAllowance = null,
+    string? CustomBenefitsJson = null);
+
+public record CompensationProfileResponse(
+    Guid EmployeeId,
+    string EmployeeCode,
+    string EmployeeName,
+    decimal? OvertimeRateMultiplierWeekday,
+    decimal? OvertimeRateMultiplierHoliday,
+    decimal? PerDiemRate,
+    decimal? AccommodationAllowance,
+    decimal? OvertimeMealAllowance,
+    string? CustomBenefitsJson,
+    /// <summary>Effective values after merging with CompanyCompensationDefaults.
+    /// What the payroll calc will actually use.</summary>
+    CompensationEffectiveRates Effective);
+
+public record CompensationEffectiveRates(
+    decimal OvertimeRateMultiplierWeekday,
+    decimal OvertimeRateMultiplierHoliday,
+    decimal PerDiemRate,
+    decimal AccommodationAllowance,
+    decimal OvertimeMealAllowance,
+    decimal StandardWorkHoursPerDay,
+    decimal StandardWorkDaysPerMonth);
+
+public record CompanyCompensationDefaultsRequest(
+    decimal? OvertimeRateMultiplierWeekday = null,
+    decimal? OvertimeRateMultiplierHoliday = null,
+    decimal? PerDiemRate = null,
+    decimal? AccommodationAllowance = null,
+    decimal? OvertimeMealAllowance = null,
+    decimal? StandardWorkHoursPerDay = null,
+    decimal? StandardWorkDaysPerMonth = null);
+
+public record CompanyCompensationDefaultsResponse(
+    decimal OvertimeRateMultiplierWeekday,
+    decimal OvertimeRateMultiplierHoliday,
+    decimal PerDiemRate,
+    decimal AccommodationAllowance,
+    decimal OvertimeMealAllowance,
+    decimal StandardWorkHoursPerDay,
+    decimal StandardWorkDaysPerMonth);
+
+/// <summary>Preview the attendance-based pay extras (OT + per-diem +
+/// accommodation + OT-meal) for one employee over a date window —
+/// reads EmployeeProjectTime rows in the window, applies the
+/// employee's effective compensation rates, returns the breakdown.
+/// Doesn't post anything; intended for "what would the payroll look
+/// like?" reviews before running the actual payroll calc.</summary>
+public record AttendancePayPreview(
+    Guid EmployeeId,
+    string EmployeeCode,
+    string EmployeeName,
+    DateTime From,
+    DateTime To,
+    decimal BaseSalary,
+    decimal HourlyRate,                 // base / (workDays × workHours)
+    CompensationEffectiveRates Effective,
+    decimal RegularHours,
+    decimal OvertimeHoursWeekday,
+    decimal OvertimeHoursHoliday,
+    decimal OvertimePay,
+    int PerDiemDays,
+    decimal PerDiemTotal,
+    int AccommodationNights,
+    decimal AccommodationTotal,
+    int OvertimeMealDays,
+    decimal OvertimeMealTotal,
+    decimal TotalExtras,                // OT + per-diem + accommodation + OT-meal
+    List<AttendanceDayDetail> Days);
+
+public record AttendanceDayDetail(
+    DateTime Date,
+    decimal Hours,
+    decimal OvertimeHours,
+    bool IsHoliday,
+    bool HasPerDiem,
+    bool HasAccommodation,
+    bool HasOvertimeMeal,
+    decimal OvertimePay,
+    decimal AllowancePay);
 
 /// <summary>Bulk-sync envelope. ExternalSystem identifies the source
 /// (Jibble, Hubstaff, parent SAP, etc.). Each row is upserted on
