@@ -65,8 +65,14 @@ public static class CrostonForecaster
             }
             else
             {
-                smoothedSize = alpha * q + (1 - alpha) * smoothedSize.Value;
-                smoothedInterval = alpha * gapSincePrevHit + (1 - alpha) * smoothedInterval.Value;
+                // smoothedSize / smoothedInterval are initialised together
+                // on the first hit (above), so by this branch both are
+                // non-null. Local copy quiets the NRT analysis without a
+                // bang operator.
+                var prevSize = smoothedSize ?? 0m;
+                var prevInterval = smoothedInterval ?? 0m;
+                smoothedSize = alpha * q + (1 - alpha) * prevSize;
+                smoothedInterval = alpha * gapSincePrevHit + (1 - alpha) * prevInterval;
             }
             gapSincePrevHit = 0;
         }

@@ -81,6 +81,9 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 .Where(c => c.Id == companyId)
                 .Select(c => new { c.Id, c.Name, c.TaxId, c.Address, c.Phone, c.Email })
                 .FirstOrDefaultAsync(ct);
+            // Company is registered + valid for the request, but stay
+            // defensive — a brand-new tenant might race the AI lookup.
+            if (company == null) return Fallback(null);
 
             // Vendor history grounding — last 5 docs from same vendor.
             object? vendorHistory = null;
