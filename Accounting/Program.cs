@@ -149,13 +149,26 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Search.IQuickSear
 builder.Services.AddScoped<Accounting.Services.Implementations.Portal.IVendorPortalService,
     Accounting.Services.Implementations.Portal.VendorPortalService>();
 // Competitor migration framework — Express / PEAK / FlowAccount.
-// Each adapter sniffs the file format + maps to canonical Contacts.
+// Each adapter sniffs file format + maps to canonical Contacts/Products/COA.
+// Conflict resolution (Skip/Overwrite/Merge) per-row is in the base classes.
 builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
     Accounting.Services.Implementations.Migration.ExpressContactsAdapter>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
     Accounting.Services.Implementations.Migration.PeakContactsAdapter>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
     Accounting.Services.Implementations.Migration.FlowAccountContactsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.ExpressProductsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.PeakProductsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.FlowAccountProductsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.ExpressAccountsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.PeakAccountsAdapter>();
+builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportAdapter,
+    Accounting.Services.Implementations.Migration.FlowAccountAccountsAdapter>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Migration.ICompetitorImportCoordinator,
     Accounting.Services.Implementations.Migration.CompetitorImportCoordinator>();
 // Production orders (BOM backflush) + Consignment movement service.

@@ -37,6 +37,19 @@ public class ImportExportController : ControllerBase
         return Ok(new ApiResponse<ImportResult>(true, result));
     }
 
+    /// <summary>Scan the data against the DB and return rows whose natural
+    /// key already exists with different field values. Client uses the
+    /// returned conflicts to render a Skip/Overwrite/Merge picker before
+    /// calling /import with Resolutions populated.</summary>
+    [HttpPost("preview-conflicts")]
+    public async Task<ActionResult<ApiResponse<ConflictPreviewResponse>>> PreviewConflicts(
+        Guid companyId, [FromBody] ImportRequest request)
+    {
+        var result = await _importExportService.PreviewConflictsAsync(companyId, request);
+        return Ok(new ApiResponse<ConflictPreviewResponse>(true, result,
+            $"พบ {result.Conflicts.Count} รายการขัดแย้ง · ใหม่ {result.NewRowCount} · ซ้ำเหมือนกัน {result.DuplicateExactCount} (รวม {result.TotalRows} แถว)"));
+    }
+
     [HttpGet("templates/{entityType}")]
     public async Task<ActionResult<ApiResponse<ImportTemplateResponse>>> GetTemplate(Guid companyId, string entityType)
     {
@@ -93,6 +106,16 @@ public class ImportExportController : ControllerBase
             result.RequiresManualMapping
                 ? $"ยังมี {result.UnmappedColumns} column ที่ต้องจับคู่"
                 : "Mapping เรียบร้อย — พร้อม Import"));
+    }
+
+    /// <summary>หา conflict ของ session (เทียบกับฐานข้อมูลปัจจุบัน) ก่อน confirm</summary>
+    [HttpGet("smart-import/sessions/{sessionId:guid}/preview-conflicts")]
+    public async Task<ActionResult<ApiResponse<ConflictPreviewResponse>>> SmartPreviewConflicts(
+        Guid companyId, Guid sessionId)
+    {
+        var result = await _importExportService.PreviewSmartConflictsAsync(companyId, sessionId);
+        return Ok(new ApiResponse<ConflictPreviewResponse>(true, result,
+            $"พบ {result.Conflicts.Count} รายการขัดแย้ง · ใหม่ {result.NewRowCount} · ซ้ำเหมือนกัน {result.DuplicateExactCount}"));
     }
 
     /// <summary>ยืนยันและเริ่ม Import ข้อมูล</summary>

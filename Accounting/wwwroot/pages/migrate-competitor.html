@@ -6,80 +6,233 @@
   <title>นำเข้าจาก Express/PEAK/FlowAccount — Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .diff-old { background:#fee2e2; color:#7f1d1d; padding:2px 6px; border-radius:4px; }
+    .diff-new { background:#dcfce7; color:#14532d; padding:2px 6px; border-radius:4px; }
+    .conflict-row td { vertical-align:top; padding:10px 8px; }
+    .action-toggle { display:inline-flex; gap:4px; }
+    .action-toggle label { display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; cursor:pointer; background:#fff; }
+    .action-toggle input[type=radio] { margin:0; }
+    .action-toggle label.active-skip { background:#fef3c7; border-color:#f59e0b; font-weight:600; }
+    .action-toggle label.active-overwrite { background:#fee2e2; border-color:#dc2626; font-weight:600; }
+    .action-toggle label.active-merge { background:#dbeafe; border-color:#2563eb; font-weight:600; }
+    .stat-pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; margin-right:6px; }
+  </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div>
         <h2 class="page-title">นำเข้าจาก Express / PEAK / FlowAccount</h2>
-        <p class="page-subtitle">Sniff รูปแบบไฟล์ + preview + dry-run ก่อน commit — รองรับ contacts; entities อื่นเพิ่มได้ใน framework</p>
+        <p class="page-subtitle">Sniff ไฟล์ → preview → ตรวจสอบรายการที่ขัดแย้ง → commit (รองรับ Contacts / Products / Chart of Accounts)</p>
       </div>
     </div>
 
     <div class="card">
-      <h3>1. อัปโหลด + Preview</h3>
+      <h3>1. เลือกไฟล์ + Preview</h3>
       <div style="margin-top:14px">
         <input type="file" id="fileInput" accept=".csv,.tsv,.txt" class="form-input">
       </div>
       <div style="margin-top:14px">
-        <button class="btn btn-secondary" onclick="Page.preview()">Preview ก่อน</button>
-        <button class="btn btn-warning" onclick="Page.import(true)" style="margin-left:8px">Dry-run import</button>
-        <button class="btn btn-primary" onclick="Page.import(false)" style="margin-left:8px">Commit import</button>
+        <button class="btn btn-primary" onclick="Page.preview()">Preview ก่อน</button>
+        <span style="font-size:12px;color:#64748b;margin-left:10px">
+          จะ scan ทั้งไฟล์เทียบกับฐานข้อมูล หา record ที่ TaxId ตรงกันแต่ข้อมูลต่างกัน
+        </span>
       </div>
-      <div id="result" style="margin-top:18px"></div>
     </div>
 
-    <div class="card" style="margin-top:14px">
-      <h3>รองรับรูปแบบ</h3>
-      <ul style="font-size:13px;line-height:1.8">
-        <li><b>Express</b> — TSV/CSV หัวคอลัมน์ภาษาไทย: รหัสลูกค้า · ชื่อ · เลขประจำตัวผู้เสียภาษี · ที่อยู่</li>
-        <li><b>PEAK</b> — CSV หัวคอลัมน์ camelCase: contactCode · contactName · taxNumber · address</li>
-        <li><b>FlowAccount</b> — CSV หัวคอลัมน์ผสม: name (TH) · name (EN) · tax id · phone</li>
-      </ul>
-      <div style="font-size:12px;color:#64748b;margin-top:10px">💡 ระบบจะ skip contact ที่มี taxId ซ้ำกับ DB เดิม (idempotent)</div>
-    </div>
+    <div id="previewSummary" style="margin-top:14px"></div>
+    <div id="conflictsBlock" style="margin-top:14px"></div>
+    <div id="sampleBlock" style="margin-top:14px"></div>
+    <div id="commitBlock" style="margin-top:14px"></div>
+    <div id="result" style="margin-top:18px"></div>
   </div>
 
   <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
   <script>
     const Page = {
+      _preview: null,                // last preview response
+      _resolutions: {},              // { taxId: 'Skip'|'Overwrite'|'Merge' }
+      _defaultAction: 'Merge',       // applied to conflicts the user didn't touch
+
       async init() {
         if (!Layout.init('migrate-competitor')) return;
         Layout.setTitle('ย้ายจาก Express/PEAK/FlowAccount');
       },
       _esc(s) { return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      _keyLabel(kind) {
+        return ({
+          Contacts: 'TaxId',
+          Products: 'รหัสสินค้า',
+          ChartOfAccounts: 'รหัสบัญชี',
+        })[kind] || 'Key';
+      },
+
       async preview() {
         const f = document.getElementById('fileInput').files[0];
         if (!f) { Layout.toast('เลือกไฟล์ก่อน', 'error'); return; }
         const cid = Layout.getCompanyId();
         const token = localStorage.getItem('token');
         const fd = new FormData(); fd.append('file', f);
+        document.getElementById('previewSummary').innerHTML = '<div class="card">กำลังวิเคราะห์ไฟล์...</div>';
+        document.getElementById('conflictsBlock').innerHTML = '';
+        document.getElementById('sampleBlock').innerHTML = '';
+        document.getElementById('commitBlock').innerHTML = '';
+        document.getElementById('result').innerHTML = '';
         try {
           const r = await fetch(`/api/companies/${cid}/migration/preview`,
             { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
           const j = await r.json();
           if (!j.success) throw new Error(j.message);
-          const d = j.data;
-          document.getElementById('result').innerHTML = `
-            <div class="card" style="background:#f0f9ff;border:1px solid #bae6fd">
-              <h3 style="margin:0 0 10px">Preview: ${d.sourceSystem} (${d.entityKind}) · ${d.totalRows} แถว</h3>
-              <div style="overflow:auto">
+          this._preview = j.data;
+          this._resolutions = {};
+          this._renderSummary(j.data, j.message);
+          this._renderConflicts(j.data);
+          this._renderSample(j.data);
+          this._renderCommit(j.data);
+        } catch (e) {
+          document.getElementById('previewSummary').innerHTML = '';
+          Layout.toast(e.message, 'error');
+        }
+      },
+
+      _renderSummary(d, msg) {
+        document.getElementById('previewSummary').innerHTML = `
+          <div class="card" style="background:#f0f9ff;border:1px solid #bae6fd">
+            <h3 style="margin:0 0 10px">📋 Preview: ${this._esc(d.sourceSystem)} (${this._esc(d.entityKind)})</h3>
+            <div>
+              <span class="stat-pill" style="background:#e0f2fe">รวม ${d.totalRows} แถว</span>
+              <span class="stat-pill" style="background:#dcfce7">ใหม่ ${d.newRowCount} แถว</span>
+              <span class="stat-pill" style="background:#fef3c7">ซ้ำเหมือนกัน ${d.duplicateExactCount} แถว (จะข้ามอัตโนมัติ)</span>
+              <span class="stat-pill" style="background:${d.conflicts.length ? '#fee2e2' : '#dcfce7'}">
+                ขัดแย้ง ${d.conflicts.length} แถว ${d.conflicts.length ? '⚠️ ต้องตัดสินใจ' : '✓'}
+              </span>
+            </div>
+            <div style="font-size:12px;color:#475569;margin-top:8px">${this._esc(msg || '')}</div>
+          </div>`;
+      },
+
+      _renderConflicts(d) {
+        if (!d.conflicts || d.conflicts.length === 0) {
+          document.getElementById('conflictsBlock').innerHTML = '';
+          return;
+        }
+        const rows = d.conflicts.map((c, i) => this._renderConflictRow(c, i)).join('');
+        document.getElementById('conflictsBlock').innerHTML = `
+          <div class="card" style="border-left:4px solid #dc2626">
+            <h3 style="margin:0 0 6px">⚠️ พบ ${d.conflicts.length} รายการที่ข้อมูลต่างจากในระบบ</h3>
+            <p style="font-size:13px;color:#475569;margin:0 0 14px">
+              เลือกได้ว่าจะ <b>ข้าม</b> (เก็บของเดิม) / <b>รวม</b> (ของเดิมชนะ ของใหม่เติมช่องว่าง) / <b>เขียนทับ</b> (ของใหม่ชนะ)<br>
+              ค่าเริ่มต้นสำหรับรายการที่ไม่ได้เลือก:
+              <select id="defaultActionSel" onchange="Page._defaultAction = this.value" style="margin-left:6px">
+                <option value="Skip">ข้าม</option>
+                <option value="Merge" selected>รวม (แนะนำ)</option>
+                <option value="Overwrite">เขียนทับ</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="Page._bulkSet('Skip')" style="margin-left:8px">ตั้งทุกแถว: ข้าม</button>
+              <button class="btn btn-secondary btn-sm" onclick="Page._bulkSet('Merge')" style="margin-left:4px">ทุกแถว: รวม</button>
+              <button class="btn btn-secondary btn-sm" onclick="Page._bulkSet('Overwrite')" style="margin-left:4px">ทุกแถว: เขียนทับ</button>
+            </p>
+            <div style="overflow:auto">
+              <table class="data-table" style="font-size:12px;width:100%">
+                <thead>
+                  <tr>
+                    <th style="width:140px">${this._keyLabel(d.entityKind)}</th>
+                    <th>ฟิลด์</th>
+                    <th>ในระบบ (เดิม)</th>
+                    <th>ในไฟล์ (ใหม่)</th>
+                    <th style="width:260px">ตัดสินใจ</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </div>`;
+      },
+
+      _renderConflictRow(c, i) {
+        const fieldRows = c.diffFields.map(f => `
+          <tr>
+            <td>${f}</td>
+            <td><span class="diff-old">${this._esc(c.existing[f] || '(ว่าง)')}</span></td>
+            <td><span class="diff-new">${this._esc(c.incoming[f] || '(ว่าง)')}</span></td>
+          </tr>`).join('');
+        return `
+          <tr class="conflict-row">
+            <td><code>${this._esc(c.key)}</code><br><small style="color:#64748b">${this._esc(c.existingLabel)}</small></td>
+            <td colspan="3" style="padding:0">
+              <table style="width:100%;font-size:12px"><tbody>${fieldRows}</tbody></table>
+            </td>
+            <td>
+              <div class="action-toggle" data-key="${this._esc(c.key)}">
+                <label><input type="radio" name="act-${i}" value="Skip" onchange="Page._pick('${this._esc(c.key)}', 'Skip', this)"> ข้าม</label>
+                <label><input type="radio" name="act-${i}" value="Merge" onchange="Page._pick('${this._esc(c.key)}', 'Merge', this)"> รวม</label>
+                <label><input type="radio" name="act-${i}" value="Overwrite" onchange="Page._pick('${this._esc(c.key)}', 'Overwrite', this)"> เขียนทับ</label>
+              </div>
+            </td>
+          </tr>`;
+      },
+
+      _pick(key, action, radio) {
+        this._resolutions[key] = action;
+        // Visual feedback
+        const group = radio.closest('.action-toggle');
+        group.querySelectorAll('label').forEach(l => l.className = '');
+        radio.parentElement.className = 'active-' + action.toLowerCase();
+      },
+
+      _bulkSet(action) {
+        document.querySelectorAll('#conflictsBlock .action-toggle').forEach(g => {
+          const key = g.dataset.key;
+          const radio = g.querySelector(`input[value="${action}"]`);
+          if (radio) { radio.checked = true; this._pick(key, action, radio); }
+        });
+        Layout.toast(`ตั้งเป็น "${action}" ทุกแถวแล้ว`, 'success');
+      },
+
+      _renderSample(d) {
+        if (!d.sampleRows || d.sampleRows.length === 0) return;
+        document.getElementById('sampleBlock').innerHTML = `
+          <div class="card">
+            <details>
+              <summary style="cursor:pointer;font-weight:600">ดู sample 20 แถวจากไฟล์ (ยังไม่บันทึก)</summary>
+              <div style="overflow:auto;margin-top:10px">
                 <table class="data-table" style="font-size:11px">
                   <thead><tr>${d.columns.map(c => `<th>${this._esc(c)}</th>`).join('')}</tr></thead>
                   <tbody>${d.sampleRows.slice(0,20).map(r => `<tr>${d.columns.map(c => `<td>${this._esc(r[c] || '')}</td>`).join('')}</tr>`).join('')}</tbody>
                 </table>
               </div>
-            </div>`;
-        } catch (e) { Layout.toast(e.message, 'error'); }
+            </details>
+          </div>`;
       },
-      async import(dryRun) {
+
+      _renderCommit(d) {
+        document.getElementById('commitBlock').innerHTML = `
+          <div class="card" style="background:#f8fafc">
+            <h3 style="margin:0 0 10px">2. ยืนยันการนำเข้า</h3>
+            <p style="font-size:13px;color:#475569">
+              จะเพิ่มใหม่ <b>${d.newRowCount}</b> รายการ · ขัดแย้ง <b>${d.conflicts.length}</b> รายการจะใช้การตัดสินใจตามที่เลือกข้างบน<br>
+              <small style="color:#64748b">แนะนำให้ Dry-run ก่อน Commit เพื่อตรวจสอบผลลัพธ์โดยไม่กระทบของจริง</small>
+            </p>
+            <button class="btn btn-warning" onclick="Page.commit(true)">🧪 Dry-run (ไม่บันทึก)</button>
+            <button class="btn btn-success" onclick="Page.commit(false)" style="margin-left:8px">✅ Commit จริง</button>
+          </div>`;
+      },
+
+      async commit(dryRun) {
         const f = document.getElementById('fileInput').files[0];
-        if (!f) { Layout.toast('เลือกไฟล์ก่อน', 'error'); return; }
+        if (!f) { Layout.toast('ต้องเลือกไฟล์ก่อน', 'error'); return; }
+        if (!this._preview) { Layout.toast('ต้อง Preview ก่อน', 'error'); return; }
         const cid = Layout.getCompanyId();
         const token = localStorage.getItem('token');
         const fd = new FormData();
-        fd.append('file', f); fd.append('dryRun', dryRun);
-        fd.append('skipDuplicates', 'true'); fd.append('sourceTag', 'manual-ui');
+        fd.append('file', f);
+        fd.append('dryRun', dryRun);
+        fd.append('skipDuplicates', 'false');     // we use explicit conflict actions now
+        fd.append('sourceTag', 'ui-conflict-resolution');
+        fd.append('resolutionsJson', JSON.stringify(this._resolutions));
+        fd.append('defaultConflictAction', this._defaultAction);
+        document.getElementById('result').innerHTML = `<div class="card">กำลัง${dryRun?'ทดสอบ':'นำเข้า'}...</div>`;
         try {
           const r = await fetch(`/api/companies/${cid}/migration/import`,
             { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
@@ -87,12 +240,20 @@
           if (!j.success) throw new Error(j.message);
           const d = j.data;
           document.getElementById('result').innerHTML = `
-            <div class="card" style="background:${dryRun ? '#fef3c7' : '#dcfce7'};border:1px solid ${dryRun ? '#fcd34d' : '#86efac'}">
-              <h3 style="margin:0 0 10px">${dryRun ? '🧪 Dry-run' : '✅ Commit'}: ${d.sourceSystem}</h3>
-              <div>นำเข้า ${d.rowsImported}/${d.rowsRead} · ข้าม ${d.rowsSkipped} · ผิดพลาด ${d.rowsFailed}</div>
-              ${d.errors?.length ? `<details style="margin-top:10px"><summary>Errors (${d.errors.length})</summary><pre style="background:#fff;padding:10px;border-radius:6px;max-height:200px;overflow:auto">${this._esc(d.errors.join('\n'))}</pre></details>` : ''}
+            <div class="card" style="background:${dryRun ? '#fef3c7' : '#dcfce7'};border:2px solid ${dryRun ? '#fcd34d' : '#22c55e'}">
+              <h3 style="margin:0 0 10px">${dryRun ? '🧪 Dry-run' : '✅ Commit สำเร็จ'} — ${this._esc(d.sourceSystem)}</h3>
+              <div style="font-size:14px">
+                <span class="stat-pill" style="background:#dcfce7">เพิ่มใหม่ ${d.rowsImported}</span>
+                <span class="stat-pill" style="background:#dbeafe">อัพเดต ${d.rowsUpdated}</span>
+                <span class="stat-pill" style="background:#fef3c7">ข้าม ${d.rowsSkipped}</span>
+                ${d.rowsFailed ? `<span class="stat-pill" style="background:#fee2e2">ผิดพลาด ${d.rowsFailed}</span>` : ''}
+                <span style="color:#64748b;margin-left:6px">จาก ${d.rowsRead} แถว</span>
+              </div>
+              ${d.errors?.length ? `<details style="margin-top:10px"><summary style="cursor:pointer">รายละเอียดข้อผิดพลาด (${d.errors.length})</summary><pre style="background:#fff;padding:10px;border-radius:6px;max-height:240px;overflow:auto;font-size:11px">${this._esc(d.errors.join('\n'))}</pre></details>` : ''}
             </div>`;
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          document.getElementById('result').innerHTML = `<div class="card" style="background:#fee2e2;border:1px solid #fca5a5"><b>เกิดข้อผิดพลาด:</b> ${this._esc(e.message)}</div>`;
+        }
       },
     };
     Page.init();

@@ -8,6 +8,11 @@ public interface IImportExportService
     Task<ImportResult> ImportAsync(Guid companyId, ImportRequest request, string performedBy);
     Task<ImportTemplateResponse> GetImportTemplateAsync(string entityType);
     Task<ImportResult> ValidateImportAsync(Guid companyId, ImportRequest request);
+    /// <summary>Scan request.Data against the DB and return rows whose
+    /// natural key (TaxId/Code/AccountCode) already exists with different
+    /// field values. Supported for entityTypes: contacts, products,
+    /// chartofaccounts. Returns an empty list for other entity types.</summary>
+    Task<ConflictPreviewResponse> PreviewConflictsAsync(Guid companyId, ImportRequest request);
 
     // Export
     Task<ExportResult> ExportAsync(Guid companyId, ExportRequest request);
@@ -18,6 +23,10 @@ public interface IImportExportService
     Task<SmartImportSessionResponse> GetSessionAsync(Guid companyId, Guid sessionId);
     Task<SmartImportSessionResponse> SubmitManualMappingAsync(Guid companyId, ManualMappingRequest request, string performedBy);
     Task<SmartImportResult> ConfirmAndImportAsync(Guid companyId, SmartImportConfirmRequest request, string performedBy);
+    /// <summary>Scan a Smart Import session's mapped data against the DB
+    /// for conflicts, same shape as PreviewConflictsAsync but works off the
+    /// stored session + column mappings (so the UI can ask BEFORE Confirm).</summary>
+    Task<ConflictPreviewResponse> PreviewSmartConflictsAsync(Guid companyId, Guid sessionId);
 
     // Template Downloads
     Task<ImportTemplateDownloadResponse> DownloadTemplateAsync(string entityType, string format);

@@ -6,7 +6,28 @@ public record ImportRequest(
     string FileFormat,
     bool HasHeaderRow,
     List<ColumnMapping>? ColumnMappings,
-    List<Dictionary<string, string>> Data);
+    List<Dictionary<string, string>> Data,
+    // Per-row decisions for rows that conflict with existing DB data —
+    // key (TaxId/Code/AccountCode) → "Skip"|"Overwrite"|"Merge".
+    // Populated by the client after calling /preview-conflicts.
+    Dictionary<string, string>? Resolutions = null,
+    string? DefaultConflictAction = null);  // fallback for conflicts not in Resolutions
+
+public record ConflictRow(
+    string Key,
+    string ExistingLabel,
+    string IncomingLabel,
+    Dictionary<string, string?> Existing,
+    Dictionary<string, string?> Incoming,
+    List<string> DiffFields);
+
+public record ConflictPreviewResponse(
+    string EntityType,
+    int TotalRows,
+    int NewRowCount,
+    int DuplicateExactCount,
+    List<ConflictRow> Conflicts,
+    List<string> Warnings);
 
 public record ColumnMapping(
     string SourceColumn,
@@ -108,7 +129,11 @@ public record ManualColumnMappingEntry(
 public record SmartImportConfirmRequest(
     Guid SessionId,
     string? DateFormat,
-    string? DecimalSeparator);
+    string? DecimalSeparator,
+    // Mirror of ImportRequest's conflict-resolution fields. Populated by
+    // the client after calling /smart-import/preview-conflicts.
+    Dictionary<string, string>? Resolutions = null,
+    string? DefaultConflictAction = null);
 
 public record SmartImportResult(
     Guid SessionId,
