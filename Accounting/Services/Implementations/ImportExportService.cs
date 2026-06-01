@@ -37,14 +37,17 @@ public class ImportExportService : IImportExportService
                 switch (request.EntityType.ToLower())
                 {
                     case "contacts":
-                        await ImportContactAsync(companyId, row);
+                        await ImportContactAsync(companyId, row, request.Resolutions,
+                            request.DefaultConflictAction ?? "Merge");
                         break;
                     case "products":
-                        await ImportProductAsync(companyId, row);
+                        await ImportProductAsync(companyId, row, request.Resolutions,
+                            request.DefaultConflictAction ?? "Skip");
                         break;
                     case "chartofaccounts":
                     case "chart-of-accounts":
-                        await ImportAccountAsync(companyId, row);
+                        await ImportAccountAsync(companyId, row, request.Resolutions,
+                            request.DefaultConflictAction ?? "Skip");
                         break;
                     case "banktransactions":
                         await ImportBankTransactionAsync(companyId, row);
@@ -100,6 +103,149 @@ public class ImportExportService : IImportExportService
 
         return new ImportResult(request.EntityType, request.Data.Count, successCount,
             errors.Count, request.Data.Count - successCount - errors.Count, errors, DateTime.UtcNow);
+    }
+
+    /// <summary>Dry-run dedup check: scan request.Data, return rows whose
+    /// natural key already exists in DB with different field values. The
+    /// client uses this to render a conflict-resolution UI before commit.
+    /// Supported: contacts (key=TaxId), products (key=Code),
+    /// chartofaccounts (key=AccountCode). Other entity types return an
+    /// empty conflict list.</summary>
+    public async Task<ConflictPreviewResponse> PreviewConflictsAsync(Guid companyId, ImportRequest request)
+    {
+        var warnings = new List<string>();
+        var conflicts = new List<ConflictRow>();
+        int newCount = 0, exactDup = 0;
+        var seen = new HashSet<string>();
+
+        switch (request.EntityType.ToLower())
+        {
+            case "contacts":
+            {
+                var taxIds = request.Data
+                    .Select(r => r.GetValueOrDefault("TaxId"))
+                    .Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
+                var existing = await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted && taxIds.Contains(c.TaxId!))
+                    .ToDictionaryAsync(c => c.TaxId!);
+                foreach (var row in request.Data)
+                {
+                    var taxId = row.GetValueOrDefault("TaxId");
+                    if (string.IsNullOrWhiteSpace(taxId) || !existing.TryGetValue(taxId, out var ex))
+                    { newCount++; continue; }
+                    var name = row.GetValueOrDefault("Name");
+                    var phone = row.GetValueOrDefault("Phone");
+                    var email = row.GetValueOrDefault("Email");
+                    var address = row.GetValueOrDefault("Address");
+                    if (EqStr(ex.Name, name) && EqStr(ex.Phone, phone) && EqStr(ex.Email, email) && EqStr(ex.Address, address))
+                    { exactDup++; continue; }
+                    if (!seen.Add(taxId)) continue;
+                    var diff = new List<string>();
+                    if (!EqStr(ex.Name, name)) diff.Add("Name");
+                    if (!EqStr(ex.Phone, phone)) diff.Add("Phone");
+                    if (!EqStr(ex.Email, email)) diff.Add("Email");
+                    if (!EqStr(ex.Address, address)) diff.Add("Address");
+                    conflicts.Add(new ConflictRow(taxId, ex.Name, name ?? "",
+                        new() { ["Name"] = ex.Name, ["Phone"] = ex.Phone, ["Email"] = ex.Email, ["Address"] = ex.Address },
+                        new() { ["Name"] = name, ["Phone"] = phone, ["Email"] = email, ["Address"] = address },
+                        diff));
+                }
+                break;
+            }
+            case "products":
+            {
+                var codes = request.Data.Select(r => r.GetValueOrDefault("Code"))
+                    .Where(c => !string.IsNullOrWhiteSpace(c)).Distinct().ToList();
+                var existing = await _db.Products
+                    .Where(p => p.CompanyId == companyId && !p.IsDeleted && codes.Contains(p.Code))
+                    .ToDictionaryAsync(p => p.Code);
+                foreach (var row in request.Data)
+                {
+                    var code = row.GetValueOrDefault("Code");
+                    if (string.IsNullOrWhiteSpace(code) || !existing.TryGetValue(code, out var ex))
+                    { newCount++; continue; }
+                    var name = row.GetValueOrDefault("Name");
+                    var unit = row.GetValueOrDefault("Unit");
+                    decimal.TryParse(row.GetValueOrDefault("SellingPrice"), out var sp);
+                    decimal.TryParse(row.GetValueOrDefault("CostPrice"), out var cp);
+                    decimal.TryParse(row.GetValueOrDefault("VatRate"), out var vr);
+                    var category = row.GetValueOrDefault("Category");
+                    bool isDup = EqStr(ex.Name, name) && EqStr(ex.Unit, unit)
+                        && ex.SellingPrice == sp && ex.CostPrice == cp && ex.VatRate == vr
+                        && EqStr(ex.Category, category);
+                    if (isDup) { exactDup++; continue; }
+                    if (!seen.Add(code)) continue;
+                    var diff = new List<string>();
+                    if (!EqStr(ex.Name, name)) diff.Add("Name");
+                    if (!EqStr(ex.Unit, unit)) diff.Add("Unit");
+                    if (ex.SellingPrice != sp) diff.Add("SellingPrice");
+                    if (ex.CostPrice != cp) diff.Add("CostPrice");
+                    if (ex.VatRate != vr) diff.Add("VatRate");
+                    if (!EqStr(ex.Category, category)) diff.Add("Category");
+                    conflicts.Add(new ConflictRow(code, ex.Name, name ?? "",
+                        new() { ["Name"] = ex.Name, ["Unit"] = ex.Unit,
+                                ["SellingPrice"] = ex.SellingPrice.ToString("N2"),
+                                ["CostPrice"] = ex.CostPrice.ToString("N2"),
+                                ["VatRate"] = ex.VatRate.ToString("N2"),
+                                ["Category"] = ex.Category },
+                        new() { ["Name"] = name, ["Unit"] = unit,
+                                ["SellingPrice"] = sp.ToString("N2"),
+                                ["CostPrice"] = cp.ToString("N2"),
+                                ["VatRate"] = vr.ToString("N2"),
+                                ["Category"] = category },
+                        diff));
+                }
+                break;
+            }
+            case "chartofaccounts":
+            case "chart-of-accounts":
+            {
+                var codes = request.Data.Select(r => r.GetValueOrDefault("AccountCode"))
+                    .Where(c => !string.IsNullOrWhiteSpace(c)).Distinct().ToList();
+                var existing = await _db.ChartOfAccounts
+                    .Where(a => a.CompanyId == companyId && !a.IsDeleted && codes.Contains(a.AccountCode))
+                    .ToDictionaryAsync(a => a.AccountCode);
+                foreach (var row in request.Data)
+                {
+                    var code = row.GetValueOrDefault("AccountCode");
+                    if (string.IsNullOrWhiteSpace(code) || !existing.TryGetValue(code, out var ex))
+                    { newCount++; continue; }
+                    var name = row.GetValueOrDefault("AccountName");
+                    var nameEn = row.GetValueOrDefault("AccountNameEn");
+                    var typeStr = row.GetValueOrDefault("AccountType");
+                    var desc = row.GetValueOrDefault("Description");
+                    bool isDup = EqStr(ex.AccountName, name) && EqStr(ex.AccountNameEn, nameEn)
+                        && EqStr(ex.AccountType.ToString(), typeStr) && EqStr(ex.Description, desc);
+                    if (isDup) { exactDup++; continue; }
+                    if (!seen.Add(code)) continue;
+                    var diff = new List<string>();
+                    if (!EqStr(ex.AccountName, name)) diff.Add("AccountName");
+                    if (!EqStr(ex.AccountNameEn, nameEn)) diff.Add("AccountNameEn");
+                    if (!EqStr(ex.AccountType.ToString(), typeStr)) diff.Add("AccountType");
+                    if (!EqStr(ex.Description, desc)) diff.Add("Description");
+                    conflicts.Add(new ConflictRow(code, ex.AccountName, name ?? "",
+                        new() { ["AccountName"] = ex.AccountName, ["AccountNameEn"] = ex.AccountNameEn,
+                                ["AccountType"] = ex.AccountType.ToString(), ["Description"] = ex.Description },
+                        new() { ["AccountName"] = name, ["AccountNameEn"] = nameEn,
+                                ["AccountType"] = typeStr, ["Description"] = desc },
+                        diff));
+                }
+                break;
+            }
+            default:
+                warnings.Add($"Conflict preview ยังไม่รองรับ entity type \"{request.EntityType}\" — รองรับเฉพาะ contacts / products / chartofaccounts");
+                newCount = request.Data.Count;
+                break;
+        }
+
+        return new ConflictPreviewResponse(request.EntityType, request.Data.Count, newCount, exactDup, conflicts, warnings);
+    }
+
+    private static bool EqStr(string? a, string? b)
+    {
+        var na = string.IsNullOrWhiteSpace(a) ? "" : a.Trim();
+        var nb = string.IsNullOrWhiteSpace(b) ? "" : b.Trim();
+        return string.Equals(na, nb, StringComparison.Ordinal);
     }
 
     public Task<ImportTemplateResponse> GetImportTemplateAsync(string entityType)
@@ -319,51 +465,55 @@ public class ImportExportService : IImportExportService
 
     // ===== Import Helpers =====
 
-    private async Task ImportContactAsync(Guid companyId, Dictionary<string, string> row)
+    private async Task ImportContactAsync(Guid companyId, Dictionary<string, string> row,
+        Dictionary<string, string>? resolutions = null, string defaultAction = "Merge")
     {
         var name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required");
         var taxId = row.GetValueOrDefault("TaxId");
         var email = row.GetValueOrDefault("Email");
 
-        // Idempotent on re-import: match by TaxId (most reliable for
-        // businesses), then by Email when TaxId is blank. Re-import
-        // updates the matched row in place instead of creating a
-        // duplicate. This makes the typical migration workflow
-        // "fix CSV → re-import" safe to repeat without dedup cleanup.
+        // Idempotent on re-import: match by TaxId, then Email.
         Contact? existing = null;
         if (!string.IsNullOrWhiteSpace(taxId))
-        {
             existing = await _db.Contacts.FirstOrDefaultAsync(c =>
                 c.CompanyId == companyId && !c.IsDeleted && c.TaxId == taxId);
-        }
         if (existing == null && !string.IsNullOrWhiteSpace(email))
-        {
             existing = await _db.Contacts.FirstOrDefaultAsync(c =>
                 c.CompanyId == companyId && !c.IsDeleted && c.Email == email);
-        }
 
         var isCustomer = bool.TryParse(row.GetValueOrDefault("IsCustomer"), out var isCust) && isCust;
         var isSupplier = bool.TryParse(row.GetValueOrDefault("IsSupplier"), out var isSup) && isSup;
 
         if (existing != null)
         {
-            existing.Name = name;
-            if (!string.IsNullOrWhiteSpace(taxId)) existing.TaxId = taxId;
-            if (!string.IsNullOrWhiteSpace(email)) existing.Email = email;
-            // OR-merge customer/supplier flags so a row imported as
-            // both supplier + customer keeps both flags set on the
-            // matched contact (typical Thai SME has same vendor as
-            // both for service exchanges).
+            var key = taxId ?? email ?? "";
+            var action = ResolveAction(resolutions, key, defaultAction);
+            if (action == "Skip") return;
+
+            // Merge (default): existing wins; new fills blanks + OR-merges flags.
+            // Overwrite: non-empty incoming overrides existing.
+            if (action == "Overwrite")
+            {
+                existing.Name = name;
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Phone"))) existing.Phone = row.GetValueOrDefault("Phone");
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Address"))) existing.Address = row.GetValueOrDefault("Address");
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactPerson"))) existing.ContactPerson = row.GetValueOrDefault("ContactPerson");
+                if (!string.IsNullOrWhiteSpace(email)) existing.Email = email;
+            }
+            else // Merge
+            {
+                if (string.IsNullOrWhiteSpace(existing.Phone)) existing.Phone = row.GetValueOrDefault("Phone");
+                if (string.IsNullOrWhiteSpace(existing.Address)) existing.Address = row.GetValueOrDefault("Address");
+                if (string.IsNullOrWhiteSpace(existing.ContactPerson)) existing.ContactPerson = row.GetValueOrDefault("ContactPerson");
+                if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(email)) existing.Email = email;
+            }
             existing.IsCustomer = existing.IsCustomer || isCustomer;
             existing.IsSupplier = existing.IsSupplier || isSupplier;
-            existing.Phone = row.GetValueOrDefault("Phone") ?? existing.Phone;
-            existing.Address = row.GetValueOrDefault("Address") ?? existing.Address;
-            existing.ContactPerson = row.GetValueOrDefault("ContactPerson") ?? existing.ContactPerson;
             existing.UpdatedAt = DateTime.UtcNow;
             return;
         }
 
-        var contact = new Contact
+        _db.Contacts.Add(new Contact
         {
             CompanyId = companyId,
             Name = name,
@@ -374,17 +524,46 @@ public class ImportExportService : IImportExportService
             Phone = row.GetValueOrDefault("Phone"),
             Address = row.GetValueOrDefault("Address"),
             ContactPerson = row.GetValueOrDefault("ContactPerson")
-        };
-        _db.Contacts.Add(contact);
+        });
     }
 
-    private async Task ImportProductAsync(Guid companyId, Dictionary<string, string> row)
+    private async Task ImportProductAsync(Guid companyId, Dictionary<string, string> row,
+        Dictionary<string, string>? resolutions = null, string defaultAction = "Skip")
     {
         var code = row.GetValueOrDefault("Code") ?? throw new InvalidOperationException("Code is required");
-        if (await _db.Products.AnyAsync(p => p.CompanyId == companyId && p.Code == code))
-            throw new InvalidOperationException($"รหัสสินค้า {code} ซ้ำ");
+        var existing = await _db.Products.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId && !p.IsDeleted && p.Code == code);
 
-        var product = new Product
+        if (existing != null)
+        {
+            // Previously threw — now respects per-row resolution (default Skip
+            // since price/cost overwrites are risky without explicit consent).
+            var action = ResolveAction(resolutions, code, defaultAction);
+            if (action == "Skip")
+                throw new InvalidOperationException($"รหัสสินค้า {code} ซ้ำ — ต้องเลือก Merge/Overwrite ใน preview-conflicts ก่อน");
+
+            if (action == "Overwrite")
+            {
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
+                    existing.Name = row.GetValueOrDefault("Name")!;
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Unit")))
+                    existing.Unit = row.GetValueOrDefault("Unit")!;
+                if (decimal.TryParse(row.GetValueOrDefault("SellingPrice"), out var sp1)) existing.SellingPrice = sp1;
+                if (decimal.TryParse(row.GetValueOrDefault("CostPrice"), out var cp1)) existing.CostPrice = cp1;
+                if (decimal.TryParse(row.GetValueOrDefault("VatRate"), out var vr1)) existing.VatRate = vr1;
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Category"))) existing.Category = row.GetValueOrDefault("Category");
+            }
+            else if (action == "Merge")
+            {
+                if (existing.SellingPrice == 0 && decimal.TryParse(row.GetValueOrDefault("SellingPrice"), out var sp2)) existing.SellingPrice = sp2;
+                if (existing.CostPrice == 0 && decimal.TryParse(row.GetValueOrDefault("CostPrice"), out var cp2)) existing.CostPrice = cp2;
+                if (string.IsNullOrWhiteSpace(existing.Category)) existing.Category = row.GetValueOrDefault("Category");
+            }
+            existing.UpdatedAt = DateTime.UtcNow;
+            return;
+        }
+
+        _db.Products.Add(new Product
         {
             CompanyId = companyId,
             Code = code,
@@ -395,20 +574,48 @@ public class ImportExportService : IImportExportService
             VatRate = decimal.TryParse(row.GetValueOrDefault("VatRate"), out var vr) ? vr : 7,
             Category = row.GetValueOrDefault("Category"),
             ProductType = Enum.TryParse<ProductType>(row.GetValueOrDefault("ProductType"), true, out var pt) ? pt : ProductType.Product
-        };
-        _db.Products.Add(product);
+        });
     }
 
-    private async Task ImportAccountAsync(Guid companyId, Dictionary<string, string> row)
+    private async Task ImportAccountAsync(Guid companyId, Dictionary<string, string> row,
+        Dictionary<string, string>? resolutions = null, string defaultAction = "Skip")
     {
         var code = row.GetValueOrDefault("AccountCode") ?? throw new InvalidOperationException("AccountCode is required");
-        if (await _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId && a.AccountCode == code))
-            throw new InvalidOperationException($"รหัสบัญชี {code} ซ้ำ");
+        var existing = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && !a.IsDeleted && a.AccountCode == code);
+
+        if (existing != null)
+        {
+            var action = ResolveAction(resolutions, code, defaultAction);
+            if (action == "Skip")
+                throw new InvalidOperationException($"รหัสบัญชี {code} ซ้ำ — ต้องเลือก Merge/Overwrite ใน preview-conflicts ก่อน");
+
+            if (action == "Overwrite")
+            {
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountName")))
+                    existing.AccountName = row.GetValueOrDefault("AccountName")!;
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountNameEn")))
+                    existing.AccountNameEn = row.GetValueOrDefault("AccountNameEn");
+                if (Enum.TryParse<AccountType>(row.GetValueOrDefault("AccountType"), true, out var at))
+                    existing.AccountType = at;
+                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Description")))
+                    existing.Description = row.GetValueOrDefault("Description");
+            }
+            else if (action == "Merge")
+            {
+                if (string.IsNullOrWhiteSpace(existing.AccountNameEn))
+                    existing.AccountNameEn = row.GetValueOrDefault("AccountNameEn");
+                if (string.IsNullOrWhiteSpace(existing.Description))
+                    existing.Description = row.GetValueOrDefault("Description");
+            }
+            existing.UpdatedAt = DateTime.UtcNow;
+            return;
+        }
 
         if (!Enum.TryParse<AccountType>(row.GetValueOrDefault("AccountType"), true, out var acctType))
             throw new InvalidOperationException("AccountType ไม่ถูกต้อง");
 
-        var account = new ChartOfAccount
+        _db.ChartOfAccounts.Add(new ChartOfAccount
         {
             CompanyId = companyId,
             AccountCode = code,
@@ -417,8 +624,23 @@ public class ImportExportService : IImportExportService
             AccountType = acctType,
             Description = row.GetValueOrDefault("Description"),
             Level = code.Length <= 4 ? 1 : 2
+        });
+    }
+
+    /// <summary>Look up the per-row action set by the user in the preview
+    /// UI; fall back to defaultAction. Accepts case-insensitive values.</summary>
+    private static string ResolveAction(Dictionary<string, string>? resolutions, string key, string defaultAction)
+    {
+        if (resolutions != null && !string.IsNullOrEmpty(key) && resolutions.TryGetValue(key, out var picked))
+            return Normalize(picked);
+        return Normalize(defaultAction);
+
+        static string Normalize(string a) => a?.Trim().ToLowerInvariant() switch
+        {
+            "overwrite" => "Overwrite",
+            "merge" => "Merge",
+            _ => "Skip",
         };
-        _db.ChartOfAccounts.Add(account);
     }
 
     private async Task ImportBankTransactionAsync(Guid companyId, Dictionary<string, string> row)

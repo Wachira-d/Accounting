@@ -35,9 +35,13 @@
             <input type="file" class="form-input" id="importFile" accept=".csv,.xlsx,.xls" style="padding:8px">
           </div>
           <div id="templateLink" style="margin-bottom:16px"></div>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secondary" onclick="Page.validateImport()">ตรวจสอบข้อมูล</button>
+            <button class="btn btn-warning" onclick="Page.previewConflicts()">ตรวจสอบข้อมูลซ้ำ</button>
             <button class="btn btn-primary" onclick="Page.doImport()" data-i18n="common.import">นำเข้า</button>
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-top:8px">
+            💡 "ตรวจสอบข้อมูลซ้ำ" จะเทียบทุกแถวกับฐานข้อมูล หาแถวที่ key (TaxId/Code/AccountCode) ตรงกันแต่ข้อมูลต่าง — เลือกได้ว่าจะ Skip/Merge/Overwrite ก่อนนำเข้า
           </div>
         </div>
 
@@ -333,7 +337,8 @@ const Page = {
       const file = fileInput.files[0];
       const parsed = await this.loadAndParseFile(file);
       const format = this._isExcel(file) ? 'excel' : 'csv';
-      const requestBody = { entityType: entity, fileFormat: format, hasHeaderRow: true, columnMappings: null, data: parsed.rows };
+      const requestBody = { entityType: entity, fileFormat: format, hasHeaderRow: true, columnMappings: null, data: parsed.rows,
+        resolutions: this._conflictResolutions, defaultConflictAction: this._conflictDefault };
       const res = await api.importData(requestBody);
       const d = res.data || {};
       result.innerHTML = `
@@ -403,6 +408,87 @@ const Page = {
       Layout.toast('นำเข้าข้อมูลสำเร็จ');
       document.getElementById('smartResult').innerHTML = '<p class="text-success text-center" style="padding:20px">นำเข้าข้อมูลเรียบร้อยแล้ว</p>';
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ─── Conflict resolution ─────────────────────────────────────
+  // Stored decisions for the next doImport(): key → "Skip"|"Overwrite"|"Merge"
+  _conflictResolutions: {},
+  _conflictDefault: 'Merge',
+
+  _keyLabel(entity) {
+    return ({ contacts: 'TaxId', products: 'รหัสสินค้า',
+              chartofaccounts: 'รหัสบัญชี', 'chart-of-accounts': 'รหัสบัญชี' })
+      [String(entity||'').toLowerCase()] || 'Key';
+  },
+
+  async previewConflicts() {
+    const entity = document.getElementById('importEntity').value;
+    const fileInput = document.getElementById('importFile');
+    if (!entity) { Layout.toast('กรุณาเลือกประเภทข้อมูล', 'error'); return; }
+    if (!fileInput.files.length) { Layout.toast('กรุณาเลือกไฟล์', 'error'); return; }
+    const cid = Layout.getCompanyId();
+    const token = localStorage.getItem('token');
+    const result = document.getElementById('importResult');
+    result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">กำลังเทียบกับฐานข้อมูล...</p></div>';
+    try {
+      const parsed = await this.loadAndParseFile(fileInput.files[0]);
+      const body = { entityType: entity, fileFormat: 'csv', hasHeaderRow: true, columnMappings: null, data: parsed.rows };
+      const r = await fetch(`/api/companies/${cid}/import-export/preview-conflicts`, {
+        method: 'POST', headers: { 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      if (!j.success) throw new Error(j.message);
+      this._conflictResolutions = {};
+      this._renderConflictResult(j.data, entity);
+    } catch (e) { result.innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
+  },
+
+  _renderConflictResult(d, entity) {
+    const result = document.getElementById('importResult');
+    const keyLabel = this._keyLabel(entity);
+    const rows = (d.conflicts||[]).map((c, i) => {
+      const fieldRows = c.diffFields.map(f => `
+        <tr><td style="font-size:11px">${Layout.esc(f)}</td>
+          <td><span style="background:#fee2e2;padding:2px 6px;border-radius:4px">${Layout.esc(c.existing[f] || '(ว่าง)')}</span></td>
+          <td><span style="background:#dcfce7;padding:2px 6px;border-radius:4px">${Layout.esc(c.incoming[f] || '(ว่าง)')}</span></td>
+        </tr>`).join('');
+      return `<tr>
+        <td style="vertical-align:top"><code>${Layout.esc(c.key)}</code><br><small style="color:#64748b">${Layout.esc(c.existingLabel||'')}</small></td>
+        <td colspan="2" style="padding:0"><table style="width:100%;font-size:11px"><tbody>${fieldRows}</tbody></table></td>
+        <td style="vertical-align:top">
+          <select onchange="Page._conflictResolutions['${Layout.esc(c.key)}'] = this.value" class="form-select" style="font-size:12px;padding:4px">
+            <option value="">(ใช้ค่าเริ่มต้น)</option>
+            <option value="Skip">ข้าม</option>
+            <option value="Merge">รวม</option>
+            <option value="Overwrite">เขียนทับ</option>
+          </select>
+        </td>
+      </tr>`;
+    }).join('');
+    result.innerHTML = `
+      <div style="margin-bottom:10px">
+        <span class="badge badge-info">รวม ${d.totalRows}</span>
+        <span class="badge badge-success">ใหม่ ${d.newRowCount}</span>
+        <span class="badge badge-warning">ซ้ำเหมือนกัน ${d.duplicateExactCount}</span>
+        <span class="badge ${d.conflicts.length ? 'badge-danger' : 'badge-success'}">ขัดแย้ง ${d.conflicts.length}</span>
+      </div>
+      ${d.conflicts.length === 0 ? '<p class="text-success">ไม่พบรายการขัดแย้ง — กดนำเข้าได้เลย</p>' : `
+        <div style="font-size:12px;margin:8px 0">
+          ค่าเริ่มต้นสำหรับรายการที่ไม่ได้เลือก:
+          <select onchange="Page._conflictDefault = this.value" class="form-select" style="display:inline;width:auto;font-size:12px;padding:2px">
+            <option value="Skip">ข้าม</option>
+            <option value="Merge" selected>รวม (แนะนำ)</option>
+            <option value="Overwrite">เขียนทับ</option>
+          </select>
+        </div>
+        <div style="overflow:auto;max-height:400px;border:1px solid #e2e8f0;border-radius:6px">
+          <table class="data-table" style="font-size:12px;width:100%">
+            <thead><tr><th>${keyLabel}</th><th>เดิม (ในระบบ)</th><th>ใหม่ (ในไฟล์)</th><th>ตัดสินใจ</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`}
+      ${(d.warnings||[]).length ? `<details style="margin-top:8px"><summary>คำเตือน (${d.warnings.length})</summary><ul>${d.warnings.map(w => `<li class="text-sm">${Layout.esc(w)}</li>`).join('')}</ul></details>` : ''}`;
   },
 };
 

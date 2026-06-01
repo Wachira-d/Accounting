@@ -133,6 +133,33 @@ public class MigrationWizardService : IMigrationWizardService
         foreach (var g in dupGroups)
             issues.Add($"⚠️ บัญชี {g.Key.ToString("N")[..8]} ถูก map จาก {g.Count()} legacy codes — ตรวจสอบว่าตั้งใจรวม");
 
+        // Surface legacy codes that ALREADY exist in the target chart of
+        // accounts under the same code but were left unmapped. Common
+        // mistake: operator pastes legacy COA, the new system already has
+        // rows with identical codes (e.g. seeded 1110 = เงินสด), they
+        // forget to map and end up creating duplicate opening balances.
+        // We flag it as a warning so the operator either maps explicitly
+        // or accepts they're skipping (legacy code already covered).
+        var legacyCodes = rows.Where(r => !r.MappedAccountId.HasValue)
+            .Select(r => r.LegacyCode).Distinct().ToList();
+        if (legacyCodes.Count > 0)
+        {
+            var sameCodeExists = await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted
+                    && legacyCodes.Contains(a.AccountCode))
+                .Select(a => new { a.AccountCode, a.AccountName })
+                .ToListAsync();
+            foreach (var hit in sameCodeExists)
+            {
+                var legacyRow = rows.FirstOrDefault(r => r.LegacyCode == hit.AccountCode);
+                var legacyName = legacyRow?.LegacyName ?? "";
+                var nameNote = string.Equals(legacyName, hit.AccountName, StringComparison.Ordinal)
+                    ? "ชื่อเหมือนกัน"
+                    : $"ชื่อต่าง: ระบบ \"{hit.AccountName}\" vs legacy \"{legacyName}\"";
+                issues.Add($"⚠️ Legacy code {hit.AccountCode} ตรงกับบัญชีในระบบอยู่แล้ว ({nameNote}) — เลือก map หรือยืนยันว่าจะข้าม");
+            }
+        }
+
         session.Status = issues.Count == 0 ? MigrationStatus.ReadyToCommit : MigrationStatus.Validating;
         await _db.SaveChangesAsync();
         return issues;

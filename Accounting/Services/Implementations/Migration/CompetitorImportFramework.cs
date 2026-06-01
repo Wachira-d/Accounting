@@ -60,13 +60,14 @@ public enum ConflictAction
 
 /// <summary>One row that already exists in the DB and differs from the
 /// import file. UI shows the user a side-by-side diff and asks for a
-/// per-row ConflictAction.</summary>
-public sealed record ContactConflict(
-    string Key,                            // TaxId (the join key)
-    string ExistingName,
-    string IncomingName,
-    IReadOnlyDictionary<string, string?> Existing,   // field → current value
-    IReadOnlyDictionary<string, string?> Incoming,   // field → file value
+/// per-row ConflictAction. Generic across entity types — for contacts
+/// Key is TaxId, for products it's Code, for accounts it's AccountCode.</summary>
+public sealed record RowConflict(
+    string Key,                                       // the join key (TaxId / Code / AccountCode)
+    string ExistingLabel,                             // human-friendly name of the DB row
+    string IncomingLabel,                             // human-friendly name of the file row
+    IReadOnlyDictionary<string, string?> Existing,    // field → current value
+    IReadOnlyDictionary<string, string?> Incoming,    // field → file value
     IReadOnlyList<string> DiffFields);                // names of fields that differ
 
 public sealed record ImportPreview(
@@ -76,7 +77,7 @@ public sealed record ImportPreview(
     IReadOnlyList<IReadOnlyDictionary<string, string>> SampleRows,
     int TotalRows,
     IReadOnlyList<string> Warnings,
-    IReadOnlyList<ContactConflict> Conflicts,         // ← NEW
+    IReadOnlyList<RowConflict> Conflicts,         // ← NEW
     int NewRowCount,                                  // ← NEW: count of rows without a DB match
     int DuplicateExactCount);                         // ← NEW: rows whose TaxId matches AND every field is identical (auto-skip, no UI prompt)
 
@@ -237,7 +238,7 @@ public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
 
     // ─────────── conflict detection ───────────
 
-    private async Task<(List<ContactConflict>, int newCount, int exactDupCount)>
+    private async Task<(List<RowConflict>, int newCount, int exactDupCount)>
         DetectConflictsAsync(Guid companyId, List<IncomingContact> rows, CancellationToken ct)
     {
         var taxIds = rows.Select(r => r.TaxId).Where(t => !string.IsNullOrEmpty(t)).Distinct().ToList();
@@ -245,7 +246,7 @@ public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
             .Where(c => c.CompanyId == companyId && !c.IsDeleted && taxIds.Contains(c.TaxId!))
             .ToDictionaryAsync(c => c.TaxId!, ct);
 
-        var conflicts = new List<ContactConflict>();
+        var conflicts = new List<RowConflict>();
         int newCount = 0, exactDupCount = 0;
         var seenKeys = new HashSet<string>();
 
@@ -274,10 +275,10 @@ public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
             cmp("Email", ex.Email, row.Email);
             cmp("Address", ex.Address, row.Address);
 
-            conflicts.Add(new ContactConflict(
+            conflicts.Add(new RowConflict(
                 Key: row.TaxId,
-                ExistingName: ex.Name,
-                IncomingName: row.Name,
+                ExistingLabel: ex.Name,
+                IncomingLabel: row.Name,
                 Existing: new Dictionary<string, string?>
                 {
                     ["Name"] = ex.Name,

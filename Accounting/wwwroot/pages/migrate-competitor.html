@@ -24,7 +24,7 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">นำเข้าจาก Express / PEAK / FlowAccount</h2>
-        <p class="page-subtitle">Sniff ไฟล์ → preview → ตรวจสอบรายการที่ขัดแย้ง → commit (รองรับ Contacts; entities อื่นเพิ่มได้ใน framework)</p>
+        <p class="page-subtitle">Sniff ไฟล์ → preview → ตรวจสอบรายการที่ขัดแย้ง → commit (รองรับ Contacts / Products / Chart of Accounts)</p>
       </div>
     </div>
 
@@ -60,6 +60,13 @@
         Layout.setTitle('ย้ายจาก Express/PEAK/FlowAccount');
       },
       _esc(s) { return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;'); },
+      _keyLabel(kind) {
+        return ({
+          Contacts: 'TaxId',
+          Products: 'รหัสสินค้า',
+          ChartOfAccounts: 'รหัสบัญชี',
+        })[kind] || 'Key';
+      },
 
       async preview() {
         const f = document.getElementById('fileInput').files[0];
@@ -130,7 +137,7 @@
               <table class="data-table" style="font-size:12px;width:100%">
                 <thead>
                   <tr>
-                    <th style="width:130px">TaxId</th>
+                    <th style="width:140px">${this._keyLabel(d.entityKind)}</th>
                     <th>ฟิลด์</th>
                     <th>ในระบบ (เดิม)</th>
                     <th>ในไฟล์ (ใหม่)</th>
@@ -152,7 +159,7 @@
           </tr>`).join('');
         return `
           <tr class="conflict-row">
-            <td><code>${this._esc(c.key)}</code><br><small style="color:#64748b">${this._esc(c.existingName)}</small></td>
+            <td><code>${this._esc(c.key)}</code><br><small style="color:#64748b">${this._esc(c.existingLabel)}</small></td>
             <td colspan="3" style="padding:0">
               <table style="width:100%;font-size:12px"><tbody>${fieldRows}</tbody></table>
             </td>
