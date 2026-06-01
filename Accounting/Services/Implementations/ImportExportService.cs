@@ -1728,6 +1728,42 @@ public class ImportExportService : IImportExportService
         return MapToSessionResponse(session, mappings, sampleRows);
     }
 
+    /// <summary>Materialise a Smart Import session into the same flat
+    /// {fieldName: value} row shape the standard ImportRequest uses, then
+    /// run PreviewConflictsAsync on it. Lets the UI show the same
+    /// Skip/Merge/Overwrite picker BEFORE calling /smart-import/confirm.</summary>
+    public async Task<ConflictPreviewResponse> PreviewSmartConflictsAsync(Guid companyId, Guid sessionId)
+    {
+        var session = await _db.SmartImportSessions
+            .Include(s => s.ColumnMappings)
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ Import Session");
+
+        var rawData = !string.IsNullOrEmpty(session.RawDataJson)
+            ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
+            : new List<List<string>>();
+        var dataRows = session.HasHeaderRow ? rawData.Skip(1).ToList() : rawData;
+        var activeMappings = session.ColumnMappings
+            .Where(m => !string.IsNullOrEmpty(m.TargetField))
+            .OrderBy(m => m.SourceIndex)
+            .ToList();
+
+        var materialised = new List<Dictionary<string, string>>(dataRows.Count);
+        foreach (var rowData in dataRows)
+        {
+            var mappedRow = new Dictionary<string, string>();
+            foreach (var mapping in activeMappings)
+            {
+                if (mapping.SourceIndex < rowData.Count && !string.IsNullOrEmpty(mapping.TargetField))
+                    mappedRow[mapping.TargetField] = rowData[mapping.SourceIndex]?.Trim() ?? "";
+            }
+            materialised.Add(mappedRow);
+        }
+
+        var fakeRequest = new ImportRequest(session.EntityType, "csv", true, null, materialised);
+        return await PreviewConflictsAsync(companyId, fakeRequest);
+    }
+
     public async Task<SmartImportSessionResponse> GetSessionAsync(Guid companyId, Guid sessionId)
     {
         var session = await _db.SmartImportSessions
@@ -1854,14 +1890,17 @@ public class ImportExportService : IImportExportService
                 switch (session.EntityType.ToLower())
                 {
                     case "contacts":
-                        await ImportContactAsync(companyId, mappedRow);
+                        await ImportContactAsync(companyId, mappedRow, request.Resolutions,
+                            request.DefaultConflictAction ?? "Merge");
                         break;
                     case "products":
-                        await ImportProductAsync(companyId, mappedRow);
+                        await ImportProductAsync(companyId, mappedRow, request.Resolutions,
+                            request.DefaultConflictAction ?? "Skip");
                         break;
                     case "chartofaccounts":
                     case "chart-of-accounts":
-                        await ImportAccountAsync(companyId, mappedRow);
+                        await ImportAccountAsync(companyId, mappedRow, request.Resolutions,
+                            request.DefaultConflictAction ?? "Skip");
                         break;
                     case "banktransactions":
                         await ImportBankTransactionAsync(companyId, mappedRow);

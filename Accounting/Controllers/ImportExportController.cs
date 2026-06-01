@@ -108,6 +108,16 @@ public class ImportExportController : ControllerBase
                 : "Mapping เรียบร้อย — พร้อม Import"));
     }
 
+    /// <summary>หา conflict ของ session (เทียบกับฐานข้อมูลปัจจุบัน) ก่อน confirm</summary>
+    [HttpGet("smart-import/sessions/{sessionId:guid}/preview-conflicts")]
+    public async Task<ActionResult<ApiResponse<ConflictPreviewResponse>>> SmartPreviewConflicts(
+        Guid companyId, Guid sessionId)
+    {
+        var result = await _importExportService.PreviewSmartConflictsAsync(companyId, sessionId);
+        return Ok(new ApiResponse<ConflictPreviewResponse>(true, result,
+            $"พบ {result.Conflicts.Count} รายการขัดแย้ง · ใหม่ {result.NewRowCount} · ซ้ำเหมือนกัน {result.DuplicateExactCount}"));
+    }
+
     /// <summary>ยืนยันและเริ่ม Import ข้อมูล</summary>
     [HttpPost("smart-import/confirm")]
     public async Task<ActionResult<ApiResponse<SmartImportResult>>> ConfirmImport(

@@ -129,7 +129,11 @@ public record ManualColumnMappingEntry(
 public record SmartImportConfirmRequest(
     Guid SessionId,
     string? DateFormat,
-    string? DecimalSeparator);
+    string? DecimalSeparator,
+    // Mirror of ImportRequest's conflict-resolution fields. Populated by
+    // the client after calling /smart-import/preview-conflicts.
+    Dictionary<string, string>? Resolutions = null,
+    string? DefaultConflictAction = null);
 
 public record SmartImportResult(
     Guid SessionId,

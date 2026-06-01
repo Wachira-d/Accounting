@@ -396,15 +396,45 @@ const Page = {
           <td>${m.targetField || m.target}</td>
           <td><span class="badge ${(m.confidence||0)>0.7?'badge-success':'badge-warning'}">${Math.round((m.confidence||0)*100)}%</span></td>
         </tr>`).join('')}</tbody></table></div>
-        <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" onclick="Page.confirmSmartImport()">ยืนยันนำเข้า</button></div>`;
+        <div style="margin-top:16px;text-align:right;display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-warning" onclick="Page.smartPreviewConflicts()">ตรวจสอบข้อมูลซ้ำ</button>
+          <button class="btn btn-primary" onclick="Page.confirmSmartImport()">ยืนยันนำเข้า</button>
+        </div>
+        <div id="smartConflicts" style="margin-top:14px"></div>`;
     } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
+  },
+
+  async smartPreviewConflicts() {
+    if (!this.smartSessionId) { Layout.toast('ต้องวิเคราะห์ไฟล์ก่อน', 'error'); return; }
+    const cid = Layout.getCompanyId();
+    const token = localStorage.getItem('token');
+    const box = document.getElementById('smartConflicts');
+    box.innerHTML = '<div class="card">กำลังเทียบกับฐานข้อมูล...</div>';
+    try {
+      const r = await fetch(`/api/companies/${cid}/import-export/smart-import/sessions/${this.smartSessionId}/preview-conflicts`, {
+        headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      if (!j.success) throw new Error(j.message);
+      this._conflictResolutions = {};
+      const entity = document.getElementById('smartEntity')?.value || j.data.entityType;
+      // Reuse the same renderer the standard import uses — but inject into smartConflicts box.
+      const origResult = document.getElementById('importResult');
+      const origInner = origResult.innerHTML;
+      this._renderConflictResult(j.data, entity);
+      box.innerHTML = origResult.innerHTML;
+      origResult.innerHTML = origInner;
+    } catch (e) { box.innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
   },
 
   async confirmSmartImport() {
     if (!this.smartSessionId) return;
     const api = Layout.api(); if (!api) return;
     try {
-      await api.smartImportConfirm({ sessionId: this.smartSessionId });
+      await api.smartImportConfirm({
+        sessionId: this.smartSessionId,
+        resolutions: this._conflictResolutions || {},
+        defaultConflictAction: this._conflictDefault || 'Merge',
+      });
       Layout.toast('นำเข้าข้อมูลสำเร็จ');
       document.getElementById('smartResult').innerHTML = '<p class="text-success text-center" style="padding:20px">นำเข้าข้อมูลเรียบร้อยแล้ว</p>';
     } catch (err) { Layout.toast(err.message, 'error'); }
