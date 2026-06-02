@@ -29,11 +29,16 @@
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
     <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
     <PackageReference Include="QuestPDF" Version="2024.12.2" />
-    <!-- Headless-Chromium HTML→PDF so the downloaded PDF matches the HTML
-         preview exactly (full CSS layout). Used only when Pdf:UseHtmlRenderer
-         is enabled; otherwise the app still uses QuestPDF. If NuGet restore
-         can't resolve this exact version, bump it to the latest 18.x/20.x. -->
-    <PackageReference Include="PuppeteerSharp" Version="18.1.0" />
+    <!-- Headless-Chromium HTML→PDF (exact match to the HTML preview) is
+         OPT-IN and guarded by the USE_PUPPETEER compile symbol so the build
+         stays green without the package. To enable:
+           1) Install the "PuppeteerSharp" NuGet package (pick the latest
+              version the NuGet UI offers — it auto-resolves a valid one), and
+           2) add USE_PUPPETEER to the project's conditional compilation
+              symbols (Project ▸ Properties ▸ Build), or build with
+              -p:DefineConstants=USE_PUPPETEER.
+         When the symbol is absent the renderer is a no-op and PDFs use
+         QuestPDF. -->
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <!-- Embedded OCR — Tesseract via NuGet (cross-platform native libs included).
          Used as the always-available local fallback when Azure DI is unavailable
