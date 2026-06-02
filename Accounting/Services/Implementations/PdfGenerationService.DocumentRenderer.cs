@@ -263,14 +263,8 @@ public partial class PdfGenerationService
         if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(co.NameEn)) Line(co.NameEn!, 11);
         if (t.ShowCompanyAddress)
         {
-            // Address is "free-text fallback / display" (entity comment) so when
-            // present it already contains tambon/district/province inline —
-            // concatenating the structured fields on top duplicates them. Only
-            // build the address from structured fields when Address is empty.
-            var addr = !string.IsNullOrWhiteSpace(co.Address)
-                ? co.Address!
-                : string.Join(" ", new[] { co.SubDistrict, co.District, co.Province, co.PostalCode }
-                    .Where(s => !string.IsNullOrWhiteSpace(s)));
+            var addr = FormatThaiAddress(co.Address, co.BuildingNumber, co.Moo, co.StreetName,
+                co.SubDistrict, co.District, co.Province, co.PostalCode);
             if (!string.IsNullOrWhiteSpace(addr)) Line(addr);
         }
         if (t.ShowCompanyTaxId && !string.IsNullOrWhiteSpace(co.TaxId))
@@ -314,13 +308,8 @@ public partial class PdfGenerationService
                 cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}").FontSize(10);
             if (t.ShowContactAddress)
             {
-                // Same dedup logic as the company header — Contact.Address already
-                // contains tambon/district/province inline when set, so don't
-                // append the structured fields on top of it.
-                var addr = !string.IsNullOrWhiteSpace(c.Address)
-                    ? c.Address!
-                    : string.Join(" ", new[] { c.SubDistrict, c.District, c.Province, c.PostalCode }
-                        .Where(s => !string.IsNullOrWhiteSpace(s)));
+                var addr = FormatThaiAddress(c.Address, c.BuildingNumber, c.Moo, c.StreetName,
+                    c.SubDistrict, c.District, c.Province, c.PostalCode);
                 if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(10);
             }
             if (t.ShowContactPhone && !string.IsNullOrWhiteSpace(c.Phone))
