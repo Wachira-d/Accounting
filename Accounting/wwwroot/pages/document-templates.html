@@ -113,7 +113,7 @@
             <p style="font-size:12px;color:#64748b;margin:0 0 10px">เลือกดีไซน์เต็มรูปแบบ — กำหนดทั้ง <b>โครงหน้าตา</b> (ตำแหน่งโลโก้/หัวเอกสาร/การจัดวาง) + ฟอนต์ + สี + การแสดงผลให้สวยงามทันที ปรับแต่งเพิ่มแล้วกดบันทึก</p>
             <div class="editor-row">
               <div><label>โครงหน้าตา (Layout)</label>
-                <select id="layoutStyle" onchange="Page.markDirty();Page.refreshPreview(true)">
+                <select id="layoutStyle" onchange="Page.markDirty();Page.refreshPreview()">
                   <option value="Classic">คลาสสิก — โลโก้ซ้าย หัวเรื่องกึ่งกลาง</option>
                   <option value="ModernLeft">โมเดิร์น — จัดชิดซ้าย เส้นเน้นสี</option>
                   <option value="BannerHeader">แบนเนอร์ — หัวกระดาษแถบสีเต็ม</option>
@@ -326,10 +326,10 @@
       <!-- Right: live preview -->
       <div class="preview-card">
         <div class="preview-toolbar">
-          <label style="font-size:12px;color:#64748b">แสดงตัวอย่างกับเอกสารจริง</label>
-          <select id="sampleDoc" onchange="Page.refreshPreview()"></select>
-          <button class="btn btn-sm btn-secondary" onclick="Page.refreshPreview()">รีเฟรช preview</button>
-          <span class="toolbar-status" id="status">— เลือกเทมเพลต —</span>
+          <label style="font-size:12px;color:#64748b">ตัวอย่างสด (ข้อมูลตัวอย่าง) — สะท้อนทุกการตั้งค่าทันที</label>
+          <select id="sampleDoc" style="display:none"></select>
+          <button class="btn btn-sm btn-secondary" onclick="Page.refreshPreview()">รีเฟรช</button>
+          <span class="toolbar-status" id="status">— เลือกเอกสารจากภาพรวม —</span>
         </div>
         <iframe id="previewFrame" sandbox="allow-same-origin"></iframe>
       </div>
@@ -551,7 +551,7 @@
         set('tableStripedColor', p.stripe);
         if (p.title) set('titleFontSize', p.title);
         this.markDirty();
-        this.refreshPreview(true);
+        this.refreshPreview();
         Layout.toast(`ใช้ดีไซน์ "${p.name}" (โครง ${this.LAYOUT_LABELS[p.layout] || p.layout}) แล้ว — ปรับแต่งเพิ่มได้ แล้วกดบันทึก`, 'success');
       },
 
@@ -713,7 +713,7 @@
         this.dirty = true;
         document.getElementById('status').textContent = '● ยังไม่บันทึก — preview จะรีเฟรชอัตโนมัติ';
         clearTimeout(this.debounceTimer);
-        this.debounceTimer = setTimeout(() => this.refreshPreview(true), 500);
+        this.debounceTimer = setTimeout(() => this.refreshPreview(), 500);
       },
 
       toggle(el) {
@@ -722,50 +722,26 @@
         el.textContent = section.classList.contains('collapsed') ? '▸' : '▾';
       },
 
-      async refreshPreview(useDraft = false) {
-        if (!this.current) { document.getElementById('status').textContent = '— ยังไม่ได้เลือกเทมเพลต —'; return; }
+      // Live preview straight from the editor form — every tick/colour/layout
+      // change is rendered immediately on sample data through the SAME engine
+      // real documents use (no save needed). Debounced via markDirty.
+      async refreshPreview() {
+        if (!this.current) { document.getElementById('status').textContent = '— เลือกเอกสารจากภาพรวมก่อน —'; return; }
         const cid = Layout.getCompanyId();
-        const sel = document.getElementById('sampleDoc');
-        const docId = sel ? sel.value : '';
-        const hasRealDoc = docId && sel.options.length > 0 && !sel.options[sel.selectedIndex]?.text?.includes('ยังไม่มีเอกสาร');
-        // No real document of this type → preview on sample data so the editor
-        // still shows the design instead of an empty pane.
-        if (!hasRealDoc) {
-          try {
-            const token = localStorage.getItem('token');
-            document.getElementById('status').textContent = '⏳ กำลัง render (ข้อมูลตัวอย่าง)...';
-            const res = await fetch(`/api/companies/${cid}/document-templates/preview-html?templateId=${this.current.id}`, {
-              headers: { 'Authorization': 'Bearer ' + token } });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            document.getElementById('previewFrame').srcdoc = await res.text();
-            document.getElementById('status').textContent = '✓ preview (ข้อมูลตัวอย่าง) — บันทึกเพื่อใช้การแก้ไขล่าสุด';
-          } catch (e) { document.getElementById('status').textContent = '✗ ' + e.message; }
-          return;
-        }
-        let tplId = this.current.id;
-        if (useDraft && this.dirty) {
-          // Save → preview cycle. To preview unsaved changes, we'd need a
-          // server-side "preview from draft" endpoint. For now, force save
-          // when previewing dirty form is too aggressive; user must click save.
-          document.getElementById('status').textContent = '● preview กำลังโหลด (จากเทมเพลตที่บันทึกล่าสุด)';
-        } else {
-          document.getElementById('status').textContent = '⏳ กำลัง render...';
-        }
+        const token = localStorage.getItem('token');
+        document.getElementById('status').textContent = '⏳ กำลังเรนเดอร์ตัวอย่าง...';
         try {
-          const token = localStorage.getItem('token');
-          const res = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+          const body = this._collectForm();
+          const res = await fetch(`/api/companies/${cid}/document-templates/preview-html-draft`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: docId, templateId: tplId,
-              watermarkOverride: null, copyNumber: null, language: null }),
+            body: JSON.stringify(body),
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const html = await res.text();
-          const frame = document.getElementById('previewFrame');
-          frame.srcdoc = html;
-          document.getElementById('status').textContent = useDraft && this.dirty
-            ? '● preview จากเทมเพลตที่บันทึกแล้ว — กด "บันทึก" เพื่อใช้การแก้ไขล่าสุด'
-            : '✓ preview พร้อม';
+          document.getElementById('previewFrame').srcdoc = await res.text();
+          document.getElementById('status').textContent = this.dirty
+            ? '● ตัวอย่างสด (ยังไม่บันทึก) — กด "บันทึก" เพื่อใช้งานจริง'
+            : '✓ ตัวอย่าง';
         } catch (e) {
           document.getElementById('status').textContent = '✗ ' + e.message;
         }

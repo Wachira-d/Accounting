@@ -14,6 +14,10 @@ public interface IPdfGenerationService
     /// document type — powers the templates gallery thumbnails.</summary>
     Task<string> GeneratePreviewHtmlAsync(Guid companyId, Guid? templateId, string? documentType, string? language);
 
+    /// <summary>Preview HTML from an unsaved template (the live editor form)
+    /// so ticks/colours/layout reflect instantly without saving.</summary>
+    Task<string> GeneratePreviewHtmlFromDraftAsync(Guid companyId, Accounting.Models.Entities.DocumentTemplate draft);
+
     /// <summary>Build the SAME HTML the PDF generator uses — exposed
     /// so the browser print preview can render an identical layout
     /// (no more "downloaded PDF and ctrl-P print look different"

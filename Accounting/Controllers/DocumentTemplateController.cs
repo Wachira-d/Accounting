@@ -119,6 +119,16 @@ public class DocumentTemplateController : ControllerBase
         return Content(html, "text/html; charset=utf-8");
     }
 
+    /// <summary>Live preview from the editor's UNSAVED template form, so every
+    /// tick/colour/layout change shows instantly. The body is a transient
+    /// DocumentTemplate (never saved).</summary>
+    [HttpPost("preview-html-draft")]
+    public async Task<ActionResult> PreviewHtmlDraft(Guid companyId, [FromBody] Accounting.Models.Entities.DocumentTemplate draft)
+    {
+        var html = await _pdfService.GeneratePreviewHtmlFromDraftAsync(companyId, draft);
+        return Content(html, "text/html; charset=utf-8");
+    }
+
     [HttpPost("withholding-tax/{certId:guid}/pdf")]
     public async Task<ActionResult> GenerateWhtPdf(Guid companyId, Guid certId)
     {
