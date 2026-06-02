@@ -112,22 +112,21 @@ public partial class PdfGenerationService
         switch (layout)
         {
             case "BannerHeader":
-                // Full-width colored band: logo + company info on TOP row,
-                // big title CENTERED below on a second row inside the same
-                // banner — title gets the full page width so long Thai
-                // labels never wrap mid-character.
-                col.Item().Background(headerBg).Padding(14).Column(bc =>
+                // Full-width accent band holds ONLY the logo + company info.
+                // The document title sits BELOW the band on white (accent
+                // colour) so it never competes with the coloured header and a
+                // long Thai label gets the full page width — matches the
+                // on-screen view.
+                col.Item().Background(accent).Padding(14).Row(r =>
                 {
-                    bc.Item().Row(r =>
-                    {
-                        if (b.LogoBytes is { Length: > 0 })
-                            try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                        r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
-                    });
-                    bc.Item().PaddingTop(10).AlignCenter()
-                        .Text(titleText).FontSize(titleFontSize + 2).Bold().FontColor(headerText);
+                    if (b.LogoBytes is { Length: > 0 })
+                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
                 });
-                ComposeDocInfo(col, doc, template, accent, alignRight: true);
+                col.Item().PaddingTop(14).AlignCenter()
+                    .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
+                col.Item().PaddingTop(4).PaddingBottom(2).LineHorizontal(1).LineColor(accent);
+                col.Item().PaddingTop(8).AlignCenter().Row(r => RenderDocInfoSpans(r, doc, template, accent));
                 break;
 
             case "BoldHeader":

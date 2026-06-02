@@ -929,14 +929,17 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         var prov = province?.Trim();
         var post = postalCode?.Trim();
 
-        // No structured locality → just use whatever free text we have.
+        // No structured locality → use whatever free text we have, but still
+        // collapse an accidental "กทม กรุงเทพมหานคร" double-spelling the user
+        // may have typed into the single free-text field.
         if (string.IsNullOrWhiteSpace(sub) && string.IsNullOrWhiteSpace(dist) && string.IsNullOrWhiteSpace(prov))
-            return (freeText ?? "").Trim();
+            return CollapseBangkok((freeText ?? "").Trim());
 
         var isBkk = !string.IsNullOrWhiteSpace(prov)
             && (prov.Contains("กรุงเทพ") || prov.Contains("กทม"));
 
-        // Street/house part: prefer the explicit structured fields.
+        // Street/house part: prefer the explicit structured fields, else the
+        // free text.
         var structuredStreet = string.Join(" ", new[]
         {
             buildingNumber?.Trim(),
@@ -944,30 +947,44 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             street?.Trim(),
         }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
-        string streetPart;
-        if (!string.IsNullOrWhiteSpace(structuredStreet))
-        {
-            streetPart = structuredStreet;
-        }
-        else
-        {
-            // Derive the street from the free text by removing the locality
-            // tokens (so a fully-typed address collapses to just the street).
-            streetPart = freeText ?? "";
-            foreach (var tok in new[] { sub, dist, prov, post, "กทม", "กรุงเทพมหานคร", "กรุงเทพ",
-                                        "แขวง", "เขต", "ตำบล", "อำเภอ", "จังหวัด", "ต.", "อ.", "จ." })
-                if (!string.IsNullOrWhiteSpace(tok))
-                    streetPart = streetPart.Replace(tok, " ");
-            streetPart = Regex.Replace(streetPart, @"\s{2,}", " ").Trim().Trim(',').Trim();
-        }
+        var streetPart = !string.IsNullOrWhiteSpace(structuredStreet)
+            ? structuredStreet
+            : (freeText ?? "");
+
+        // The street line must NEVER echo the locality we're about to print as
+        // its own fields. Strip the explicit sub/district/province values, every
+        // Bangkok synonym, the postal code and the bare prefixes — whether the
+        // street came from structured fields or free text. This is what kills
+        // "8/36 แขวงดอกไม้ เขตประเวศ กทม กรุงเทพมหานคร 10250".
+        foreach (var tok in new[] { sub, dist, prov, post,
+                                    "กทม.", "กทมฯ", "กทม", "กรุงเทพมหานคร", "กรุงเทพฯ", "กรุงเทพ",
+                                    "แขวง", "เขต", "ตำบล", "อำเภอ", "จังหวัด", "ต.", "อ.", "จ." })
+            if (!string.IsNullOrWhiteSpace(tok))
+                streetPart = streetPart.Replace(tok, " ");
+        streetPart = Regex.Replace(streetPart, @"\s{2,}", " ").Trim().Trim(',').Trim();
 
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(streetPart)) parts.Add(streetPart);
         if (!string.IsNullOrWhiteSpace(sub)) parts.Add((isBkk ? "แขวง" : "ต.") + sub);
         if (!string.IsNullOrWhiteSpace(dist)) parts.Add((isBkk ? "เขต" : "อ.") + dist);
-        if (!string.IsNullOrWhiteSpace(prov)) parts.Add(isBkk ? prov : "จ." + prov);
+        // Bangkok prints its full canonical name (กรุงเทพมหานคร) with no จ.;
+        // other provinces get the จ. prefix.
+        if (!string.IsNullOrWhiteSpace(prov)) parts.Add(isBkk ? "กรุงเทพมหานคร" : "จ." + prov);
         if (!string.IsNullOrWhiteSpace(post)) parts.Add(post);
         return string.Join(" ", parts);
+    }
+
+    /// <summary>Collapse a redundant "กทม กรุงเทพมหานคร" (or any Bangkok
+    /// abbreviation sitting next to the full name) down to the single canonical
+    /// "กรุงเทพมหานคร", for the free-text-only address path.</summary>
+    private static string CollapseBangkok(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return s;
+        // Drop the abbreviation when the full name is also present.
+        if (s.Contains("กรุงเทพมหานคร"))
+            foreach (var abbr in new[] { "กทม.", "กทมฯ", "กทม", "กรุงเทพฯ" })
+                s = s.Replace(abbr, " ");
+        return Regex.Replace(s, @"\s{2,}", " ").Trim();
     }
 
     /// <summary>
