@@ -213,7 +213,7 @@
         </div>
         <div class="form-group">
           <label>Timeout (s)</label>
-          <input type="number" id="provTimeout" min="2" max="120" value="8">
+          <input type="number" id="provTimeout" min="2" max="120" value="30">
         </div>
         <div class="form-group" style="display:flex;align-items:center;gap:8px">
           <label class="toggle-switch" style="margin-top:18px">
@@ -426,7 +426,7 @@
           document.getElementById('provApiKey').placeholder = 'sk-...';
           document.getElementById('provTemp').value = 0.1;
           document.getElementById('provMaxTokens').value = 1024;
-          document.getElementById('provTimeout').value = 8;
+          document.getElementById('provTimeout').value = 30;
           document.getElementById('provEnabled').checked = true;
           document.getElementById('provDailyCap').value = '';
           document.getElementById('provMonthlyBudget').value = '';

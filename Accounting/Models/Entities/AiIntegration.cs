@@ -70,7 +70,7 @@ public class AiProviderConfig : BaseEntity
     /// <summary>Per-call timeout. 8 seconds is the orchestrator's hard
     /// budget for user-facing flows (anything longer becomes UX-blocking).
     /// Background jobs (forecast narrative) can raise via PromptBuilder.</summary>
-    public int RequestTimeoutSeconds { get; set; } = 8;
+    public int RequestTimeoutSeconds { get; set; } = 30;   // 8s was too low for DeepSeek reasoning; per-call overrides still apply
 
     /// <summary>Daily call cap across all tenants — second line of defence
     /// against runaway cost. Null = no cap.</summary>

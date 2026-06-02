@@ -239,7 +239,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine("<div class='company-info'>");
         if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{company.Name}</div>");
         if (template.ShowCompanyNameEn && company.NameEn != null) sb.AppendLine($"<div class='company-name-en'>{company.NameEn}</div>");
-        if (template.ShowCompanyAddress && company.Address != null) sb.AppendLine($"<div>{company.Address} {company.SubDistrict} {company.District} {company.Province} {company.PostalCode}</div>");
+        if (template.ShowCompanyAddress)
+        {
+            var fullAddr = FormatThaiAddress(company.Address, company.BuildingNumber, company.Moo, company.StreetName,
+                company.SubDistrict, company.District, company.Province, company.PostalCode);
+            if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{fullAddr}</div>");
+        }
         if (template.ShowCompanyTaxId) sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}</div>");
         if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>โทร: {company.Phone}</div>");
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
@@ -261,7 +266,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{template.ContactSectionTitle}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
         if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId}</div>");
-        if (template.ShowContactAddress && doc.Contact.Address != null) sb.AppendLine($"<div>{doc.Contact.Address}</div>");
+        if (template.ShowContactAddress)
+        {
+            var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.Moo, doc.Contact.StreetName,
+                doc.Contact.SubDistrict, doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
+            if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{caddr}</div>");
+        }
         if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>โทร: {doc.Contact.Phone}</div>");
         sb.AppendLine("</div>");
 
@@ -900,6 +910,64 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         var c = color.Trim();
         if (c[0] != '#') c = "#" + c;
         return Regex.IsMatch(c, "^#[0-9A-Fa-f]{6}$") ? c.ToUpperInvariant() : null;
+    }
+
+    /// <summary>
+    /// Format a Thai address with correct prefixes. Bangkok uses แขวง/เขต and
+    /// no จ. prefix; provinces use ต./อ./จ.. The street/house part is taken
+    /// from the structured fields when present, otherwise from the free-text
+    /// address with any trailing tambon/district/province/postal tokens
+    /// stripped — so we never print "...ชลบุรี 20110 บางพระ ศรีราชา ชลบุรี 20110".
+    /// Falls back to the raw free-text when no structured locality exists.
+    /// </summary>
+    internal static string FormatThaiAddress(
+        string? freeText, string? buildingNumber, string? moo, string? street,
+        string? subDistrict, string? district, string? province, string? postalCode)
+    {
+        var sub = subDistrict?.Trim();
+        var dist = district?.Trim();
+        var prov = province?.Trim();
+        var post = postalCode?.Trim();
+
+        // No structured locality → just use whatever free text we have.
+        if (string.IsNullOrWhiteSpace(sub) && string.IsNullOrWhiteSpace(dist) && string.IsNullOrWhiteSpace(prov))
+            return (freeText ?? "").Trim();
+
+        var isBkk = !string.IsNullOrWhiteSpace(prov)
+            && (prov.Contains("กรุงเทพ") || prov.Contains("กทม"));
+
+        // Street/house part: prefer the explicit structured fields.
+        var structuredStreet = string.Join(" ", new[]
+        {
+            buildingNumber?.Trim(),
+            string.IsNullOrWhiteSpace(moo) ? null : $"หมู่ {moo!.Trim()}",
+            street?.Trim(),
+        }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+        string streetPart;
+        if (!string.IsNullOrWhiteSpace(structuredStreet))
+        {
+            streetPart = structuredStreet;
+        }
+        else
+        {
+            // Derive the street from the free text by removing the locality
+            // tokens (so a fully-typed address collapses to just the street).
+            streetPart = freeText ?? "";
+            foreach (var tok in new[] { sub, dist, prov, post, "กทม", "กรุงเทพมหานคร", "กรุงเทพ",
+                                        "แขวง", "เขต", "ตำบล", "อำเภอ", "จังหวัด", "ต.", "อ.", "จ." })
+                if (!string.IsNullOrWhiteSpace(tok))
+                    streetPart = streetPart.Replace(tok, " ");
+            streetPart = Regex.Replace(streetPart, @"\s{2,}", " ").Trim().Trim(',').Trim();
+        }
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(streetPart)) parts.Add(streetPart);
+        if (!string.IsNullOrWhiteSpace(sub)) parts.Add((isBkk ? "แขวง" : "ต.") + sub);
+        if (!string.IsNullOrWhiteSpace(dist)) parts.Add((isBkk ? "เขต" : "อ.") + dist);
+        if (!string.IsNullOrWhiteSpace(prov)) parts.Add(isBkk ? prov : "จ." + prov);
+        if (!string.IsNullOrWhiteSpace(post)) parts.Add(post);
+        return string.Join(" ", parts);
     }
 
     /// <summary>
