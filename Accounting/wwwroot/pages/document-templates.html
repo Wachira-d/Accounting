@@ -50,6 +50,13 @@
     .design-thumb .thumb-ph { display:flex; align-items:center; justify-content:center; height:100%; color:#94a3b8; font-size:12px; }
     .design-meta { padding:10px 12px; }
 
+    /* ---- Colour palette picker ---- */
+    .color-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:10px; }
+    .color-card { border:1px solid #e2e8f0; border-radius:10px; padding:10px; cursor:pointer; background:#fff; text-align:center; transition:border-color .15s, box-shadow .15s; }
+    .color-card:hover { border-color:#6366f1; box-shadow:0 4px 12px rgba(99,102,241,.12); }
+    .color-card .color-swatch { display:inline-block; width:22px; height:22px; border-radius:5px; margin:0 1px; }
+    .color-card .color-name { font-size:12px; font-weight:600; color:#1f2937; margin-top:6px; }
+
     /* ---- (legacy swatch look picker) ---- */
     .look-card { border:1px solid #e2e8f0; border-radius:10px; padding:10px; cursor:pointer; background:#fff; text-align:left; transition:border-color .15s, box-shadow .15s; }
     .look-card { border:1px solid #e2e8f0; border-radius:10px; padding:10px; cursor:pointer; background:#fff; text-align:left; transition:border-color .15s, box-shadow .15s; }
@@ -72,10 +79,16 @@
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 4px">1️⃣ เลือกโครงเทมเพลต — 10 แบบ การจัดวางหน้าต่างกัน</h3>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px">กดเลือกโครงที่ชอบ → ใช้กับเอกสารทุกประเภท (สีเดิมคงไว้ เปลี่ยนสีได้ในขั้นที่ 2)</p>
+        <div id="globalLayoutGrid" class="look-grid"></div>
+      </div>
+
       <div class="card" style="margin-bottom:18px">
-        <h3 style="margin:0 0 4px">🎨 ธีมหลัก — ใช้กับเอกสารทุกประเภทในคลิกเดียว</h3>
-        <p style="font-size:12px;color:#64748b;margin:0 0 12px">เปลี่ยนทั้งโครงหน้าตา + สี + ฟอนต์ ให้ทุกเอกสารพร้อมกัน (ตั้งเป็นค่าเริ่มต้น)</p>
-        <div id="globalLookGrid" class="look-grid"></div>
+        <h3 style="margin:0 0 4px">2️⃣ เลือกโทนสี</h3>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px">เปลี่ยนชุดสีให้ทุกเอกสาร (โครงที่เลือกไว้คงเดิม)</p>
+        <div id="globalColorGrid" class="color-grid"></div>
       </div>
 
       <h3 style="margin:18px 0 10px">📄 เอกสารแต่ละประเภท — กด "ปรับแต่ง" เพื่อแก้รายเอกสาร</h3>
@@ -492,36 +505,75 @@
         }
       },
 
-      // ───────────────── Global theme (all docs at once) ─────────────────
+      // 10 structural templates — each arranges the page differently (header,
+      // title, meta, contact, totals). Colour is chosen separately below.
+      LAYOUTS: [
+        { key:'Classic',        name:'คลาสสิก',        desc:'โลโก้ซ้าย หัวเรื่องกึ่งกลาง', title:26 },
+        { key:'Letterhead',     name:'เลตเตอร์เฮด',     desc:'หัวกระดาษกึ่งกลาง เส้นคาดหนา', title:24 },
+        { key:'ModernLeft',     name:'โมเดิร์นซ้าย',    desc:'จัดชิดซ้าย แถบเน้นสี', title:24 },
+        { key:'BannerHeader',   name:'แบนเนอร์',        desc:'หัวกระดาษแถบสีเต็มความกว้าง', title:28 },
+        { key:'BoldHeader',     name:'หัวเรื่องเด่น',    desc:'ชื่อเอกสารตัวใหญ่อยู่บนสุด', title:30 },
+        { key:'SidebarAccent',  name:'แถบข้างสี',       desc:'หัวสี + ราวเน้นซ้าย + แถบยอดรวม', title:26 },
+        { key:'SplitHeader',    name:'สองคอลัมน์',      desc:'ข้อมูลเอกสารเป็นการ์ดมุมขวา', title:26 },
+        { key:'CenteredFormal', name:'ทางการ',         desc:'ทุกอย่างกึ่งกลาง เส้นคู่', title:28 },
+        { key:'Compact',        name:'กระชับ',         desc:'ตัวอักษรเล็ก ประหยัดพื้นที่', title:20 },
+        { key:'Minimal',        name:'มินิมอล',        desc:'เรียบ ไม่มีกรอบ เว้นเยอะ', title:22 },
+      ],
+      // Colour palettes applied on top of any layout.
+      COLORS: [
+        { key:'blue',   name:'น้ำเงิน', primary:'#1F2937', accent:'#1E40AF', headBg:'#1E40AF', headText:'#FFFFFF', stripe:'#EEF2FF' },
+        { key:'teal',   name:'เทอร์ควอยซ์', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', stripe:'#F0FDFA' },
+        { key:'green',  name:'เขียว', primary:'#14532D', accent:'#15803D', headBg:'#16A34A', headText:'#FFFFFF', stripe:'#F0FDF4' },
+        { key:'maroon', name:'แดงเลือดหมู', primary:'#450A0A', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', stripe:'#FEF2F2' },
+        { key:'orange', name:'ส้ม', primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', stripe:'#FFF7ED' },
+        { key:'purple', name:'ม่วง', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', stripe:'#FAF5FF' },
+        { key:'slate',  name:'เทาเข้ม', primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', stripe:'#F8FAFC' },
+        { key:'rose',   name:'โรสโกลด์', primary:'#4C0519', accent:'#9F1239', headBg:'#BE123C', headText:'#FFFFFF', stripe:'#FFF1F2' },
+      ],
+      _layoutThumbColor: '#334155',   // neutral colour for layout thumbnails so STRUCTURE stands out
+
+      // ───────────────── Global: structural layout picker ─────────────────
       _renderGlobalLooks() {
-        const grid = document.getElementById('globalLookGrid');
-        if (!grid) return;
-        // Each design card shows a REAL mini document preview (rendered via the
-        // draft-preview endpoint) so the user sees the actual หน้าตาเอกสาร, not
-        // just colour swatches.
-        grid.innerHTML = this.PRESETS.map(p => `
-          <div class="design-card">
-            <div class="design-thumb" id="design-${p.key}"><div class="thumb-ph">กำลังเรนเดอร์…</div></div>
-            <div class="design-meta">
-              <div class="look-name">${p.name}</div>
-              <div class="look-sub">โครง: ${this.LAYOUT_LABELS[p.layout] || p.layout} · ${p.font}</div>
-              <button class="btn btn-sm btn-primary" style="width:100%;margin-top:6px" onclick="Page.applyGlobalLook('${p.key}')">ใช้ธีมนี้กับทุกเอกสาร</button>
-            </div>
-          </div>`).join('');
-        this.PRESETS.forEach(p => this._loadDesignThumb(p));
+        const lg = document.getElementById('globalLayoutGrid');
+        if (lg) {
+          lg.innerHTML = this.LAYOUTS.map(l => `
+            <div class="design-card">
+              <div class="design-thumb" id="layout-${l.key}"><div class="thumb-ph">กำลังเรนเดอร์…</div></div>
+              <div class="design-meta">
+                <div class="look-name">${l.name}</div>
+                <div class="look-sub">${l.desc}</div>
+                <button class="btn btn-sm btn-primary" style="width:100%;margin-top:6px" onclick="Page.applyGlobalLayout('${l.key}')">ใช้โครงนี้</button>
+              </div>
+            </div>`).join('');
+          this.LAYOUTS.forEach(l => this._loadLayoutThumb(l));
+        }
+        const cg = document.getElementById('globalColorGrid');
+        if (cg) {
+          cg.innerHTML = this.COLORS.map(c => `
+            <button type="button" class="color-card" onclick="Page.applyGlobalColor('${c.key}')" title="${c.name}">
+              <span class="color-swatch" style="background:${c.accent}"></span>
+              <span class="color-swatch" style="background:${c.headBg}"></span>
+              <span class="color-swatch" style="background:${c.stripe};border:1px solid #cbd5e1"></span>
+              <div class="color-name">${c.name}</div>
+            </button>`).join('');
+        }
       },
 
-      async _loadDesignThumb(p) {
-        const host = document.getElementById('design-' + p.key);
+      async _loadLayoutThumb(l) {
+        const host = document.getElementById('layout-' + l.key);
         if (!host) return;
         try {
           const cid = Layout.getCompanyId();
           const token = localStorage.getItem('token');
-          const body = Object.assign({ name: p.name, documentType: 'Invoice' }, this._designFields(p));
+          // Neutral colour everywhere → only the STRUCTURE differs between cards.
+          const body = {
+            name: l.name, documentType: 'Invoice', layoutStyle: l.key, titleFontSize: String(l.title),
+            primaryColor: '#1F2937', accentColor: this._layoutThumbColor,
+            tableHeaderColor: this._layoutThumbColor, tableHeaderTextColor: '#FFFFFF', tableStripedColor: '#F1F5F9',
+          };
           const res = await fetch(`/api/companies/${cid}/document-templates/preview-html-draft`, {
             method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
             body: JSON.stringify(body) });
-          if (!res.ok) throw new Error('preview');
           const html = await res.text();
           const f = document.createElement('iframe');
           f.setAttribute('sandbox', 'allow-same-origin');
@@ -530,34 +582,48 @@
         } catch { host.innerHTML = '<div class="thumb-ph">ดูตัวอย่างไม่ได้</div>'; }
       },
 
-      async applyGlobalLook(key) {
-        const p = this.PRESETS.find(x => x.key === key);
-        if (!p) return;
-        if (!confirm(`ใช้ธีม "${p.name}" กับเอกสารทุกประเภท?\nระบบจะตั้งเป็นค่าเริ่มต้นให้ทุกเอกสาร (ปรับแต่งรายเอกสารทีหลังได้)`)) return;
+      async applyGlobalLayout(layoutKey) {
+        const l = this.LAYOUTS.find(x => x.key === layoutKey);
+        if (!l) return;
+        if (!confirm(`ใช้โครง "${l.name}" กับเอกสารทุกประเภท?\n(สีเดิมจะคงไว้ — เปลี่ยนสีได้ในขั้นที่ 2)`)) return;
+        await this._applyToAll({ layoutStyle: l.key, titleFontSize: String(l.title) }, `โครง "${l.name}"`,
+          (type, label) => `${label} — ${l.name}`);
+      },
+
+      async applyGlobalColor(colorKey) {
+        const c = this.COLORS.find(x => x.key === colorKey);
+        if (!c) return;
+        if (!confirm(`ใช้โทนสี "${c.name}" กับเอกสารทุกประเภท?\n(โครงที่เลือกไว้จะคงเดิม)`)) return;
+        await this._applyToAll({
+          primaryColor: c.primary, accentColor: c.accent,
+          tableHeaderColor: c.headBg, tableHeaderTextColor: c.headText, tableStripedColor: c.stripe,
+        }, `โทนสี "${c.name}"`);
+      },
+
+      // Apply a partial field-set to the default template of every doc type
+      // (creating one when missing). Only the given fields change; everything
+      // else (the other of layout/colour, all toggles) is preserved.
+      async _applyToAll(fields, what, nameFn) {
         const cid = Layout.getCompanyId();
         let ok = 0, fail = 0, firstErr = '';
-        Layout.toast('กำลังใช้ธีมกับทุกเอกสาร…', 'info');
+        Layout.toast(`กำลังใช้${what}กับทุกเอกสาร…`, 'info');
         for (const [type, label] of this.DOC_TYPES) {
           try {
             let tpl = this._defaultTemplateFor(type);
             if (!tpl) {
               const r = await API.post(`/api/companies/${cid}/document-templates`,
-                { name: `${label} — ${p.name}`, documentType: type, isDefault: true });
+                { name: nameFn ? nameFn(type, label) : `${label}`, documentType: type, isDefault: true });
               tpl = r.data; this.templates.push(tpl);
             }
-            // Clean, minimal payload matching UpdateDocumentTemplateRequest —
-            // ApplyRequestToTemplate only touches the fields we send, so the
-            // show-* toggles are preserved. (Spreading the full response object
-            // previously broke binding → every type failed.)
-            const payload = Object.assign({ isDefault: true, isActive: true }, this._designFields(p));
+            const payload = Object.assign({ isDefault: true, isActive: true }, fields);
             await API.put(`/api/companies/${cid}/document-templates/${tpl.id}`, payload);
             ok++;
           } catch (e) { fail++; if (!firstErr) firstErr = e?.message || String(e); }
         }
         await this.loadTemplates();
         this.renderGallery();
-        if (ok > 0) Layout.toast(`ใช้ธีม "${p.name}" สำเร็จ ${ok} ประเภท${fail ? ` (พลาด ${fail})` : ''}`, fail ? 'info' : 'success');
-        else Layout.toast(`ใช้ธีมไม่สำเร็จ: ${firstErr || 'unknown'}`, 'error');
+        if (ok > 0) Layout.toast(`ใช้${what}สำเร็จ ${ok} ประเภท${fail ? ` (พลาด ${fail})` : ''}`, fail ? 'info' : 'success');
+        else Layout.toast(`ไม่สำเร็จ: ${firstErr || 'unknown'}`, 'error');
       },
 
       _renderPresets() {

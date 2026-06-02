@@ -676,7 +676,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     // ===== CSS Builder =====
 
     private static readonly HashSet<string> KnownLayouts = new(StringComparer.OrdinalIgnoreCase)
-        { "Classic", "ModernLeft", "BannerHeader", "Compact", "Minimal", "CenteredFormal" };
+        { "Classic", "ModernLeft", "BannerHeader", "Compact", "Minimal", "CenteredFormal",
+          "SidebarAccent", "BoldHeader", "SplitHeader", "Letterhead" };
 
     /// <summary>Whitelist the layout name to a safe CSS-class token; unknown
     /// values fall back to Classic so a bad value can never break the page.</summary>
@@ -743,6 +744,52 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                     body.layout-CenteredFormal .doc-info {{ justify-content:center; gap:30px; }}
                     body.layout-CenteredFormal .contact-section {{ text-align:center; border:none; }}
                     body.layout-CenteredFormal .signatures {{ justify-content:center; gap:60px; }}
+                ";
+            case "SidebarAccent":
+                // Colored header block + left-accent rails on title/contact +
+                // a filled total bar. Strong "left spine" feel.
+                return $@"
+                    body.layout-SidebarAccent .header {{ background:{accent}; color:#fff; padding:16px 18px; border-radius:0 0 12px 0; align-items:center; }}
+                    body.layout-SidebarAccent .company-name, body.layout-SidebarAccent .company-name-en {{ color:#fff; }}
+                    body.layout-SidebarAccent .doc-title {{ text-align:left; border:none; background:#f1f5f9; padding:8px 14px; border-left:6px solid {accent}; border-radius:0 6px 6px 0; margin:14px 0 12px; }}
+                    body.layout-SidebarAccent .doc-info {{ justify-content:flex-start; }}
+                    body.layout-SidebarAccent .contact-section {{ border:none; border-left:6px solid {accent}; background:#f8fafc; border-radius:0 6px 6px 0; }}
+                    body.layout-SidebarAccent .items-table th {{ border-radius:0; }}
+                    body.layout-SidebarAccent .sum-row.total {{ border:none; background:{accent}; color:#fff; padding:8px 12px; border-radius:6px; }}
+                ";
+            case "BoldHeader":
+                // Oversized document title FIRST (above the company header) as a
+                // full-width colored banner — reorders the page via flex order.
+                return $@"
+                    body.layout-BoldHeader {{ display:flex; flex-direction:column; }}
+                    body.layout-BoldHeader .doc-title {{ order:-2; text-align:left; background:{accent}; color:#fff; border:none; border-radius:10px; padding:16px 20px; margin:0 0 14px; letter-spacing:1px; font-size:30px; }}
+                    body.layout-BoldHeader .header {{ order:-1; border-bottom:2px solid #e5e7eb; padding-bottom:10px; margin-bottom:14px; }}
+                    body.layout-BoldHeader .doc-info {{ justify-content:flex-start; gap:28px; }}
+                    body.layout-BoldHeader .contact-section {{ border:none; background:#f8fafc; }}
+                ";
+            case "SplitHeader":
+                // Company header with accent rule, left-aligned title, and a
+                // boxed meta card (number/date/due stacked) with an accent edge.
+                return $@"
+                    body.layout-SplitHeader .header {{ border-bottom:3px solid {accent}; padding-bottom:10px; margin-bottom:14px; }}
+                    body.layout-SplitHeader .doc-title {{ text-align:left; border:none; font-size:26px; margin:8px 0; }}
+                    body.layout-SplitHeader .doc-info {{ flex-direction:column; align-items:flex-start; gap:3px; background:#f8fafc; border:1px solid #e5e7eb; border-left:4px solid {accent}; padding:10px 14px; border-radius:6px; width:max-content; margin-left:auto; }}
+                    body.layout-SplitHeader .contact-section {{ background:#f8fafc; border-color:#e5e7eb; }}
+                    body.layout-SplitHeader .items-table th {{ background:{accent}; }}
+                ";
+            case "Letterhead":
+                // Corporate letterhead: company centred on top with a thick
+                // accent rule, left-aligned title beneath, ruled meta line.
+                return $@"
+                    body.layout-Letterhead .header {{ flex-direction:column; align-items:center; text-align:center; border-bottom:4px solid {accent}; padding-bottom:12px; }}
+                    body.layout-Letterhead .logo {{ margin:0 0 6px 0; }}
+                    body.layout-Letterhead .company-info {{ text-align:center; }}
+                    body.layout-Letterhead .company-name {{ font-size:24px; letter-spacing:1px; }}
+                    body.layout-Letterhead .doc-title {{ text-align:left; border:none; font-size:24px; letter-spacing:2px; margin:16px 0 4px; text-transform:uppercase; }}
+                    body.layout-Letterhead .doc-info {{ justify-content:flex-start; gap:24px; border-bottom:1px solid #e5e7eb; padding-bottom:10px; }}
+                    body.layout-Letterhead .contact-section {{ border:none; padding:0; margin:12px 0; }}
+                    body.layout-Letterhead .items-table th {{ background:none !important; color:{accent} !important; border-bottom:2px solid {accent}; }}
+                    body.layout-Letterhead .items-table td {{ border:none; border-bottom:1px solid #eee; }}
                 ";
             default:
                 return ""; // Classic
