@@ -55,21 +55,21 @@ public partial class PdfGenerationService : IPdfGenerationService
                 ?? CreateInMemoryDefaultTemplate(document.DocumentType);
         }
 
-        var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language);
-
-        // Preferred path: render the SAME HTML to PDF with headless Chromium so
-        // the download matches the preview exactly (full CSS layout). Falls back
-        // to the QuestPDF block renderer when the HTML renderer is off or fails.
+        // Render order:
+        //  1. Headless Chromium HTML→PDF when enabled — pixel-perfect match.
+        //  2. Native QuestPDF composition from entities — respects the chosen
+        //     layout (Classic / BannerHeader / Letterhead / …) because it
+        //     composes with QuestPDF's Fluent API directly, not via the lossy
+        //     HTML parser.
+        //  3. (Inside RenderDocumentPdfNative) last-resort HTML→QuestPDF
+        //     parser path so a composition bug can never blank the document.
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
-            pdfBytes = await _htmlPdf.TryRenderAsync(html);
-        if (pdfBytes == null)
         {
-            // Build the full branding (colours + logo image + signatures + font)
-            // so the fallback PDF still reflects the configured template.
-            var branding = BuildBranding(template, settings, request.WatermarkOverride);
-            pdfBytes = ConvertHtmlToPdf(html, template, branding);
+            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language);
+            pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
+        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language);
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
