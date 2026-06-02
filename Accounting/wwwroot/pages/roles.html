@@ -59,7 +59,9 @@
     </div>
 
     <div id="roleList"></div>
-  </div>
+
+  <!-- Modals live INSIDE #pageContent — the app injects only that element's
+       markup when navigating, so anything outside it isn't in the DOM. -->
 
   <!-- Template picker — 9 starter roles for POS / CMS / Inventory / HR / etc. -->
   <div class="modal-overlay" id="templateModal">
@@ -134,6 +136,7 @@
       </div>
     </div>
   </div>
+  </div><!-- /pageContent -->
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
