@@ -2130,7 +2130,7 @@ const Layout = {
     win.onload = () => { win.print(); win.close(); };
   },
 
-  contactAutocomplete(inputId, hiddenId, { placeholder = 'พิมพ์ชื่อหรือเลขผู้เสียภาษี...', onSelect } = {}) {
+  contactAutocomplete(inputId, hiddenId, { placeholder = 'พิมพ์ชื่อหรือเลขผู้เสียภาษี...', onSelect, onCreateNew } = {}) {
     const input = document.getElementById(inputId);
     const hidden = document.getElementById(hiddenId);
     if (!input || !hidden) return;
@@ -2144,18 +2144,42 @@ const Layout = {
       input.parentElement.style.position = 'relative';
       input.parentElement.appendChild(dropdown);
     }
-    let contacts = [], debounce = null;
+    let contacts = [], debounce = null, autoFiredFor = null;
     const search = async (q) => {
       const api = Layout.api(); if (!api) return;
       try {
         const res = await api.getContacts('?pageSize=20&search=' + encodeURIComponent(q));
         contacts = res.data?.items || res.data || [];
       } catch { contacts = []; }
-      if (!contacts.length) { dropdown.style.display = 'none'; return; }
-      dropdown.innerHTML = contacts.map(c => `<div class="ac-item" data-id="${c.id}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gray-100);font-size:13px">
+      // Auto-create on a COMPLETE Tax ID with no existing match — the user
+      // asked for "type the full tax id and it just creates it". Fires once
+      // per distinct id; quickCreateContact dedups + notifies.
+      if (onCreateNew && /^\d{13}$/.test(q)
+          && !contacts.some(c => (c.taxId || '') === q)
+          && autoFiredFor !== q) {
+        autoFiredFor = q;
+        dropdown.style.display = 'none';
+        onCreateNew(q);
+        return;
+      }
+      // When a create-new handler is supplied, always keep the dropdown open
+      // (even with zero matches) so the user can add the contact inline.
+      if (!contacts.length && !onCreateNew) { dropdown.style.display = 'none'; return; }
+      const itemsHtml = contacts.map(c => `<div class="ac-item" data-id="${c.id}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gray-100);font-size:13px">
         <div class="font-medium">${Layout.esc(c.name)}</div>
         <div class="text-xs text-gray-500">${Layout.esc(c.taxId || '')} ${c.isCustomer ? '(ลูกค้า)' : ''} ${c.isSupplier ? '(ผู้ขาย)' : ''}</div>
       </div>`).join('');
+      // Footer "create new" affordance. A 13-digit query is treated as a Tax
+      // ID → offer DBD-assisted auto-create; otherwise create by name.
+      let createHtml = '';
+      if (onCreateNew) {
+        const isTaxId = /^\d{13}$/.test(q);
+        const label = isTaxId
+          ? `➕ สร้างผู้ติดต่อจากเลขภาษี <b>${Layout.esc(q)}</b> (ดึงชื่อจาก DBD)`
+          : `➕ สร้างผู้ติดต่อใหม่ “${Layout.esc(q)}”`;
+        createHtml = `<div class="ac-create" style="padding:9px 12px;cursor:pointer;font-size:13px;color:var(--primary);background:#f8fafc;border-top:1px solid var(--gray-200);font-weight:500">${label}</div>`;
+      }
+      dropdown.innerHTML = itemsHtml + createHtml;
       dropdown.style.display = 'block';
       dropdown.querySelectorAll('.ac-item').forEach(item => {
         item.onmousedown = (e) => {
@@ -2170,6 +2194,12 @@ const Layout = {
         item.onmouseenter = () => item.style.background = 'var(--gray-50)';
         item.onmouseleave = () => item.style.background = '';
       });
+      const createEl = dropdown.querySelector('.ac-create');
+      if (createEl) createEl.onmousedown = (e) => {
+        e.preventDefault();
+        dropdown.style.display = 'none';
+        onCreateNew(q);
+      };
     };
     input.addEventListener('input', () => {
       hidden.value = '';

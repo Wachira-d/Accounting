@@ -985,8 +985,77 @@
               if (inp) inp.placeholder = originalPlaceholder;
               this._selectedContact = c;
               this.onContactChange();
-            }
+            },
+            // Inline create — no need to leave the form. A 13-digit query is
+            // treated as a Tax ID and auto-filled from DBD before saving.
+            onCreateNew: (q) => this.quickCreateContact(q),
           });
+        }
+      },
+      // Create a contact straight from the document form's picker. If the
+      // typed text is a 13-digit Tax ID, look it up on DBD first to fill the
+      // company name + address; otherwise create by the typed name. The new
+      // contact is selected into the form and the user is told what happened.
+      async quickCreateContact(query) {
+        const api = Layout.api(); if (!api) return;
+        const q = (query || '').trim();
+        if (!q) { Layout.toast('พิมพ์ชื่อหรือเลขผู้เสียภาษีก่อน', 'error'); return; }
+        // Sales-side docs → customer; purchase-side → supplier.
+        const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
+        const docType = document.getElementById('fDocType')?.value || '';
+        const isSupplier = expenseTypes.has(docType);
+        const isTaxId = /^\d{13}$/.test(q);
+
+        const payload = {
+          name: q, taxId: null,
+          isCustomer: !isSupplier, isSupplier: isSupplier,
+          address: null, phone: null, email: null,
+        };
+
+        if (isTaxId) {
+          // Dedup: if a contact with this Tax ID already exists, select it
+          // instead of creating a duplicate.
+          try {
+            const ex = await api.getContacts('?pageSize=20&search=' + encodeURIComponent(q));
+            const items = ex.data?.items || ex.data || [];
+            const hit = items.find(c => (c.taxId || '') === q);
+            if (hit) {
+              this._contactAC.setValue(hit.id, hit.name);
+              this._selectedContact = hit;
+              this.onContactChange();
+              Layout.toast('เลือกผู้ติดต่อที่มีเลขภาษีนี้อยู่แล้ว: ' + hit.name, 'info');
+              return;
+            }
+          } catch {}
+          payload.taxId = q;
+          payload.name = `นิติบุคคล ${q}`;   // fallback until DBD answers
+          try {
+            const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(q)}`);
+            const d = res?.data;
+            if (d && (d.nameTh || d.nameEn)) {
+              payload.name = d.nameTh || d.nameEn;
+              if (d.address) payload.address = d.address;
+            } else {
+              Layout.toast('ไม่พบชื่อจาก DBD — สร้างด้วยเลขภาษีไปก่อน แก้ชื่อได้ภายหลัง', 'info');
+            }
+          } catch {
+            Layout.toast('เชื่อมต่อ DBD ไม่ได้ — สร้างด้วยเลขภาษีไปก่อน แก้ชื่อได้ภายหลัง', 'info');
+          }
+        }
+
+        try {
+          const res = await api.createContact(payload);
+          const c = res.data;
+          if (!c?.id) throw new Error('สร้างผู้ติดต่อไม่สำเร็จ');
+          this._contactAC.setValue(c.id, c.name);
+          this._selectedContact = c;
+          this.onContactChange();
+          Layout.toast(isTaxId
+            ? `✅ สร้างผู้ติดต่อจากเลขภาษีให้แล้ว: ${c.name}`
+            : `✅ สร้างผู้ติดต่อใหม่ให้แล้ว: ${c.name} (${isSupplier ? 'ผู้ขาย' : 'ลูกค้า'})`,
+            'success');
+        } catch (e) {
+          Layout.toast('สร้างผู้ติดต่อไม่สำเร็จ: ' + e.message, 'error');
         }
       },
       populateProjects() {
