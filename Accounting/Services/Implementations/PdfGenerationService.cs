@@ -53,7 +53,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language);
-        var pdfBytes = ConvertHtmlToPdf(html, template);
+        // Build the full branding (colours + logo image + signatures + font)
+        // so the downloaded PDF matches the configured template, not just the
+        // browser print preview. Every part is best-effort — see BuildBranding.
+        var branding = BuildBranding(template, settings, request.WatermarkOverride);
+        var pdfBytes = ConvertHtmlToPdf(html, template, branding);
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -650,7 +654,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// correctly. The <paramref name="template"/> argument is retained for
     /// the existing call sites; page geometry is currently fixed at A4.
     /// </summary>
-    internal static byte[] ConvertHtmlToPdf(string html, DocumentTemplate? template)
+    internal static byte[] ConvertHtmlToPdf(string html, DocumentTemplate? template, PdfBranding? brandingOverride = null)
     {
         // Parse the generated HTML into structured blocks, then render with
         // QuestPDF. The previous hand-rolled PDF writer declared only simple
@@ -660,17 +664,16 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         // QuestPDF embeds the registered Thai fonts (the same path the
         // e-Tax PDF/A-3 export already uses successfully).
         var blocks = ParseHtmlToBlocks(html);
-        // Thread the template's branding into the QuestPDF renderer so the
-        // downloaded PDF honours the configured accent colour, table-header
-        // colours and watermark — previously QuestPDF re-rendered the parsed
-        // text with hardcoded styling, so the PDF ignored the settings the
-        // browser print preview applied (the "PDF ไม่ตรงกับที่ตั้งค่า" gap).
-        var branding = template == null ? null : new PdfBranding(
+        // Use the caller-supplied full branding when present (the document PDF
+        // path); otherwise derive a colours-only branding from the template
+        // (cert/receipt paths). QuestPDF re-renders parsed text with its own
+        // styling, so without this the PDF ignored the configured branding.
+        var branding = brandingOverride ?? (template == null ? null : new PdfBranding(
             AccentColor: SanitizeHex(template.AccentColor),
             PrimaryColor: SanitizeHex(template.PrimaryColor),
             TableHeaderBg: SanitizeHex(template.TableHeaderColor) ?? "#4472C4",
             TableHeaderText: SanitizeHex(template.TableHeaderTextColor) ?? "#FFFFFF",
-            WatermarkText: template.ShowWatermark ? template.WatermarkText : null);
+            WatermarkText: template.ShowWatermark ? template.WatermarkText : null));
         return RenderBlocksWithQuestPdf(blocks, branding);
     }
 
@@ -684,12 +687,86 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         return Regex.IsMatch(c, "^#[0-9A-Fa-f]{6}$") ? c.ToUpperInvariant() : null;
     }
 
-    /// <summary>Minimal branding passed to the QuestPDF renderer — only
-    /// primitives, so the renderer partial avoids importing the entities
-    /// namespace (which clashes with QuestPDF's own Document type).</summary>
+    /// <summary>
+    /// Assemble the full branding for a document PDF — colours, font, logo +
+    /// stamp image bytes, and signature labels. Defensive on every axis: a
+    /// missing/unreadable logo file, an over-large image, a bad colour, or a
+    /// disabled toggle each degrades to "skip that part" without throwing, so
+    /// PDF generation can never be broken by branding data.
+    /// </summary>
+    private static PdfBranding BuildBranding(DocumentTemplate template, CompanySettings? settings, string? watermarkOverride)
+    {
+        byte[]? logo = template.ShowLogo ? TryReadImage(settings?.LogoPath) : null;
+        byte[]? stamp = template.ShowCompanyStamp ? TryReadImage(template.StampImagePath) : null;
+
+        var sigLabels = new List<string>();
+        if (template.ShowSignature)
+        {
+            void add(string? s) { if (!string.IsNullOrWhiteSpace(s)) sigLabels.Add(s!.Trim()); }
+            add(template.SignatureLabel1);
+            if (template.SignatureCount >= 2) add(template.SignatureLabel2);
+            if (template.SignatureCount >= 3) add(template.SignatureLabel3);
+        }
+
+        var wm = !string.IsNullOrWhiteSpace(watermarkOverride) ? watermarkOverride
+               : template.ShowWatermark ? template.WatermarkText : null;
+
+        return new PdfBranding(
+            AccentColor: SanitizeHex(template.AccentColor),
+            PrimaryColor: SanitizeHex(template.PrimaryColor),
+            TableHeaderBg: SanitizeHex(template.TableHeaderColor) ?? "#4472C4",
+            TableHeaderText: SanitizeHex(template.TableHeaderTextColor) ?? "#FFFFFF",
+            WatermarkText: wm,
+            FontFamily: NormalizeFont(template.FontFamily),
+            LogoBytes: logo,
+            LogoPosition: (template.LogoPosition ?? "Left").Trim(),
+            LogoHeightMm: Clamp((float)template.LogoHeight, 5f, 60f, 18f),
+            ShowSignature: template.ShowSignature && sigLabels.Count > 0,
+            SignatureLabels: sigLabels.ToArray(),
+            StampBytes: stamp);
+    }
+
+    /// <summary>Read an image file into bytes, swallowing every failure
+    /// (null path, missing file, IO error, oversized) → returns null so the
+    /// caller simply renders no image.</summary>
+    private static byte[]? TryReadImage(string? path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+            var info = new FileInfo(path);
+            if (info.Length <= 0 || info.Length > 8 * 1024 * 1024) return null;  // cap 8MB
+            return File.ReadAllBytes(path);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Map a template font name to a family QuestPDF is likely to
+    /// have registered; null when blank so the default Thai chain is used.</summary>
+    private static string? NormalizeFont(string? font)
+    {
+        if (string.IsNullOrWhiteSpace(font)) return null;
+        return font.Trim() switch
+        {
+            "THSarabunNew" => "TH Sarabun New",
+            "NotoSansThai" => "Noto Sans Thai",
+            _ => font.Trim(),   // Sarabun / Prompt / custom — used as-is if registered
+        };
+    }
+
+    private static float Clamp(float v, float min, float max, float fallback)
+        => v <= 0 ? fallback : v < min ? min : v > max ? max : v;
+
+    /// <summary>Branding passed to the QuestPDF renderer. Primitives + byte[]
+    /// only, so the renderer partial avoids importing the entities namespace
+    /// (which clashes with QuestPDF's own Document type).</summary>
     internal record PdfBranding(
         string? AccentColor, string? PrimaryColor,
-        string? TableHeaderBg, string? TableHeaderText, string? WatermarkText);
+        string? TableHeaderBg, string? TableHeaderText, string? WatermarkText,
+        string? FontFamily = null,
+        byte[]? LogoBytes = null, string? LogoPosition = null, float LogoHeightMm = 18f,
+        bool ShowSignature = false, string[]? SignatureLabels = null,
+        byte[]? StampBytes = null);
 
     private enum HtmlBlockType { Title, Header, Text, BoldText, TableHeader, TableRow, Separator, Space }
 
