@@ -147,6 +147,15 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     public async Task<BulkAiMatchPlan> ProposeAsync(Guid companyId, Guid bankAccountId,
         DateTime fromDate, DateTime toDate, CancellationToken ct)
     {
+        // Normalise the window to WHOLE days. The UI sends date-only values
+        // (e.g. 2026-06-30) which model-bind to midnight, so a plain
+        // "TransactionDate <= toDate" would drop every transaction on the
+        // last day that carries a time component (imported rows often do).
+        // Snap fromDate to start-of-day and toDate to the last tick of its
+        // day so the range is inclusive of the entire last day.
+        fromDate = fromDate.Date;
+        toDate = toDate.Date.AddDays(1).AddTicks(-1);
+
         // ── 1. Company + bank account context ──────────────────────────
         var company = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == companyId)
@@ -203,7 +212,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 t.Description, t.Reference, t.Payee))
             .ToListAsync(ct);
         if (txns.Count == 0)
-            return Empty("No unmatched bank transactions in window");
+            return Empty($"ไม่พบรายการเดินบัญชีที่ยังไม่กระทบยอดในช่วง {fromDate:d MMM yyyy} – {toDate:d MMM yyyy} " +
+                "— ตรวจสอบว่าได้นำเข้า statement ของเดือนนี้แล้ว หรือรายการอาจกระทบยอดครบแล้ว/อยู่เดือนอื่น");
         var truncatedBankTxns = txns.Count > MaxBankTxns;
         if (truncatedBankTxns) txns = txns.Take(MaxBankTxns).ToList();
 
