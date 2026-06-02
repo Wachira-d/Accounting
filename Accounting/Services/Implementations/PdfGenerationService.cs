@@ -20,11 +20,14 @@ public partial class PdfGenerationService : IPdfGenerationService
 {
     private readonly AccountingDbContext _db;
     private readonly IDocumentTemplateService _templateService;
+    private readonly Pdf.IHtmlPdfRenderer? _htmlPdf;
 
-    public PdfGenerationService(AccountingDbContext db, IDocumentTemplateService templateService)
+    public PdfGenerationService(AccountingDbContext db, IDocumentTemplateService templateService,
+        Pdf.IHtmlPdfRenderer? htmlPdf = null)
     {
         _db = db;
         _templateService = templateService;
+        _htmlPdf = htmlPdf;
     }
 
     public async Task<GeneratePdfResponse> GenerateDocumentPdfAsync(Guid companyId, GeneratePdfRequest request)
@@ -53,11 +56,20 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language);
-        // Build the full branding (colours + logo image + signatures + font)
-        // so the downloaded PDF matches the configured template, not just the
-        // browser print preview. Every part is best-effort — see BuildBranding.
-        var branding = BuildBranding(template, settings, request.WatermarkOverride);
-        var pdfBytes = ConvertHtmlToPdf(html, template, branding);
+
+        // Preferred path: render the SAME HTML to PDF with headless Chromium so
+        // the download matches the preview exactly (full CSS layout). Falls back
+        // to the QuestPDF block renderer when the HTML renderer is off or fails.
+        byte[]? pdfBytes = null;
+        if (_htmlPdf is { Enabled: true })
+            pdfBytes = await _htmlPdf.TryRenderAsync(html);
+        if (pdfBytes == null)
+        {
+            // Build the full branding (colours + logo image + signatures + font)
+            // so the fallback PDF still reflects the configured template.
+            var branding = BuildBranding(template, settings, request.WatermarkOverride);
+            pdfBytes = ConvertHtmlToPdf(html, template, branding);
+        }
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -166,8 +178,15 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // Header
         sb.AppendLine("<div class='header'>");
-        if (template.ShowLogo && settings?.LogoUrl != null)
-            sb.AppendLine($"<img src='{settings.LogoUrl}' class='logo' style='width:{template.LogoWidth}mm;height:{template.LogoHeight}mm;'/>");
+        if (template.ShowLogo)
+        {
+            // Prefer an embedded data URI (works in headless Chromium + the
+            // preview iframe srcdoc, neither of which resolves relative URLs);
+            // fall back to the public LogoUrl.
+            var logoSrc = TryLogoDataUri(settings?.LogoPath) ?? settings?.LogoUrl;
+            if (!string.IsNullOrEmpty(logoSrc))
+                sb.AppendLine($"<img src='{logoSrc}' class='logo' style='max-width:{template.LogoWidth}mm;height:{template.LogoHeight}mm;'/>");
+        }
 
         sb.AppendLine("<div class='company-info'>");
         if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{company.Name}</div>");
@@ -824,6 +843,27 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             ShowSignature: template.ShowSignature && sigLabels.Count > 0,
             SignatureLabels: sigLabels.ToArray(),
             StampBytes: stamp);
+    }
+
+    /// <summary>Build a base64 data-URI for the logo from its file path so it
+    /// embeds directly in the HTML (renders in headless Chromium + the preview
+    /// iframe without a base URL). Returns null on any failure → caller uses
+    /// the public URL instead.</summary>
+    private static string? TryLogoDataUri(string? path)
+    {
+        var bytes = TryReadImage(path);
+        if (bytes == null) return null;
+        var ext = (Path.GetExtension(path) ?? "").ToLowerInvariant();
+        var mime = ext switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".svg" => "image/svg+xml",
+            _ => "image/png",
+        };
+        return $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
     }
 
     /// <summary>Read an image file into bytes, swallowing every failure
