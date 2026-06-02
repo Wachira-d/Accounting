@@ -32,13 +32,25 @@ public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposabl
 
     public bool Enabled { get; }
 
+    /// <summary>Optional path to an already-installed Chromium-family browser
+    /// (e.g. Windows Edge: C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe).
+    /// When set, we launch it directly and skip the Chromium download.</summary>
+    private readonly string? _executablePath;
+
+    /// <summary>Optional writable folder for PuppeteerSharp's downloaded
+    /// Chromium — set this when the app/IIS identity can't write the default
+    /// cache location.</summary>
+    private readonly string? _browserCachePath;
+
     public PuppeteerHtmlPdfRenderer(IConfiguration config, ILogger<PuppeteerHtmlPdfRenderer> logger)
     {
         _logger = logger;
-        // Default OFF — the headless browser needs Chromium + native libs on the
-        // host, so it's opt-in. Flip Pdf:UseHtmlRenderer=true once the server is
-        // provisioned; until then the app keeps using QuestPDF unchanged.
+        // Default OFF — the headless browser needs a Chromium-family browser on
+        // the host, so it's opt-in. Flip Pdf:UseHtmlRenderer=true once the server
+        // is provisioned; until then the app keeps using QuestPDF unchanged.
         Enabled = config.GetValue("Pdf:UseHtmlRenderer", false);
+        _executablePath = config.GetValue<string?>("Pdf:ExecutablePath", null);
+        _browserCachePath = config.GetValue<string?>("Pdf:BrowserCachePath", null);
     }
 
     public async Task<byte[]?> TryRenderAsync(string html, CancellationToken ct = default)
@@ -86,17 +98,34 @@ public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposabl
         {
             if (_browser is { IsConnected: true }) return _browser;
 
-            // Download a matching Chromium on first use (cached afterwards).
-            await new BrowserFetcher().DownloadAsync();
-
-            _browser = await Puppeteer.LaunchAsync(new LaunchOptions
+            var options = new LaunchOptions
             {
                 Headless = true,
-                // --no-sandbox is required to run Chromium as root in most
-                // containers; the others avoid /dev/shm and GPU issues on servers.
+                // --no-sandbox needed when running as a service/elevated; the
+                // others avoid /dev/shm + GPU issues on headless servers.
                 Args = new[] { "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu" },
-            });
-            _logger.LogInformation("Headless Chromium launched for HTML→PDF rendering");
+            };
+
+            if (!string.IsNullOrWhiteSpace(_executablePath))
+            {
+                // Use an installed browser (e.g. Windows Edge) — no download.
+                options.ExecutablePath = _executablePath;
+                _logger.LogInformation("Launching HTML→PDF browser from {Path}", _executablePath);
+            }
+            else
+            {
+                // Download a matching Chromium on first use (cached afterwards).
+                var fetcher = string.IsNullOrWhiteSpace(_browserCachePath)
+                    ? new BrowserFetcher()
+                    : new BrowserFetcher(new BrowserFetcherOptions { Path = _browserCachePath });
+                var installed = await fetcher.DownloadAsync();
+                if (installed?.GetExecutablePath() is { Length: > 0 } exe)
+                    options.ExecutablePath = exe;
+                _logger.LogInformation("Using downloaded Chromium for HTML→PDF rendering");
+            }
+
+            _browser = await Puppeteer.LaunchAsync(options);
+            _logger.LogInformation("Headless browser launched for HTML→PDF rendering");
             return _browser;
         }
         catch (Exception ex)
