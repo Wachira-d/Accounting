@@ -181,6 +181,15 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(Guid companyId, Guid scanId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "")));
 
+    /// <summary>Rebuild an OCR-created document's lines from the original scan
+    /// when it was created empty. Looked up by documentId (the document edit
+    /// page calls this). Refuses if the document already has real lines.</summary>
+    [HttpPost("documents/{documentId:guid}/repopulate-lines")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> RepopulateLines(Guid companyId, Guid documentId)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.RepopulateDocumentLinesFromScanAsync(companyId, documentId, User.Identity?.Name ?? ""),
+            "ดึงรายการจาก OCR สำเร็จ"));
+
     public sealed record SetAllLinesProjectRequest(Guid? ProjectId, string? ProjectName, bool OnlyEmpty);
 
     /// <summary>Apply ONE project to EVERY OCR-extracted line in a

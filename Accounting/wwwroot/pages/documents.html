@@ -308,6 +308,9 @@
                   <input type="checkbox" id="fStrictProducts" checked style="margin:0">
                   <span title="ติ๊กไว้ = ห้ามกรอกอิสระ ต้องเลือกจากสินค้าที่บันทึกในระบบเท่านั้น (ป้องกันชื่อสะกดผิด + ทำให้รายงานสรุปสินค้ารวมยอดได้ถูกต้อง)">เฉพาะสินค้าในระบบ</span>
                 </label>
+                <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
+                  title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
+                  onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
               </div>
             </div>
@@ -1388,8 +1391,8 @@
           // edit session only (we don't persist to localStorage — manual
           // data entry keeps its own default).
           const strictCb = document.getElementById('fStrictProducts');
+          const isOcrDoc = (d.notes || '').includes('OCR scan');
           if (strictCb) {
-            const isOcrDoc = (d.notes || '').includes('OCR scan');
             const hasFreeText = (d.lines || []).some(l => !l.productCode && (l.description || '').trim());
             if (isOcrDoc || hasFreeText) {
               strictCb.checked = false;
@@ -1397,6 +1400,12 @@
               if (hint) hint.innerHTML = '💡 เอกสารนี้มาจาก OCR/กรอกอิสระ — ปลดล็อกโหมด "เฉพาะสินค้าในระบบ" ให้แล้ว แก้ไขรายละเอียดได้อิสระ';
             }
           }
+          // OCR document that came out empty: offer a one-click "pull lines
+          // from the original scan" so the user doesn't have to retype them.
+          const linesEmpty = !(d.lines || []).some(l => l.amount || (l.description || '').trim());
+          this._ocrRepopulateDocId = (isOcrDoc && linesEmpty) ? d.id : null;
+          const repBtn = document.getElementById('btnOcrRepopulate');
+          if (repBtn) repBtn.style.display = this._ocrRepopulateDocId ? '' : 'none';
           // Reset email-template watermarks so the auto-template re-applies if
           // the user enables "send email" on this Edit session.
           this._lastAutoSubject = '';
@@ -1407,6 +1416,31 @@
           this.onDocTypeChange();
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // Pull line items from the document's original OCR scan into this empty
+      // OCR-created document, then reopen it so the rebuilt lines show.
+      async repopulateFromOcr() {
+        const docId = this._ocrRepopulateDocId;
+        if (!docId) return;
+        if (!confirm('ดึงรายการสินค้า/บริการจากไฟล์ OCR ต้นฉบับมาเติมในเอกสารนี้?')) return;
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        const btn = document.getElementById('btnOcrRepopulate');
+        if (btn) { btn.disabled = true; btn.textContent = '⟲ กำลังดึง...'; }
+        try {
+          const r = await fetch(`/api/companies/${cid}/ocr/documents/${docId}/repopulate-lines`, {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('ดึงรายการจาก OCR สำเร็จ', 'success');
+          Layout.closeModal('formModal');
+          await this.load();
+          await this.openEdit(docId);   // reopen with the rebuilt lines
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = '⟲ ดึงรายการจาก OCR'; }
+        }
       },
       async save() {
         const api = Layout.api(); if (!api) return;

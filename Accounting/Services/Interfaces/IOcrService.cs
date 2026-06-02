@@ -19,6 +19,9 @@ public interface IOcrService
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy);
+    /// <summary>Rebuild a document's lines from its source OCR scan when it
+    /// was created empty (pre line-building fix). Looked up by documentId.</summary>
+    Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(Guid companyId, Guid documentId, string performedBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
 
     /// <summary>Persist a per-line project assignment into the scan's

@@ -3124,6 +3124,106 @@ public class OcrService : IOcrService
         return MapToResponse(result);
     }
 
+    /// <summary>
+    /// Re-populate the line items of a document that was created from an OCR
+    /// scan but ended up with no lines (e.g. created before the line-building
+    /// fix). Finds the scan via its CreatedDocumentId, rebuilds DocumentLines
+    /// from the persisted ExtractedItemsJson, and recomputes the header totals.
+    /// Refuses if the document already has real (non-blank) lines so manual
+    /// work is never clobbered.
+    /// </summary>
+    public async Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(
+        Guid companyId, Guid documentId, string performedBy)
+    {
+        var result = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
+            ?? throw new InvalidOperationException("เอกสารนี้ไม่ได้ถูกสร้างจากการสแกน OCR");
+
+        var document = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new InvalidOperationException("ไม่พบเอกสาร");
+
+        var hasRealLines = document.Lines.Any(l => l.Amount != 0 || !string.IsNullOrWhiteSpace(l.Description));
+        if (hasRealLines)
+            throw new InvalidOperationException("เอกสารมีรายการอยู่แล้ว — ลบรายการเดิมก่อนหากต้องการดึงจาก OCR ใหม่");
+
+        // Drop any blank placeholder lines before rebuilding.
+        if (document.Lines.Count > 0)
+        {
+            _db.Set<DocumentLine>().RemoveRange(document.Lines.ToList());
+            document.Lines.Clear();
+        }
+
+        var items = new List<OcrExtractedLineItem>();
+        if (!string.IsNullOrWhiteSpace(result.ExtractedItemsJson))
+        {
+            try
+            {
+                items = System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson) ?? new();
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "OCR ExtractedItemsJson parse failed for scan {ScanId}", result.Id);
+            }
+        }
+
+        if (items.Count > 0)
+        {
+            int lineOrder = 1;
+            foreach (var item in items)
+            {
+                Guid? lineAccountId = null;
+                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
+                {
+                    var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
+                    lineAccountId = lineAccount?.Id;
+                }
+                document.Lines.Add(new DocumentLine
+                {
+                    LineOrder = lineOrder++,
+                    Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
+                    Quantity = item.Quantity ?? 1,
+                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    Amount = item.Amount ?? 0,
+                    VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                    AccountId = lineAccountId,
+                    ProjectId = item.ProjectId,
+                });
+            }
+        }
+        else
+        {
+            document.Lines.Add(new DocumentLine
+            {
+                LineOrder = 1,
+                Description = result.DocumentType ?? "รายการจาก OCR",
+                Quantity = 1,
+                UnitPrice = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                Amount = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                VatAmount = result.ExtractedVatAmount ?? 0,
+            });
+        }
+
+        // Recompute header totals from the rebuilt lines so the document is
+        // self-consistent even before the user opens + saves it.
+        var subTotal = document.Lines.Sum(l => l.Amount);
+        var vat = document.Lines.Sum(l =>
+            l.VatAmount != 0 ? l.VatAmount : Math.Round(l.Amount * l.VatRate / 100m, 2));
+        document.SubTotal = subTotal;
+        document.VatAmount = vat;
+        document.TotalAmount = subTotal + vat;
+        document.BalanceDue = subTotal + vat;
+        document.UpdatedAt = DateTime.UtcNow;
+        document.UpdatedBy = performedBy;
+
+        await _db.SaveChangesAsync();
+        return MapToResponse(result);
+    }
+
     public async Task SetExtractedLineProjectAsync(Guid companyId, Guid scanResultId,
         int lineIndex, Guid? projectId, string? projectName)
     {
