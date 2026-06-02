@@ -210,6 +210,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine($"<meta charset='utf-8'/>");
         sb.AppendLine($"<style>{BuildCss(template)}{BuildLayoutCss(layout, template)}</style>");
         sb.AppendLine($"</head><body class='layout-{layout}'>");
+        // Wrap everything in a layout-classed root DIV (not just <body>) so the
+        // layout CSS still applies when this HTML is injected via innerHTML
+        // (which strips <body>) — e.g. the document view modal. Without this the
+        // "body.layout-X ..." rules silently failed there (colours showed via
+        // plain class selectors, but the STRUCTURE didn't).
+        sb.AppendLine($"<div class='doc-root layout-{layout}'>");
 
         // Watermark
         if (template.ShowWatermark || watermark != null)
@@ -355,7 +361,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine("</div>");
         }
 
-        sb.AppendLine("</body></html>");
+        sb.AppendLine("</div></body></html>");
         return sb.ToString();
     }
 
@@ -699,97 +705,97 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         {
             case "ModernLeft":
                 return $@"
-                    body.layout-ModernLeft .doc-title {{ text-align:left; border-bottom:none; border-left:6px solid {accent}; padding:2px 0 2px 12px; margin:14px 0; }}
-                    body.layout-ModernLeft .doc-info {{ justify-content:flex-start; }}
-                    body.layout-ModernLeft .contact-section {{ border:none; border-left:4px solid {accent}; border-radius:0; background:#f8fafc; }}
-                    body.layout-ModernLeft .header {{ border-bottom:2px solid {accent}; padding-bottom:8px; }}
-                    body.layout-ModernLeft .summary {{ background:#f8fafc; padding:10px 14px; border-radius:6px; }}
+                    .layout-ModernLeft .doc-title {{ text-align:left; border-bottom:none; border-left:6px solid {accent}; padding:2px 0 2px 12px; margin:14px 0; }}
+                    .layout-ModernLeft .doc-info {{ justify-content:flex-start; }}
+                    .layout-ModernLeft .contact-section {{ border:none; border-left:4px solid {accent}; border-radius:0; background:#f8fafc; }}
+                    .layout-ModernLeft .header {{ border-bottom:2px solid {accent}; padding-bottom:8px; }}
+                    .layout-ModernLeft .summary {{ background:#f8fafc; padding:10px 14px; border-radius:6px; }}
                 ";
             case "BannerHeader":
                 return $@"
-                    body.layout-BannerHeader .header {{ background:{accent}; color:#fff; padding:16px 18px; border-radius:8px; align-items:center; }}
-                    body.layout-BannerHeader .company-name, body.layout-BannerHeader .company-name-en {{ color:#fff; }}
-                    body.layout-BannerHeader .doc-title {{ text-align:center; color:{accent}; border:none; letter-spacing:1px; }}
-                    body.layout-BannerHeader .doc-info {{ justify-content:center; gap:28px; background:#f1f5f9; padding:8px; border-radius:6px; }}
-                    body.layout-BannerHeader .contact-section {{ border-radius:8px; }}
+                    .layout-BannerHeader .header {{ background:{accent}; color:#fff; padding:16px 18px; border-radius:8px; align-items:center; }}
+                    .layout-BannerHeader .company-name, .layout-BannerHeader .company-name-en {{ color:#fff; }}
+                    .layout-BannerHeader .doc-title {{ text-align:center; color:{accent}; border:none; letter-spacing:1px; }}
+                    .layout-BannerHeader .doc-info {{ justify-content:center; gap:28px; background:#f1f5f9; padding:8px; border-radius:6px; }}
+                    .layout-BannerHeader .contact-section {{ border-radius:8px; }}
                 ";
             case "Compact":
                 return @"
-                    body.layout-Compact { font-size:12px; }
-                    body.layout-Compact .header { margin-bottom:6px; }
-                    body.layout-Compact .doc-title { font-size:18px; margin:8px 0; padding-bottom:3px; }
-                    body.layout-Compact .company-name { font-size:16px; }
-                    body.layout-Compact .contact-section { padding:6px; margin-bottom:8px; }
-                    body.layout-Compact .items-table th { padding:4px; font-size:11px; }
-                    body.layout-Compact .items-table td { padding:3px 4px; font-size:11px; }
-                    body.layout-Compact .sum-row { padding:2px 0; }
-                    body.layout-Compact .signatures { margin-top:24px; }
+                    .layout-Compact { font-size:12px; }
+                    .layout-Compact .header { margin-bottom:6px; }
+                    .layout-Compact .doc-title { font-size:18px; margin:8px 0; padding-bottom:3px; }
+                    .layout-Compact .company-name { font-size:16px; }
+                    .layout-Compact .contact-section { padding:6px; margin-bottom:8px; }
+                    .layout-Compact .items-table th { padding:4px; font-size:11px; }
+                    .layout-Compact .items-table td { padding:3px 4px; font-size:11px; }
+                    .layout-Compact .sum-row { padding:2px 0; }
+                    .layout-Compact .signatures { margin-top:24px; }
                 ";
             case "Minimal":
                 return $@"
-                    body.layout-Minimal .header {{ border:none; background:none; }}
-                    body.layout-Minimal .doc-title {{ text-align:left; border:none; font-weight:600; text-transform:uppercase; letter-spacing:3px; font-size:20px; color:#111; }}
-                    body.layout-Minimal .contact-section {{ border:none; padding:0; margin:8px 0 18px; }}
-                    body.layout-Minimal .doc-info {{ gap:24px; color:#555; }}
-                    body.layout-Minimal .items-table th {{ background:none !important; color:#111 !important; border-bottom:2px solid #111; }}
-                    body.layout-Minimal .items-table td {{ border:none; border-bottom:1px solid #eee; }}
-                    body.layout-Minimal .sum-row.total {{ border-top:1px solid #111; border-bottom:none; color:#111; }}
+                    .layout-Minimal .header {{ border:none; background:none; }}
+                    .layout-Minimal .doc-title {{ text-align:left; border:none; font-weight:600; text-transform:uppercase; letter-spacing:3px; font-size:20px; color:#111; }}
+                    .layout-Minimal .contact-section {{ border:none; padding:0; margin:8px 0 18px; }}
+                    .layout-Minimal .doc-info {{ gap:24px; color:#555; }}
+                    .layout-Minimal .items-table th {{ background:none !important; color:#111 !important; border-bottom:2px solid #111; }}
+                    .layout-Minimal .items-table td {{ border:none; border-bottom:1px solid #eee; }}
+                    .layout-Minimal .sum-row.total {{ border-top:1px solid #111; border-bottom:none; color:#111; }}
                 ";
             case "CenteredFormal":
                 return $@"
-                    body.layout-CenteredFormal .header {{ flex-direction:column; align-items:center; text-align:center; }}
-                    body.layout-CenteredFormal .logo {{ margin:0 0 8px 0; }}
-                    body.layout-CenteredFormal .company-info {{ text-align:center; }}
-                    body.layout-CenteredFormal .doc-title {{ text-align:center; border-top:3px double {accent}; border-bottom:3px double {accent}; padding:6px 0; letter-spacing:2px; }}
-                    body.layout-CenteredFormal .doc-info {{ justify-content:center; gap:30px; }}
-                    body.layout-CenteredFormal .contact-section {{ text-align:center; border:none; }}
-                    body.layout-CenteredFormal .signatures {{ justify-content:center; gap:60px; }}
+                    .layout-CenteredFormal .header {{ flex-direction:column; align-items:center; text-align:center; }}
+                    .layout-CenteredFormal .logo {{ margin:0 0 8px 0; }}
+                    .layout-CenteredFormal .company-info {{ text-align:center; }}
+                    .layout-CenteredFormal .doc-title {{ text-align:center; border-top:3px double {accent}; border-bottom:3px double {accent}; padding:6px 0; letter-spacing:2px; }}
+                    .layout-CenteredFormal .doc-info {{ justify-content:center; gap:30px; }}
+                    .layout-CenteredFormal .contact-section {{ text-align:center; border:none; }}
+                    .layout-CenteredFormal .signatures {{ justify-content:center; gap:60px; }}
                 ";
             case "SidebarAccent":
                 // Colored header block + left-accent rails on title/contact +
                 // a filled total bar. Strong "left spine" feel.
                 return $@"
-                    body.layout-SidebarAccent .header {{ background:{accent}; color:#fff; padding:16px 18px; border-radius:0 0 12px 0; align-items:center; }}
-                    body.layout-SidebarAccent .company-name, body.layout-SidebarAccent .company-name-en {{ color:#fff; }}
-                    body.layout-SidebarAccent .doc-title {{ text-align:left; border:none; background:#f1f5f9; padding:8px 14px; border-left:6px solid {accent}; border-radius:0 6px 6px 0; margin:14px 0 12px; }}
-                    body.layout-SidebarAccent .doc-info {{ justify-content:flex-start; }}
-                    body.layout-SidebarAccent .contact-section {{ border:none; border-left:6px solid {accent}; background:#f8fafc; border-radius:0 6px 6px 0; }}
-                    body.layout-SidebarAccent .items-table th {{ border-radius:0; }}
-                    body.layout-SidebarAccent .sum-row.total {{ border:none; background:{accent}; color:#fff; padding:8px 12px; border-radius:6px; }}
+                    .layout-SidebarAccent .header {{ background:{accent}; color:#fff; padding:16px 18px; border-radius:0 0 12px 0; align-items:center; }}
+                    .layout-SidebarAccent .company-name, .layout-SidebarAccent .company-name-en {{ color:#fff; }}
+                    .layout-SidebarAccent .doc-title {{ text-align:left; border:none; background:#f1f5f9; padding:8px 14px; border-left:6px solid {accent}; border-radius:0 6px 6px 0; margin:14px 0 12px; }}
+                    .layout-SidebarAccent .doc-info {{ justify-content:flex-start; }}
+                    .layout-SidebarAccent .contact-section {{ border:none; border-left:6px solid {accent}; background:#f8fafc; border-radius:0 6px 6px 0; }}
+                    .layout-SidebarAccent .items-table th {{ border-radius:0; }}
+                    .layout-SidebarAccent .sum-row.total {{ border:none; background:{accent}; color:#fff; padding:8px 12px; border-radius:6px; }}
                 ";
             case "BoldHeader":
                 // Oversized document title FIRST (above the company header) as a
                 // full-width colored banner — reorders the page via flex order.
                 return $@"
-                    body.layout-BoldHeader {{ display:flex; flex-direction:column; }}
-                    body.layout-BoldHeader .doc-title {{ order:-2; text-align:left; background:{accent}; color:#fff; border:none; border-radius:10px; padding:16px 20px; margin:0 0 14px; letter-spacing:1px; font-size:30px; }}
-                    body.layout-BoldHeader .header {{ order:-1; border-bottom:2px solid #e5e7eb; padding-bottom:10px; margin-bottom:14px; }}
-                    body.layout-BoldHeader .doc-info {{ justify-content:flex-start; gap:28px; }}
-                    body.layout-BoldHeader .contact-section {{ border:none; background:#f8fafc; }}
+                    .layout-BoldHeader {{ display:flex; flex-direction:column; }}
+                    .layout-BoldHeader .doc-title {{ order:-2; text-align:left; background:{accent}; color:#fff; border:none; border-radius:10px; padding:16px 20px; margin:0 0 14px; letter-spacing:1px; font-size:30px; }}
+                    .layout-BoldHeader .header {{ order:-1; border-bottom:2px solid #e5e7eb; padding-bottom:10px; margin-bottom:14px; }}
+                    .layout-BoldHeader .doc-info {{ justify-content:flex-start; gap:28px; }}
+                    .layout-BoldHeader .contact-section {{ border:none; background:#f8fafc; }}
                 ";
             case "SplitHeader":
                 // Company header with accent rule, left-aligned title, and a
                 // boxed meta card (number/date/due stacked) with an accent edge.
                 return $@"
-                    body.layout-SplitHeader .header {{ border-bottom:3px solid {accent}; padding-bottom:10px; margin-bottom:14px; }}
-                    body.layout-SplitHeader .doc-title {{ text-align:left; border:none; font-size:26px; margin:8px 0; }}
-                    body.layout-SplitHeader .doc-info {{ flex-direction:column; align-items:flex-start; gap:3px; background:#f8fafc; border:1px solid #e5e7eb; border-left:4px solid {accent}; padding:10px 14px; border-radius:6px; width:max-content; margin-left:auto; }}
-                    body.layout-SplitHeader .contact-section {{ background:#f8fafc; border-color:#e5e7eb; }}
-                    body.layout-SplitHeader .items-table th {{ background:{accent}; }}
+                    .layout-SplitHeader .header {{ border-bottom:3px solid {accent}; padding-bottom:10px; margin-bottom:14px; }}
+                    .layout-SplitHeader .doc-title {{ text-align:left; border:none; font-size:26px; margin:8px 0; }}
+                    .layout-SplitHeader .doc-info {{ flex-direction:column; align-items:flex-start; gap:3px; background:#f8fafc; border:1px solid #e5e7eb; border-left:4px solid {accent}; padding:10px 14px; border-radius:6px; width:max-content; margin-left:auto; }}
+                    .layout-SplitHeader .contact-section {{ background:#f8fafc; border-color:#e5e7eb; }}
+                    .layout-SplitHeader .items-table th {{ background:{accent}; }}
                 ";
             case "Letterhead":
                 // Corporate letterhead: company centred on top with a thick
                 // accent rule, left-aligned title beneath, ruled meta line.
                 return $@"
-                    body.layout-Letterhead .header {{ flex-direction:column; align-items:center; text-align:center; border-bottom:4px solid {accent}; padding-bottom:12px; }}
-                    body.layout-Letterhead .logo {{ margin:0 0 6px 0; }}
-                    body.layout-Letterhead .company-info {{ text-align:center; }}
-                    body.layout-Letterhead .company-name {{ font-size:24px; letter-spacing:1px; }}
-                    body.layout-Letterhead .doc-title {{ text-align:left; border:none; font-size:24px; letter-spacing:2px; margin:16px 0 4px; text-transform:uppercase; }}
-                    body.layout-Letterhead .doc-info {{ justify-content:flex-start; gap:24px; border-bottom:1px solid #e5e7eb; padding-bottom:10px; }}
-                    body.layout-Letterhead .contact-section {{ border:none; padding:0; margin:12px 0; }}
-                    body.layout-Letterhead .items-table th {{ background:none !important; color:{accent} !important; border-bottom:2px solid {accent}; }}
-                    body.layout-Letterhead .items-table td {{ border:none; border-bottom:1px solid #eee; }}
+                    .layout-Letterhead .header {{ flex-direction:column; align-items:center; text-align:center; border-bottom:4px solid {accent}; padding-bottom:12px; }}
+                    .layout-Letterhead .logo {{ margin:0 0 6px 0; }}
+                    .layout-Letterhead .company-info {{ text-align:center; }}
+                    .layout-Letterhead .company-name {{ font-size:24px; letter-spacing:1px; }}
+                    .layout-Letterhead .doc-title {{ text-align:left; border:none; font-size:24px; letter-spacing:2px; margin:16px 0 4px; text-transform:uppercase; }}
+                    .layout-Letterhead .doc-info {{ justify-content:flex-start; gap:24px; border-bottom:1px solid #e5e7eb; padding-bottom:10px; }}
+                    .layout-Letterhead .contact-section {{ border:none; padding:0; margin:12px 0; }}
+                    .layout-Letterhead .items-table th {{ background:none !important; color:{accent} !important; border-bottom:2px solid {accent}; }}
+                    .layout-Letterhead .items-table td {{ border:none; border-bottom:1px solid #eee; }}
                 ";
             default:
                 return ""; // Classic
