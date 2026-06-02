@@ -73,7 +73,12 @@ public sealed record MissingDataHint(Guid BankTxnId, string MissingType, string 
 public class BulkBankAiMatchService : IBulkBankAiMatchService
 {
     private const int MaxBankTxns = 150;
-    private const int MaxCandidatesPerKind = 80;
+    // Bumped from 80 → 200 per kind (docs / payments / JEs). The cap exists so
+    // the prompt fits the provider's context window; 200 × 3 kinds + 150 txns
+    // is still well within DeepSeek-V3's 128k limit, and 80 was truncating
+    // real Thai SME books mid-month. Tune down if a provider with a smaller
+    // context is selected.
+    private const int MaxCandidatesPerKind = 200;
 
     private readonly AccountingDbContext _db;
     private readonly IAiOrchestrator _orchestrator;
@@ -286,29 +291,46 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             LinkedDocumentType: p.DocType.ToString())).ToList();
 
         // ── 6. Open journal entries (Posted, not yet linked to a bank
-        // ── txn). Lines summed by abs(net) so AI compares amounts only. ─
+        // ── txn). Lines summed by abs(net) so AI compares amounts only.
+        // No row cap — instead, prefilter by amount: keep every JE whose
+        // |net| matches ANY bank-txn amount within ±5 baht. AI then sees
+        // every CANDIDATE that could possibly match, with all noise dropped.
         var matchedJeIdsRaw = await _db.BankTransactions.AsNoTracking()
             .Where(t => t.BankAccountId == bankAccountId
                         && t.MatchedJournalEntryId != null)
             .Select(t => t.MatchedJournalEntryId!.Value)
             .ToListAsync(ct);
         var matchedJeIds = matchedJeIdsRaw.ToHashSet();
-        var jeRows = await _db.JournalEntries.AsNoTracking()
+        var allJes = await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && !j.IsDeleted
                         && j.Status == JournalEntryStatus.Posted
                         && j.EntryDate >= windowStart && j.EntryDate <= windowEnd)
             .Where(j => !matchedJeIds.Contains(j.Id))
             .Include(j => j.Lines)
             .OrderByDescending(j => j.EntryDate)
-            .Take(MaxCandidatesPerKind + 1)
             .Select(j => new
             {
                 j.Id, j.EntryNumber, j.EntryDate, j.Description, j.Reference,
                 NetAmount = j.Lines.Sum(l => l.DebitAmount - l.CreditAmount),
             })
             .ToListAsync(ct);
-        var truncatedJes = jeRows.Count > MaxCandidatesPerKind;
-        if (truncatedJes) jeRows = jeRows.Take(MaxCandidatesPerKind).ToList();
+
+        // Round bank-txn amounts to 2dp once for the lookup set.
+        var bankAmounts = txns.Select(t => Math.Round(t.Amount, 2)).ToHashSet();
+        bool amountMatches(decimal x)
+        {
+            var a = Math.Abs(Math.Round(x, 2));
+            // ±5 THB tolerance (covers small bank fees / withholding-tax rounding).
+            for (decimal d = -5; d <= 5; d++)
+                if (bankAmounts.Contains(Math.Round(a + d, 2))) return true;
+            return false;
+        }
+        var jeRows = allJes.Where(j => amountMatches(j.NetAmount)).ToList();
+        // Hard ceiling as a final safety net so a pathological dataset can
+        // never exceed a sane prompt size (DeepSeek-V3 context = 128k tokens).
+        const int HardJeCeiling = 600;
+        var truncatedJes = jeRows.Count > HardJeCeiling;
+        if (truncatedJes) jeRows = jeRows.Take(HardJeCeiling).ToList();
         var openJes = jeRows.Select(j => new BulkBankMatchPrompt.OpenJeInput(
             j.Id.ToString(), j.EntryNumber, j.EntryDate, Math.Abs(j.NetAmount),
             j.Description, j.Reference)).ToList();
@@ -362,7 +384,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         if (truncatedPayments)
             warnings.Add($"จำกัด open payments ที่ {MaxCandidatesPerKind} รายการ");
         if (truncatedJes)
-            warnings.Add($"จำกัด open JEs ที่ {MaxCandidatesPerKind} รายการ");
+            warnings.Add($"open JEs ที่ผ่านเงื่อนไขยอดเงินมากเกิน {HardJeCeiling} รายการ — ใช้แค่ {HardJeCeiling} ตัวล่าสุด");
         if (resp.Status == AiCallStatus.Failed || resp.Status == AiCallStatus.NoProvider
             || resp.Status == AiCallStatus.BudgetExceeded)
             warnings.Add($"AI ไม่ทำงาน ({resp.Status}): {resp.Reasoning ?? "—"}. กรุณา match ด้วยมือ");

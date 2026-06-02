@@ -64,6 +64,11 @@ public sealed record AiRequest
     /// (200 tokens) and forecast-narrative (2000 tokens) coexist.</summary>
     public int? MaxTokensOverride { get; init; }
 
+    /// <summary>Per-call HTTP timeout in seconds. Bulk-prompt features
+    /// (bank match against 150+150 candidates) need 40-60s; the default
+    /// provider config is tuned for short prompts (8s).</summary>
+    public int? TimeoutSecondsOverride { get; init; }
+
     /// <summary>When true, force a provider call even if the local model
     /// is above the confidence threshold. Used by admin "ขอความเห็น AI"
     /// buttons in the UI.</summary>

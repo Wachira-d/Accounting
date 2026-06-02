@@ -186,6 +186,10 @@ Strict JSON output (NO prose outside JSON):
             CacheTtlOverrideDays = 0,        // never cache — state changes daily
             BypassCache = true,
             MaxTokensOverride = 4000,         // bulk response can be long
+            // DeepSeek with a ~150-txn + ~240-candidate prompt commonly takes
+            // 20-40s. The provider-wide default (8s) was guaranteed to time
+            // out for this feature — raise just this one call to 60s.
+            TimeoutSecondsOverride = 60,
         };
     }
 }
