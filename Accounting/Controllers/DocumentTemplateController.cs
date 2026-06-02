@@ -115,18 +115,40 @@ public class DocumentTemplateController : ControllerBase
     public async Task<ActionResult> PreviewHtml(Guid companyId,
         [FromQuery] Guid? templateId, [FromQuery] string? documentType, [FromQuery] string? language)
     {
-        var html = await _pdfService.GeneratePreviewHtmlAsync(companyId, templateId, documentType, language);
-        return Content(html, "text/html; charset=utf-8");
+        try
+        {
+            var html = await _pdfService.GeneratePreviewHtmlAsync(companyId, templateId, documentType, language);
+            return Content(html, "text/html; charset=utf-8");
+        }
+        catch (Exception ex)
+        {
+            // Show the reason inside the preview frame instead of failing the
+            // fetch (which would only render a generic "can't preview").
+            return Content(PreviewError(ex), "text/html; charset=utf-8");
+        }
     }
+
+    private static string PreviewError(Exception ex) =>
+        $"<!DOCTYPE html><html><head><meta charset='utf-8'></head><body style=\"font:13px 'Noto Sans Thai',sans-serif;color:#b91c1c;padding:14px;line-height:1.6\">⚠️ สร้างตัวอย่างไม่สำเร็จ<br><span style='color:#475569'>{System.Net.WebUtility.HtmlEncode(ex.Message)}</span></body></html>";
 
     /// <summary>Live preview from the editor's UNSAVED template form, so every
     /// tick/colour/layout change shows instantly. The body is a transient
     /// DocumentTemplate (never saved).</summary>
     [HttpPost("preview-html-draft")]
-    public async Task<ActionResult> PreviewHtmlDraft(Guid companyId, [FromBody] Accounting.Models.Entities.DocumentTemplate draft)
+    public async Task<ActionResult> PreviewHtmlDraft(Guid companyId, [FromBody] CreateDocumentTemplateRequest draft)
     {
-        var html = await _pdfService.GeneratePreviewHtmlFromDraftAsync(companyId, draft);
-        return Content(html, "text/html; charset=utf-8");
+        // Map the request through the template service (same proven binding +
+        // mapping as Create) into an unsaved template, then render it.
+        try
+        {
+            var transient = _templateService.BuildTransient(companyId, draft);
+            var html = await _pdfService.GeneratePreviewHtmlFromDraftAsync(companyId, transient);
+            return Content(html, "text/html; charset=utf-8");
+        }
+        catch (Exception ex)
+        {
+            return Content(PreviewError(ex), "text/html; charset=utf-8");
+        }
     }
 
     [HttpPost("withholding-tax/{certId:guid}/pdf")]
