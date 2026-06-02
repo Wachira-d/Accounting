@@ -63,13 +63,15 @@ public partial class PdfGenerationService : IPdfGenerationService
         //     HTML parser.
         //  3. (Inside RenderDocumentPdfNative) last-resort HTML→QuestPDF
         //     parser path so a composition bug can never blank the document.
+        var signers = await ResolveSignersAsync(document);
+
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
         {
-            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language);
+            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
             pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
-        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language);
+        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -102,7 +104,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                 t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
                 ?? CreateInMemoryDefaultTemplate(document.DocumentType);
         }
-        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language);
+        var signers = await ResolveSignersAsync(document);
+        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
     }
 
     public async Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId)
@@ -200,7 +203,76 @@ public partial class PdfGenerationService : IPdfGenerationService
 
     // ===== HTML Builders =====
 
-    private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings, DocumentTemplate template, string? watermark, string? langOverride)
+    /// <summary>
+    /// Auto-resolved signer (creator/approver) carrying the user's saved
+    /// signature image + display name + title. Both renderers (HTML + native
+    /// QuestPDF) consume the same list so what shows on screen also prints.
+    /// </summary>
+    internal sealed record DocumentSigner(
+        string? SignatureImageDataUri,   // "data:image/png;base64,..." (HTML) — null if user has no signature
+        byte[]? SignatureImageBytes,     // raw bytes for QuestPDF — null if no signature
+        string? Name,
+        string? Title);
+
+    /// <summary>Resolve up to TWO signers for a document:
+    /// signers[0] = creator (CreatedBy), signers[1] = approver (UpdatedBy when
+    /// different from the creator). Each signer carries the user's saved
+    /// signature image + their display name + title. When a user has no
+    /// signature image, the slot still records the name so the printed label
+    /// reads "ผู้รับ: <name>" with a blank line instead of mystery text.</summary>
+    private async Task<List<DocumentSigner>> ResolveSignersAsync(Document doc)
+    {
+        var ids = new List<Guid>();
+        if (Guid.TryParse(doc.CreatedBy, out var cId)) ids.Add(cId);
+        if (Guid.TryParse(doc.UpdatedBy, out var uId) && uId != ids.FirstOrDefault()) ids.Add(uId);
+        if (ids.Count == 0) return new();
+
+        var users = await _db.Users.AsNoTracking()
+            .Where(u => ids.Contains(u.Id))
+            .Select(u => new { u.Id, u.FullName, u.SignatureImageBase64, u.SignatureName, u.SignatureTitle })
+            .ToListAsync();
+
+        var byId = users.ToDictionary(u => u.Id);
+        var signers = new List<DocumentSigner>();
+        foreach (var id in ids)
+        {
+            if (!byId.TryGetValue(id, out var u)) continue;
+            string? dataUri = null;
+            byte[]? bytes = null;
+            var raw = u.SignatureImageBase64?.Trim();
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                // Already a data URI? keep as-is for HTML. Otherwise wrap.
+                dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? raw : "data:image/png;base64," + raw;
+                bytes = TryDecodeBase64Image(raw);
+            }
+            signers.Add(new DocumentSigner(dataUri, bytes,
+                !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName,
+                u.SignatureTitle));
+        }
+        return signers;
+    }
+
+    /// <summary>Decode a (possibly data-URI-prefixed) base64 PNG/JPG to raw
+    /// bytes for QuestPDF. Returns null on any failure (so a malformed image
+    /// just falls back to the blank signature line).</summary>
+    private static byte[]? TryDecodeBase64Image(string s)
+    {
+        try
+        {
+            var b64 = s;
+            var comma = b64.IndexOf(',');
+            if (b64.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && comma > 0)
+                b64 = b64[(comma + 1)..];
+            return Convert.FromBase64String(b64);
+        }
+        catch { return null; }
+    }
+
+    private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
+        DocumentTemplate template, string? watermark, string? langOverride,
+        IReadOnlyList<DocumentSigner>? signers = null)
     {
         var lang = langOverride ?? template.Language;
         var sb = new StringBuilder();
@@ -361,13 +433,31 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
             sb.AppendLine($"<div class='terms-conditions'><strong>เงื่อนไข:</strong><br/>{doc.CustomTermsAndConditions}</div>");
 
-        // Signatures
+        // Signatures — slot[0] = creator, slot[1] = approver. Each slot
+        // overlays the user's saved signature image on the line and prints
+        // their display name + title below the role label, so a fully approved
+        // document prints REAL signatures (matches the e-Tax export). Missing
+        // images degrade to a blank line + label.
         if (template.ShowSignature)
         {
             sb.AppendLine("<div class='signatures'>");
-            if (template.SignatureLabel1 != null) sb.AppendLine($"<div class='sig-box'><div class='sig-line'></div><div>{template.SignatureLabel1}</div></div>");
-            if (template.SignatureLabel2 != null) sb.AppendLine($"<div class='sig-box'><div class='sig-line'></div><div>{template.SignatureLabel2}</div></div>");
-            if (template.SignatureCount >= 3 && template.SignatureLabel3 != null) sb.AppendLine($"<div class='sig-box'><div class='sig-line'></div><div>{template.SignatureLabel3}</div></div>");
+            DocumentSigner? sigAt(int i) => signers != null && i < signers.Count ? signers[i] : null;
+            void Box(string roleLabel, DocumentSigner? s)
+            {
+                sb.Append("<div class='sig-box'>");
+                if (s?.SignatureImageDataUri != null)
+                    sb.Append($"<img class='sig-img' src='{s.SignatureImageDataUri}' alt='signature'/>");
+                sb.Append("<div class='sig-line'></div>");
+                sb.Append($"<div class='sig-role'>{WebUtility.HtmlEncode(roleLabel)}</div>");
+                if (s != null && !string.IsNullOrWhiteSpace(s.Name))
+                    sb.Append($"<div class='sig-name'>{WebUtility.HtmlEncode(s.Name!)}</div>");
+                if (s != null && !string.IsNullOrWhiteSpace(s.Title))
+                    sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(s.Title!)}</div>");
+                sb.AppendLine("</div>");
+            }
+            if (template.SignatureLabel1 != null) Box(template.SignatureLabel1, sigAt(0));
+            if (template.SignatureLabel2 != null) Box(template.SignatureLabel2, sigAt(1));
+            if (template.SignatureCount >= 3 && template.SignatureLabel3 != null) Box(template.SignatureLabel3, sigAt(2));
             sb.AppendLine("</div>");
         }
 
@@ -863,10 +953,16 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             .terms-conditions {{ font-size: 12px; color: #555; margin: 12px 0; padding-top: 8px; border-top: 1px solid #eee; }}
             .cert-section {{ margin-top: 16px; }}
 
-            /* Signatures — evenly spaced, breathing room above */
+            /* Signatures — evenly spaced, breathing room above. The image
+               overlays the line via negative margin so a real signature
+               appears to be written ON the line. */
             .signatures {{ display: flex; justify-content: space-around; gap: 24px; margin-top: 48px; }}
-            .sig-box {{ text-align: center; flex: 1 1 0; max-width: 32%; }}
-            .sig-line {{ border-bottom: 1px solid #333; height: 44px; margin-bottom: 6px; }}
+            .sig-box {{ text-align: center; flex: 1 1 0; max-width: 32%; position: relative; }}
+            .sig-img {{ display: block; max-height: 48px; max-width: 80%; margin: 0 auto -12px; object-fit: contain; }}
+            .sig-line {{ border-bottom: 1px solid #333; height: 28px; margin-bottom: 6px; }}
+            .sig-role {{ font-size: 12px; color: #555; }}
+            .sig-name {{ font-size: 13px; font-weight: 600; margin-top: 2px; }}
+            .sig-title {{ font-size: 11px; color: #666; }}
         ";
     }
 
