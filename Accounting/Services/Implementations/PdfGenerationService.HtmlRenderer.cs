@@ -17,13 +17,20 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public partial class PdfGenerationService
 {
-    private static byte[] RenderBlocksWithQuestPdf(List<HtmlBlock> blocks)
+    private static byte[] RenderBlocksWithQuestPdf(List<HtmlBlock> blocks, PdfBranding? branding = null)
     {
         // Register Loma/Sarabun (same Thai fonts the e-Tax PDF/A-3 export uses).
         EnsureThaiFontsRegistered();
 
         if (blocks.Count == 0)
             blocks.Add(new HtmlBlock(HtmlBlockType.Text, "(ไม่มีเนื้อหา)"));
+
+        // Kept as hex strings (QuestPDF implicitly converts string → Color);
+        // mixing a Colors.* Color value here would break the ?? type unify.
+        string accent = branding?.AccentColor ?? "#222222";
+        string headerBg = branding?.TableHeaderBg ?? "#4472C4";
+        string headerText = branding?.TableHeaderText ?? "#FFFFFF";
+        var watermark = branding?.WatermarkText;
 
         var pdf = QuestPDF.Fluent.Document.Create(container =>
         {
@@ -34,6 +41,13 @@ public partial class PdfGenerationService
                 page.PageColor(Colors.White);
                 page.DefaultTextStyle(t => t.FontFamily(GetFontFamilyChain()).FontSize(10));
 
+                // Faint centred watermark behind the content when configured.
+                if (!string.IsNullOrWhiteSpace(watermark))
+                {
+                    page.Background().AlignCenter().AlignMiddle()
+                        .Text(watermark).FontSize(72).FontColor(Colors.Grey.Lighten3).Bold();
+                }
+
                 page.Content().Column(col =>
                 {
                     foreach (var block in blocks)
@@ -42,11 +56,11 @@ public partial class PdfGenerationService
                         {
                             case HtmlBlockType.Title:
                                 col.Item().PaddingBottom(6).AlignCenter()
-                                    .Text(block.Text).FontSize(16).Bold();
+                                    .Text(block.Text).FontSize(16).Bold().FontColor(accent);
                                 break;
 
                             case HtmlBlockType.Header:
-                                col.Item().PaddingTop(6).Text(block.Text).FontSize(12).Bold();
+                                col.Item().PaddingTop(6).Text(block.Text).FontSize(12).Bold().FontColor(accent);
                                 break;
 
                             case HtmlBlockType.BoldText:
@@ -61,11 +75,11 @@ public partial class PdfGenerationService
                             {
                                 var cells = block.Cells ?? Array.Empty<string>();
                                 if (cells.Length == 0) break;
-                                col.Item().Background(Colors.Grey.Lighten2).Padding(3).Row(r =>
+                                col.Item().Background(headerBg).Padding(3).Row(r =>
                                 {
                                     for (int i = 0; i < cells.Length; i++)
                                         r.RelativeItem(ColWeight(block.ColWidths, i))
-                                            .Text(cells[i]).FontSize(9).Bold();
+                                            .Text(cells[i]).FontSize(9).Bold().FontColor(headerText);
                                 });
                                 break;
                             }

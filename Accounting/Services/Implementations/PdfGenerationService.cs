@@ -660,8 +660,36 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         // QuestPDF embeds the registered Thai fonts (the same path the
         // e-Tax PDF/A-3 export already uses successfully).
         var blocks = ParseHtmlToBlocks(html);
-        return RenderBlocksWithQuestPdf(blocks);
+        // Thread the template's branding into the QuestPDF renderer so the
+        // downloaded PDF honours the configured accent colour, table-header
+        // colours and watermark — previously QuestPDF re-rendered the parsed
+        // text with hardcoded styling, so the PDF ignored the settings the
+        // browser print preview applied (the "PDF ไม่ตรงกับที่ตั้งค่า" gap).
+        var branding = template == null ? null : new PdfBranding(
+            AccentColor: SanitizeHex(template.AccentColor),
+            PrimaryColor: SanitizeHex(template.PrimaryColor),
+            TableHeaderBg: SanitizeHex(template.TableHeaderColor) ?? "#4472C4",
+            TableHeaderText: SanitizeHex(template.TableHeaderTextColor) ?? "#FFFFFF",
+            WatermarkText: template.ShowWatermark ? template.WatermarkText : null);
+        return RenderBlocksWithQuestPdf(blocks, branding);
     }
+
+    /// <summary>Normalise a hex colour to "#RRGGBB" or return null when it
+    /// isn't a valid 6-digit hex (so QuestPDF never throws on bad input).</summary>
+    internal static string? SanitizeHex(string? color)
+    {
+        if (string.IsNullOrWhiteSpace(color)) return null;
+        var c = color.Trim();
+        if (c[0] != '#') c = "#" + c;
+        return Regex.IsMatch(c, "^#[0-9A-Fa-f]{6}$") ? c.ToUpperInvariant() : null;
+    }
+
+    /// <summary>Minimal branding passed to the QuestPDF renderer — only
+    /// primitives, so the renderer partial avoids importing the entities
+    /// namespace (which clashes with QuestPDF's own Document type).</summary>
+    internal record PdfBranding(
+        string? AccentColor, string? PrimaryColor,
+        string? TableHeaderBg, string? TableHeaderText, string? WatermarkText);
 
     private enum HtmlBlockType { Title, Header, Text, BoldText, TableHeader, TableRow, Separator, Space }
 
