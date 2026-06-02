@@ -3033,6 +3033,65 @@ public class OcrService : IOcrService
             CreatedBy = createdBy
         };
 
+        // Build document lines from the persisted extracted items (the same
+        // data AutoCreateDocumentAsync uses). Without this the document was
+        // created with a header but ZERO lines, so it opened completely empty
+        // in the editor — the user couldn't see what was scanned.
+        var items = new List<OcrExtractedLineItem>();
+        if (!string.IsNullOrWhiteSpace(result.ExtractedItemsJson))
+        {
+            try
+            {
+                items = System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson) ?? new();
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "OCR ExtractedItemsJson parse failed for scan {ScanId}", result.Id);
+            }
+        }
+
+        if (items.Count > 0)
+        {
+            int lineOrder = 1;
+            foreach (var item in items)
+            {
+                Guid? lineAccountId = null;
+                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
+                {
+                    var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
+                    lineAccountId = lineAccount?.Id;
+                }
+                document.Lines.Add(new DocumentLine
+                {
+                    LineOrder = lineOrder++,
+                    Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
+                    Quantity = item.Quantity ?? 1,
+                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    Amount = item.Amount ?? 0,
+                    VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                    AccountId = lineAccountId,
+                    ProjectId = item.ProjectId,
+                });
+            }
+        }
+        else
+        {
+            // No itemised lines were extracted — fall back to a single summary
+            // line from the header totals so the document still has content.
+            document.Lines.Add(new DocumentLine
+            {
+                LineOrder = 1,
+                Description = result.DocumentType ?? "รายการจาก OCR",
+                Quantity = 1,
+                UnitPrice = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                Amount = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                VatAmount = result.ExtractedVatAmount ?? 0,
+            });
+        }
+
         _db.Documents.Add(document);
 
         result.CreatedDocumentId = document.Id;

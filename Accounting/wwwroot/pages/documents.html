@@ -1382,6 +1382,21 @@
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
+          // OCR-sourced (or otherwise free-text) documents carry plain
+          // descriptions, not catalog products. Strict "เฉพาะสินค้าในระบบ"
+          // mode would block saving every such row, so unlock it for THIS
+          // edit session only (we don't persist to localStorage — manual
+          // data entry keeps its own default).
+          const strictCb = document.getElementById('fStrictProducts');
+          if (strictCb) {
+            const isOcrDoc = (d.notes || '').includes('OCR scan');
+            const hasFreeText = (d.lines || []).some(l => !l.productCode && (l.description || '').trim());
+            if (isOcrDoc || hasFreeText) {
+              strictCb.checked = false;
+              const hint = document.getElementById('linesHint');
+              if (hint) hint.innerHTML = '💡 เอกสารนี้มาจาก OCR/กรอกอิสระ — ปลดล็อกโหมด "เฉพาะสินค้าในระบบ" ให้แล้ว แก้ไขรายละเอียดได้อิสระ';
+            }
+          }
           // Reset email-template watermarks so the auto-template re-applies if
           // the user enables "send email" on this Edit session.
           this._lastAutoSubject = '';

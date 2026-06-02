@@ -75,7 +75,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             {
                 var accessToken = context.Request.Query["access_token"];
                 var path = context.HttpContext.Request.Path;
-                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                // SignalR hubs can't set the Authorization header, and neither
+                // can a browser embedding/opening a file URL directly
+                // (<img>/<iframe>/new tab) — the JWT lives in localStorage, not
+                // a cookie. Accept the token from the query string for those two
+                // cases only, so the OCR document-image endpoint stays behind
+                // [Authorize] but is still viewable inline.
+                var isOcrImage = path.HasValue
+                    && path.Value.Contains("/ocr/", StringComparison.OrdinalIgnoreCase)
+                    && path.Value.EndsWith("/image", StringComparison.OrdinalIgnoreCase);
+                if (!string.IsNullOrEmpty(accessToken)
+                    && (path.StartsWithSegments("/hubs") || isOcrImage))
                 {
                     context.Token = accessToken;
                 }

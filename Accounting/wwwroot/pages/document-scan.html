@@ -1452,7 +1452,11 @@
           // a plain <img>. Both also expose an "เปิดไฟล์เต็ม" link so
           // the user can pop it out in a new tab for a fuller view.
           const cid = Layout.getCompanyId();
-          const fileUrl = `/api/companies/${cid}/ocr/${scan.id}/image`;
+          // The image endpoint sits behind [Authorize] but the browser can't
+          // attach the localStorage JWT to <img>/<iframe>/new-tab requests, so
+          // pass it as access_token (the server accepts it for /ocr/.../image).
+          const _tok = encodeURIComponent(localStorage.getItem('token') || '');
+          const fileUrl = `/api/companies/${cid}/ocr/${scan.id}/image?access_token=${_tok}`;
           const fname = (scan.originalFileName || '').toLowerCase();
           const isImage = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(fname);
           const isPdf = /\.pdf$/i.test(fname);
