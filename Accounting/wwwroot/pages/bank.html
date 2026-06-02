@@ -1024,20 +1024,43 @@
         const toStr = Layout.toDateInput(to);
         const btn = document.getElementById('btnBulkAi');
         btn.disabled = true; btn.textContent = '🧠 AI กำลังคิด ทั้งเดือน...';
+        // Visible status so the user always knows what happened (the modal alone
+        // can be missed; an error/empty response must never fail silently).
+        const statusBox = document.getElementById('aiMatchStatus');
+        const statusText = document.getElementById('aiStatusText');
+        const statusDetail = document.getElementById('aiStatusDetail');
+        if (statusBox) statusBox.style.display = '';
+        if (statusText) statusText.textContent = `🧠 AI กำลังกระทบยอด ${fromStr} → ${toStr} (อาจใช้เวลาถึง ~1 นาที)...`;
+        if (statusDetail) statusDetail.textContent = '';
         try {
           const accId = this.selectedAccount.id;
           const cid = Layout.getCompanyId();
           const r = await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match?fromDate=${fromStr}&toDate=${toStr}`, {});
-          this.bulkPlan = r.data;
           btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
+          // Defensive: rate-limit / not-ready paths return {success:false,data:null}
+          // WITHOUT throwing, so guard before touching plan fields.
+          if (!r || !r.data) {
+            const m = (r && r.message) ? r.message : 'AI ไม่ตอบกลับ — อาจถูกจำกัดอัตรา (rate limit) หรือ provider ไม่พร้อม ลองใหม่อีกครั้ง';
+            if (statusText) statusText.textContent = '⚠️ ไม่สำเร็จ';
+            if (statusDetail) statusDetail.textContent = m;
+            Layout.toast(m, 'error');
+            return;
+          }
+          this.bulkPlan = r.data;
+          if (statusText) statusText.textContent = '✓ วิเคราะห์เสร็จ — ดูผลในหน้าต่างที่เปิดขึ้น';
+          if (statusDetail) statusDetail.textContent = r.message || '';
           this.renderBulkPlan(r.data, r.message);
         } catch (e) {
           btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
-          Layout.toast(e.message, 'error');
+          const m = e?.message || 'เกิดข้อผิดพลาดในการเรียก AI';
+          if (statusText) statusText.textContent = '⚠️ เกิดข้อผิดพลาด';
+          if (statusDetail) statusDetail.textContent = m;
+          Layout.toast(m, 'error');
         }
       },
 
       renderBulkPlan(plan, message) {
+        if (!plan) { Layout.toast(message || 'ไม่มีผลลัพธ์จาก AI', 'error'); return; }
         let modal = document.getElementById('bulkAiPlanModal');
         if (!modal) {
           modal = document.createElement('div');

@@ -185,6 +185,11 @@ Strict JSON output (NO prose outside JSON):
             SourceEntityId = bankAccountId,
             CacheTtlOverrideDays = 0,        // never cache — state changes daily
             BypassCache = true,
+            // Bulk cross-matching is beyond the local heuristic model — always
+            // use the configured provider (DeepSeek). Without this the
+            // orchestrator fell back to the local model, which returned
+            // "Provider timeout after 10s" / no usable matches.
+            ForceProviderCall = true,
             MaxTokensOverride = 4000,         // bulk response can be long
             // DeepSeek with a ~150-txn + ~240-candidate prompt commonly takes
             // 20-40s. The provider-wide default (8s) was guaranteed to time
