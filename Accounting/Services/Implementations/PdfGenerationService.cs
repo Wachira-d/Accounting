@@ -151,10 +151,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         var lang = langOverride ?? template.Language;
         var sb = new StringBuilder();
 
+        var layout = SanitizeLayout(template.LayoutStyle);
         sb.AppendLine("<!DOCTYPE html><html><head>");
         sb.AppendLine($"<meta charset='utf-8'/>");
-        sb.AppendLine($"<style>{BuildCss(template)}</style>");
-        sb.AppendLine("</head><body>");
+        sb.AppendLine($"<style>{BuildCss(template)}{BuildLayoutCss(layout, template)}</style>");
+        sb.AppendLine($"</head><body class='layout-{layout}'>");
 
         // Watermark
         if (template.ShowWatermark || watermark != null)
@@ -611,6 +612,80 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     }
 
     // ===== CSS Builder =====
+
+    private static readonly HashSet<string> KnownLayouts = new(StringComparer.OrdinalIgnoreCase)
+        { "Classic", "ModernLeft", "BannerHeader", "Compact", "Minimal", "CenteredFormal" };
+
+    /// <summary>Whitelist the layout name to a safe CSS-class token; unknown
+    /// values fall back to Classic so a bad value can never break the page.</summary>
+    private static string SanitizeLayout(string? style)
+        => !string.IsNullOrWhiteSpace(style) && KnownLayouts.Contains(style.Trim())
+            ? style.Trim() : "Classic";
+
+    /// <summary>
+    /// Layout-specific CSS layered on top of BuildCss. Each layout re-arranges
+    /// the SAME content blocks (header / title / doc-info / contact / table /
+    /// summary / signatures) into a distinct look — banner header, modern
+    /// left-accent, compact, minimal, centred-formal — via class-scoped rules.
+    /// Classic adds nothing (the base CSS already is the classic look).
+    /// </summary>
+    private static string BuildLayoutCss(string layout, DocumentTemplate t)
+    {
+        var accent = t.AccentColor;
+        switch (layout)
+        {
+            case "ModernLeft":
+                return $@"
+                    body.layout-ModernLeft .doc-title {{ text-align:left; border-bottom:none; border-left:6px solid {accent}; padding:2px 0 2px 12px; margin:14px 0; }}
+                    body.layout-ModernLeft .doc-info {{ justify-content:flex-start; }}
+                    body.layout-ModernLeft .contact-section {{ border:none; border-left:4px solid {accent}; border-radius:0; background:#f8fafc; }}
+                    body.layout-ModernLeft .header {{ border-bottom:2px solid {accent}; padding-bottom:8px; }}
+                    body.layout-ModernLeft .summary {{ background:#f8fafc; padding:10px 14px; border-radius:6px; }}
+                ";
+            case "BannerHeader":
+                return $@"
+                    body.layout-BannerHeader .header {{ background:{accent}; color:#fff; padding:16px 18px; border-radius:8px; align-items:center; }}
+                    body.layout-BannerHeader .company-name, body.layout-BannerHeader .company-name-en {{ color:#fff; }}
+                    body.layout-BannerHeader .doc-title {{ text-align:center; color:{accent}; border:none; letter-spacing:1px; }}
+                    body.layout-BannerHeader .doc-info {{ justify-content:center; gap:28px; background:#f1f5f9; padding:8px; border-radius:6px; }}
+                    body.layout-BannerHeader .contact-section {{ border-radius:8px; }}
+                ";
+            case "Compact":
+                return @"
+                    body.layout-Compact { font-size:12px; }
+                    body.layout-Compact .header { margin-bottom:6px; }
+                    body.layout-Compact .doc-title { font-size:18px; margin:8px 0; padding-bottom:3px; }
+                    body.layout-Compact .company-name { font-size:16px; }
+                    body.layout-Compact .contact-section { padding:6px; margin-bottom:8px; }
+                    body.layout-Compact .items-table th { padding:4px; font-size:11px; }
+                    body.layout-Compact .items-table td { padding:3px 4px; font-size:11px; }
+                    body.layout-Compact .sum-row { padding:2px 0; }
+                    body.layout-Compact .signatures { margin-top:24px; }
+                ";
+            case "Minimal":
+                return $@"
+                    body.layout-Minimal .header {{ border:none; background:none; }}
+                    body.layout-Minimal .doc-title {{ text-align:left; border:none; font-weight:600; text-transform:uppercase; letter-spacing:3px; font-size:20px; color:#111; }}
+                    body.layout-Minimal .contact-section {{ border:none; padding:0; margin:8px 0 18px; }}
+                    body.layout-Minimal .doc-info {{ gap:24px; color:#555; }}
+                    body.layout-Minimal .items-table th {{ background:none !important; color:#111 !important; border-bottom:2px solid #111; }}
+                    body.layout-Minimal .items-table td {{ border:none; border-bottom:1px solid #eee; }}
+                    body.layout-Minimal .sum-row.total {{ border-top:1px solid #111; border-bottom:none; color:#111; }}
+                ";
+            case "CenteredFormal":
+                return $@"
+                    body.layout-CenteredFormal .header {{ flex-direction:column; align-items:center; text-align:center; }}
+                    body.layout-CenteredFormal .logo {{ margin:0 0 8px 0; }}
+                    body.layout-CenteredFormal .company-info {{ text-align:center; }}
+                    body.layout-CenteredFormal .doc-title {{ text-align:center; border-top:3px double {accent}; border-bottom:3px double {accent}; padding:6px 0; letter-spacing:2px; }}
+                    body.layout-CenteredFormal .doc-info {{ justify-content:center; gap:30px; }}
+                    body.layout-CenteredFormal .contact-section {{ text-align:center; border:none; }}
+                    body.layout-CenteredFormal .signatures {{ justify-content:center; gap:60px; }}
+                ";
+            default:
+                return ""; // Classic
+        }
+    }
 
     private static string BuildCss(DocumentTemplate t)
     {

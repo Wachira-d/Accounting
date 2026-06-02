@@ -1528,6 +1528,10 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentAccountId" uuid NULL;
             """,
 
+            // Document template layout style — the chosen structural look.
+            """
+            ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "LayoutStyle" varchar(40) NOT NULL DEFAULT 'Classic';
+            """,
             // ===== OcrScanResults: duplicate detection fields =====
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "FileHash" varchar(64) NULL;

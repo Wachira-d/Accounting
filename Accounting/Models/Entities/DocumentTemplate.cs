@@ -100,6 +100,11 @@ public class DocumentTemplate : TenantEntity
     public decimal WatermarkOpacity { get; set; } = 0.15m;
 
     // ===== Font & Style =====
+    /// <summary>Overall layout/structure of the document — controls the
+    /// arrangement of header, title, doc-info and contact blocks (not just
+    /// colours). One of: Classic, ModernLeft, BannerHeader, Compact, Minimal,
+    /// CenteredFormal. Drives both the HTML view and the print layout.</summary>
+    public string LayoutStyle { get; set; } = "Classic";
     public string FontFamily { get; set; } = "THSarabunNew"; // THSarabunNew, Prompt, NotoSansThai
     public string BodyFontSize { get; set; } = "14";
     public string PrimaryColor { get; set; } = "#333333";
