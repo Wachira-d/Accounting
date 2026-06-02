@@ -2952,7 +2952,7 @@ public class OcrService : IOcrService
             (int)Math.Ceiling(totalCount / (double)request.PageSize));
     }
 
-    public async Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy)
+    public async Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -2964,10 +2964,18 @@ public class OcrService : IOcrService
         if (result.CreatedDocumentId.HasValue)
             throw new InvalidOperationException("A document has already been created from this scan.");
 
-        // Prefer the inferred TargetDocumentType (what the role inferrer
-        // decided we should book) over the scanned paper type.
+        // Document type precedence: explicit caller override (the user's live
+        // dropdown pick in the review modal) → persisted inferred
+        // TargetDocumentType → fallback mapping off the scanned paper type.
         DocumentType docType;
-        if (!string.IsNullOrEmpty(result.TargetDocumentType)
+        if (!string.IsNullOrWhiteSpace(targetTypeOverride)
+            && Enum.TryParse<DocumentType>(targetTypeOverride, ignoreCase: true, out var overrideTarget))
+        {
+            docType = overrideTarget;
+            // Persist the user's choice so re-opening the scan reflects it.
+            result.TargetDocumentType = overrideTarget.ToString();
+        }
+        else if (!string.IsNullOrEmpty(result.TargetDocumentType)
             && Enum.TryParse<DocumentType>(result.TargetDocumentType, ignoreCase: true, out var inferredTarget))
         {
             docType = inferredTarget;
@@ -3011,6 +3019,15 @@ public class OcrService : IOcrService
         if (!contactId.HasValue)
             throw new InvalidOperationException("Cannot create document: no contact could be resolved from OCR data.");
 
+        // Due date from the OCR-read credit terms (doc date + Net N). PaymentDate
+        // is only meaningful for a payment voucher (we scanned a paid receipt) —
+        // the cash actually moved on the document date.
+        var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
+        DateTime? dueDate = result.PaymentTermsDays.HasValue
+            ? docDate.AddDays(result.PaymentTermsDays.Value)
+            : null;
+        DateTime? paymentDate = docType == DocumentType.PaymentVoucher ? docDate : null;
+
         // Transaction holds the per-tenant advisory lock for the duration
         // of the sequence-number assignment + insert, so concurrent OCR
         // creations don't collide.
@@ -3022,7 +3039,9 @@ public class OcrService : IOcrService
             DocumentNumber = docNumber,
             DocumentType = docType,
             Status = DocumentStatus.Draft,
-            DocumentDate = result.ExtractedDate ?? DateTime.UtcNow.Date,
+            DocumentDate = docDate,
+            DueDate = dueDate,
+            PaymentDate = paymentDate,
             ContactId = contactId.Value,
             SubTotal = result.ExtractedSubTotal ?? 0,
             VatAmount = result.ExtractedVatAmount ?? 0,
@@ -3354,6 +3373,12 @@ public class OcrService : IOcrService
             expenseAccountId = account?.Id;
         }
 
+        var autoDocDate = scan.ExtractedDate ?? DateTime.UtcNow.Date;
+        DateTime? autoDueDate = scan.PaymentTermsDays.HasValue
+            ? autoDocDate.AddDays(scan.PaymentTermsDays.Value)
+            : null;
+        DateTime? autoPaymentDate = docType == DocumentType.PaymentVoucher ? autoDocDate : null;
+
         await using var txn = await _db.Database.BeginTransactionAsync();
         var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
         var document = new Document
@@ -3362,7 +3387,9 @@ public class OcrService : IOcrService
             DocumentNumber = docNumber,
             DocumentType = docType,
             Status = DocumentStatus.Draft,
-            DocumentDate = scan.ExtractedDate ?? DateTime.UtcNow.Date,
+            DocumentDate = autoDocDate,
+            DueDate = autoDueDate,
+            PaymentDate = autoPaymentDate,
             ContactId = scan.MatchedContactId!.Value,
             SubTotal = scan.ExtractedSubTotal ?? 0,
             VatAmount = scan.ExtractedVatAmount ?? 0,

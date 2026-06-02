@@ -178,8 +178,10 @@ public class OcrController : ControllerBase
         => Ok(new ApiResponse<PagedResponse<OcrResultResponse>>(true, await _service.GetResultsAsync(companyId, status, new PagedRequest(page, pageSize))));
 
     [HttpPost("{scanId:guid}/create-document")]
-    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<OcrResultResponse>(true, await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "")));
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(
+        Guid companyId, Guid scanId, [FromQuery] string? targetType = null)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "", targetType)));
 
     /// <summary>Rebuild an OCR-created document's lines from the original scan
     /// when it was created empty. Looked up by documentId (the document edit

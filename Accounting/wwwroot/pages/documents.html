@@ -661,14 +661,33 @@
         // Wait a tick for openCreate's DOM mutations to settle.
         await new Promise(r => setTimeout(r, 30));
 
-        // Target document type (the inferrer's suggestion).
+        // Target document type (the inferrer's suggestion). Fire
+        // onDocTypeChange so type-specific fields (expense category, cert /
+        // payment-voucher blocks, AR-only widgets) render for the chosen type
+        // before we fill them.
         const dtSel = document.getElementById('fDocType');
         if (payload.documentType && dtSel) {
           const opt = [...dtSel.options].find(o => o.value === payload.documentType);
-          if (opt) dtSel.value = payload.documentType;
+          if (opt) { dtSel.value = payload.documentType; this.onDocTypeChange(); }
         }
         if (payload.documentDate) {
           try { document.getElementById('fDate').value = Layout.dateInput(payload.documentDate); } catch (e) {}
+        }
+        // Due date — from the OCR-derived credit terms (documentDate + Net N).
+        // Fall back to computing it here if the handoff only carried the term.
+        const dueEl = document.getElementById('fDueDate');
+        if (dueEl) {
+          if (payload.dueDate) {
+            try { dueEl.value = Layout.dateInput(payload.dueDate); } catch (e) {}
+          } else if (payload.documentDate && payload.paymentTermsDays) {
+            const d = new Date(payload.documentDate);
+            if (!isNaN(d.getTime())) { d.setDate(d.getDate() + payload.paymentTermsDays); dueEl.value = Layout.toDateInput(d); }
+          }
+        }
+        // Payment date (ใบสำคัญจ่าย) — when the scanned paper was a paid receipt.
+        const payEl = document.getElementById('fPaymentDate');
+        if (payEl && payload.paymentDate) {
+          try { payEl.value = Layout.dateInput(payload.paymentDate); } catch (e) {}
         }
         if (payload.reference) document.getElementById('fRef').value = payload.reference;
         if (payload.notes) document.getElementById('fNotes').value = payload.notes;
