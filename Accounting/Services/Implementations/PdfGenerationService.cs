@@ -239,7 +239,17 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine("<div class='company-info'>");
         if (template.ShowCompanyName) sb.AppendLine($"<div class='company-name'>{company.Name}</div>");
         if (template.ShowCompanyNameEn && company.NameEn != null) sb.AppendLine($"<div class='company-name-en'>{company.NameEn}</div>");
-        if (template.ShowCompanyAddress && company.Address != null) sb.AppendLine($"<div>{company.Address} {company.SubDistrict} {company.District} {company.Province} {company.PostalCode}</div>");
+        if (template.ShowCompanyAddress)
+        {
+            // Address is the free-text fallback and usually already includes
+            // tambon/district/province inline — concat'ing the structured
+            // fields on top would duplicate them in the preview/print HTML.
+            var fullAddr = !string.IsNullOrWhiteSpace(company.Address)
+                ? company.Address
+                : string.Join(" ", new[] { company.SubDistrict, company.District, company.Province, company.PostalCode }
+                    .Where(s => !string.IsNullOrWhiteSpace(s)));
+            if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{fullAddr}</div>");
+        }
         if (template.ShowCompanyTaxId) sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}</div>");
         if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>โทร: {company.Phone}</div>");
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");

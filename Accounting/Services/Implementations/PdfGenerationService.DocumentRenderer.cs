@@ -112,14 +112,20 @@ public partial class PdfGenerationService
         switch (layout)
         {
             case "BannerHeader":
-                // Full-width colored band: logo + company on left, big title on right.
-                col.Item().Background(headerBg).Padding(14).Row(r =>
+                // Full-width colored band: logo + company info on TOP row,
+                // big title CENTERED below on a second row inside the same
+                // banner — title gets the full page width so long Thai
+                // labels never wrap mid-character.
+                col.Item().Background(headerBg).Padding(14).Column(bc =>
                 {
-                    if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().Column(c => RenderCompanyLines(c, company, template, headerText));
-                    r.ConstantItem(170).AlignRight().AlignMiddle()
-                        .Text(titleText).FontSize(titleFontSize + 4).Bold().FontColor(headerText);
+                    bc.Item().Row(r =>
+                    {
+                        if (b.LogoBytes is { Length: > 0 })
+                            try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
+                    });
+                    bc.Item().PaddingTop(10).AlignCenter()
+                        .Text(titleText).FontSize(titleFontSize + 2).Bold().FontColor(headerText);
                 });
                 ComposeDocInfo(col, doc, template, accent, alignRight: true);
                 break;
@@ -127,12 +133,12 @@ public partial class PdfGenerationService
             case "BoldHeader":
                 // Oversized title on a colored bar at the very top.
                 col.Item().Background(accent).Padding(14)
-                    .Text(titleText).FontSize(titleFontSize + 8).Bold().FontColor(headerText);
+                    .Text(titleText).FontSize(titleFontSize + 4).Bold().FontColor(headerText);
                 col.Item().PaddingTop(10).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Grey.Lighten1);
                 ComposeDocInfo(col, doc, template, accent, alignRight: false);
@@ -171,7 +177,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(12).BorderLeft(6).BorderColor(accent).PaddingLeft(10)
                     .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
@@ -183,7 +189,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().Column(c => RenderCompanyLines(c, company, template, headerText));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
                 });
                 col.Item().PaddingTop(10).Background("#F1F5F9").BorderLeft(6).BorderColor(accent)
                     .PaddingVertical(8).PaddingHorizontal(12)
@@ -196,7 +202,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(10).Row(r =>
                 {
@@ -220,7 +226,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(layout == "Compact" ? 6 : 14)
                     .Text(titleText).FontSize(titleFontSize)
@@ -235,7 +241,7 @@ public partial class PdfGenerationService
                 {
                     if (b.LogoBytes is { Length: > 0 })
                         try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(12).AlignCenter().Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
                 col.Item().PaddingBottom(4).BorderBottom(2).BorderColor(accent);
@@ -257,8 +263,14 @@ public partial class PdfGenerationService
         if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(co.NameEn)) Line(co.NameEn!, 11);
         if (t.ShowCompanyAddress)
         {
-            var addr = string.Join(" ", new[] { co.Address, co.SubDistrict, co.District, co.Province, co.PostalCode }
-                .Where(s => !string.IsNullOrWhiteSpace(s)));
+            // Address is "free-text fallback / display" (entity comment) so when
+            // present it already contains tambon/district/province inline —
+            // concatenating the structured fields on top duplicates them. Only
+            // build the address from structured fields when Address is empty.
+            var addr = !string.IsNullOrWhiteSpace(co.Address)
+                ? co.Address!
+                : string.Join(" ", new[] { co.SubDistrict, co.District, co.Province, co.PostalCode }
+                    .Where(s => !string.IsNullOrWhiteSpace(s)));
             if (!string.IsNullOrWhiteSpace(addr)) Line(addr);
         }
         if (t.ShowCompanyTaxId && !string.IsNullOrWhiteSpace(co.TaxId))
@@ -302,8 +314,13 @@ public partial class PdfGenerationService
                 cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}").FontSize(10);
             if (t.ShowContactAddress)
             {
-                var addr = string.Join(" ", new[] { c.Address, c.SubDistrict, c.District, c.Province, c.PostalCode }
-                    .Where(s => !string.IsNullOrWhiteSpace(s)));
+                // Same dedup logic as the company header — Contact.Address already
+                // contains tambon/district/province inline when set, so don't
+                // append the structured fields on top of it.
+                var addr = !string.IsNullOrWhiteSpace(c.Address)
+                    ? c.Address!
+                    : string.Join(" ", new[] { c.SubDistrict, c.District, c.Province, c.PostalCode }
+                        .Where(s => !string.IsNullOrWhiteSpace(s)));
                 if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(10);
             }
             if (t.ShowContactPhone && !string.IsNullOrWhiteSpace(c.Phone))
