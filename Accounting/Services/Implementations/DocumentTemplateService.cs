@@ -40,6 +40,21 @@ public class DocumentTemplateService : IDocumentTemplateService
         return MapToResponse(template);
     }
 
+    public DocumentTemplate BuildTransient(Guid companyId, CreateDocumentTemplateRequest request)
+    {
+        var template = new DocumentTemplate
+        {
+            CompanyId = companyId,
+            Name = string.IsNullOrWhiteSpace(request.Name) ? "Preview" : request.Name,
+            LayoutStyle = request.LayoutStyle ?? "Classic",
+            Description = request.Description,
+            DocumentType = request.DocumentType,
+            IsDefault = request.IsDefault,
+        };
+        ApplyRequestToTemplate(template, request);   // entity defaults preserved for unsent fields
+        return template;
+    }
+
     public async Task<DocumentTemplateResponse> GetByIdAsync(Guid companyId, Guid templateId)
     {
         var template = await _db.DocumentTemplates
