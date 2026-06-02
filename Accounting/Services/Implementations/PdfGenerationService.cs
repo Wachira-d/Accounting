@@ -778,7 +778,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                 // full-width colored banner — reorders the page via flex order.
                 return $@"
                     .layout-BoldHeader {{ display:flex; flex-direction:column; }}
-                    .layout-BoldHeader .doc-title {{ order:-2; text-align:left; background:{accent}; color:#fff; border:none; border-radius:10px; padding:16px 20px; margin:0 0 14px; letter-spacing:1px; font-size:30px; }}
+                    .layout-BoldHeader .doc-title {{ order:-2; text-align:left; background:{accent}; color:#fff; border:none; border-radius:10px; padding:16px 20px; margin:0 0 14px; letter-spacing:1px; font-size:{t.TitleFontSize}px; }}
                     .layout-BoldHeader .header {{ order:-1; border-bottom:2px solid #e5e7eb; padding-bottom:10px; margin-bottom:14px; }}
                     .layout-BoldHeader .doc-info {{ justify-content:flex-start; gap:28px; }}
                     .layout-BoldHeader .contact-section {{ border:none; background:#f8fafc; }}
@@ -788,7 +788,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                 // boxed meta card (number/date/due stacked) with an accent edge.
                 return $@"
                     .layout-SplitHeader .header {{ border-bottom:3px solid {accent}; padding-bottom:10px; margin-bottom:14px; }}
-                    .layout-SplitHeader .doc-title {{ text-align:left; border:none; font-size:26px; margin:8px 0; }}
+                    .layout-SplitHeader .doc-title {{ text-align:left; border:none; font-size:{t.TitleFontSize}px; margin:8px 0; }}
                     .layout-SplitHeader .doc-info {{ flex-direction:column; align-items:flex-start; gap:3px; background:#f8fafc; border:1px solid #e5e7eb; border-left:4px solid {accent}; padding:10px 14px; border-radius:6px; width:max-content; margin-left:auto; }}
                     .layout-SplitHeader .contact-section {{ background:#f8fafc; border-color:#e5e7eb; }}
                     .layout-SplitHeader .items-table th {{ background:{accent}; }}
@@ -801,7 +801,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                     .layout-Letterhead .logo {{ margin:0 0 6px 0; }}
                     .layout-Letterhead .company-info {{ text-align:center; }}
                     .layout-Letterhead .company-name {{ font-size:24px; letter-spacing:1px; }}
-                    .layout-Letterhead .doc-title {{ text-align:left; border:none; font-size:24px; letter-spacing:2px; margin:16px 0 4px; text-transform:uppercase; }}
+                    .layout-Letterhead .doc-title {{ text-align:left; border:none; font-size:{t.TitleFontSize}px; letter-spacing:2px; margin:16px 0 4px; text-transform:uppercase; }}
                     .layout-Letterhead .doc-info {{ justify-content:flex-start; gap:24px; border-bottom:1px solid #e5e7eb; padding-bottom:10px; }}
                     .layout-Letterhead .contact-section {{ border:none; padding:0; margin:12px 0; }}
                     .layout-Letterhead .items-table th {{ background:none !important; color:{accent} !important; border-bottom:2px solid {accent}; }}

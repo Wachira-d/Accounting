@@ -77,6 +77,15 @@ public sealed record AiRequest
     /// <summary>When true, skip cache lookup. Admin retry button uses this
     /// to get a fresh opinion.</summary>
     public bool BypassCache { get; init; }
+
+    /// <summary>When true the feature returns a free-form plan / structured
+    /// JSON document (e.g. bulk bank reconciliation) rather than the standard
+    /// primaryAnswer/alternatives shape. The orchestrator then skips the
+    /// "primary answer or alternatives" schema check and surfaces the provider
+    /// content verbatim in <see cref="AiResponse.RawResponseJson"/> as Success —
+    /// the caller is responsible for parsing it. Without this, plan responses
+    /// were wrongly rejected as "Schema mismatch" and fell back to local.</summary>
+    public bool RawPlanResponse { get; init; }
 }
 
 /// <summary>

@@ -75,7 +75,7 @@ public partial class PdfGenerationService
                     {
                         ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText);
                         ComposeContact(col, doc, template, accent);
-                        ComposeItemsTable(col, doc, template, headerBg, headerText, stripe);
+                        ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent);
                         ComposeSummary(col, doc, template, accent, layout);
                         ComposeFooter(col, doc, template);
                         ComposeSignatures(col, template, b);
@@ -130,9 +130,11 @@ public partial class PdfGenerationService
                 break;
 
             case "BoldHeader":
-                // Oversized title on a colored bar at the very top.
+                // Prominent title on a colored bar at the very top (uses the
+                // configured size — the BoldHeader preset already seeds a
+                // larger value so it reads bigger than the other layouts).
                 col.Item().Background(accent).Padding(14)
-                    .Text(titleText).FontSize(titleFontSize + 4).Bold().FontColor(headerText);
+                    .Text(titleText).FontSize(titleFontSize).Bold().FontColor(headerText);
                 col.Item().PaddingTop(10).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
@@ -319,8 +321,12 @@ public partial class PdfGenerationService
     }
 
     private static void ComposeItemsTable(ColumnDescriptor col, EntDoc doc, EntTemplate t,
-        string headerBg, string headerText, string stripe)
+        string headerBg, string headerText, string stripe, string layout = "Classic", string accent = "#1F2937")
     {
+        // Minimal & Letterhead use a borderless header — no fill, accent-coloured
+        // text and a single rule underneath — to match their on-screen look.
+        var flatHeader = layout is "Minimal" or "Letterhead";
+
         col.Item().PaddingTop(12).Table(table =>
         {
             table.ColumnsDefinition(cols =>
@@ -338,8 +344,10 @@ public partial class PdfGenerationService
             {
                 void Th(string text, string align = "left")
                 {
-                    var cell = h.Cell().Background(headerBg).Padding(6);
-                    var tx = cell.Text(text).FontSize(10).Bold().FontColor(headerText);
+                    var cell = flatHeader
+                        ? h.Cell().BorderBottom(2).BorderColor(accent).Padding(6)
+                        : h.Cell().Background(headerBg).Padding(6);
+                    var tx = cell.Text(text).FontSize(10).Bold().FontColor(flatHeader ? accent : headerText);
                     if (align == "right") tx.AlignRight();
                     else if (align == "center") tx.AlignCenter();
                 }
