@@ -49,6 +49,7 @@ public class OcrService : IOcrService
     private readonly Ocr.RdComplianceValidator? _rdComplianceValidator;
     private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
     private readonly Services.Ai.IOcrAiAugmenter? _aiAugmenter;
+    private readonly Services.Interfaces.IAccountingService? _accounting;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -65,10 +66,12 @@ public class OcrService : IOcrService
         Ocr.VendorKnownGoodCorrector knownGoodCorrector,
         Ocr.RdComplianceValidator? rdComplianceValidator = null,
         Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null,
-        Services.Ai.IOcrAiAugmenter? aiAugmenter = null)
+        Services.Ai.IOcrAiAugmenter? aiAugmenter = null,
+        Services.Interfaces.IAccountingService? accounting = null)
     {
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
+        _accounting = accounting;
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -2952,7 +2955,7 @@ public class OcrService : IOcrService
             (int)Math.Ceiling(totalCount / (double)request.PageSize));
     }
 
-    public async Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy)
+    public async Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -2964,10 +2967,18 @@ public class OcrService : IOcrService
         if (result.CreatedDocumentId.HasValue)
             throw new InvalidOperationException("A document has already been created from this scan.");
 
-        // Prefer the inferred TargetDocumentType (what the role inferrer
-        // decided we should book) over the scanned paper type.
+        // Document type precedence: explicit caller override (the user's live
+        // dropdown pick in the review modal) → persisted inferred
+        // TargetDocumentType → fallback mapping off the scanned paper type.
         DocumentType docType;
-        if (!string.IsNullOrEmpty(result.TargetDocumentType)
+        if (!string.IsNullOrWhiteSpace(targetTypeOverride)
+            && Enum.TryParse<DocumentType>(targetTypeOverride, ignoreCase: true, out var overrideTarget))
+        {
+            docType = overrideTarget;
+            // Persist the user's choice so re-opening the scan reflects it.
+            result.TargetDocumentType = overrideTarget.ToString();
+        }
+        else if (!string.IsNullOrEmpty(result.TargetDocumentType)
             && Enum.TryParse<DocumentType>(result.TargetDocumentType, ignoreCase: true, out var inferredTarget))
         {
             docType = inferredTarget;
@@ -3011,6 +3022,15 @@ public class OcrService : IOcrService
         if (!contactId.HasValue)
             throw new InvalidOperationException("Cannot create document: no contact could be resolved from OCR data.");
 
+        // Due date from the OCR-read credit terms (doc date + Net N). PaymentDate
+        // is only meaningful for a payment voucher (we scanned a paid receipt) —
+        // the cash actually moved on the document date.
+        var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
+        DateTime? dueDate = result.PaymentTermsDays.HasValue
+            ? docDate.AddDays(result.PaymentTermsDays.Value)
+            : null;
+        DateTime? paymentDate = docType == DocumentType.PaymentVoucher ? docDate : null;
+
         // Transaction holds the per-tenant advisory lock for the duration
         // of the sequence-number assignment + insert, so concurrent OCR
         // creations don't collide.
@@ -3022,7 +3042,9 @@ public class OcrService : IOcrService
             DocumentNumber = docNumber,
             DocumentType = docType,
             Status = DocumentStatus.Draft,
-            DocumentDate = result.ExtractedDate ?? DateTime.UtcNow.Date,
+            DocumentDate = docDate,
+            DueDate = dueDate,
+            PaymentDate = paymentDate,
             ContactId = contactId.Value,
             SubTotal = result.ExtractedSubTotal ?? 0,
             VatAmount = result.ExtractedVatAmount ?? 0,
@@ -3032,6 +3054,65 @@ public class OcrService : IOcrService
             Notes = $"Created from OCR scan: {result.OriginalFileName}",
             CreatedBy = createdBy
         };
+
+        // Build document lines from the persisted extracted items (the same
+        // data AutoCreateDocumentAsync uses). Without this the document was
+        // created with a header but ZERO lines, so it opened completely empty
+        // in the editor — the user couldn't see what was scanned.
+        var items = new List<OcrExtractedLineItem>();
+        if (!string.IsNullOrWhiteSpace(result.ExtractedItemsJson))
+        {
+            try
+            {
+                items = System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson) ?? new();
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "OCR ExtractedItemsJson parse failed for scan {ScanId}", result.Id);
+            }
+        }
+
+        if (items.Count > 0)
+        {
+            int lineOrder = 1;
+            foreach (var item in items)
+            {
+                Guid? lineAccountId = null;
+                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
+                {
+                    var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
+                    lineAccountId = lineAccount?.Id;
+                }
+                document.Lines.Add(new DocumentLine
+                {
+                    LineOrder = lineOrder++,
+                    Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
+                    Quantity = item.Quantity ?? 1,
+                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    Amount = item.Amount ?? 0,
+                    VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                    AccountId = lineAccountId,
+                    ProjectId = item.ProjectId,
+                });
+            }
+        }
+        else
+        {
+            // No itemised lines were extracted — fall back to a single summary
+            // line from the header totals so the document still has content.
+            document.Lines.Add(new DocumentLine
+            {
+                LineOrder = 1,
+                Description = result.DocumentType ?? "รายการจาก OCR",
+                Quantity = 1,
+                UnitPrice = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                Amount = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                VatAmount = result.ExtractedVatAmount ?? 0,
+            });
+        }
 
         _db.Documents.Add(document);
 
@@ -3063,6 +3144,235 @@ public class OcrService : IOcrService
         }
 
         return MapToResponse(result);
+    }
+
+    /// <summary>
+    /// Re-populate the line items of a document that was created from an OCR
+    /// scan but ended up with no lines (e.g. created before the line-building
+    /// fix). Finds the scan via its CreatedDocumentId, rebuilds DocumentLines
+    /// from the persisted ExtractedItemsJson, and recomputes the header totals.
+    /// Refuses if the document already has real (non-blank) lines so manual
+    /// work is never clobbered.
+    /// </summary>
+    public async Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(
+        Guid companyId, Guid documentId, string performedBy)
+    {
+        var result = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
+            ?? throw new InvalidOperationException("เอกสารนี้ไม่ได้ถูกสร้างจากการสแกน OCR");
+
+        var document = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new InvalidOperationException("ไม่พบเอกสาร");
+
+        var hasRealLines = document.Lines.Any(l => l.Amount != 0 || !string.IsNullOrWhiteSpace(l.Description));
+        if (hasRealLines)
+            throw new InvalidOperationException("เอกสารมีรายการอยู่แล้ว — ลบรายการเดิมก่อนหากต้องการดึงจาก OCR ใหม่");
+
+        // Drop any blank placeholder lines before rebuilding.
+        if (document.Lines.Count > 0)
+        {
+            _db.Set<DocumentLine>().RemoveRange(document.Lines.ToList());
+            document.Lines.Clear();
+        }
+
+        var items = new List<OcrExtractedLineItem>();
+        if (!string.IsNullOrWhiteSpace(result.ExtractedItemsJson))
+        {
+            try
+            {
+                items = System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson) ?? new();
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "OCR ExtractedItemsJson parse failed for scan {ScanId}", result.Id);
+            }
+        }
+
+        if (items.Count > 0)
+        {
+            int lineOrder = 1;
+            foreach (var item in items)
+            {
+                Guid? lineAccountId = null;
+                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
+                {
+                    var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
+                    lineAccountId = lineAccount?.Id;
+                }
+                document.Lines.Add(new DocumentLine
+                {
+                    LineOrder = lineOrder++,
+                    Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
+                    Quantity = item.Quantity ?? 1,
+                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    Amount = item.Amount ?? 0,
+                    VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                    AccountId = lineAccountId,
+                    ProjectId = item.ProjectId,
+                });
+            }
+        }
+        else
+        {
+            document.Lines.Add(new DocumentLine
+            {
+                LineOrder = 1,
+                Description = result.DocumentType ?? "รายการจาก OCR",
+                Quantity = 1,
+                UnitPrice = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                Amount = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                VatAmount = result.ExtractedVatAmount ?? 0,
+            });
+        }
+
+        // Recompute header totals from the rebuilt lines so the document is
+        // self-consistent even before the user opens + saves it.
+        var subTotal = document.Lines.Sum(l => l.Amount);
+        var vat = document.Lines.Sum(l =>
+            l.VatAmount != 0 ? l.VatAmount : Math.Round(l.Amount * l.VatRate / 100m, 2));
+        document.SubTotal = subTotal;
+        document.VatAmount = vat;
+        document.TotalAmount = subTotal + vat;
+        document.BalanceDue = subTotal + vat;
+        document.UpdatedAt = DateTime.UtcNow;
+        document.UpdatedBy = performedBy;
+
+        await _db.SaveChangesAsync();
+        return MapToResponse(result);
+    }
+
+    /// <summary>
+    /// Record a balanced Journal Entry straight from a scan — the "บันทึก JE
+    /// เท่านั้น" path for when the real document was issued in an external
+    /// system and only the GL effect needs to land here. Builds Dr/Cr lines
+    /// from the extracted amounts + the user's two account picks, auto-adding
+    /// balanced VAT and WHT lines when those accounts resolve, then delegates
+    /// to the standard CreateJournalEntryAsync (same validation + numbering).
+    /// </summary>
+    public async Task<Guid> CreateJournalEntryFromScanAsync(Guid companyId, Guid scanResultId,
+        Models.DTOs.Ocr.CreateJeFromScanRequest request, string performedBy)
+    {
+        if (_accounting == null)
+            throw new InvalidOperationException("Accounting service unavailable");
+
+        var result = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("ไม่พบผลการสแกน");
+        if (result.ScanStatus != "Completed")
+            throw new InvalidOperationException("สแกนยังไม่เสร็จ");
+        if (result.CreatedJournalEntryId.HasValue)
+            throw new InvalidOperationException("สแกนนี้บันทึก JE ไปแล้ว");
+        if (result.CreatedDocumentId.HasValue)
+            throw new InvalidOperationException("สแกนนี้สร้างเอกสารไปแล้ว — ไม่ต้องบันทึก JE ซ้ำ");
+
+        // Amounts. Derive subtotal from total−vat when only the total was read.
+        var vat = (request.PostVat ? result.ExtractedVatAmount : 0m) ?? 0m;
+        var subtotal = result.ExtractedSubTotal ?? 0m;
+        var total = result.ExtractedTotalAmount ?? (subtotal + vat);
+        if (subtotal == 0m && total > 0m) subtotal = total - vat;
+        if (total <= 0m)
+            throw new InvalidOperationException("ไม่มียอดเงินที่อ่านได้ — กรุณาตรวจสอบยอดในหน้ารีวิวก่อน");
+
+        decimal wht = 0m;
+        if (request.PostWht && result.HasWht && result.WhtRate is > 0m)
+            wht = Math.Round(subtotal * result.WhtRate!.Value / 100m, 2, MidpointRounding.AwayFromZero);
+
+        var debitAcc = await ResolveAccountIdByCodeAsync(companyId, request.DebitAccountCode)
+            ?? throw new InvalidOperationException($"ไม่พบบัญชีเดบิตรหัส {request.DebitAccountCode}");
+        var creditAcc = await ResolveAccountIdByCodeAsync(companyId, request.CreditAccountCode)
+            ?? throw new InvalidOperationException($"ไม่พบบัญชีเครดิตรหัส {request.CreditAccountCode}");
+
+        var isSeller = string.Equals(result.OurRole, "Seller", StringComparison.OrdinalIgnoreCase);
+
+        Guid? vatAcc = null;
+        if (request.PostVat && vat > 0m)
+            vatAcc = isSeller
+                ? await ResolveTaxAccountAsync(companyId, new[] { "21911", "21910", "2192" }, AccountType.Liability, "ภาษีขาย")
+                : await ResolveTaxAccountAsync(companyId, new[] { "11511", "1151", "115" }, AccountType.Asset, "ภาษีซื้อ");
+
+        Guid? whtAcc = null;
+        if (wht > 0m)
+            whtAcc = await ResolveTaxAccountAsync(companyId, new[] { "21701", "2161", "2162" }, AccountType.Liability, "หัก ณ ที่จ่าย");
+
+        // Build a guaranteed-balanced set of lines. Optional VAT/WHT lines only
+        // appear when their account resolves; the primary side absorbs the rest
+        // so total debits always equal total credits.
+        var lines = new List<Accounting.Models.DTOs.Accounting.JournalLineRequest>();
+        if (isSeller)
+        {
+            var vatLine = vatAcc != null ? vat : 0m;
+            var revenueAmt = total - vatLine;
+            lines.Add(new(debitAcc, total, 0m, "ลูกหนี้/เงินรับ"));
+            lines.Add(new(creditAcc, 0m, revenueAmt, "รายได้"));
+            if (vatLine > 0m) lines.Add(new(vatAcc!.Value, 0m, vatLine, "ภาษีขาย"));
+        }
+        else
+        {
+            var vatLine = vatAcc != null ? vat : 0m;
+            var whtLine = whtAcc != null ? wht : 0m;
+            var expenseAmt = total - vatLine;
+            var creditAmt = total - whtLine;
+            lines.Add(new(debitAcc, expenseAmt, 0m, "ค่าใช้จ่าย/สินทรัพย์"));
+            if (vatLine > 0m) lines.Add(new(vatAcc!.Value, vatLine, 0m, "ภาษีซื้อ"));
+            if (whtLine > 0m) lines.Add(new(whtAcc!.Value, 0m, whtLine, "ภาษีหัก ณ ที่จ่าย"));
+            lines.Add(new(creditAcc, 0m, creditAmt, "เจ้าหนี้/เงินจ่าย"));
+        }
+
+        var entryDate = request.EntryDate ?? result.ExtractedDate ?? DateTime.UtcNow.Date;
+        var description = !string.IsNullOrWhiteSpace(request.Description)
+            ? request.Description!
+            : $"บันทึกจากสแกน OCR: {result.OriginalFileName}";
+
+        var jeReq = new Accounting.Models.DTOs.Accounting.CreateJournalEntryRequest(
+            EntryDate: entryDate,
+            Description: description,
+            Reference: result.ExtractedDocumentNumber,
+            Lines: lines,
+            JournalType: isSeller ? JournalType.Sales : JournalType.Purchase);
+
+        var je = await _accounting.CreateJournalEntryAsync(companyId, jeReq, performedBy);
+
+        result.CreatedJournalEntryId = je.Id;
+        result.ProcessingNotes = (result.ProcessingNotes ?? "") + $" JE recorded: {je.EntryNumber}.";
+        await _db.SaveChangesAsync();
+
+        // Re-link the scanned file to nothing extra — it stays attached to the
+        // scan; the JE references it via the scan in the audit trail.
+        return je.Id;
+    }
+
+    /// <summary>Resolve a company account by exact code → Id (active only).</summary>
+    private async Task<Guid?> ResolveAccountIdByCodeAsync(Guid companyId, string code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return null;
+        return await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive && a.AccountCode == code)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    /// <summary>Resolve a VAT/WHT account by trying a list of standard codes,
+    /// then falling back to the first active account of the right type whose
+    /// name contains the keyword. Returns null when nothing matches (caller
+    /// then folds the amount into the primary line to keep the JE balanced).</summary>
+    private async Task<Guid?> ResolveTaxAccountAsync(Guid companyId, string[] codes, AccountType type, string nameKeyword)
+    {
+        foreach (var c in codes)
+        {
+            var hit = await ResolveAccountIdByCodeAsync(companyId, c);
+            if (hit != null) return hit;
+        }
+        return await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
+                && a.AccountType == type && a.AccountName!.Contains(nameKeyword))
+            .OrderBy(a => a.AccountCode)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync();
     }
 
     public async Task SetExtractedLineProjectAsync(Guid companyId, Guid scanResultId,
@@ -3195,6 +3505,12 @@ public class OcrService : IOcrService
             expenseAccountId = account?.Id;
         }
 
+        var autoDocDate = scan.ExtractedDate ?? DateTime.UtcNow.Date;
+        DateTime? autoDueDate = scan.PaymentTermsDays.HasValue
+            ? autoDocDate.AddDays(scan.PaymentTermsDays.Value)
+            : null;
+        DateTime? autoPaymentDate = docType == DocumentType.PaymentVoucher ? autoDocDate : null;
+
         await using var txn = await _db.Database.BeginTransactionAsync();
         var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
         var document = new Document
@@ -3203,7 +3519,9 @@ public class OcrService : IOcrService
             DocumentNumber = docNumber,
             DocumentType = docType,
             Status = DocumentStatus.Draft,
-            DocumentDate = scan.ExtractedDate ?? DateTime.UtcNow.Date,
+            DocumentDate = autoDocDate,
+            DueDate = autoDueDate,
+            PaymentDate = autoPaymentDate,
             ContactId = scan.MatchedContactId!.Value,
             SubTotal = scan.ExtractedSubTotal ?? 0,
             VatAmount = scan.ExtractedVatAmount ?? 0,

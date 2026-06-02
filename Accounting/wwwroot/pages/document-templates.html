@@ -62,6 +62,14 @@
         </div>
 
         <div class="editor-section">
+          <h4>✨ รูปแบบสำเร็จรูป (พรีเซ็ต) <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <div class="body">
+            <p style="font-size:12px;color:#64748b;margin:0 0 8px">เลือกชุดสี+ฟอนต์สำเร็จรูป แล้วปรับแต่งเพิ่มได้ — กดบันทึกเพื่อใช้งาน</p>
+            <div id="presetGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px"></div>
+          </div>
+        </div>
+
+        <div class="editor-section">
           <h4>🎨 Font + สี <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
           <div class="body">
             <div class="editor-row">
@@ -279,12 +287,60 @@
       dirty: false,
       debounceTimer: null,
 
+      // 9 ready-made visual styles. Each only sets the visual fields; all
+      // other template options are left as-is so a preset can be applied on
+      // top of an existing template without wiping structural settings.
+      PRESETS: [
+        { key:'classic',  name:'คลาสสิก',   font:'THSarabunNew', primary:'#1F2937', accent:'#4472C4', headBg:'#4472C4', headText:'#FFFFFF', border:'Full',       stripe:'#F1F5F9' },
+        { key:'navy',     name:'ทางการ',    font:'Prompt',       primary:'#0F172A', accent:'#1E3A8A', headBg:'#1E40AF', headText:'#FFFFFF', border:'Full',       stripe:'#EEF2FF' },
+        { key:'teal',     name:'มืออาชีพ',  font:'NotoSansThai', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDFA' },
+        { key:'green',    name:'สดใส',      font:'Sarabun',      primary:'#14532D', accent:'#15803D', headBg:'#16A34A', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDF4' },
+        { key:'orange',   name:'อบอุ่น',    font:'Prompt',       primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', border:'Full',       stripe:'#FFF7ED' },
+        { key:'maroon',   name:'หรูหรา',    font:'THSarabunNew', primary:'#450A0A', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', border:'Full',       stripe:'#FEF2F2' },
+        { key:'purple',   name:'โมเดิร์น',  font:'NotoSansThai', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FAF5FF' },
+        { key:'mono',     name:'มินิมอล',   font:'Sarabun',      primary:'#111827', accent:'#374151', headBg:'#374151', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFFFFF' },
+        { key:'slate',    name:'เรียบหรู',  font:'Prompt',       primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC' },
+      ],
+
       async init() {
         if (!Layout.init('document-templates')) return;
         Layout.setTitle('เทมเพลตเอกสาร');
         this._populateDocTypeOptions();
+        this._renderPresets();
         await this.loadSampleDocs();
         await this.loadTemplates();
+      },
+
+      _renderPresets() {
+        const grid = document.getElementById('presetGrid');
+        if (!grid) return;
+        grid.innerHTML = this.PRESETS.map(p => `
+          <button type="button" onclick="Page.applyPreset('${p.key}')"
+            style="text-align:left;border:1px solid #e2e8f0;border-radius:8px;padding:8px;cursor:pointer;background:#fff">
+            <div style="display:flex;gap:4px;margin-bottom:6px">
+              <span style="width:18px;height:18px;border-radius:4px;background:${p.accent}"></span>
+              <span style="width:18px;height:18px;border-radius:4px;background:${p.headBg}"></span>
+              <span style="width:18px;height:18px;border-radius:4px;border:1px solid #cbd5e1;background:${p.stripe}"></span>
+            </div>
+            <div style="font-size:13px;font-weight:600;color:#1f2937">${p.name}</div>
+            <div style="font-size:11px;color:#94a3b8">${p.font}</div>
+          </button>`).join('');
+      },
+
+      applyPreset(key) {
+        const p = this.PRESETS.find(x => x.key === key);
+        if (!p) return;
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        set('fontFamily', p.font);
+        set('primaryColor', p.primary);
+        set('accentColor', p.accent);
+        set('tableHeaderColor', p.headBg);
+        set('tableHeaderTextColor', p.headText);
+        set('tableBorderStyle', p.border);
+        set('tableStripedColor', p.stripe);
+        this.markDirty();
+        this.refreshPreview(true);
+        Layout.toast(`ใช้รูปแบบ "${p.name}" แล้ว — ปรับแต่งเพิ่มได้ แล้วกดบันทึก`, 'success');
       },
 
       _populateDocTypeOptions() {

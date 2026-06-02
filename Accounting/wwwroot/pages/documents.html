@@ -308,6 +308,9 @@
                   <input type="checkbox" id="fStrictProducts" checked style="margin:0">
                   <span title="ติ๊กไว้ = ห้ามกรอกอิสระ ต้องเลือกจากสินค้าที่บันทึกในระบบเท่านั้น (ป้องกันชื่อสะกดผิด + ทำให้รายงานสรุปสินค้ารวมยอดได้ถูกต้อง)">เฉพาะสินค้าในระบบ</span>
                 </label>
+                <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
+                  title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
+                  onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
               </div>
             </div>
@@ -658,14 +661,33 @@
         // Wait a tick for openCreate's DOM mutations to settle.
         await new Promise(r => setTimeout(r, 30));
 
-        // Target document type (the inferrer's suggestion).
+        // Target document type (the inferrer's suggestion). Fire
+        // onDocTypeChange so type-specific fields (expense category, cert /
+        // payment-voucher blocks, AR-only widgets) render for the chosen type
+        // before we fill them.
         const dtSel = document.getElementById('fDocType');
         if (payload.documentType && dtSel) {
           const opt = [...dtSel.options].find(o => o.value === payload.documentType);
-          if (opt) dtSel.value = payload.documentType;
+          if (opt) { dtSel.value = payload.documentType; this.onDocTypeChange(); }
         }
         if (payload.documentDate) {
           try { document.getElementById('fDate').value = Layout.dateInput(payload.documentDate); } catch (e) {}
+        }
+        // Due date — from the OCR-derived credit terms (documentDate + Net N).
+        // Fall back to computing it here if the handoff only carried the term.
+        const dueEl = document.getElementById('fDueDate');
+        if (dueEl) {
+          if (payload.dueDate) {
+            try { dueEl.value = Layout.dateInput(payload.dueDate); } catch (e) {}
+          } else if (payload.documentDate && payload.paymentTermsDays) {
+            const d = new Date(payload.documentDate);
+            if (!isNaN(d.getTime())) { d.setDate(d.getDate() + payload.paymentTermsDays); dueEl.value = Layout.toDateInput(d); }
+          }
+        }
+        // Payment date (ใบสำคัญจ่าย) — when the scanned paper was a paid receipt.
+        const payEl = document.getElementById('fPaymentDate');
+        if (payEl && payload.paymentDate) {
+          try { payEl.value = Layout.dateInput(payload.paymentDate); } catch (e) {}
         }
         if (payload.reference) document.getElementById('fRef').value = payload.reference;
         if (payload.notes) document.getElementById('fNotes').value = payload.notes;
@@ -963,8 +985,77 @@
               if (inp) inp.placeholder = originalPlaceholder;
               this._selectedContact = c;
               this.onContactChange();
-            }
+            },
+            // Inline create — no need to leave the form. A 13-digit query is
+            // treated as a Tax ID and auto-filled from DBD before saving.
+            onCreateNew: (q) => this.quickCreateContact(q),
           });
+        }
+      },
+      // Create a contact straight from the document form's picker. If the
+      // typed text is a 13-digit Tax ID, look it up on DBD first to fill the
+      // company name + address; otherwise create by the typed name. The new
+      // contact is selected into the form and the user is told what happened.
+      async quickCreateContact(query) {
+        const api = Layout.api(); if (!api) return;
+        const q = (query || '').trim();
+        if (!q) { Layout.toast('พิมพ์ชื่อหรือเลขผู้เสียภาษีก่อน', 'error'); return; }
+        // Sales-side docs → customer; purchase-side → supplier.
+        const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
+        const docType = document.getElementById('fDocType')?.value || '';
+        const isSupplier = expenseTypes.has(docType);
+        const isTaxId = /^\d{13}$/.test(q);
+
+        const payload = {
+          name: q, taxId: null,
+          isCustomer: !isSupplier, isSupplier: isSupplier,
+          address: null, phone: null, email: null,
+        };
+
+        if (isTaxId) {
+          // Dedup: if a contact with this Tax ID already exists, select it
+          // instead of creating a duplicate.
+          try {
+            const ex = await api.getContacts('?pageSize=20&search=' + encodeURIComponent(q));
+            const items = ex.data?.items || ex.data || [];
+            const hit = items.find(c => (c.taxId || '') === q);
+            if (hit) {
+              this._contactAC.setValue(hit.id, hit.name);
+              this._selectedContact = hit;
+              this.onContactChange();
+              Layout.toast('เลือกผู้ติดต่อที่มีเลขภาษีนี้อยู่แล้ว: ' + hit.name, 'info');
+              return;
+            }
+          } catch {}
+          payload.taxId = q;
+          payload.name = `นิติบุคคล ${q}`;   // fallback until DBD answers
+          try {
+            const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(q)}`);
+            const d = res?.data;
+            if (d && (d.nameTh || d.nameEn)) {
+              payload.name = d.nameTh || d.nameEn;
+              if (d.address) payload.address = d.address;
+            } else {
+              Layout.toast('ไม่พบชื่อจาก DBD — สร้างด้วยเลขภาษีไปก่อน แก้ชื่อได้ภายหลัง', 'info');
+            }
+          } catch {
+            Layout.toast('เชื่อมต่อ DBD ไม่ได้ — สร้างด้วยเลขภาษีไปก่อน แก้ชื่อได้ภายหลัง', 'info');
+          }
+        }
+
+        try {
+          const res = await api.createContact(payload);
+          const c = res.data;
+          if (!c?.id) throw new Error('สร้างผู้ติดต่อไม่สำเร็จ');
+          this._contactAC.setValue(c.id, c.name);
+          this._selectedContact = c;
+          this.onContactChange();
+          Layout.toast(isTaxId
+            ? `✅ สร้างผู้ติดต่อจากเลขภาษีให้แล้ว: ${c.name}`
+            : `✅ สร้างผู้ติดต่อใหม่ให้แล้ว: ${c.name} (${isSupplier ? 'ผู้ขาย' : 'ลูกค้า'})`,
+            'success');
+        } catch (e) {
+          Layout.toast('สร้างผู้ติดต่อไม่สำเร็จ: ' + e.message, 'error');
         }
       },
       populateProjects() {
@@ -1382,6 +1473,27 @@
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
+          // OCR-sourced (or otherwise free-text) documents carry plain
+          // descriptions, not catalog products. Strict "เฉพาะสินค้าในระบบ"
+          // mode would block saving every such row, so unlock it for THIS
+          // edit session only (we don't persist to localStorage — manual
+          // data entry keeps its own default).
+          const strictCb = document.getElementById('fStrictProducts');
+          const isOcrDoc = (d.notes || '').includes('OCR scan');
+          if (strictCb) {
+            const hasFreeText = (d.lines || []).some(l => !l.productCode && (l.description || '').trim());
+            if (isOcrDoc || hasFreeText) {
+              strictCb.checked = false;
+              const hint = document.getElementById('linesHint');
+              if (hint) hint.innerHTML = '💡 เอกสารนี้มาจาก OCR/กรอกอิสระ — ปลดล็อกโหมด "เฉพาะสินค้าในระบบ" ให้แล้ว แก้ไขรายละเอียดได้อิสระ';
+            }
+          }
+          // OCR document that came out empty: offer a one-click "pull lines
+          // from the original scan" so the user doesn't have to retype them.
+          const linesEmpty = !(d.lines || []).some(l => l.amount || (l.description || '').trim());
+          this._ocrRepopulateDocId = (isOcrDoc && linesEmpty) ? d.id : null;
+          const repBtn = document.getElementById('btnOcrRepopulate');
+          if (repBtn) repBtn.style.display = this._ocrRepopulateDocId ? '' : 'none';
           // Reset email-template watermarks so the auto-template re-applies if
           // the user enables "send email" on this Edit session.
           this._lastAutoSubject = '';
@@ -1392,6 +1504,31 @@
           this.onDocTypeChange();
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // Pull line items from the document's original OCR scan into this empty
+      // OCR-created document, then reopen it so the rebuilt lines show.
+      async repopulateFromOcr() {
+        const docId = this._ocrRepopulateDocId;
+        if (!docId) return;
+        if (!confirm('ดึงรายการสินค้า/บริการจากไฟล์ OCR ต้นฉบับมาเติมในเอกสารนี้?')) return;
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        const btn = document.getElementById('btnOcrRepopulate');
+        if (btn) { btn.disabled = true; btn.textContent = '⟲ กำลังดึง...'; }
+        try {
+          const r = await fetch(`/api/companies/${cid}/ocr/documents/${docId}/repopulate-lines`, {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('ดึงรายการจาก OCR สำเร็จ', 'success');
+          Layout.closeModal('formModal');
+          await this.load();
+          await this.openEdit(docId);   // reopen with the rebuilt lines
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = '⟲ ดึงรายการจาก OCR'; }
+        }
       },
       async save() {
         const api = Layout.api(); if (!api) return;

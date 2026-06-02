@@ -18,7 +18,15 @@ public interface IOcrService
     Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null);
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
-    Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy);
+    Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);
+    /// <summary>Rebuild a document's lines from its source OCR scan when it
+    /// was created empty (pre line-building fix). Looked up by documentId.</summary>
+    Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(Guid companyId, Guid documentId, string performedBy);
+
+    /// <summary>Record a balanced Journal Entry directly from a scan (the
+    /// "JE only" path — no business document). Returns the created JE id.</summary>
+    Task<Guid> CreateJournalEntryFromScanAsync(Guid companyId, Guid scanResultId,
+        Models.DTOs.Ocr.CreateJeFromScanRequest request, string performedBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
 
     /// <summary>Persist a per-line project assignment into the scan's

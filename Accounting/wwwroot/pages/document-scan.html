@@ -447,6 +447,7 @@
           <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
           <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
           <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว ระบบเดาปลายทางและสร้างให้อัตโนมัติ">📦 นำเข้าสินค้า / สินทรัพย์</button>
+          <button class="btn btn-outline" id="reviewCreateJeBtn" onclick="Page.createJeFromReview()" title="บันทึกเฉพาะ Journal Entry (เดบิต/เครดิต) โดยไม่สร้างเอกสารในระบบ — ใช้เมื่อออกเอกสารจริงจากระบบภายนอกแล้ว ต้องการแค่ลง GL">🧾 บันทึก JE เท่านั้น</button>
           <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสารทันทีตามข้อมูลที่แกะได้ (สถานะ Draft)">สร้างเอกสารทันที</button>
         </div>
       </div>
@@ -1311,8 +1312,12 @@
       async createDocument(scanId) {
         const api = Layout.api();
         if (!api) return;
+        // Honour the user's live target-type pick from the review modal so the
+        // selection takes effect immediately — without needing a separate
+        // "บันทึกการแก้ไข" first. Null when called from the scan list.
+        const target = document.getElementById('revTargetDocType')?.value || null;
         try {
-          await api.ocrCreateDocument(scanId);
+          await api.ocrCreateDocument(scanId, target);
           Layout.toast('สร้างเอกสารสำเร็จ');
           this.loadScans();
         } catch (err) {
@@ -1452,7 +1457,11 @@
           // a plain <img>. Both also expose an "เปิดไฟล์เต็ม" link so
           // the user can pop it out in a new tab for a fuller view.
           const cid = Layout.getCompanyId();
-          const fileUrl = `/api/companies/${cid}/ocr/${scan.id}/image`;
+          // The image endpoint sits behind [Authorize] but the browser can't
+          // attach the localStorage JWT to <img>/<iframe>/new-tab requests, so
+          // pass it as access_token (the server accepts it for /ocr/.../image).
+          const _tok = encodeURIComponent(localStorage.getItem('token') || '');
+          const fileUrl = `/api/companies/${cid}/ocr/${scan.id}/image?access_token=${_tok}`;
           const fname = (scan.originalFileName || '').toLowerCase();
           const isImage = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(fname);
           const isPdf = /\.pdf$/i.test(fname);
@@ -1612,6 +1621,7 @@
                   <option value="Receipt" ${scan.targetDocumentType === 'Receipt' ? 'selected' : ''}>ใบเสร็จ (ขาย)</option>
                   <option value="ReceiptVoucher" ${scan.targetDocumentType === 'ReceiptVoucher' ? 'selected' : ''}>ใบสำคัญรับ (รับเงิน)</option>
                   <option value="Invoice" ${scan.targetDocumentType === 'Invoice' ? 'selected' : ''}>ใบแจ้งหนี้ (ขาย)</option>
+                  <option value="BillingNote" ${scan.targetDocumentType === 'BillingNote' ? 'selected' : ''}>ใบวางบิล (ขาย)</option>
                   <option value="Quotation" ${scan.targetDocumentType === 'Quotation' ? 'selected' : ''}>ใบเสนอราคา</option>
                 </select>
                 <span style="font-size:11px;color:#92400e">บทบาทของเรา: <strong>${scan.ourRole === 'Seller' ? 'ผู้ขาย' : 'ผู้ซื้อ'}</strong></span>
@@ -2315,7 +2325,10 @@
         btn.textContent = 'กำลังสร้าง...';
 
         try {
-          await api.ocrCreateDocument(this._reviewScan.id);
+          // Pass the live target-type pick so the chosen เอกสารที่จะสร้าง
+          // takes effect without needing a separate "บันทึก" first.
+          const target = document.getElementById('revTargetDocType')?.value || null;
+          await api.ocrCreateDocument(this._reviewScan.id, target);
           Layout.toast('สร้างเอกสารสำเร็จ');
           btn.textContent = 'สร้างแล้ว';
           btn.className = 'btn btn-success';
@@ -2324,6 +2337,55 @@
           Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
           btn.disabled = false;
           btn.textContent = 'สร้างเอกสารทันที';
+        }
+      },
+
+      /**
+       * Record a Journal Entry directly from the scan — no business document.
+       * Uses the debit/credit account pickers in the review modal; the server
+       * auto-adds balanced VAT/WHT lines from the extracted amounts. For when
+       * the real document was already issued in an external system and only
+       * the GL posting needs to land here.
+       */
+      async createJeFromReview() {
+        if (!this._reviewScan) return;
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        const debit = document.getElementById('revDebitAccount')?.value || '';
+        const credit = document.getElementById('revCreditAccount')?.value || '';
+        if (!debit || !credit) {
+          Layout.toast('กรุณาเลือกบัญชีเดบิตและเครดิตก่อนบันทึก JE', 'error');
+          return;
+        }
+        if (debit === credit) {
+          Layout.toast('บัญชีเดบิตและเครดิตต้องไม่ใช่บัญชีเดียวกัน', 'error');
+          return;
+        }
+        if (!confirm('บันทึกเป็น Journal Entry เท่านั้น (ไม่สร้างเอกสารในระบบ)?\nระบบจะลง Dr/Cr + ภาษีซื้อ-ขาย/หัก ณ ที่จ่าย ให้อัตโนมัติตามยอดที่อ่านได้')) return;
+        const btn = document.getElementById('reviewCreateJeBtn');
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก JE...';
+        try {
+          const r = await fetch(`/api/companies/${cid}/ocr/${this._reviewScan.id}/create-journal-entry`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              debitAccountCode: debit,
+              creditAccountCode: credit,
+              description: (document.getElementById('revVendorName')?.value || '').trim() || null,
+              entryDate: document.getElementById('revDate')?.value || null,
+              postVat: true,
+              postWht: true,
+            }),
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('บันทึก JE สำเร็จ', 'success');
+          btn.textContent = '🧾 บันทึก JE แล้ว';
+          btn.className = 'btn btn-success';
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('บันทึก JE ไม่สำเร็จ: ' + err.message, 'error');
+          btn.disabled = false; btn.textContent = '🧾 บันทึก JE เท่านั้น';
         }
       },
 
@@ -2913,20 +2975,25 @@
        * item typeahead to upgrade an OCR'd "น้ำดื่ม 12 ขวด" line into a
        * linked product, or to fix anything the OCR mis-extracted.
        */
-      openInDocumentForm() {
+      openInDocumentForm(overrideType) {
         const scan = this._reviewScan;
         if (!scan) return;
 
-        // Decide which side of the documents page to land on, based on the
-        // OurRole hint from the role inferrer. Buyer-side scans (most
-        // common) become expense documents; Seller-side become revenue.
+        // Target type precedence: explicit arg (AI-verdict shortcut) → the
+        // user's live dropdown pick → the inferrer's suggestion → a per-role
+        // default. This makes the user's selection take effect even if they
+        // didn't press "บันทึกการแก้ไข" first.
         const isBuyer = (scan.ourRole || 'Buyer') === 'Buyer';
-        const side = isBuyer ? 'expense' : 'revenue';
-
-        // Use the target doc type the inferrer suggested. Falls back to a
-        // sensible per-side default if the inferrer wasn't confident.
-        const targetType = scan.targetDocumentType ||
+        const liveSel = document.getElementById('revTargetDocType')?.value || null;
+        const targetType = overrideType || liveSel || scan.targetDocumentType ||
           (isBuyer ? 'PurchaseInvoice' : 'TaxInvoice');
+
+        // Land on the correct side of the documents page based on the CHOSEN
+        // type, not just OurRole — so picking a sales type opens the revenue
+        // form (whose fDocType lists that option).
+        const salesTypes = new Set(['Quotation', 'Invoice', 'TaxInvoice', 'Receipt',
+          'BillingNote', 'ReceiptVoucher', 'DeliveryNote']);
+        const side = salesTypes.has(targetType) ? 'revenue' : 'expense';
 
         // Extract line items the OCR pulled out. ProductCode left blank
         // here — the typeahead on the documents page will let the user
@@ -2942,6 +3009,24 @@
         // Always provide at least one row so the user has somewhere to start.
         if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
 
+        // Derive a due date from the credit terms the OCR read ("Net 30" →
+        // PaymentTermsDays = 30) so AR/AP documents land with วันครบกำหนด
+        // already filled. OCR doesn't read an explicit due date, so this is
+        // the best signal we have; the user can still adjust it.
+        let dueDate = null;
+        if (scan.extractedDate && scan.paymentTermsDays) {
+          const d = new Date(scan.extractedDate);
+          if (!isNaN(d.getTime())) {
+            d.setDate(d.getDate() + scan.paymentTermsDays);
+            dueDate = Layout.toDateInput(d);
+          }
+        }
+
+        // For a payment voucher (we scanned a paid receipt), the payment
+        // already happened on the document date — carry it as the payment
+        // date so the voucher books the real cash-out date.
+        const paymentDate = (targetType === 'PaymentVoucher') ? (scan.extractedDate || null) : null;
+
         const handoff = {
           source: 'ocr-scan',
           scanId: scan.id,
@@ -2950,6 +3035,9 @@
           contactId: scan.matchedContactId || null,
           contactName: scan.extractedVendorName || null,
           documentDate: scan.extractedDate || null,
+          dueDate,
+          paymentDate,
+          paymentTermsDays: scan.paymentTermsDays || null,
           reference: scan.extractedDocumentNumber || null,
           notes: scan.processingNotes ? `(จาก OCR) ${scan.processingNotes}` : null,
           lines,

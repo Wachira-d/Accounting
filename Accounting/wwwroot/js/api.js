@@ -728,7 +728,7 @@ const API = {
       ocrScan: (fileId) => API.post(`${base}/ocr/scan/${fileId}`),
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
-      ocrCreateDocument: (id) => API.post(`${base}/ocr/${id}/create-document`),
+      ocrCreateDocument: (id, targetType) => API.post(`${base}/ocr/${id}/create-document${targetType ? `?targetType=${encodeURIComponent(targetType)}` : ''}`),
       ocrStockPreview: (id) => API.get(`${base}/ocr/${id}/stock-preview`),
       ocrImportStock: (id, data) => API.post(`${base}/ocr/${id}/import-stock`, data),
       ocrRejectMatch: (id, data) => API.post(`${base}/ocr/${id}/reject-match`, data),

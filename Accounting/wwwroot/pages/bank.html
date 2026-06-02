@@ -111,11 +111,17 @@
       <div class="card" style="margin-bottom:16px">
         <div class="card-header">
           <h3 class="card-title">AI กระทบยอดอัตโนมัติ</h3>
-          <div class="flex gap-2">
+          <div class="flex gap-2" style="align-items:center;flex-wrap:wrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่พื้นฐาน</button>
             <button class="btn btn-sm btn-primary" onclick="Page.runAiMatch()" id="btnAiMatch" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">AI จับคู่ (heuristic)</button>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569">
+              เดือน
+              <input type="month" id="aiMatchMonth" class="form-input"
+                     style="width:auto;font-size:13px;padding:4px 8px"
+                     title="เลือกเดือนที่จะให้ AI กระทบยอด — ค่าเริ่มต้นคือเดือนปัจจุบัน">
+            </label>
             <button class="btn btn-sm btn-primary" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
-              title="โยน bank txn + เอกสารเปิด + JE + บริบทบริษัททั้งหมดให้ DeepSeek match พร้อมกัน — รายงานข้อมูลที่ขาดด้วย"
+              title="โยน bank txn ที่ยังไม่กระทบยอด + เอกสารเปิด + payment + JE + บริบทบริษัทของเดือนที่เลือก ให้ DeepSeek match พร้อมกัน — รายงานข้อมูลที่ขาดด้วย"
               style="background:linear-gradient(135deg,#ec4899,#f43f5e)">🧠 AI match ทั้งเดือน (ปุ่มเดียว)</button>
           </div>
         </div>
@@ -583,6 +589,13 @@
       async init() {
         if (!Layout.init('bank')) return;
         Layout.setTitle('บัญชีธนาคาร');
+        // Default the AI-match month picker to the current month so the
+        // user sees which period will be analysed (and can change it).
+        const mInput = document.getElementById('aiMatchMonth');
+        if (mInput && !mInput.value) {
+          const t = new Date();
+          mInput.value = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`;
+        }
         await this.load();
       },
       setTab(tab, el) {
@@ -992,10 +1005,21 @@
       async runBulkAiMatch() {
         if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
         const api = Layout.api(); if (!api) return;
-        // Default to the current month — user can later refine in the modal.
-        const today = new Date();
-        const from = new Date(today.getFullYear(), today.getMonth(), 1);
-        const to = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        // Resolve the target month from the picker (YYYY-MM). Fall back to the
+        // current calendar month when the field is empty/invalid. from = 1st of
+        // that month, to = last day (new Date(y, m+1, 0) = last day of month m).
+        const mv = document.getElementById('aiMatchMonth')?.value;
+        let year, month0;
+        if (mv && /^\d{4}-\d{2}$/.test(mv)) {
+          year = parseInt(mv.slice(0, 4), 10);
+          month0 = parseInt(mv.slice(5, 7), 10) - 1;
+        } else {
+          const today = new Date();
+          year = today.getFullYear();
+          month0 = today.getMonth();
+        }
+        const from = new Date(year, month0, 1);
+        const to = new Date(year, month0 + 1, 0);
         const fromStr = Layout.toDateInput(from);
         const toStr = Layout.toDateInput(to);
         const btn = document.getElementById('btnBulkAi');

@@ -214,8 +214,8 @@
           description: document.getElementById('fDesc').value || null,
           startDate: document.getElementById('fStart').value,
           endDate: document.getElementById('fEnd').value || null,
-          budgetAmount: parseFloat(document.getElementById('fBudget').value),
-          contractAmount: parseFloat(document.getElementById('fContract').value) || null,
+          budgetAmount: parseFloat(document.getElementById('fBudget').value) || 0,
+          contractAmount: parseFloat(document.getElementById('fContract').value) || 0,
         };
         try {
           if (id) { await api.updateProject(id, data); }

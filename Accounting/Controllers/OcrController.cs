@@ -178,8 +178,30 @@ public class OcrController : ControllerBase
         => Ok(new ApiResponse<PagedResponse<OcrResultResponse>>(true, await _service.GetResultsAsync(companyId, status, new PagedRequest(page, pageSize))));
 
     [HttpPost("{scanId:guid}/create-document")]
-    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<OcrResultResponse>(true, await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "")));
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(
+        Guid companyId, Guid scanId, [FromQuery] string? targetType = null)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "", targetType)));
+
+    /// <summary>Rebuild an OCR-created document's lines from the original scan
+    /// when it was created empty. Looked up by documentId (the document edit
+    /// page calls this). Refuses if the document already has real lines.</summary>
+    [HttpPost("documents/{documentId:guid}/repopulate-lines")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> RepopulateLines(Guid companyId, Guid documentId)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.RepopulateDocumentLinesFromScanAsync(companyId, documentId, User.Identity?.Name ?? ""),
+            "ดึงรายการจาก OCR สำเร็จ"));
+
+    /// <summary>Record a Journal Entry directly from a scan (no business
+    /// document) — for when the real document was issued externally and only
+    /// the GL effect is needed here.</summary>
+    [HttpPost("{scanId:guid}/create-journal-entry")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateJournalEntry(
+        Guid companyId, Guid scanId, [FromBody] Models.DTOs.Ocr.CreateJeFromScanRequest request)
+    {
+        var jeId = await _service.CreateJournalEntryFromScanAsync(companyId, scanId, request, User.Identity?.Name ?? "");
+        return Ok(new ApiResponse<object>(true, new { journalEntryId = jeId }, "บันทึก JE จากสแกนสำเร็จ"));
+    }
 
     public sealed record SetAllLinesProjectRequest(Guid? ProjectId, string? ProjectName, bool OnlyEmpty);
 

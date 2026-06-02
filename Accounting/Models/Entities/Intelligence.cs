@@ -171,6 +171,7 @@ public class OcrScanResult : TenantEntity
     // Matching
     public Guid? MatchedContactId { get; set; }
     public Guid? CreatedDocumentId { get; set; }           // Document created from OCR
+    public Guid? CreatedJournalEntryId { get; set; }       // JE recorded from OCR (JE-only path)
 
     // AI augmentation trail — populated when IOcrAiAugmenter ran post-
     // extraction. AiSuggestedContactId is what AI proposed (may equal
