@@ -447,6 +447,7 @@
           <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
           <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
           <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว ระบบเดาปลายทางและสร้างให้อัตโนมัติ">📦 นำเข้าสินค้า / สินทรัพย์</button>
+          <button class="btn btn-outline" id="reviewCreateJeBtn" onclick="Page.createJeFromReview()" title="บันทึกเฉพาะ Journal Entry (เดบิต/เครดิต) โดยไม่สร้างเอกสารในระบบ — ใช้เมื่อออกเอกสารจริงจากระบบภายนอกแล้ว ต้องการแค่ลง GL">🧾 บันทึก JE เท่านั้น</button>
           <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสารทันทีตามข้อมูลที่แกะได้ (สถานะ Draft)">สร้างเอกสารทันที</button>
         </div>
       </div>
@@ -2324,7 +2325,10 @@
         btn.textContent = 'กำลังสร้าง...';
 
         try {
-          await api.ocrCreateDocument(this._reviewScan.id);
+          // Pass the live target-type pick so the chosen เอกสารที่จะสร้าง
+          // takes effect without needing a separate "บันทึก" first.
+          const target = document.getElementById('revTargetDocType')?.value || null;
+          await api.ocrCreateDocument(this._reviewScan.id, target);
           Layout.toast('สร้างเอกสารสำเร็จ');
           btn.textContent = 'สร้างแล้ว';
           btn.className = 'btn btn-success';
@@ -2333,6 +2337,55 @@
           Layout.toast('สร้างเอกสารไม่สำเร็จ: ' + err.message, 'error');
           btn.disabled = false;
           btn.textContent = 'สร้างเอกสารทันที';
+        }
+      },
+
+      /**
+       * Record a Journal Entry directly from the scan — no business document.
+       * Uses the debit/credit account pickers in the review modal; the server
+       * auto-adds balanced VAT/WHT lines from the extracted amounts. For when
+       * the real document was already issued in an external system and only
+       * the GL posting needs to land here.
+       */
+      async createJeFromReview() {
+        if (!this._reviewScan) return;
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        const debit = document.getElementById('revDebitAccount')?.value || '';
+        const credit = document.getElementById('revCreditAccount')?.value || '';
+        if (!debit || !credit) {
+          Layout.toast('กรุณาเลือกบัญชีเดบิตและเครดิตก่อนบันทึก JE', 'error');
+          return;
+        }
+        if (debit === credit) {
+          Layout.toast('บัญชีเดบิตและเครดิตต้องไม่ใช่บัญชีเดียวกัน', 'error');
+          return;
+        }
+        if (!confirm('บันทึกเป็น Journal Entry เท่านั้น (ไม่สร้างเอกสารในระบบ)?\nระบบจะลง Dr/Cr + ภาษีซื้อ-ขาย/หัก ณ ที่จ่าย ให้อัตโนมัติตามยอดที่อ่านได้')) return;
+        const btn = document.getElementById('reviewCreateJeBtn');
+        btn.disabled = true; btn.textContent = 'กำลังบันทึก JE...';
+        try {
+          const r = await fetch(`/api/companies/${cid}/ocr/${this._reviewScan.id}/create-journal-entry`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              debitAccountCode: debit,
+              creditAccountCode: credit,
+              description: (document.getElementById('revVendorName')?.value || '').trim() || null,
+              entryDate: document.getElementById('revDate')?.value || null,
+              postVat: true,
+              postWht: true,
+            }),
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('บันทึก JE สำเร็จ', 'success');
+          btn.textContent = '🧾 บันทึก JE แล้ว';
+          btn.className = 'btn btn-success';
+          this.loadScans();
+        } catch (err) {
+          Layout.toast('บันทึก JE ไม่สำเร็จ: ' + err.message, 'error');
+          btn.disabled = false; btn.textContent = '🧾 บันทึก JE เท่านั้น';
         }
       },
 

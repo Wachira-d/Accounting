@@ -22,6 +22,11 @@ public interface IOcrService
     /// <summary>Rebuild a document's lines from its source OCR scan when it
     /// was created empty (pre line-building fix). Looked up by documentId.</summary>
     Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(Guid companyId, Guid documentId, string performedBy);
+
+    /// <summary>Record a balanced Journal Entry directly from a scan (the
+    /// "JE only" path — no business document). Returns the created JE id.</summary>
+    Task<Guid> CreateJournalEntryFromScanAsync(Guid companyId, Guid scanResultId,
+        Models.DTOs.Ocr.CreateJeFromScanRequest request, string performedBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
 
     /// <summary>Persist a per-line project assignment into the scan's

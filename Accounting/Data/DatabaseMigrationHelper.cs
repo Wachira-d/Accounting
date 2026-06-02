@@ -1532,6 +1532,11 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "FileHash" varchar(64) NULL;
             """,
+            // JE-only path: tracks the Journal Entry recorded straight from a
+            // scan (no business document), so we can block double-posting.
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "CreatedJournalEntryId" uuid NULL;
+            """,
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "RetryCount" integer NOT NULL DEFAULT 0;
             """,

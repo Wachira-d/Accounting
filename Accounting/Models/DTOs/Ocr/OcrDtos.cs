@@ -96,3 +96,20 @@ public record OcrCorrectionRequest(
     // backend can both update the scan record AND train VendorIntelligence
     // to suggest the same target for this vendor next time.
     string? TargetDocumentType = null);
+
+/// <summary>
+/// Request to record a Journal Entry directly from a scan — the "บันทึก JE
+/// เท่านั้น" path, used when the company already issued the real document in
+/// an external system and only needs the GL effect recorded here (no
+/// business document created). DebitAccountCode / CreditAccountCode are the
+/// two primary account codes the user picks in the review modal; the service
+/// auto-adds balanced VAT / WHT lines from the extracted amounts when those
+/// accounts resolve. EntryDate defaults to the scan's document date.
+/// </summary>
+public record CreateJeFromScanRequest(
+    string DebitAccountCode,
+    string CreditAccountCode,
+    string? Description = null,
+    DateTime? EntryDate = null,
+    bool PostVat = true,
+    bool PostWht = true);
