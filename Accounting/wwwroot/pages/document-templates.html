@@ -62,10 +62,22 @@
         </div>
 
         <div class="editor-section">
-          <h4>✨ รูปแบบสำเร็จรูป (พรีเซ็ต) <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
+          <h4>✨ ดีไซน์สำเร็จรูป (เลือกรูปแบบทั้งหมด) <span class="toggle" onclick="Page.toggle(this)">▾</span></h4>
           <div class="body">
-            <p style="font-size:12px;color:#64748b;margin:0 0 8px">เลือกชุดสี+ฟอนต์สำเร็จรูป แล้วปรับแต่งเพิ่มได้ — กดบันทึกเพื่อใช้งาน</p>
-            <div id="presetGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px"></div>
+            <p style="font-size:12px;color:#64748b;margin:0 0 10px">เลือกดีไซน์เต็มรูปแบบ — กำหนดทั้ง <b>โครงหน้าตา</b> (ตำแหน่งโลโก้/หัวเอกสาร/การจัดวาง) + ฟอนต์ + สี + การแสดงผลให้สวยงามทันที ปรับแต่งเพิ่มแล้วกดบันทึก</p>
+            <div class="editor-row">
+              <div><label>โครงหน้าตา (Layout)</label>
+                <select id="layoutStyle" onchange="Page.markDirty();Page.refreshPreview(true)">
+                  <option value="Classic">คลาสสิก — โลโก้ซ้าย หัวเรื่องกึ่งกลาง</option>
+                  <option value="ModernLeft">โมเดิร์น — จัดชิดซ้าย เส้นเน้นสี</option>
+                  <option value="BannerHeader">แบนเนอร์ — หัวกระดาษแถบสีเต็ม</option>
+                  <option value="Compact">กระชับ — ตัวอักษรเล็ก ประหยัดพื้นที่</option>
+                  <option value="Minimal">มินิมอล — เรียบ ไม่มีกรอบ</option>
+                  <option value="CenteredFormal">ทางการ — จัดกึ่งกลางทั้งหมด</option>
+                </select>
+              </div>
+            </div>
+            <div id="presetGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px"></div>
           </div>
         </div>
 
@@ -287,20 +299,23 @@
       dirty: false,
       debounceTimer: null,
 
-      // 9 ready-made visual styles. Each only sets the visual fields; all
-      // other template options are left as-is so a preset can be applied on
-      // top of an existing template without wiping structural settings.
+      // 9 complete designs. Each sets the LAYOUT (overall structure) plus
+      // font, colours, table style and a few sensible display toggles, so one
+      // click gives a finished, good-looking template. Other options are left
+      // untouched so a design can be layered on an existing template.
       PRESETS: [
-        { key:'classic',  name:'คลาสสิก',   font:'THSarabunNew', primary:'#1F2937', accent:'#4472C4', headBg:'#4472C4', headText:'#FFFFFF', border:'Full',       stripe:'#F1F5F9' },
-        { key:'navy',     name:'ทางการ',    font:'Prompt',       primary:'#0F172A', accent:'#1E3A8A', headBg:'#1E40AF', headText:'#FFFFFF', border:'Full',       stripe:'#EEF2FF' },
-        { key:'teal',     name:'มืออาชีพ',  font:'NotoSansThai', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDFA' },
-        { key:'green',    name:'สดใส',      font:'Sarabun',      primary:'#14532D', accent:'#15803D', headBg:'#16A34A', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDF4' },
-        { key:'orange',   name:'อบอุ่น',    font:'Prompt',       primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', border:'Full',       stripe:'#FFF7ED' },
-        { key:'maroon',   name:'หรูหรา',    font:'THSarabunNew', primary:'#450A0A', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', border:'Full',       stripe:'#FEF2F2' },
-        { key:'purple',   name:'โมเดิร์น',  font:'NotoSansThai', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FAF5FF' },
-        { key:'mono',     name:'มินิมอล',   font:'Sarabun',      primary:'#111827', accent:'#374151', headBg:'#374151', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFFFFF' },
-        { key:'slate',    name:'เรียบหรู',  font:'Prompt',       primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC' },
+        { key:'classic', name:'คลาสสิกธุรกิจ', layout:'Classic',        font:'THSarabunNew', primary:'#1F2937', accent:'#4472C4', headBg:'#4472C4', headText:'#FFFFFF', border:'Full',       stripe:'#F1F5F9', title:26 },
+        { key:'banner',  name:'แบนเนอร์น้ำเงิน', layout:'BannerHeader',  font:'Prompt',       primary:'#0F172A', accent:'#1E40AF', headBg:'#1E40AF', headText:'#FFFFFF', border:'Full',       stripe:'#EEF2FF', title:28 },
+        { key:'modern',  name:'โมเดิร์นเขียว',  layout:'ModernLeft',    font:'NotoSansThai', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDFA', title:24 },
+        { key:'formal',  name:'ทางการคลาสสิก',  layout:'CenteredFormal',font:'THSarabunNew', primary:'#1C1917', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', border:'Full',       stripe:'#FEF2F2', title:28 },
+        { key:'minimal', name:'มินิมอลขาว',    layout:'Minimal',       font:'Sarabun',      primary:'#111827', accent:'#111827', headBg:'#111827', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFFFFF', title:22 },
+        { key:'compact', name:'กระชับประหยัด',  layout:'Compact',       font:'Sarabun',      primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC', title:20 },
+        { key:'warm',    name:'อบอุ่นส้ม',     layout:'BannerHeader',  font:'Prompt',       primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', border:'Full',       stripe:'#FFF7ED', title:26 },
+        { key:'purple',  name:'โมเดิร์นม่วง',   layout:'ModernLeft',    font:'NotoSansThai', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FAF5FF', title:24 },
+        { key:'slate',   name:'เรียบหรูเทา',   layout:'CenteredFormal',font:'Prompt',       primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC', title:26 },
       ],
+
+      LAYOUT_LABELS: { Classic:'คลาสสิก', ModernLeft:'โมเดิร์น', BannerHeader:'แบนเนอร์', Compact:'กระชับ', Minimal:'มินิมอล', CenteredFormal:'ทางการ' },
 
       async init() {
         if (!Layout.init('document-templates')) return;
@@ -323,14 +338,15 @@
               <span style="width:18px;height:18px;border-radius:4px;border:1px solid #cbd5e1;background:${p.stripe}"></span>
             </div>
             <div style="font-size:13px;font-weight:600;color:#1f2937">${p.name}</div>
-            <div style="font-size:11px;color:#94a3b8">${p.font}</div>
+            <div style="font-size:11px;color:#94a3b8">โครง: ${this.LAYOUT_LABELS[p.layout] || p.layout} · ${p.font}</div>
           </button>`).join('');
       },
 
       applyPreset(key) {
         const p = this.PRESETS.find(x => x.key === key);
         if (!p) return;
-        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        const set = (id, val) => { const el = document.getElementById(id); if (el != null && val != null) el.value = val; };
+        set('layoutStyle', p.layout);
         set('fontFamily', p.font);
         set('primaryColor', p.primary);
         set('accentColor', p.accent);
@@ -338,9 +354,10 @@
         set('tableHeaderTextColor', p.headText);
         set('tableBorderStyle', p.border);
         set('tableStripedColor', p.stripe);
+        if (p.title) set('titleFontSize', p.title);
         this.markDirty();
         this.refreshPreview(true);
-        Layout.toast(`ใช้รูปแบบ "${p.name}" แล้ว — ปรับแต่งเพิ่มได้ แล้วกดบันทึก`, 'success');
+        Layout.toast(`ใช้ดีไซน์ "${p.name}" (โครง ${this.LAYOUT_LABELS[p.layout] || p.layout}) แล้ว — ปรับแต่งเพิ่มได้ แล้วกดบันทึก`, 'success');
       },
 
       _populateDocTypeOptions() {
@@ -403,7 +420,7 @@
           else el.value = val ?? '';
         } };
         // text/select fields
-        ['tplName:name','tplDocType:documentType','fontFamily','bodyFontSize','titleFontSize',
+        ['tplName:name','tplDocType:documentType','layoutStyle','fontFamily','bodyFontSize','titleFontSize',
          'primaryColor','accentColor','tableHeaderColor','tableHeaderTextColor','headerBackgroundColor',
          'logoPosition','logoWidth','logoHeight',
          'contactSectionTitle','contactSectionTitleEn',
@@ -442,6 +459,7 @@
           documentType: get('tplDocType'),
           isDefault: getCheck('tplIsDefault'),
           isActive: true,
+          layoutStyle: get('layoutStyle'),
           fontFamily: get('fontFamily'),
           bodyFontSize: get('bodyFontSize'),
           titleFontSize: get('titleFontSize'),

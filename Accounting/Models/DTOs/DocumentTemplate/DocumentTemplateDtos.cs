@@ -94,6 +94,7 @@ public record CreateDocumentTemplateRequest(
     decimal? WatermarkOpacity,
 
     // Font
+    string? LayoutStyle,
     string? FontFamily,
     string? BodyFontSize,
     string? PrimaryColor,
@@ -200,6 +201,7 @@ public record UpdateDocumentTemplateRequest(
     string? WatermarkText,
     decimal? WatermarkOpacity,
 
+    string? LayoutStyle,
     string? FontFamily,
     string? BodyFontSize,
     string? PrimaryColor,
@@ -252,6 +254,7 @@ public record DocumentTemplateResponse(
     bool ShowQrCode,
     string? QrCodeType,
     string? PromptPayId,
+    string LayoutStyle,
     string FontFamily,
     string Language,
     bool ShowBilingual,

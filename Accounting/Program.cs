@@ -212,6 +212,10 @@ builder.Services.AddScoped<IWithholdingTaxCertService, WithholdingTaxCertService
 
 // PDF, Document Templates & e-Tax
 builder.Services.AddScoped<IDocumentTemplateService, DocumentTemplateService>();
+// Headless-Chromium HTML→PDF renderer (singleton — reuses one browser).
+// Opt-in via Pdf:UseHtmlRenderer; falls back to QuestPDF when off/unavailable.
+builder.Services.AddSingleton<Accounting.Services.Implementations.Pdf.IHtmlPdfRenderer,
+    Accounting.Services.Implementations.Pdf.PuppeteerHtmlPdfRenderer>();
 builder.Services.AddScoped<IPdfGenerationService, PdfGenerationService>();
 builder.Services.AddScoped<IEtaxInvoiceService, EtaxInvoiceService>();
 
