@@ -102,7 +102,7 @@ public sealed record ImportResult(
 /// parsing its own CSV dialect. Conflict detection + write logic
 /// lives in the shared base class so we don't repeat ourselves.
 /// </summary>
-internal sealed record IncomingContact(
+public sealed record IncomingContact(
     string Name,
     string TaxId,
     string? Phone,

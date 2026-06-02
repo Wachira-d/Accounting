@@ -11,7 +11,7 @@ namespace Accounting.Services.Implementations.Migration;
 /// Conflict if same code but different AccountName / AccountType /
 /// AccountNameEn / Description.
 /// </summary>
-internal sealed record IncomingAccount(
+public sealed record IncomingAccount(
     string AccountCode,
     string AccountName,
     string? AccountNameEn,
