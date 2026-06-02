@@ -1,27 +1,37 @@
+#if USE_PUPPETEER
 using PuppeteerSharp;
 using PuppeteerSharp.Media;
+#endif
 
 namespace Accounting.Services.Implementations.Pdf;
 
 /// <summary>
 /// Renders an HTML string to a PDF exactly as a browser would — full CSS
 /// layout, fonts, colours, images — so the downloaded PDF matches the
-/// on-screen preview. Implemented with a headless Chromium (PuppeteerSharp).
+/// on-screen preview. Backed by a headless Chromium-family browser
+/// (PuppeteerSharp).
 ///
-/// Every entry point is best-effort: when disabled, when the browser can't
-/// be obtained, or on any render error, it returns null so the caller falls
-/// back to the always-available QuestPDF renderer. PDF generation can never
-/// be broken by this path.
+/// The whole browser integration is guarded by the USE_PUPPETEER compile
+/// symbol. Without it (the default) this type compiles to a no-op that
+/// reports Enabled=false and returns null, so the app builds with no extra
+/// NuGet package and PDFs are produced by QuestPDF. See Accounting.csproj
+/// for how to switch it on.
+///
+/// Even when enabled every entry point is best-effort: a disabled flag, an
+/// unavailable browser, or any render error returns null so the caller
+/// falls back to QuestPDF. PDF generation can never be broken by this path.
 /// </summary>
 public interface IHtmlPdfRenderer
 {
-    /// <summary>True when the renderer is switched on via config
-    /// (Pdf:UseHtmlRenderer). Lets callers skip building data when off.</summary>
+    /// <summary>True when the renderer is compiled in AND switched on via
+    /// config (Pdf:UseHtmlRenderer). Callers skip building data when false.</summary>
     bool Enabled { get; }
 
     /// <summary>Render HTML → PDF bytes, or null on disabled/failure.</summary>
     Task<byte[]?> TryRenderAsync(string html, CancellationToken ct = default);
 }
+
+#if USE_PUPPETEER
 
 public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposable
 {
@@ -45,9 +55,6 @@ public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposabl
     public PuppeteerHtmlPdfRenderer(IConfiguration config, ILogger<PuppeteerHtmlPdfRenderer> logger)
     {
         _logger = logger;
-        // Default OFF — the headless browser needs a Chromium-family browser on
-        // the host, so it's opt-in. Flip Pdf:UseHtmlRenderer=true once the server
-        // is provisioned; until then the app keeps using QuestPDF unchanged.
         Enabled = config.GetValue("Pdf:UseHtmlRenderer", false);
         _executablePath = config.GetValue<string?>("Pdf:ExecutablePath", null);
         _browserCachePath = config.GetValue<string?>("Pdf:BrowserCachePath", null);
@@ -66,7 +73,6 @@ public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposabl
             {
                 await page.SetContentAsync(html, new NavigationOptions
                 {
-                    // Wait for fonts/images to settle; cap so a hung resource can't stall.
                     WaitUntil = new[] { WaitUntilNavigation.Networkidle0 },
                     Timeout = 15000,
                 });
@@ -101,20 +107,16 @@ public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposabl
             var options = new LaunchOptions
             {
                 Headless = true,
-                // --no-sandbox needed when running as a service/elevated; the
-                // others avoid /dev/shm + GPU issues on headless servers.
                 Args = new[] { "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu" },
             };
 
             if (!string.IsNullOrWhiteSpace(_executablePath))
             {
-                // Use an installed browser (e.g. Windows Edge) — no download.
-                options.ExecutablePath = _executablePath;
+                options.ExecutablePath = _executablePath;   // installed Edge/Chrome — no download
                 _logger.LogInformation("Launching HTML→PDF browser from {Path}", _executablePath);
             }
             else
             {
-                // Download a matching Chromium on first use (cached afterwards).
                 var fetcher = string.IsNullOrWhiteSpace(_browserCachePath)
                     ? new BrowserFetcher()
                     : new BrowserFetcher(new BrowserFetcherOptions { Path = _browserCachePath });
@@ -130,7 +132,7 @@ public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposabl
         }
         catch (Exception ex)
         {
-            _initFailed = true;   // don't hammer a broken environment on every request
+            _initFailed = true;
             _logger.LogError(ex, "Headless browser init failed — HTML PDF disabled, using QuestPDF");
             return null;
         }
@@ -147,3 +149,17 @@ public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer, IAsyncDisposabl
         _gate.Dispose();
     }
 }
+
+#else
+
+/// <summary>No-op implementation compiled when USE_PUPPETEER is not defined.
+/// Always disabled, so PdfGenerationService uses QuestPDF.</summary>
+public sealed class PuppeteerHtmlPdfRenderer : IHtmlPdfRenderer
+{
+    public PuppeteerHtmlPdfRenderer(IConfiguration config, ILogger<PuppeteerHtmlPdfRenderer> logger) { }
+    public bool Enabled => false;
+    public Task<byte[]?> TryRenderAsync(string html, CancellationToken ct = default)
+        => Task.FromResult<byte[]?>(null);
+}
+
+#endif
