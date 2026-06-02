@@ -150,7 +150,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
-        var html = BuildPreviewHtml(company, template, request.Language);
+        var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var html = BuildPreviewHtml(company, settings, template, request.Language);
         return ConvertHtmlToPdf(html, template);
     }
 
@@ -178,7 +179,21 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
-        return BuildPreviewHtml(company, template, language);
+        var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        return BuildPreviewHtml(company, settings, template, language);
+    }
+
+    /// <summary>
+    /// Render preview HTML from an UNSAVED template object (the live editor
+    /// form). Lets the editor reflect every tick/colour/layout change instantly
+    /// without saving first. The draft is transient — never persisted.
+    /// </summary>
+    public async Task<string> GeneratePreviewHtmlFromDraftAsync(Guid companyId, DocumentTemplate draft)
+    {
+        var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
+        var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        draft.CompanyId = companyId;
+        return BuildPreviewHtml(company, settings, draft, draft.Language);
     }
 
     public byte[] ConvertHtmlToPdfBytes(string html) => ConvertHtmlToPdf(html, null);
@@ -611,50 +626,51 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         return sb.ToString();
     }
 
-    private string BuildPreviewHtml(Company company, DocumentTemplate template, string? lang)
+    private string BuildPreviewHtml(Company company, CompanySettings? settings, DocumentTemplate template, string? lang)
     {
-        // Generate a sample document for preview
-        var sb = new StringBuilder();
-        sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'/>");
-        sb.AppendLine($"<style>{BuildCss(template)}</style></head><body>");
-
-        sb.AppendLine("<div class='header'>");
-        sb.AppendLine($"<div class='company-name'>{company.Name}</div>");
-        sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}</div>");
-        sb.AppendLine("</div>");
-        sb.AppendLine($"<div class='doc-title'>{template.CustomTitle ?? "ตัวอย่างเอกสาร"}</div>");
-
-        sb.AppendLine("<div class='doc-info'><div>เลขที่: INV-202603-0001</div><div>วันที่: 19/03/2026</div></div>");
-        sb.AppendLine("<div class='contact-section'><div class='section-title'>ลูกค้า</div><div>บริษัท ตัวอย่าง จำกัด</div></div>");
-
-        sb.AppendLine("<table class='items-table'><thead><tr>");
-        if (template.ShowLineNumber) sb.AppendLine("<th>#</th>");
-        sb.AppendLine("<th>รายการ</th><th>จำนวน</th>");
-        if (template.ShowUnit) sb.AppendLine("<th>หน่วย</th>");
-        sb.AppendLine("<th>ราคา/หน่วย</th><th>จำนวนเงิน</th></tr></thead><tbody>");
-        sb.AppendLine("<tr>");
-        if (template.ShowLineNumber) sb.AppendLine("<td class='center'>1</td>");
-        sb.AppendLine("<td>สินค้าตัวอย่าง A</td><td class='right'>10.00</td>");
-        if (template.ShowUnit) sb.AppendLine("<td class='center'>ชิ้น</td>");
-        sb.AppendLine("<td class='right'>1,000.00</td><td class='right'>10,000.00</td></tr>");
-        sb.AppendLine("</tbody></table>");
-
-        sb.AppendLine("<div class='summary'>");
-        sb.AppendLine("<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>10,000.00</span></div>");
-        sb.AppendLine("<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>700.00</span></div>");
-        sb.AppendLine("<div class='sum-row total'><span>ยอดรวมสุทธิ</span><span>10,700.00</span></div>");
-        sb.AppendLine("</div>");
-
-        if (template.ShowSignature)
+        // Render the preview through the SAME path real documents use, so every
+        // toggle (show company/contact fields, line columns, summary rows,
+        // signatures, watermark), the chosen layout, colours, logo and fonts are
+        // all reflected. Previously this was a hardcoded sample that ignored the
+        // template settings, so ticking a checkbox changed nothing in the preview.
+        var contact = new Contact
         {
-            sb.AppendLine("<div class='signatures'>");
-            sb.AppendLine($"<div class='sig-box'><div class='sig-line'></div><div>{template.SignatureLabel1}</div></div>");
-            sb.AppendLine($"<div class='sig-box'><div class='sig-line'></div><div>{template.SignatureLabel2}</div></div>");
-            sb.AppendLine("</div>");
-        }
-
-        sb.AppendLine("</body></html>");
-        return sb.ToString();
+            Name = lang == "en" ? "Sample Customer Co., Ltd." : "บริษัท ตัวอย่างลูกค้า จำกัด",
+            TaxId = "0105551234567",
+            BranchCode = "00000",
+            BranchName = lang == "en" ? "Head Office" : "สำนักงานใหญ่",
+            Address = lang == "en"
+                ? "199/9 Sukhumvit Rd., Khlong Toei, Bangkok 10110"
+                : "199/9 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพฯ 10110",
+            Phone = "02-123-4567",
+            Email = "ar@customer-example.co.th",
+        };
+        var lines = new List<DocumentLine>
+        {
+            new() { LineOrder = 1, Description = lang == "en" ? "Sample product A" : "สินค้าตัวอย่าง A",
+                    Quantity = 10, Unit = lang == "en" ? "pcs" : "ชิ้น", UnitPrice = 1000, DiscountAmount = 0,
+                    Amount = 10000, VatRate = 7 },
+            new() { LineOrder = 2, Description = lang == "en" ? "Sample service B" : "บริการตัวอย่าง B",
+                    Quantity = 1, Unit = lang == "en" ? "job" : "งาน", UnitPrice = 5000, DiscountAmount = 0,
+                    Amount = 5000, VatRate = 7 },
+        };
+        var doc = new Document
+        {
+            DocumentNumber = "DOC-202603-0001",
+            DocumentType = template.DocumentType,
+            DocumentDate = new DateTime(2026, 3, 19),
+            DueDate = new DateTime(2026, 4, 18),
+            Reference = "PO-2026-0001",
+            Contact = contact,
+            Lines = lines,
+            SubTotal = 15000m,
+            DiscountAmount = 0m,
+            VatAmount = 1050m,
+            WithholdingTaxAmount = 0m,
+            TotalAmount = 16050m,
+            BalanceDue = 16050m,
+        };
+        return BuildDocumentHtml(doc, company, settings, template, null, lang);
     }
 
     // ===== CSS Builder =====

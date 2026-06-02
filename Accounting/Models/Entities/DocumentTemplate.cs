@@ -50,7 +50,7 @@ public class DocumentTemplate : TenantEntity
     public bool ShowContactBranch { get; set; } = true;
     public bool ShowContactAddress { get; set; } = true;
     public bool ShowContactPhone { get; set; } = true;
-    public bool ShowContactEmail { get; set; } = false;
+    public bool ShowContactEmail { get; set; } = true;   // default on — show as complete info as possible
     public string ContactSectionTitle { get; set; } = "ลูกค้า";
     public string? ContactSectionTitleEn { get; set; } = "Customer";
 
