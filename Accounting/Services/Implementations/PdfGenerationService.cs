@@ -200,13 +200,13 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // Line Items Table
         sb.AppendLine("<table class='items-table'><thead><tr>");
-        if (template.ShowLineNumber) sb.AppendLine("<th>#</th>");
+        if (template.ShowLineNumber) sb.AppendLine("<th class='center'>#</th>");
         sb.AppendLine("<th>รายการ</th>");
-        sb.AppendLine("<th>จำนวน</th>");
-        if (template.ShowUnit) sb.AppendLine("<th>หน่วย</th>");
-        sb.AppendLine("<th>ราคา/หน่วย</th>");
-        if (template.ShowDiscount) sb.AppendLine("<th>ส่วนลด</th>");
-        sb.AppendLine("<th>จำนวนเงิน</th>");
+        sb.AppendLine("<th class='right'>จำนวน</th>");
+        if (template.ShowUnit) sb.AppendLine("<th class='center'>หน่วย</th>");
+        sb.AppendLine("<th class='right'>ราคา/หน่วย</th>");
+        if (template.ShowDiscount) sb.AppendLine("<th class='right'>ส่วนลด</th>");
+        sb.AppendLine("<th class='right'>จำนวนเงิน</th>");
         sb.AppendLine("</tr></thead><tbody>");
 
         var lineNum = 1;
@@ -226,7 +226,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // Summary
         sb.AppendLine("<div class='summary'>");
-        if (template.ShowSubTotal) sb.AppendLine($"<div class='sum-row'><span>ยอมรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
+        if (template.ShowSubTotal) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
         if (template.ShowVatSummary && doc.VatAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
@@ -689,34 +689,59 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
     private static string BuildCss(DocumentTemplate t)
     {
+        var headTextAlign = "left";
         return $@"
+            * {{ box-sizing: border-box; }}
             @page {{ size: {t.PaperSize} {t.Orientation.ToLower()}; margin: {t.MarginTop}mm {t.MarginRight}mm {t.MarginBottom}mm {t.MarginLeft}mm; }}
-            body {{ font-family: '{t.FontFamily}', sans-serif; font-size: {t.BodyFontSize}px; color: {t.PrimaryColor}; line-height: 1.4; }}
-            .watermark {{ position: fixed; top: 40%; left: 20%; font-size: 80px; color: rgba(0,0,0,{t.WatermarkOpacity}); transform: rotate(-30deg); z-index: -1; }}
-            .header {{ display: flex; align-items: flex-start; margin-bottom: 10px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:10px;" : "")} }}
-            .logo {{ margin-right: 15px; }}
-            .company-name {{ font-size: 20px; font-weight: bold; color: {t.AccentColor}; }}
-            .company-name-en {{ font-size: 16px; color: #666; }}
-            .doc-title {{ text-align: center; font-size: {t.TitleFontSize}px; font-weight: bold; color: {t.AccentColor}; margin: 15px 0; border-bottom: 2px solid {t.AccentColor}; padding-bottom: 5px; }}
-            .doc-info {{ display: flex; justify-content: flex-end; gap: 20px; margin-bottom: 15px; }}
-            .contact-section {{ border: 1px solid #ddd; padding: 10px; margin-bottom: 15px; border-radius: 4px; }}
-            .section-title {{ font-weight: bold; color: {t.AccentColor}; margin-bottom: 5px; }}
-            .contact-name {{ font-size: 16px; font-weight: bold; }}
-            .items-table {{ width: 100%; border-collapse: collapse; margin-bottom: 15px; }}
-            .items-table th {{ background: {t.TableHeaderColor ?? "#4472C4"}; color: {t.TableHeaderTextColor ?? "#fff"}; padding: 8px; text-align: left; font-size: 13px; }}
-            .items-table td {{ padding: 6px 8px; {(t.TableBorderStyle == "Full" ? "border: 1px solid #ddd;" : t.TableBorderStyle == "HeaderOnly" ? "border-bottom: 1px solid #eee;" : "")} }}
-            {(t.TableStripedColor != null ? $".items-table tr:nth-child(even) {{ background: {t.TableStripedColor}; }}" : "")}
+            body {{ font-family: '{t.FontFamily}', sans-serif; font-size: {t.BodyFontSize}px; color: {t.PrimaryColor}; line-height: 1.45; margin: 0; }}
+            .watermark {{ position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 90px; color: rgba(0,0,0,{t.WatermarkOpacity}); z-index: -1; white-space: nowrap; }}
+
+            /* Header: logo left, company details fill remaining width */
+            .header {{ display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:12px;border-radius:6px;" : "")} }}
+            .logo {{ flex: 0 0 auto; object-fit: contain; }}
+            .company-info {{ flex: 1 1 auto; }}
+            .company-info > div {{ margin: 1px 0; }}
+            .company-name {{ font-size: 20px; font-weight: 700; color: {t.AccentColor}; line-height: 1.2; }}
+            .company-name-en {{ font-size: 15px; color: #666; }}
+
+            /* Title + doc meta */
+            .doc-title {{ text-align: center; font-size: {t.TitleFontSize}px; font-weight: 700; color: {t.AccentColor}; margin: 16px 0 12px; border-bottom: 2px solid {t.AccentColor}; padding-bottom: 6px; }}
+            .doc-info {{ display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 14px; }}
+            .doc-info > div {{ white-space: nowrap; }}
+
+            /* Contact box */
+            .contact-section {{ border: 1px solid #e2e2e2; padding: 10px 12px; margin-bottom: 16px; border-radius: 6px; }}
+            .section-title {{ font-weight: 700; color: {t.AccentColor}; margin-bottom: 4px; font-size: 13px; }}
+            .contact-name {{ font-size: 16px; font-weight: 700; margin-bottom: 2px; }}
+            .contact-section > div {{ margin: 1px 0; }}
+
+            /* Items table — numeric columns right-aligned, headers match cells */
+            .items-table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; }}
+            .items-table th {{ background: {t.TableHeaderColor ?? "#4472C4"}; color: {t.TableHeaderTextColor ?? "#fff"}; padding: 8px; text-align: {headTextAlign}; font-size: 13px; font-weight: 600; }}
+            .items-table td {{ padding: 6px 8px; font-size: 13px; vertical-align: top; {(t.TableBorderStyle == "Full" ? "border: 1px solid #e0e0e0;" : t.TableBorderStyle == "HeaderOnly" ? "border-bottom: 1px solid #eee;" : "")} }}
+            .items-table th.right, .items-table td.right {{ text-align: right; }}
+            .items-table th.center, .items-table td.center {{ text-align: center; }}
+            {(t.TableStripedColor != null ? $".items-table tbody tr:nth-child(even) {{ background: {t.TableStripedColor}; }}" : "")}
             .right {{ text-align: right; }}
             .center {{ text-align: center; }}
-            .summary {{ width: 50%; margin-left: auto; }}
-            .sum-row {{ display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #eee; }}
-            .sum-row.total {{ font-size: 16px; font-weight: bold; color: {t.AccentColor}; border-bottom: 2px solid {t.AccentColor}; border-top: 2px solid {t.AccentColor}; }}
-            .amount-words {{ text-align: center; margin: 10px 0; font-style: italic; }}
-            .bank-details {{ background: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }}
-            .footer-notes {{ font-size: 12px; color: #666; margin: 10px 0; }}
-            .signatures {{ display: flex; justify-content: space-around; margin-top: 40px; }}
-            .sig-box {{ text-align: center; width: 30%; }}
-            .sig-line {{ border-bottom: 1px solid #000; height: 40px; margin-bottom: 5px; }}
+
+            /* Summary block, aligned right */
+            .summary {{ width: 46%; min-width: 280px; margin-left: auto; margin-bottom: 8px; }}
+            .sum-row {{ display: flex; justify-content: space-between; gap: 16px; padding: 5px 2px; border-bottom: 1px solid #eee; }}
+            .sum-row.total {{ font-size: 16px; font-weight: 700; color: {t.AccentColor}; border-bottom: 2px solid {t.AccentColor}; border-top: 2px solid {t.AccentColor}; margin-top: 2px; }}
+            .amount-words {{ text-align: center; margin: 12px 0; font-style: italic; color: #444; }}
+
+            /* Footer sections */
+            .bank-details {{ background: #f8f9fa; padding: 10px 12px; border-radius: 6px; margin: 12px 0; font-size: 13px; }}
+            .footer-notes {{ font-size: 12px; color: #666; margin: 12px 0; }}
+            .custom-appendix {{ font-size: 13px; margin: 12px 0; }}
+            .terms-conditions {{ font-size: 12px; color: #555; margin: 12px 0; padding-top: 8px; border-top: 1px solid #eee; }}
+            .cert-section {{ margin-top: 16px; }}
+
+            /* Signatures — evenly spaced, breathing room above */
+            .signatures {{ display: flex; justify-content: space-around; gap: 24px; margin-top: 48px; }}
+            .sig-box {{ text-align: center; flex: 1 1 0; max-width: 32%; }}
+            .sig-line {{ border-bottom: 1px solid #333; height: 44px; margin-bottom: 6px; }}
         ";
     }
 
