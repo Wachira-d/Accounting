@@ -277,7 +277,8 @@ public class AiOrchestrator : IAiOrchestrator
         AiProviderRawResponse raw;
         using (var providerCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            providerCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(2, providerConfig.RequestTimeoutSeconds)));
+            var timeoutSec = request.TimeoutSecondsOverride ?? providerConfig.RequestTimeoutSeconds;
+            providerCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(2, timeoutSec)));
             raw = await providerImpl.CompleteAsync(request with { UserPromptJson = sanitizedUserJson },
                 providerConfig, providerCts.Token);
         }

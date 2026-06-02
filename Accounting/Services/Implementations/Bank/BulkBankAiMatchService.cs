@@ -73,7 +73,12 @@ public sealed record MissingDataHint(Guid BankTxnId, string MissingType, string 
 public class BulkBankAiMatchService : IBulkBankAiMatchService
 {
     private const int MaxBankTxns = 150;
-    private const int MaxCandidatesPerKind = 80;
+    // Bumped from 80 → 200 per kind (docs / payments / JEs). The cap exists so
+    // the prompt fits the provider's context window; 200 × 3 kinds + 150 txns
+    // is still well within DeepSeek-V3's 128k limit, and 80 was truncating
+    // real Thai SME books mid-month. Tune down if a provider with a smaller
+    // context is selected.
+    private const int MaxCandidatesPerKind = 200;
 
     private readonly AccountingDbContext _db;
     private readonly IAiOrchestrator _orchestrator;

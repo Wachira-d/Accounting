@@ -1017,6 +1017,14 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         var bodyMatch = Regex.Match(html, @"<body[^>]*>(.*?)</body>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
         var content = bodyMatch.Success ? bodyMatch.Groups[1].Value : html;
 
+        // Strip the doc-root wrapper too — it was added for HTML/iframe rendering
+        // (layout CSS targets ".layout-X"), but without unwrapping, the parser
+        // would treat it as a generic <div> and flatten the ENTIRE document into
+        // one Text block (which is why the PDF came out as a wall of text).
+        var rootMatch = Regex.Match(content, @"<div[^>]*class\s*=\s*['""][^'""]*doc-root[^'""]*['""][^>]*>(.*)</div>",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        if (rootMatch.Success) content = rootMatch.Groups[1].Value;
+
         // Process by tags
         var pos = 0;
         while (pos < content.Length)

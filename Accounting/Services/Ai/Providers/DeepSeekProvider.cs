@@ -75,7 +75,10 @@ public class DeepSeekProvider : IAiProvider
         var json = JsonSerializer.Serialize(payload);
 
         using var http = _httpClientFactory.CreateClient();
-        http.Timeout = TimeSpan.FromSeconds(Math.Max(2, config.RequestTimeoutSeconds + 2));
+        // Per-request timeout override lets bulk features (bank match) opt
+        // into a longer wait without changing the provider-wide default.
+        var timeoutSec = request.TimeoutSecondsOverride ?? config.RequestTimeoutSeconds;
+        http.Timeout = TimeSpan.FromSeconds(Math.Max(2, timeoutSec + 2));
         using var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
