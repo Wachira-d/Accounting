@@ -42,9 +42,25 @@ public class TenantAccessMiddleware
             return;
         }
 
-        // Skip tenant check for API Key auth (already validated in ApiKeyMiddleware)
-        if (context.Items.ContainsKey("IsApiKeyAuth"))
+        // API Key auth: the key's company was established in ApiKeyMiddleware.
+        // We still enforce that the company in the route/header matches the
+        // key's company — otherwise a key issued for Company A could read
+        // Company B's data simply by changing the {companyId} in the URL
+        // (the per-service filters use the route param, so without this guard
+        // they'd happily return B's rows). Endpoints with no company in the
+        // route are unaffected.
+        if (context.Items.TryGetValue("IsApiKeyAuth", out var isApiKeyAuth) && isApiKeyAuth is true)
         {
+            var requested = ExtractCompanyId(context);
+            if (requested != null
+                && context.Items.TryGetValue("CompanyId", out var keyCompanyObj)
+                && keyCompanyObj is Guid keyCompany
+                && requested.Value != keyCompany)
+            {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new { success = false, message = "API key ไม่มีสิทธิ์เข้าถึงบริษัทนี้" });
+                return;
+            }
             await _next(context);
             return;
         }
