@@ -89,6 +89,34 @@
         <h3 style="margin:0 0 4px">2️⃣ เลือกโทนสี</h3>
         <p style="font-size:12px;color:#64748b;margin:0 0 12px">เปลี่ยนชุดสีให้ทุกเอกสาร (โครงที่เลือกไว้คงเดิม)</p>
         <div id="globalColorGrid" class="color-grid"></div>
+
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #e2e8f0">
+          <div style="font-size:12px;font-weight:600;color:#334155;margin-bottom:10px">🎨 กำหนดสีเอง — เลือกเฉดหรือใส่โค้ดสี (#RRGGBB) ได้แต่ละส่วน</div>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end">
+            <div>
+              <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">สีเน้น / หัวเรื่อง</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="cAccent" value="#1E40AF" oninput="Page._syncColor('cAccent','cAccentHex')" style="width:42px;height:34px;padding:0;border:1px solid #d1d5db;border-radius:6px;cursor:pointer">
+                <input type="text" id="cAccentHex" value="#1E40AF" oninput="Page._syncHex('cAccentHex','cAccent')" style="width:90px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              </div>
+            </div>
+            <div>
+              <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">สีหัวตาราง / แบนเนอร์</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="cHead" value="#1E40AF" oninput="Page._syncColor('cHead','cHeadHex')" style="width:42px;height:34px;padding:0;border:1px solid #d1d5db;border-radius:6px;cursor:pointer">
+                <input type="text" id="cHeadHex" value="#1E40AF" oninput="Page._syncHex('cHeadHex','cHead')" style="width:90px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              </div>
+            </div>
+            <div>
+              <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">สีแถบสลับแถว</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="cStripe" value="#EEF2FF" oninput="Page._syncColor('cStripe','cStripeHex')" style="width:42px;height:34px;padding:0;border:1px solid #d1d5db;border-radius:6px;cursor:pointer">
+                <input type="text" id="cStripeHex" value="#EEF2FF" oninput="Page._syncHex('cStripeHex','cStripe')" style="width:90px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="Page.applyCustomColor()">ใช้สีที่กำหนดเองกับทุกเอกสาร</button>
+          </div>
+        </div>
       </div>
 
       <h3 style="margin:18px 0 10px">📄 เอกสารแต่ละประเภท — กด "ปรับแต่ง" เพื่อแก้รายเอกสาร</h3>
@@ -598,6 +626,39 @@
           primaryColor: c.primary, accentColor: c.accent,
           tableHeaderColor: c.headBg, tableHeaderTextColor: c.headText, tableStripedColor: c.stripe,
         }, `โทนสี "${c.name}"`);
+      },
+
+      // Keep the colour-picker and hex text input in sync.
+      _syncColor(colorId, hexId) {
+        const v = document.getElementById(colorId).value;
+        document.getElementById(hexId).value = v.toUpperCase();
+      },
+      _syncHex(hexId, colorId) {
+        let v = document.getElementById(hexId).value.trim();
+        if (!v.startsWith('#')) v = '#' + v;
+        if (/^#[0-9A-Fa-f]{6}$/.test(v)) document.getElementById(colorId).value = v;
+      },
+      _validHex(v) { v = (v || '').trim(); if (!v.startsWith('#')) v = '#' + v; return /^#[0-9A-Fa-f]{6}$/.test(v) ? v.toUpperCase() : null; },
+      // Pick readable text colour (black/white) for a given background hex.
+      _textOn(hex) {
+        const h = hex.replace('#', '');
+        const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+        return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111111' : '#FFFFFF';
+      },
+
+      async applyCustomColor() {
+        const accent = this._validHex(document.getElementById('cAccentHex').value);
+        const head = this._validHex(document.getElementById('cHeadHex').value);
+        const stripe = this._validHex(document.getElementById('cStripeHex').value);
+        if (!accent || !head || !stripe) {
+          Layout.toast('โค้ดสีไม่ถูกต้อง — ต้องเป็น #RRGGBB ทั้ง 3 ช่อง', 'error');
+          return;
+        }
+        if (!confirm('ใช้สีที่กำหนดเองกับเอกสารทุกประเภท? (โครงที่เลือกไว้จะคงเดิม)')) return;
+        await this._applyToAll({
+          primaryColor: accent, accentColor: accent,
+          tableHeaderColor: head, tableHeaderTextColor: this._textOn(head), tableStripedColor: stripe,
+        }, 'สีที่กำหนดเอง');
       },
 
       // Apply a partial field-set to the default template of every doc type
