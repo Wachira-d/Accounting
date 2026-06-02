@@ -12,7 +12,7 @@ namespace Accounting.Services.Implementations.Migration;
 /// Key = Code (per-company unique). Conflict if same Code but different
 /// Name / Unit / SellingPrice / CostPrice / VatRate / Category.
 /// </summary>
-internal sealed record IncomingProduct(
+public sealed record IncomingProduct(
     string Code,
     string Name,
     string? Unit,
