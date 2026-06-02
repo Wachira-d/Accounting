@@ -154,6 +154,33 @@ public partial class PdfGenerationService : IPdfGenerationService
         return ConvertHtmlToPdf(html, template);
     }
 
+    /// <summary>
+    /// Build the template-preview HTML (sample data, no real document) for a
+    /// template OR a document type. Used by the templates gallery to render a
+    /// live thumbnail of every document type's current look — works even when
+    /// the company has no real documents and no saved template yet (falls back
+    /// to an in-memory default for the type).
+    /// </summary>
+    public async Task<string> GeneratePreviewHtmlAsync(Guid companyId, Guid? templateId, string? documentType, string? language)
+    {
+        DocumentTemplate template;
+        if (templateId.HasValue)
+        {
+            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == templateId.Value && t.CompanyId == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
+        }
+        else
+        {
+            var docType = Enum.TryParse<DocumentType>(documentType, ignoreCase: true, out var dt) ? dt : DocumentType.Invoice;
+            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+                           t.CompanyId == companyId && t.DocumentType == docType && t.IsDefault && t.IsActive)
+                       ?? CreateInMemoryDefaultTemplate(docType);
+        }
+
+        var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
+        return BuildPreviewHtml(company, template, language);
+    }
+
     public byte[] ConvertHtmlToPdfBytes(string html) => ConvertHtmlToPdf(html, null);
 
     // ===== HTML Builders =====

@@ -10,6 +10,10 @@ public interface IPdfGenerationService
     Task<GeneratePdfResponse> GenerateReceiptPdfAsync(Guid companyId, Guid paymentId);
     Task<byte[]> GeneratePreviewPdfAsync(Guid companyId, PdfPreviewRequest request);
 
+    /// <summary>Template-preview HTML (sample data) for a template or a
+    /// document type — powers the templates gallery thumbnails.</summary>
+    Task<string> GeneratePreviewHtmlAsync(Guid companyId, Guid? templateId, string? documentType, string? language);
+
     /// <summary>Build the SAME HTML the PDF generator uses — exposed
     /// so the browser print preview can render an identical layout
     /// (no more "downloaded PDF and ctrl-P print look different"

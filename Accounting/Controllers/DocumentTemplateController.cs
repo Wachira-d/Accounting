@@ -109,6 +109,16 @@ public class DocumentTemplateController : ControllerBase
         return File(pdfBytes, "application/pdf", "preview.pdf");
     }
 
+    /// <summary>Template-preview HTML (sample data) for a template or a doc
+    /// type — used for the gallery thumbnails. Works without real documents.</summary>
+    [HttpGet("preview-html")]
+    public async Task<ActionResult> PreviewHtml(Guid companyId,
+        [FromQuery] Guid? templateId, [FromQuery] string? documentType, [FromQuery] string? language)
+    {
+        var html = await _pdfService.GeneratePreviewHtmlAsync(companyId, templateId, documentType, language);
+        return Content(html, "text/html; charset=utf-8");
+    }
+
     [HttpPost("withholding-tax/{certId:guid}/pdf")]
     public async Task<ActionResult> GenerateWhtPdf(Guid companyId, Guid certId)
     {
