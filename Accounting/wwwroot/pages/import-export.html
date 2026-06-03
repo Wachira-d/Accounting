@@ -10,9 +10,9 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="tabs" style="margin-bottom:20px">
-      <button class="tab active" onclick="Page.switchTab('import')">นำเข้าข้อมูล</button>
+      <button class="tab active" onclick="Page.switchTab('import')">นำเข้าตามเทมเพลต</button>
+      <button class="tab" onclick="Page.switchTab('smart')">🔄 จับคู่คอลัมน์ (ไฟล์จากระบบอื่น)</button>
       <button class="tab" onclick="Page.switchTab('export')">ส่งออกข้อมูล</button>
-      <button class="tab" onclick="Page.switchTab('smart')">Smart Import (AI)</button>
     </div>
 
     <!-- Import Tab -->
@@ -42,6 +42,11 @@
           </div>
           <div style="font-size:11px;color:#64748b;margin-top:8px">
             💡 "ตรวจสอบข้อมูลซ้ำ" จะเทียบทุกแถวกับฐานข้อมูล หาแถวที่ key (TaxId/Code/AccountCode) ตรงกันแต่ข้อมูลต่าง — เลือกได้ว่าจะ Skip/Merge/Overwrite ก่อนนำเข้า
+          </div>
+          <div style="margin-top:12px;padding:10px 12px;background:#fef3c7;border-radius:8px;font-size:12px;color:#92400e">
+            ⚠️ ถ้าคอลัมน์ในไฟล์ของคุณชื่อไม่ตรงกับเทมเพลต (เช่น export มาจาก Express/PEAK/FlowAccount) ให้
+            <a href="#" onclick="Page.switchTab('smart');return false;" style="color:#92400e;text-decoration:underline;font-weight:600">ไปที่ "จับคู่คอลัมน์"</a>
+            แทน — ระบบจะให้คุณเลือกได้ว่าคอลัมน์ในไฟล์ตรงกับฟิลด์ไหนในระบบ
           </div>
         </div>
 
@@ -90,28 +95,50 @@
     <!-- Smart Import Tab -->
     <div id="tab-smart" style="display:none">
       <div class="page-header">
-        <div><h2 class="page-title">Smart Import (AI)</h2><p class="page-subtitle">ใช้ AI จับคู่คอลัมน์อัตโนมัติจากไฟล์ที่ไม่ตรงเทมเพลต</p></div>
+        <div>
+          <h2 class="page-title">🔄 จับคู่คอลัมน์ (Smart Import)</h2>
+          <p class="page-subtitle">ใช้กับไฟล์จากระบบอื่น (Express/PEAK/FlowAccount/Excel ของบริษัทคุณ) ที่ชื่อคอลัมน์ไม่ตรงกับเทมเพลต — AI จะเดาให้ก่อน คุณปรับเองได้ทุกคอลัมน์</p>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
-        <div class="card" style="padding:24px">
-          <h3 style="margin-bottom:16px">อัพโหลดไฟล์</h3>
-          <div class="form-group"><label class="form-label">ประเภทข้อมูล *</label>
+
+      <!-- STEP 1: upload -->
+      <div class="card" style="padding:24px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <span style="background:var(--primary);color:#fff;width:28px;height:28px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-weight:600">1</span>
+          <h3 style="margin:0">เลือกประเภทข้อมูล + อัพโหลดไฟล์</h3>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end">
+          <div class="form-group" style="margin:0">
+            <label class="form-label">ประเภทข้อมูล *</label>
             <select class="form-select" id="smartEntity">
               <option value="">-- เลือกประเภท --</option>
             </select>
           </div>
-          <div class="form-group">
-            <label class="form-label">เลือกไฟล์</label>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">ไฟล์ของคุณ (CSV / Excel)</label>
             <input type="file" class="form-input" id="smartFile" accept=".csv,.xlsx,.xls" style="padding:8px">
           </div>
-          <button class="btn btn-primary" onclick="Page.smartUpload()">วิเคราะห์ด้วย AI</button>
+          <button class="btn btn-primary" onclick="Page.smartUpload()" style="height:42px">📤 อัพโหลดและวิเคราะห์</button>
         </div>
-        <div class="card" style="padding:24px">
-          <h3 style="margin-bottom:16px">ผลการวิเคราะห์</h3>
-          <div id="smartResult">
-            <p class="text-gray-400 text-center" style="padding:40px">อัพโหลดไฟล์เพื่อให้ AI วิเคราะห์คอลัมน์</p>
-          </div>
+      </div>
+
+      <!-- STEP 2: mapping editor (populated after upload) -->
+      <div id="smartMappingCard" class="card" style="padding:24px;margin-bottom:16px;display:none">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <span style="background:var(--primary);color:#fff;width:28px;height:28px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-weight:600">2</span>
+          <h3 style="margin:0">ตรวจสอบและปรับการจับคู่คอลัมน์</h3>
         </div>
+        <div id="smartMappingBody"></div>
+      </div>
+
+      <!-- STEP 3: result + conflicts (populated after save) -->
+      <div id="smartResultCard" class="card" style="padding:24px;display:none">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <span style="background:var(--primary);color:#fff;width:28px;height:28px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-weight:600">3</span>
+          <h3 style="margin:0">ตรวจสอบความซ้ำและยืนยันนำเข้า</h3>
+        </div>
+        <div id="smartResult"></div>
+        <div id="smartConflicts" style="margin-top:14px"></div>
       </div>
     </div>
   </div>
@@ -129,15 +156,33 @@ const Page = {
   init() {
     if (!Layout.init('import-export')) return;
     Layout.setTitle('นำเข้า/ส่งออก');
-    this.loadEntities();
+    this.loadEntities().then(() => this._applyDeeplink());
   },
 
+  // Deep-link: other pages link here with ?entity=xxx&mode=smart so the
+  // operator lands directly on the right entity + tab, instead of having
+  // to find import-export themselves. e.g. fixed-assets.html offers
+  // "📥 นำเข้าจากไฟล์ระบบอื่น" → /pages/import-export.html?entity=fixed-assets&mode=smart
+  _applyDeeplink() {
+    const params = new URLSearchParams(location.search);
+    const entity = params.get('entity');
+    const mode = params.get('mode'); // "smart" | "import"
+    if (mode === 'smart') this.switchTab('smart');
+    if (entity) {
+      const sel = document.getElementById(mode === 'smart' ? 'smartEntity' : 'importEntity');
+      if (sel) sel.value = entity;
+      this.updateTemplateLink?.();
+    }
+  },
+
+  // Tab order in HTML: import, smart, export
   switchTab(tab) {
-    ['import','export','smart'].forEach(t => {
+    const order = ['import','smart','export'];
+    order.forEach(t => {
       const el = document.getElementById('tab-'+t);
       if (el) el.style.display = t === tab ? '' : 'none';
     });
-    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['import','export','smart'][i] === tab));
+    document.querySelectorAll('.tabs .tab').forEach((el, i) => el.classList.toggle('active', order[i] === tab));
   },
 
   async loadEntities() {
@@ -371,37 +416,167 @@ const Page = {
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
+  // STEP 1 of smart-import: upload file → backend AI suggests target field
+  // per source column. Then fetch the entity's template metadata so the
+  // dropdown in step 2 can list every available system field (even ones
+  // the AI didn't suggest), letting the user override every column.
   async smartUpload() {
     const api = Layout.api(); if (!api) return;
     const entity = document.getElementById('smartEntity').value;
     const fileInput = document.getElementById('smartFile');
     if (!entity || !fileInput.files.length) { Layout.toast('กรุณาเลือกประเภทและไฟล์', 'error'); return; }
-    const result = document.getElementById('smartResult');
-    result.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div><p class="text-sm text-gray-500" style="margin-top:8px">AI กำลังวิเคราะห์...</p></div>';
+
+    // Reset later-stage UI so a re-upload doesn't show stale step-3 results
+    document.getElementById('smartMappingCard').style.display = 'none';
+    document.getElementById('smartResultCard').style.display = 'none';
+    document.getElementById('smartResult').innerHTML = '';
+    document.getElementById('smartConflicts').innerHTML = '';
+
     try {
       const file = fileInput.files[0];
       const parsed = await this.loadAndParseFile(file);
       const format = this._isExcel(file) ? 'excel' : 'csv';
       const requestBody = { entityType: entity, fileName: file.name, fileFormat: format, hasHeaderRow: true, rawData: parsed.rawData };
-      const res = await api.smartImportUpload(requestBody);
-      const d = res.data || {};
-      this.smartSessionId = d.sessionId || d.id;
-      const mappings = d.columnMappings || d.mappings || [];
-      result.innerHTML = `
-        <div style="margin-bottom:12px"><span class="badge badge-success">วิเคราะห์สำเร็จ</span></div>
-        <div class="text-sm" style="margin-bottom:12px"><strong>คอลัมน์ที่จับคู่ได้:</strong></div>
-        <div class="table-container"><table class="table"><thead><tr><th>คอลัมน์ไฟล์</th><th>ฟิลด์ระบบ</th><th>ความมั่นใจ</th></tr></thead>
-        <tbody>${mappings.map(m => `<tr>
-          <td>${m.sourceColumn || m.source}</td>
-          <td>${m.targetField || m.target}</td>
-          <td><span class="badge ${(m.confidence||0)>0.7?'badge-success':'badge-warning'}">${Math.round((m.confidence||0)*100)}%</span></td>
-        </tr>`).join('')}</tbody></table></div>
-        <div style="margin-top:16px;text-align:right;display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn btn-warning" onclick="Page.smartPreviewConflicts()">ตรวจสอบข้อมูลซ้ำ</button>
-          <button class="btn btn-primary" onclick="Page.confirmSmartImport()">ยืนยันนำเข้า</button>
+
+      // Parallel: AI mapping suggestion + entity field catalogue (needed
+      // for the dropdown). Both are cheap so issue together.
+      const [uploadRes, metaRes] = await Promise.all([
+        api.smartImportUpload(requestBody),
+        api.getImportTemplateMeta(entity),
+      ]);
+      const session = uploadRes.data || {};
+      const meta = metaRes.data || {};
+      this.smartSessionId = session.sessionId || session.id;
+      this.smartSession = session;
+      this.smartTargetFields = meta.fields || [];
+      this.renderSmartMappingEditor();
+    } catch (err) {
+      document.getElementById('smartMappingCard').style.display = '';
+      document.getElementById('smartMappingBody').innerHTML =
+        `<p class="text-danger">${Layout.esc(err.message)}</p>`;
+    }
+  },
+
+  // STEP 2: render one row per source column with a dropdown of system
+  // fields. AI's suggestion is pre-selected when present so the typical
+  // case (90% auto-correct) is just "scan + click save", while edge cases
+  // (file from a competitor with weird column names) get fully manual.
+  renderSmartMappingEditor() {
+    const session = this.smartSession;
+    const mappings = session.columnMappings || [];
+    const fields = this.smartTargetFields;
+    const targetMapped = new Set(mappings.map(m => m.targetField).filter(Boolean));
+    const requiredFields = fields.filter(f => f.isRequired);
+    const previewRows = (session.previewData || []).slice(1, 6); // skip header
+
+    const optsHtml = (selected) => {
+      const opts = fields.map(f => {
+        const sel = (f.fieldName === selected) ? 'selected' : '';
+        const star = f.isRequired ? ' *' : '';
+        return `<option value="${Layout.esc(f.fieldName)}" ${sel}>${Layout.esc(f.displayName + star)}</option>`;
+      }).join('');
+      return `<option value="">— ไม่ใช้คอลัมน์นี้ —</option>${opts}`;
+    };
+
+    const rows = mappings.map(m => {
+      const conf = Math.round((m.confidenceScore || 0) * 100);
+      const confClass = conf >= 70 ? 'badge-success' : conf >= 40 ? 'badge-warning' : 'badge-danger';
+      const samples = (m.sampleValues || []).slice(0, 3).map(s => Layout.esc(String(s)));
+      const samplesHtml = samples.length
+        ? samples.map(s => `<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:11px">${s}</code>`).join(' ')
+        : '<span class="text-gray-400 text-sm">—</span>';
+      return `<tr>
+        <td><strong>${Layout.esc(m.sourceHeader || '')}</strong></td>
+        <td>${samplesHtml}</td>
+        <td><select class="form-select smart-map" data-src="${m.sourceIndex}" style="min-width:200px">${optsHtml(m.targetField)}</select></td>
+        <td><span class="badge ${confClass}">${conf}%</span></td>
+      </tr>`;
+    }).join('');
+
+    const previewTable = previewRows.length ? `
+      <details style="margin-top:16px">
+        <summary style="cursor:pointer;font-weight:600;color:#475569">👀 ดูตัวอย่างข้อมูล 5 แถวแรก</summary>
+        <div class="table-container" style="margin-top:8px;max-height:200px;overflow:auto">
+          <table class="table" style="font-size:12px">
+            <thead><tr>${mappings.map(m => `<th>${Layout.esc(m.sourceHeader || '')}</th>`).join('')}</tr></thead>
+            <tbody>${previewRows.map(r => `<tr>${r.map(c => `<td>${Layout.esc(String(c || ''))}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
         </div>
-        <div id="smartConflicts" style="margin-top:14px"></div>`;
-    } catch (err) { result.innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
+      </details>` : '';
+
+    const missingRequired = requiredFields.filter(f => !targetMapped.has(f.fieldName));
+    const reqHtml = requiredFields.length ? `
+      <div class="alert ${missingRequired.length ? 'alert-warning' : 'alert-info'}" style="margin-bottom:12px">
+        <strong>ฟิลด์ที่จำเป็น (*):</strong>
+        ${requiredFields.map(f => {
+          const ok = targetMapped.has(f.fieldName);
+          return `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border-radius:10px;background:${ok?'#dcfce7':'#fee2e2'};color:${ok?'#166534':'#991b1b'}">${ok?'✓':'✗'} ${Layout.esc(f.displayName)}</span>`;
+        }).join('')}
+      </div>` : '';
+
+    document.getElementById('smartMappingCard').style.display = '';
+    document.getElementById('smartMappingBody').innerHTML = `
+      <p class="text-sm text-gray-500" style="margin-bottom:12px">
+        AI วิเคราะห์ ${mappings.length} คอลัมน์จากไฟล์แล้ว — ปรับการจับคู่ได้ตามต้องการ
+        (พบ ${session.totalRows || 0} แถว, จับคู่อัตโนมัติ ${mappings.length - (session.unmappedColumns || 0)}/${mappings.length})
+      </p>
+      ${reqHtml}
+      <div class="table-container">
+        <table class="table">
+          <thead><tr>
+            <th style="width:25%">คอลัมน์ในไฟล์</th>
+            <th style="width:30%">ตัวอย่าง</th>
+            <th style="width:35%">ฟิลด์ในระบบ</th>
+            <th style="width:10%">ความมั่นใจ</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${previewTable}
+      <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary" onclick="Page.smartUpload()">↻ อัพโหลดใหม่</button>
+        <button class="btn btn-primary" onclick="Page.saveSmartMappings()">💾 บันทึกการจับคู่ → ตรวจสอบความซ้ำ</button>
+      </div>
+    `;
+  },
+
+  // STEP 3a: persist user's column mappings + chain into conflict preview.
+  // Block submit if any required field is still unmapped so the operator
+  // doesn't waste a round-trip just to be told "TaxId is required".
+  async saveSmartMappings() {
+    const api = Layout.api(); if (!api) return;
+    const mappings = Array.from(document.querySelectorAll('.smart-map')).map(s => ({
+      sourceIndex: Number(s.dataset.src),
+      targetField: s.value || null,
+    }));
+
+    const requiredFields = (this.smartTargetFields || []).filter(f => f.isRequired);
+    const mappedTargets = new Set(mappings.map(m => m.targetField).filter(Boolean));
+    const missing = requiredFields.filter(f => !mappedTargets.has(f.fieldName));
+    if (missing.length) {
+      Layout.toast(`ยังไม่ได้จับคู่ฟิลด์ที่จำเป็น: ${missing.map(m => m.displayName).join(', ')}`, 'error');
+      return;
+    }
+    // Catch the same source field mapped to two targets — silent overwrite
+    // would produce confusing import errors downstream.
+    const targets = mappings.map(m => m.targetField).filter(Boolean);
+    const dup = targets.find((t, i) => targets.indexOf(t) !== i);
+    if (dup) {
+      Layout.toast(`ฟิลด์ "${dup}" ถูกจับคู่ซ้ำ — แต่ละฟิลด์ระบบใช้กับ 1 คอลัมน์ในไฟล์เท่านั้น`, 'error');
+      return;
+    }
+
+    try {
+      const res = await api.smartImportMapping({ sessionId: this.smartSessionId, mappings });
+      this.smartSession = res.data || this.smartSession;
+      document.getElementById('smartResultCard').style.display = '';
+      document.getElementById('smartResult').innerHTML = `
+        <div style="margin-bottom:12px"><span class="badge badge-success">บันทึกการจับคู่สำเร็จ</span></div>
+        <div class="text-sm" style="margin-bottom:12px">กำลังเทียบกับฐานข้อมูลเพื่อหาแถวที่ซ้ำ...</div>`;
+      await this.smartPreviewConflicts();
+    } catch (err) {
+      Layout.toast('บันทึกการจับคู่ไม่สำเร็จ: ' + err.message, 'error');
+    }
   },
 
   async smartPreviewConflicts() {
@@ -409,7 +584,7 @@ const Page = {
     const cid = Layout.getCompanyId();
     const token = localStorage.getItem('token');
     const box = document.getElementById('smartConflicts');
-    box.innerHTML = '<div class="card">กำลังเทียบกับฐานข้อมูล...</div>';
+    box.innerHTML = '<div class="text-sm text-gray-500" style="text-align:center;padding:20px">⏳ กำลังเทียบกับฐานข้อมูล...</div>';
     try {
       const r = await fetch(`/api/companies/${cid}/import-export/smart-import/sessions/${this.smartSessionId}/preview-conflicts`, {
         headers: { 'Authorization': 'Bearer ' + token } });
@@ -417,26 +592,31 @@ const Page = {
       if (!j.success) throw new Error(j.message);
       this._conflictResolutions = {};
       const entity = document.getElementById('smartEntity')?.value || j.data.entityType;
-      // Reuse the same renderer the standard import uses — but inject into smartConflicts box.
-      const origResult = document.getElementById('importResult');
-      const origInner = origResult.innerHTML;
-      this._renderConflictResult(j.data, entity);
-      box.innerHTML = origResult.innerHTML;
-      origResult.innerHTML = origInner;
+      // Render directly into smartConflicts (no temp swap) and inject
+      // the smart-flow's confirm button into the same view.
+      this._renderConflictResult(j.data, entity, 'smartConflicts', 'Page.confirmSmartImport()');
     } catch (e) { box.innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
   },
 
+  // STEP 3b: commit the mapped + conflict-resolved import.
   async confirmSmartImport() {
     if (!this.smartSessionId) return;
     const api = Layout.api(); if (!api) return;
     try {
-      await api.smartImportConfirm({
+      const r = await api.smartImportConfirm({
         sessionId: this.smartSessionId,
         resolutions: this._conflictResolutions || {},
         defaultConflictAction: this._conflictDefault || 'Merge',
       });
+      const d = r.data || {};
       Layout.toast('นำเข้าข้อมูลสำเร็จ');
-      document.getElementById('smartResult').innerHTML = '<p class="text-success text-center" style="padding:20px">นำเข้าข้อมูลเรียบร้อยแล้ว</p>';
+      document.getElementById('smartResult').innerHTML = `
+        <div style="padding:16px;background:#dcfce7;border-radius:8px;color:#166534">
+          <h4 style="margin:0 0 8px 0">✅ นำเข้าข้อมูลเรียบร้อย</h4>
+          <div class="text-sm">นำเข้า: <strong>${d.successCount || 0}</strong> · ข้าม: <strong>${d.skippedCount || 0}</strong> · ผิดพลาด: <strong>${d.errorCount || 0}</strong></div>
+          ${(d.errors||[]).length ? `<details style="margin-top:8px"><summary class="text-sm" style="cursor:pointer">ดูข้อผิดพลาด (${d.errors.length})</summary><ul style="font-size:11px;margin:8px 0 0 0;padding-left:20px">${d.errors.slice(0,20).map(e => `<li>แถว ${e.rowNumber}: ${Layout.esc(e.field || '')} — ${Layout.esc(e.errorMessage || '')}</li>`).join('')}</ul></details>` : ''}
+        </div>`;
+      document.getElementById('smartConflicts').innerHTML = '';
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
@@ -474,8 +654,16 @@ const Page = {
     } catch (e) { result.innerHTML = `<p class="text-danger">${Layout.esc(e.message)}</p>`; }
   },
 
-  _renderConflictResult(d, entity) {
-    const result = document.getElementById('importResult');
+  // Renders the conflict-resolution table into a caller-chosen container,
+  // so both the standard import (#importResult) and the smart import
+  // (#smartConflicts) share one view instead of duplicating markup.
+  // confirmHandler is the JS expression for the final-confirm button
+  // (e.g. "Page.doImport()" vs "Page.confirmSmartImport()") — null
+  // means "don't render a confirm button here, the host card has its
+  // own action row".
+  _renderConflictResult(d, entity, targetId = 'importResult', confirmHandler = null) {
+    const result = document.getElementById(targetId);
+    if (!result) return;
     const keyLabel = this._keyLabel(entity);
     const rows = (d.conflicts||[]).map((c, i) => {
       const fieldRows = c.diffFields.map(f => `
@@ -518,7 +706,8 @@ const Page = {
             <tbody>${rows}</tbody>
           </table>
         </div>`}
-      ${(d.warnings||[]).length ? `<details style="margin-top:8px"><summary>คำเตือน (${d.warnings.length})</summary><ul>${d.warnings.map(w => `<li class="text-sm">${Layout.esc(w)}</li>`).join('')}</ul></details>` : ''}`;
+      ${(d.warnings||[]).length ? `<details style="margin-top:8px"><summary>คำเตือน (${d.warnings.length})</summary><ul>${d.warnings.map(w => `<li class="text-sm">${Layout.esc(w)}</li>`).join('')}</ul></details>` : ''}
+      ${confirmHandler ? `<div style="margin-top:16px;text-align:right"><button class="btn btn-primary" onclick="${confirmHandler}">✅ ยืนยันนำเข้า</button></div>` : ''}`;
   },
 };
 
