@@ -255,8 +255,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 || d.DocumentType == DocumentType.Expense) ? "AP" : "AR",
             d.ContactName, d.TaxId)).ToList();
 
-        // ── 5. Open payments (Bank transfer / PromptPay / DirectDebit)
-        // ── that haven't been linked to a bank txn yet ─────────────────
+        // ── 5. Open payments not yet linked to a bank txn ──────────────
+        // No payment-method filter: a customer can pay cash / cheque / e-wallet
+        // and the shop deposits it, so the Payment.PaymentMethod won't always be
+        // BankTransfer even though it shows as a bank deposit. Matching on
+        // amount + date + unmatched status (not method) maximises recall;
+        // AI + the user's confirm step filter out false positives.
         var matchedPaymentIdsRaw = await _db.BankTransactions.AsNoTracking()
             .Where(t => t.BankAccountId == bankAccountId
                         && t.MatchedPaymentId != null)
@@ -266,10 +270,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         var payments = await _db.Payments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && !p.IsDeleted
                         && p.PaymentDate >= windowStart
-                        && p.PaymentDate <= windowEnd
-                        && (p.PaymentMethod == PaymentMethod.BankTransfer
-                            || p.PaymentMethod == PaymentMethod.PromptPay
-                            || p.PaymentMethod == PaymentMethod.DirectDebit))
+                        && p.PaymentDate <= windowEnd)
             .Where(p => !matchedPaymentIds.Contains(p.Id))
             .OrderByDescending(p => p.PaymentDate)
             .Take(MaxCandidatesPerKind + 1)
@@ -334,6 +335,67 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         var openJes = jeRows.Select(j => new BulkBankMatchPrompt.OpenJeInput(
             j.Id.ToString(), j.EntryNumber, j.EntryDate, Math.Abs(j.NetAmount),
             j.Description, j.Reference)).ToList();
+
+        // ── 6b. Zero-candidate guard ───────────────────────────────────
+        // If nothing made it through the AR/AP-doc + payment + JE filters,
+        // calling AI is pointless (it can only reply "nothing to match" —
+        // exactly the wasted call the user just saw). Instead diagnose WHY
+        // by counting what exists in the window IGNORING our filters, so
+        // the message is actionable ("you have 60 docs but all are fully
+        // paid" vs "you've recorded 0 payments — import/create them first").
+        if (openDocs.Count + openPayments.Count + openJes.Count == 0)
+        {
+            var docsInWindowAny = await _db.Documents.AsNoTracking()
+                .CountAsync(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                    && d.DocumentDate >= windowStart && d.DocumentDate <= windowEnd, ct);
+            var docsOpenAny = await _db.Documents.AsNoTracking()
+                .CountAsync(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                    && d.BalanceDue > 0
+                    && d.DocumentDate >= windowStart && d.DocumentDate <= windowEnd, ct);
+            var paymentsInWindow = await _db.Payments.AsNoTracking()
+                .CountAsync(p => p.CompanyId == companyId && !p.IsDeleted
+                    && p.PaymentDate >= windowStart && p.PaymentDate <= windowEnd, ct);
+            var jesInWindow = await _db.JournalEntries.AsNoTracking()
+                .CountAsync(j => j.CompanyId == companyId && !j.IsDeleted
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.EntryDate >= windowStart && j.EntryDate <= windowEnd, ct);
+
+            var diag = new List<string>
+            {
+                $"พบ bank txn ที่ยังไม่กระทบยอด {txns.Count} รายการ แต่ไม่มีรายการในระบบให้จับคู่เลย " +
+                $"(ค้นในช่วง {windowStart:d MMM yyyy} – {windowEnd:d MMM yyyy})",
+            };
+            // Tell them exactly which bucket is empty + the likely fix.
+            if (docsInWindowAny == 0 && paymentsInWindow == 0 && jesInWindow == 0)
+                diag.Add("• ยังไม่มีเอกสาร / การชำระเงิน / รายการบัญชีในช่วงนี้เลย — ถ้านี่คือเงินรับจากลูกค้า ให้สร้าง Invoice/ใบเสร็จ หรือบันทึก Payment/Journal Entry ก่อน แล้วค่อย match");
+            else
+            {
+                if (docsInWindowAny > 0)
+                    diag.Add($"• มีเอกสาร {docsInWindowAny} ฉบับในช่วงนี้ แต่ {(docsOpenAny == 0 ? "ทั้งหมดชำระครบแล้ว (ยอดคงค้าง = 0)" : $"มีเพียง {docsOpenAny} ฉบับที่ยังค้างชำระ และไม่ใช่ประเภท Invoice/TaxInvoice/BillingNote/PurchaseInvoice/Expense")} — เงินที่รับอาจถูกบันทึกเป็นใบเสร็จ (Receipt) ที่ปิดยอดแล้ว");
+                if (paymentsInWindow > 0)
+                    diag.Add($"• มี Payment {paymentsInWindow} รายการในช่วงนี้ แต่ทั้งหมดถูกจับคู่กับ bank txn อื่นไปแล้ว");
+                if (jesInWindow > 0)
+                    diag.Add($"• มี Journal Entry {jesInWindow} รายการในช่วงนี้ แต่ยอดไม่ตรงกับ bank txn ใด (ต่างเกิน ±5 บาท) หรือถูกจับคู่ไปแล้ว");
+                diag.Add("→ ตรวจว่าได้สร้าง Invoice/Payment/JE สำหรับเงินรับเหล่านี้แล้วหรือยัง");
+            }
+
+            return new BulkAiMatchPlan(
+                FeedbackId: null,
+                Status: "NoCandidates",
+                BankTxnsConsidered: txns.Count,
+                CandidatesConsidered: 0,
+                Matches: Array.Empty<ProposedMatch>(),
+                Unmatched: txns.Select(t => new UnmatchedTxn(
+                    Guid.Parse(t.Id),
+                    "ไม่มีรายการในระบบให้จับคู่",
+                    "สร้าง Invoice/ใบเสร็จ หรือบันทึก Payment/Journal Entry สำหรับเงินจำนวนนี้")).ToList(),
+                MissingData: Array.Empty<MissingDataHint>(),
+                Warnings: diag,
+                Reasoning: null,
+                ProviderModel: null);
+        }
 
         var bankContext = new BulkBankMatchPrompt.BankAccountContext(
             bankAccountId.ToString(), bank.AccountName, bank.BankName,
