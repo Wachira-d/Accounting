@@ -52,7 +52,16 @@ public sealed record AdvancedAiResult(
     string? Reasoning,
     IReadOnlyList<string> SuggestedActions,
     bool UsedAi,
-    Guid? FeedbackId);
+    Guid? FeedbackId,
+    // Schema validation outcome. Populated when the caller supplied
+    // expected top-level keys to ToResult(). Empty list = JSON shape
+    // matches expectations; non-empty = AI returned but skipped or
+    // renamed a key — frontend should surface the warning instead of
+    // silently rendering blank.
+    IReadOnlyList<string> SchemaWarnings)
+{
+    public bool HasSchemaIssues => SchemaWarnings.Count > 0;
+}
 
 /// <summary>Compact projection used by the AR/AP aging helper.
 /// Concrete record (not anonymous) so the Aging() local function
@@ -131,7 +140,11 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 localGuessTargetType: scan.TargetDocumentType ?? scan.DocumentType,
                 localConfidence: scan.Confidence);
             var resp = await _orchestrator.AskAsync(req, ct);
-            return ToResult(resp);
+            // OcrReviewPrompt expects corrections / target_document / vendor_canonical /
+            // line_items in the response — flagging any missing key surfaces
+            // a "AI ตอบแต่ขาด corrections" warning to the operator instead of
+            // silently leaving the form unchanged.
+            return ToResult(resp, "corrections", "target_document", "vendor_canonical", "line_items");
         }
         catch (Exception ex)
         {
@@ -200,7 +213,10 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 companyId, scanResultId, docHeader,
                 lineItems, products.Cast<object>().ToArray());
             var resp = await _orchestrator.AskAsync(req, ct);
-            return ToResult(resp);
+            // StockDecisionPrompt expects { lines: [...] } — per-line CreateNew/
+            // Update/Match decisions. Without that key the UI's "apply decisions"
+            // button has nothing to apply.
+            return ToResult(resp, "lines");
         }
         catch (Exception ex)
         {
@@ -265,7 +281,9 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 customerPaymentHistory: new { },
                 vendorPaymentHistory: new { });
             var resp = await _orchestrator.AskAsync(req, ct);
-            return ToResult(resp);
+            // ArApAnalysisPrompt expects risk_buckets + cash_gap_forecast +
+            // recommendations — the UI's three-section render needs all three.
+            return ToResult(resp, "risk_buckets", "cash_gap_forecast", "recommendations");
         }
         catch (Exception ex)
         {
@@ -298,7 +316,9 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 scannedSnapshot: snapshot,
                 ourRole: scan.OurRole ?? "Unknown");
             var resp = await _orchestrator.AskAsync(req, ct);
-            return ToResult(resp);
+            // DocumentConversionPrompt expects { targets: [...] } — viable
+            // conversion targets with prefill strategies.
+            return ToResult(resp, "targets");
         }
         catch (Exception ex)
         {
@@ -361,7 +381,9 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 recentPayments: Array.Empty<object>(),
                 counterpartyOffsetSummary: null);
             var resp = await _orchestrator.AskAsync(req, ct);
-            return ToResult(resp);
+            // BankComprehensiveMatchPrompt expects { matches, missing_pieces,
+            // patterns_detected } — the UI's three-tab view requires all three.
+            return ToResult(resp, "matches", "missing_pieces", "patterns_detected");
         }
         catch (Exception ex)
         {
@@ -370,7 +392,7 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
         }
     }
 
-    private static AdvancedAiResult ToResult(AiResponse resp) => new(
+    private static AdvancedAiResult ToResult(AiResponse resp, params string[] expectedTopLevelKeys) => new(
         Primary: resp.PrimaryAnswer,
         Confidence: resp.Confidence,
         StructuredJson: resp.RawResponseJson,
@@ -379,11 +401,40 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
         Reasoning: resp.Reasoning,
         SuggestedActions: resp.SuggestedActions,
         UsedAi: resp.UsedAi,
-        FeedbackId: resp.FeedbackId);
+        FeedbackId: resp.FeedbackId,
+        SchemaWarnings: ValidateSchema(resp.RawResponseJson, resp.UsedAi, expectedTopLevelKeys));
+
+    /// <summary>Verify the AI's JSON response contains every expected
+    /// top-level key. Catches the silent-render-blank class of bug
+    /// where AI succeeded but skipped the field the UI parses. Returns
+    /// an empty list when AI didn't run (no schema to validate) or
+    /// when all keys are present.</summary>
+    private static IReadOnlyList<string> ValidateSchema(
+        string? rawJson, bool usedAi, IReadOnlyList<string> expectedKeys)
+    {
+        if (!usedAi || expectedKeys.Count == 0) return Array.Empty<string>();
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return new[] { "AI ตอบแต่ JSON ว่าง — ไม่สามารถ render ผลได้" };
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return new[] { $"AI ตอบแต่ JSON root ไม่ใช่ object (เป็น {doc.RootElement.ValueKind})" };
+            var missing = expectedKeys.Where(k => !doc.RootElement.TryGetProperty(k, out _)).ToList();
+            return missing.Count == 0
+                ? Array.Empty<string>()
+                : new[] { $"AI ตอบแต่ขาด key: {string.Join(", ", missing)}" };
+        }
+        catch (JsonException ex)
+        {
+            return new[] { $"AI ตอบแต่ JSON parse ไม่ได้: {ex.Message}" };
+        }
+    }
 
     private static AdvancedAiResult Fallback(string? primary) => new(
         primary, null, null,
         Array.Empty<string>(), Array.Empty<string>(),
         null, Array.Empty<string>(),
-        false, null);
+        false, null,
+        Array.Empty<string>());
 }

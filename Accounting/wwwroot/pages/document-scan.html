@@ -2195,6 +2195,12 @@
             Layout.toast('AI ไม่ตอบ — ใช้ข้อมูลเดิมต่อ', 'warning');
             return;
           }
+          // Schema warnings from the augmenter — AI ran but response
+          // JSON missed an expected key (corrections / line_items /
+          // targets). Toast so the operator knows the fill might be
+          // partial rather than silently leaving fields untouched.
+          const sw = [...(review?.schemaWarnings || []), ...(conv?.schemaWarnings || [])].filter(Boolean);
+          sw.forEach(w => Layout.toast('⚠️ ' + w, 'warning'));
           // Apply corrections: parse review.structured (JSON string of
           // the full AI response) — corrections field carries the field-
           // level overrides. Apply them to the visible form inputs.
@@ -2422,6 +2428,10 @@
         if (btn) { btn.disabled = true; btn.textContent = '🤖 กำลังถาม AI...'; }
         try {
           const res = await API.post(`/api/companies/${cid}/ai/ocr/${scanId}/stock-decisions`);
+          // schemaWarnings = AI ran but response was missing the "lines"
+          // key — show the warning before applying so the operator knows
+          // the apply step has nothing to apply.
+          (res?.data?.schemaWarnings || []).forEach(w => Layout.toast('⚠️ ' + w, 'warning'));
           if (res && res.data && res.data.structured) {
             const payload = JSON.parse(res.data.structured);
             this._lastAiStockDecision = { scanId, payload };

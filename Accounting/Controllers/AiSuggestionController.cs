@@ -447,6 +447,12 @@ public class AiSuggestionController : ControllerBase
         suggestedActions = r.SuggestedActions,
         feedbackId = r.FeedbackId,
         usedAi = r.UsedAi,
+        // Schema validation outcome from the augmenter — populated when
+        // AI ran but its JSON didn't carry the keys the UI parses (e.g.
+        // 'corrections' missing from OCR-review, 'risk_buckets' missing
+        // from AR/AP analysis). UI shows these as orange warnings instead
+        // of silently rendering blank sections.
+        schemaWarnings = r.SchemaWarnings,
     };
 
     private static IReadOnlyList<string> DeserializeList(string? json)
@@ -492,9 +498,36 @@ public class AiSuggestionController : ControllerBase
             MaxTokensOverride = 600,
         };
         var resp = await orchestrator.AskAsync(aiReq, ct);
+        // Three-state outcome (the previous "?? Reasoning ?? ''" fallback
+        // was useful but ambiguous — the operator couldn't tell whether
+        // AI was off, returned bad output, or genuinely had nothing to
+        // say). Now status makes it explicit.
+        string narrative;
+        string status;
+        if (!resp.UsedAi)
+        {
+            narrative = "AI ปิดอยู่หรือไม่พร้อมใช้งาน — ลองอีกครั้งหรือดูข้อมูล raw จากตารางด้านบน";
+            status = "ai_unavailable";
+        }
+        else if (!string.IsNullOrWhiteSpace(resp.PrimaryAnswer))
+        {
+            narrative = resp.PrimaryAnswer!;
+            status = "ok";
+        }
+        else if (!string.IsNullOrWhiteSpace(resp.Reasoning))
+        {
+            narrative = resp.Reasoning!;
+            status = "partial";    // AI ran but PrimaryAnswer was empty
+        }
+        else
+        {
+            narrative = "AI ตอบแต่ผลว่าง — ลองดูจาก raw data แทน";
+            status = "empty_response";
+        }
         return Ok(new ApiResponse<object>(true, new
         {
-            narrative = resp.PrimaryAnswer ?? resp.Reasoning ?? "",
+            narrative,
+            status,
             usedAi = resp.UsedAi,
             feedbackId = resp.FeedbackId,
         }));
@@ -504,6 +537,19 @@ public class AiSuggestionController : ControllerBase
     //  Anomaly explanation — local model returns deterministic Thai
     //  reason + suggested actions from MAD z-score; DeepSeek wraps
     //  the borderline 5% with prose. Hybrid mode by default.
+    //
+    //  Note on the two endpoints:
+    //   POST /anomalies/{anomalyId}/explain  — persisted variant.
+    //     Reads an existing AnomalyDetection row, runs AI, then writes
+    //     AiVerdict / AiConfidence / AiReasoning / AiFeedbackId BACK
+    //     onto the row so subsequent reads (and dashboards) can skip
+    //     the AI call. Used for "explain this flagged anomaly" UX.
+    //   POST /anomaly/explain                — ad-hoc variant (below).
+    //     No persistence — caller passes raw amount + history inline
+    //     (e.g. "I'm typing a new invoice and the amount looks high,
+    //     what does AI think?"). Used during document entry / before
+    //     the row exists in AnomalyDetection. Both paths share the
+    //     same prompt builder.
     // ────────────────────────────────────────────────────────────────
     public sealed record ExplainAnomalyRequest(
         Guid? AnomalyId, decimal Amount,
