@@ -1016,6 +1016,10 @@ public class DocumentService : IDocumentService
                     DocumentType.PurchaseInvoice, DocumentType.Expense,
                     DocumentType.Receipt, DocumentType.ReceiptVoucher,
                     DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
+                    // 3-way match: a GRN accrues goods-received-not-invoiced
+                    // (Dr Expense / Cr GR-NI) so received goods hit the books
+                    // before the supplier's invoice arrives.
+                    DocumentType.GoodsReceiptNote,
                 };
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
                 {
@@ -3258,6 +3262,61 @@ public class DocumentService : IDocumentService
             ?? await FindAccountAsync(companyId, secondary);
     }
 
+    /// <summary>Get (creating once if absent) the "goods received not
+    /// invoiced" accrual account (21240) used by the 3-way-match GRN flow.
+    /// Auto-creating it means the feature works for existing companies whose
+    /// chart predates it — it appears as a standard liability under 212.</summary>
+    private async Task<ChartOfAccount?> EnsureGrNiAccountAsync(Guid companyId)
+    {
+        var existing = await FindAccountAsync(companyId, "21240");
+        if (existing != null) return existing;
+
+        var parentId = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AccountCode == "212")
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync();
+
+        var acct = new ChartOfAccount
+        {
+            CompanyId = companyId,
+            AccountCode = "21240",
+            AccountName = "เจ้าหนี้-รับสินค้ายังไม่วางบิล",
+            AccountNameEn = "Goods Received Not Invoiced",
+            AccountType = AccountType.Liability,
+            ParentAccountId = parentId,
+            Level = 4,
+            IsActive = true,
+            IsSystemAccount = true,
+            Description = "ตั้งพักเจ้าหนี้สำหรับสินค้าที่รับแล้วแต่ยังไม่ได้รับใบกำกับ (3-way match)",
+        };
+        _db.ChartOfAccounts.Add(acct);
+        await _db.SaveChangesAsync();
+        return acct;
+    }
+
+    /// <summary>When a PurchaseInvoice was billed against a GoodsReceiptNote
+    /// that already accrued the goods (posted a Dr Expense / Cr GR-NI entry),
+    /// return that GR-NI account so the PI can clear the accrual instead of
+    /// re-debiting expense + re-moving stock. Returns null for a standalone
+    /// PI or a GRN that hasn't posted (so the caller falls back to the normal
+    /// expense + stock path).</summary>
+    private async Task<ChartOfAccount?> GetReceivedViaGrnAccrualAccountAsync(Guid companyId, Document doc)
+    {
+        if (doc.RelatedDocumentId == null) return null;
+        var srcType = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
+        if (srcType != DocumentType.GoodsReceiptNote) return null;
+
+        var grnPosted = await _db.JournalEntries.AsNoTracking()
+            .AnyAsync(j => j.SourceDocumentId == doc.RelatedDocumentId.Value
+                && j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted);
+        if (!grnPosted) return null;
+
+        return await FindAccountAsync(companyId, "21240");
+    }
+
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
@@ -3334,6 +3393,11 @@ public class DocumentService : IDocumentService
         int direction = doc.DocumentType switch
         {
             DocumentType.Invoice or DocumentType.TaxInvoice => -1,  // sale OUT
+            // Goods physically arrive at the GRN (3-way match) — stock moves
+            // IN there. A PurchaseInvoice raised against that GRN must NOT
+            // move stock again (handled below); a STANDALONE PurchaseInvoice
+            // (no GRN) still moves stock IN itself.
+            DocumentType.GoodsReceiptNote => +1,
             DocumentType.PurchaseInvoice => +1,                     // purchase IN
             // CreditNote only restocks when reason = Return (goods physically
             // came back). Discount / Adjustment / Writeoff are pure financial
@@ -3344,6 +3408,12 @@ public class DocumentService : IDocumentService
             _ => 0,
         };
         if (direction == 0) return;
+
+        // PurchaseInvoice billed against an accrued GRN → goods already
+        // stocked at receipt; don't double-count them now.
+        if (doc.DocumentType == DocumentType.PurchaseInvoice
+            && await GetReceivedViaGrnAccrualAccountAsync(companyId, doc) != null)
+            return;
         // sign flips on void: a sale's OUT becomes an IN; the BalanceAfter
         // walks back to where it was before.
         var effective = direction * sign;
@@ -3706,12 +3776,29 @@ public class DocumentService : IDocumentService
         {
             journalType = JournalType.Purchase;
 
-            // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ
-            foreach (var docLine in doc.Lines)
+            // 3-way match: if this invoice was billed against a Goods Receipt
+            // Note that ALREADY accrued the goods (Dr Expense / Cr GR-NI when
+            // received), the expense is already in the books — so here we just
+            // CLEAR the GR-NI accrual (Dr GR-NI) instead of debiting expense
+            // again, then claim VAT + set up the payable. Otherwise (standalone
+            // PI) we debit expense as normal.
+            var grNiAccount = await GetReceivedViaGrnAccrualAccountAsync(companyId, doc);
+            if (grNiAccount != null)
             {
-                var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
-                if (expenseAccountId.HasValue)
-                    AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+                // Dr: เจ้าหนี้-รับสินค้ายังไม่วางบิล (GR-NI) — clear the accrual
+                // for the invoiced (ex-VAT) value. Partial invoices clear only
+                // their portion; the rest of the GR-NI stays for later bills.
+                AddLine(grNiAccount.Id, doc.SubTotal, 0, $"ตัดเจ้าหนี้รับของยังไม่วางบิล - {doc.DocumentNumber}");
+            }
+            else
+            {
+                // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ (standalone purchase)
+                foreach (var docLine in doc.Lines)
+                {
+                    var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                    if (expenseAccountId.HasValue)
+                        AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+                }
             }
 
             // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30
@@ -3925,6 +4012,28 @@ public class DocumentService : IDocumentService
                         AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
                 }
             }
+        }
+        else if (doc.DocumentType == DocumentType.GoodsReceiptNote)
+        {
+            // 3-way match — accrue goods received but not yet invoiced.
+            //   Dr ค่าใช้จ่าย/สินค้า (per line, ex-VAT)   = goods value
+            //   Cr เจ้าหนี้-รับสินค้ายังไม่วางบิล (GR-NI)  = goods value
+            // No VAT/WHT here — those belong to the supplier's tax invoice,
+            // booked when the PurchaseInvoice is raised against this GRN
+            // (which then Dr GR-NI to clear this accrual). VAT/WHT entered on
+            // a GRN line is ignored for posting (the goods value = SubTotal).
+            journalType = JournalType.Purchase;
+            var grNi = await EnsureGrNiAccountAsync(companyId);
+            if (grNi == null) return;   // chart can't support it → no JE (legacy behaviour)
+
+            foreach (var docLine in doc.Lines)
+            {
+                var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                if (expenseAccountId.HasValue)
+                    AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+            }
+            if (doc.SubTotal > 0)
+                AddLine(grNi.Id, 0, doc.SubTotal, $"รับสินค้ายังไม่วางบิล - {doc.DocumentNumber}");
         }
         else
         {
