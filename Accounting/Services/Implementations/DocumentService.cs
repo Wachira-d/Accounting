@@ -310,10 +310,34 @@ public class DocumentService : IDocumentService
                 CreatedBy = createdBy
             };
 
+            // ===== Settlement basis (Payment Voucher: เครดิต vs จ่ายทันที) =====
+            // Resolve the effective payment type. A standalone Payment Voucher
+            // (no source PI) defaults to Cash — that mirrors the existing JE
+            // (Dr Expense / Cr Cash) and fixes the long-standing bug where such
+            // a voucher set BalanceDue = total and wrongly showed as ค้างชำระ.
+            // A PV settling a prior PurchaseInvoice (RelatedDocumentId) is, by
+            // definition, paying off a credit liability → treated as the cash
+            // outflow that clears AP (handled in posting). Non-PV documents keep
+            // their existing behaviour (type left null).
+            if (request.DocumentType == DocumentType.PaymentVoucher)
+            {
+                doc.PaymentType = request.PaymentType
+                    ?? (request.RelatedDocumentId.HasValue ? Models.Enums.PaymentType.Credit
+                                                           : Models.Enums.PaymentType.Cash);
+            }
+            else
+            {
+                doc.PaymentType = request.PaymentType;
+            }
+            var isCashSettled = doc.PaymentType == Models.Enums.PaymentType.Cash;
+
             // Auto-fill DueDate from CreditDays when caller didn't provide one
             // explicitly. Keeps DSO/DPO reports working even when the partner
-            // API only sends credit terms.
-            if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value > 0)
+            // API only sends credit terms. Cash-settled documents never carry a
+            // due date (the money already moved).
+            if (isCashSettled)
+                doc.DueDate = null;
+            else if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value > 0)
                 doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
 
             // Auto-link Revenue Contract via Project when not explicitly provided.
@@ -377,7 +401,19 @@ public class DocumentService : IDocumentService
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = subTotal + totalVat - totalWht;
-            doc.BalanceDue = doc.TotalAmount;
+            // Cash-settled documents carry no outstanding balance — the cash
+            // already moved, so PaidAmount = Total and BalanceDue = 0. This is
+            // what keeps a จ่ายทันที voucher out of the aging / ค้างชำระ report
+            // (the aging query keys on PaidAmount < TotalAmount).
+            if (isCashSettled)
+            {
+                doc.PaidAmount = doc.TotalAmount;
+                doc.BalanceDue = 0m;
+            }
+            else
+            {
+                doc.BalanceDue = doc.TotalAmount;
+            }
 
             await _db.SaveChangesAsync();
             await _subscriptionService.IncrementUsageAsync(companyId, "document");
@@ -761,7 +797,22 @@ public class DocumentService : IDocumentService
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = subTotal + totalVat - totalWht;
-            doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+
+            // Preserve / apply the settlement basis on edit. A cash-settled
+            // voucher must stay fully paid (BalanceDue = 0, no due date) even
+            // after its lines/total change — otherwise editing it would
+            // re-introduce a phantom outstanding balance.
+            if (request.PaymentType.HasValue) doc.PaymentType = request.PaymentType;
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash)
+            {
+                doc.PaidAmount = doc.TotalAmount;
+                doc.BalanceDue = 0m;
+                doc.DueDate = null;
+            }
+            else
+            {
+                doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+            }
         }
 
         await _db.SaveChangesAsync();
@@ -900,7 +951,13 @@ public class DocumentService : IDocumentService
                     && j.CompanyId == companyId
                     && j.Status == JournalEntryStatus.Posted);
 
-                doc.Status = DocumentStatus.Approved;
+                // A cash-settled document (จ่ายทันที) is already fully paid the
+                // moment it's approved — the JE moves real cash, not a payable.
+                // Mark it Paid so it lands in the right bucket and never shows
+                // as outstanding/ค้างชำระ; everything else goes to Approved.
+                doc.Status = (doc.PaymentType == Models.Enums.PaymentType.Cash && doc.BalanceDue <= 0)
+                    ? DocumentStatus.Paid
+                    : DocumentStatus.Approved;
                 doc.UpdatedBy = approvedBy;
                 doc.UpdatedAt = DateTime.UtcNow;
 
@@ -3754,9 +3811,24 @@ public class DocumentService : IDocumentService
                         AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
                 }
 
-                if (moneyAccount != null)
+                // Credit side depends on the settlement basis:
+                //   Credit (เครดิต) → book a liability to Accounts Payable (212);
+                //     the voucher carries an outstanding balance + due date and
+                //     ages until a later payment settles it.
+                //   Cash (จ่ายทันที) → money leaves now, credit Cash/Bank
+                //     directly — never touches AP.
+                if (doc.PaymentType == Models.Enums.PaymentType.Credit)
+                {
+                    var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
+                    if (apAccount != null)
+                        AddLine(apAccount.Id, 0, doc.TotalAmount,
+                            $"เจ้าหนี้ - {doc.DocumentNumber}");
+                }
+                else if (moneyAccount != null)
+                {
                     AddLine(moneyAccount.Id, 0, doc.TotalAmount,
                         $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
+                }
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
@@ -4076,6 +4148,7 @@ public class DocumentService : IDocumentService
         SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
         CreditDays: d.CreditDays,
         PaymentTerms: d.PaymentTerms,
+        PaymentType: d.PaymentType,
         RelatedDocument: upstream,
         ConvertedToDocuments: downstream,
         ConversionCompletionPercent: conversionPercent,

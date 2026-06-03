@@ -36,6 +36,14 @@ public class Document : TenantEntity
     /// documents. Independent of CreditDays which drives auto math.</summary>
     public string? PaymentTerms { get; set; }
 
+    /// <summary>Settlement basis — Cash (จ่าย/รับทันที) vs Credit (เครดิต).
+    /// Primarily for Payment Voucher (ใบสำคัญจ่าย): Cash posts straight to
+    /// Cash/Bank with no payable + no due date + no aging; Credit posts to
+    /// Accounts Payable, carries a due date, and ages until settled. Null =
+    /// not specified → the service picks a per-type default (standalone
+    /// Payment Voucher defaults to Cash).</summary>
+    public PaymentType? PaymentType { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;

@@ -322,6 +322,24 @@ public enum PaymentMethod
     Other = 99
 }
 
+/// <summary>
+/// Settlement basis for a money-movement document (primarily ใบสำคัญจ่าย /
+/// Payment Voucher, but reusable). Decides the GL posting + whether the
+/// document carries an outstanding balance:
+///   Cash   = จ่าย/รับทันที — posts straight to Cash/Bank, no payable/
+///            receivable, BalanceDue = 0, no due date, never ages.
+///   Credit = เครดิต — posts to Accounts Payable (or Receivable), carries a
+///            due date + outstanding balance, and ages until settled.
+/// Null on a document = legacy/not-applicable; the service infers a sensible
+/// default per document type (standalone Payment Voucher → Cash).
+/// </summary>
+public enum PaymentType
+{
+    Cash = 1,
+    Credit = 2
+}
+
+
 // ==================== Audit ====================
 public enum AuditAction
 {
