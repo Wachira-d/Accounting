@@ -616,6 +616,10 @@ const API = {
       smartImportSession: (sid) => API.get(`${base}/import-export/smart-import/sessions/${sid}`),
       smartImportMapping: (d) => API.post(`${base}/import-export/smart-import/manual-mapping`, d),
       smartImportConfirm: (d) => API.post(`${base}/import-export/smart-import/confirm`, d),
+      // Single DeepSeek call → type normalizations + fuzzy duplicates + per-row
+      // quality flags + semantic validation + batch patterns. Called between
+      // mapping save and confirm.
+      smartImportAiReview: (sid) => API.post(`${base}/import-export/smart-import/sessions/${sid}/ai-review`),
       // Currency
       getCurrencies: () => API.get(`${base}/currency`),
       addCurrency: (d) => API.post(`${base}/currency`, d),

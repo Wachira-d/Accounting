@@ -28,6 +28,11 @@ public interface IImportExportService
     /// stored session + column mappings (so the UI can ask BEFORE Confirm).</summary>
     Task<ConflictPreviewResponse> PreviewSmartConflictsAsync(Guid companyId, Guid sessionId);
 
+    // AI Review — single DeepSeek call covering type normalizations + fuzzy dups
+    // + per-row quality flags + semantic field validation + batch patterns.
+    // Caller invokes after mapping is saved, before commit.
+    Task<ImportAiReviewResponse> AiReviewSessionAsync(Guid companyId, Guid sessionId);
+
     // Template Downloads
     Task<ImportTemplateDownloadResponse> DownloadTemplateAsync(string entityType, string format);
     Task<List<ImportableEntityInfo>> GetImportableEntitiesAsync();

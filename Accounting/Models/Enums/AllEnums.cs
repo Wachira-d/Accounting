@@ -1212,6 +1212,30 @@ public enum AiFeatureKey
     /// batch-orientated; accuracy tracked separately.</summary>
     BulkBankStatementMatch = 25,
 
+    /// <summary>CSV/Excel column-header normalization for files from
+    /// other systems (PEAK/Express/FlowAccount + arbitrary client
+    /// spreadsheets). Fires only when the heuristic AnalyzeColumnMatch
+    /// confidence is &lt; 0.7 on at least one column — keeps happy-path
+    /// imports AI-free. AI sees source headers + 5 sample values per
+    /// column + the entity's template field catalogue and re-ranks
+    /// suggestions, especially for Thai abbreviations / vendor-specific
+    /// conventions the alias table misses.</summary>
+    ImportColumnMatch = 26,
+
+    /// <summary>One-shot per-import data review: type-coercion
+    /// normalizations (Buddhist year → western, "1.234,50" → 1234.50,
+    /// "ใช่/Y/✓" → true), fuzzy-duplicate suggestions beyond exact-key
+    /// match ("บจก. ABC" vs "บริษัท เอบีซี จำกัด"), per-row quality
+    /// flags ("price 10× supplier average"), semantic field validation
+    /// (TaxId checksum, email domain plausibility), and batch-level
+    /// pattern detection ("appears to be a price list" vs "regional
+    /// customer dump"). One AI call per import session covers all five
+    /// concerns since they need the same input context (sample rows +
+    /// target schema + a slice of existing entities). Surfaced to the
+    /// operator BEFORE the conflict step so issues are caught while
+    /// the data is still mutable.</summary>
+    ImportDataReview = 27,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

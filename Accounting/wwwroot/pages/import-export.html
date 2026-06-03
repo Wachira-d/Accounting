@@ -572,11 +572,99 @@ const Page = {
       document.getElementById('smartResultCard').style.display = '';
       document.getElementById('smartResult').innerHTML = `
         <div style="margin-bottom:12px"><span class="badge badge-success">บันทึกการจับคู่สำเร็จ</span></div>
-        <div class="text-sm" style="margin-bottom:12px">กำลังเทียบกับฐานข้อมูลเพื่อหาแถวที่ซ้ำ...</div>`;
+        <div class="text-sm" style="margin-bottom:12px">🤖 AI กำลังตรวจคุณภาพข้อมูล (ปกติใช้เวลา 10-30 วินาที)...</div>`;
+      // Chain: mapping saved → AI review → exact-key conflict preview → confirm.
+      // AI review is best-effort; even if it fails the flow continues into
+      // the existing conflict step.
+      await this.runAiReview();
       await this.smartPreviewConflicts();
     } catch (err) {
       Layout.toast('บันทึกการจับคู่ไม่สำเร็จ: ' + err.message, 'error');
     }
+  },
+
+  // STEP 3.5 (NEW): AI quality review — one DeepSeek call returning
+  // normalizations + fuzzy dups + quality flags + field validation +
+  // batch patterns. Renders the result above the exact-key conflict
+  // table so the operator sees BOTH "AI thinks these need fixing" and
+  // "these keys already exist in DB" before the final confirm.
+  async runAiReview() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const r = await api.smartImportAiReview(this.smartSessionId);
+      this._renderAiReview(r.data || {});
+    } catch (e) {
+      // AI failure is silent — show a one-liner so the operator knows
+      // the AI step ran but couldn't help.
+      const result = document.getElementById('smartResult');
+      result.innerHTML += `<div class="text-sm text-gray-500" style="margin-top:8px">🤖 AI ตรวจสอบไม่สำเร็จ (${Layout.esc(e.message)}) — ดำเนินการต่อด้วย heuristic</div>`;
+    }
+  },
+
+  _renderAiReview(d) {
+    const result = document.getElementById('smartResult');
+    if (!d.usedAi) {
+      result.innerHTML += `<div class="alert alert-info" style="margin-top:8px">🤖 AI ปิดอยู่หรือไม่พร้อมใช้งาน — ใช้ heuristic อย่างเดียว</div>`;
+      return;
+    }
+    const score = d.overallQualityScore != null ? Math.round(d.overallQualityScore * 100) : null;
+    const scoreColor = score == null ? '#64748b' : score >= 80 ? '#16a34a' : score >= 50 ? '#d97706' : '#dc2626';
+    const sectionRow = (icon, title, count, body) => count > 0 ? `
+      <details style="margin-top:8px;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px" open>
+        <summary style="cursor:pointer;font-weight:600">${icon} ${title} <span class="badge badge-info">${count}</span></summary>
+        <div style="margin-top:8px;font-size:12px">${body}</div>
+      </details>` : '';
+
+    const normRows = (d.normalizations || []).slice(0, 50).map(n => `
+      <tr><td>แถว ${n.rowIndex + 1}</td><td><code>${Layout.esc(n.field)}</code></td>
+      <td><span style="background:#fee2e2;padding:2px 6px;border-radius:4px">${Layout.esc(n.original || '(ว่าง)')}</span></td>
+      <td>→</td>
+      <td><span style="background:#dcfce7;padding:2px 6px;border-radius:4px">${Layout.esc(n.normalized || '(ว่าง)')}</span></td>
+      <td class="text-gray-500">${Layout.esc(n.reason || '')}</td></tr>`).join('');
+
+    const dupRows = (d.fuzzyDuplicates || []).map(f => `
+      <tr><td>แถว ${f.rowIndex + 1}</td><td>${Layout.esc(f.incomingKey || '')}</td>
+      <td>≈</td><td>${Layout.esc(f.existingLabel || f.existingId || '')}</td>
+      <td><span class="badge badge-warning">${Math.round((f.similarity || 0) * 100)}%</span></td>
+      <td class="text-gray-500">${Layout.esc(f.reasoning || '')}</td></tr>`).join('');
+
+    const flagRows = (d.qualityFlags || []).map(q => {
+      const sev = q.severity === 'error' ? 'badge-danger' : q.severity === 'warning' ? 'badge-warning' : 'badge-info';
+      return `<li><span class="badge ${sev}">${Layout.esc(q.severity)}</span> แถว ${q.rowIndex + 1}: ${Layout.esc(q.message)}</li>`;
+    }).join('');
+
+    const valRows = (d.fieldValidations || []).map(v => `
+      <li>แถว ${v.rowIndex + 1} · <code>${Layout.esc(v.field)}</code>=<span style="background:#fef3c7;padding:1px 6px;border-radius:4px">${Layout.esc(v.value || '(ว่าง)')}</span>
+      — ${Layout.esc(v.issue)}${v.suggestedFix ? ` <span class="text-success">→ ${Layout.esc(v.suggestedFix)}</span>` : ''}</li>`).join('');
+
+    const patternsHtml = (d.batchPatterns || []).map(p => `<li>${Layout.esc(p)}</li>`).join('');
+
+    result.innerHTML += `
+      <div class="card" style="margin-top:12px;padding:16px;border-left:4px solid ${scoreColor}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <h4 style="margin:0">🤖 AI Review</h4>
+          ${score != null ? `<span class="badge" style="background:${scoreColor};color:#fff">คุณภาพ ${score}/100</span>` : ''}
+        </div>
+        ${d.summary ? `<p class="text-sm" style="margin:0 0 12px 0">${Layout.esc(d.summary)}</p>` : ''}
+        ${sectionRow('🔧', 'แนะนำแก้ค่า (Buddhist year, format, ฯลฯ)', (d.normalizations || []).length,
+          `<div class="table-container"><table class="table" style="font-size:11px">
+            <thead><tr><th>แถว</th><th>ฟิลด์</th><th>เดิม</th><th></th><th>แก้เป็น</th><th>เหตุผล</th></tr></thead>
+            <tbody>${normRows}</tbody></table></div>
+          ${(d.normalizations || []).length > 50 ? `<p class="text-gray-500">...และอีก ${(d.normalizations||[]).length - 50} รายการ</p>` : ''}`)}
+        ${sectionRow('👥', 'น่าจะซ้ำกับข้อมูลเดิม (ชื่อใกล้เคียง)', (d.fuzzyDuplicates || []).length,
+          `<div class="table-container"><table class="table" style="font-size:11px">
+            <thead><tr><th>แถว</th><th>ในไฟล์</th><th></th><th>ในระบบ</th><th>คล้าย</th><th>เหตุผล</th></tr></thead>
+            <tbody>${dupRows}</tbody></table></div>`)}
+        ${sectionRow('⚠️', 'จุดที่ควรตรวจ', (d.qualityFlags || []).length,
+          `<ul style="margin:0;padding-left:18px">${flagRows}</ul>`)}
+        ${sectionRow('🚫', 'ฟิลด์ที่ format ไม่ถูก', (d.fieldValidations || []).length,
+          `<ul style="margin:0;padding-left:18px">${valRows}</ul>`)}
+        ${sectionRow('🔍', 'รูปแบบที่ AI สังเกตเห็นทั้งไฟล์', (d.batchPatterns || []).length,
+          `<ul style="margin:0;padding-left:18px">${patternsHtml}</ul>`)}
+        <div class="text-sm text-gray-500" style="margin-top:12px">
+          💡 AI Review เป็นแค่คำแนะนำ — ดูแล้วตัดสินใจเอง คุณยังต้องกดยืนยันก่อนข้อมูลจะเข้าระบบ
+        </div>
+      </div>`;
   },
 
   async smartPreviewConflicts() {
