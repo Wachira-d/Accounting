@@ -163,6 +163,38 @@ public class DocumentService : IDocumentService
         return rate.MidRate;
     }
 
+    /// <summary>Validate the line items on a create OR update. Same guards in
+    /// one place so an edit can't slip past the create-time checks (qty &gt; 0,
+    /// non-negative price, discount 0-100%, VAT ∈ {0,7,-1}, WHT 0-15%, valid
+    /// active account). Throws InvalidOperationException on the first failure.</summary>
+    private async Task ValidateDocumentLinesAsync(Guid companyId, List<DocumentLineRequest>? lines)
+    {
+        if (lines == null || lines.Count == 0)
+            throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
+
+        foreach (var line in lines)
+        {
+            if (line.Quantity <= 0)
+                throw new InvalidOperationException("จำนวนสินค้าต้องมากกว่า 0");
+            if (line.UnitPrice < 0)
+                throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
+            if (line.DiscountPercent < 0 || line.DiscountPercent > 100)
+                throw new InvalidOperationException("ส่วนลดต้องอยู่ระหว่าง 0-100%");
+            if (line.VatRate != 0 && line.VatRate != 7 && line.VatRate != -1)
+                throw new InvalidOperationException("อัตราภาษีมูลค่าเพิ่มต้องเป็น 0, 7 หรือ -1 (ยกเว้น)");
+            if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)
+                throw new InvalidOperationException("อัตราภาษีหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-15%");
+            if (line.AccountId.HasValue)
+            {
+                var acctExists = await _db.ChartOfAccounts.AnyAsync(a =>
+                    a.Id == line.AccountId.Value && a.CompanyId == companyId && a.IsActive);
+                if (!acctExists)
+                    throw new InvalidOperationException(
+                        $"รหัสบัญชีที่ระบุในรายการ '{line.Description}' ไม่พบในผังบัญชี หรือถูกปิดใช้งาน");
+            }
+        }
+    }
+
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
     {
         // Check usage limit
@@ -221,37 +253,9 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException("ใบรับรองแทนใบเสร็จต้องระบุชื่อผู้รับรอง");
         }
 
-        // Validate at least 1 line item
-        if (request.Lines == null || request.Lines.Count == 0)
-            throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
-
-        // Validate each line
-        foreach (var line in request.Lines)
-        {
-            if (line.Quantity <= 0)
-                throw new InvalidOperationException("จำนวนสินค้าต้องมากกว่า 0");
-
-            if (line.UnitPrice < 0)
-                throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
-
-            if (line.DiscountPercent < 0 || line.DiscountPercent > 100)
-                throw new InvalidOperationException("ส่วนลดต้องอยู่ระหว่าง 0-100%");
-
-            if (line.VatRate != 0 && line.VatRate != 7 && line.VatRate != -1)
-                throw new InvalidOperationException("อัตราภาษีมูลค่าเพิ่มต้องเป็น 0, 7 หรือ -1 (ยกเว้น)");
-
-            if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)
-                throw new InvalidOperationException("อัตราภาษีหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-15%");
-
-            if (line.AccountId.HasValue)
-            {
-                var acctExists = await _db.ChartOfAccounts.AnyAsync(a =>
-                    a.Id == line.AccountId.Value && a.CompanyId == companyId && a.IsActive);
-                if (!acctExists)
-                    throw new InvalidOperationException(
-                        $"รหัสบัญชีที่ระบุในรายการ '{line.Description}' ไม่พบในผังบัญชี หรือถูกปิดใช้งาน");
-            }
-        }
+        // Validate the line items (shared with UpdateDocumentAsync so an edit
+        // can't bypass the same accounting guards a create enforces).
+        await ValidateDocumentLinesAsync(companyId, request.Lines);
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
@@ -324,6 +328,12 @@ public class DocumentService : IDocumentService
                 doc.PaymentType = request.PaymentType
                     ?? (request.RelatedDocumentId.HasValue ? Models.Enums.PaymentType.Credit
                                                            : Models.Enums.PaymentType.Cash);
+            }
+            else if (request.DocumentType == DocumentType.CertificateInLieu)
+            {
+                // ใบรับรองแทนใบเสร็จ is always an immediate cash payment — no
+                // payable, no outstanding balance (its JE credits Cash).
+                doc.PaymentType = Models.Enums.PaymentType.Cash;
             }
             else
             {
@@ -749,6 +759,10 @@ public class DocumentService : IDocumentService
 
         if (request.Lines != null)
         {
+            // Re-validate on edit — the create path's guards must hold here too
+            // (previously an edit could set qty=0 / VatRate=-99 unchecked).
+            await ValidateDocumentLinesAsync(companyId, request.Lines);
+
             _db.DocumentLines.RemoveRange(doc.Lines);
 
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
@@ -3610,9 +3624,41 @@ public class DocumentService : IDocumentService
         // ============================================================
         // PURCHASE SIDE: PurchaseInvoice / Expense / CertificateInLieu (on credit)
         // ============================================================
+        else if (doc.DocumentType == DocumentType.CertificateInLieu)
+        {
+            // ใบรับรองแทนใบเสร็จ — used when the payee can't issue a tax
+            // invoice/receipt (street vendor, taxi, ...). Per Revenue Code
+            // §82/4 the buyer CANNOT claim input VAT without a valid tax
+            // invoice, so VAT is NOT posted to ภาษีซื้อ (116); any VAT amount
+            // is folded into the expense as part of its (non-recoverable)
+            // cost. It is a cash payment, so the credit side hits Cash/Bank,
+            // never Accounts Payable.
+            journalType = JournalType.Purchase;
+
+            foreach (var docLine in doc.Lines)
+            {
+                var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                if (expenseAccountId.HasValue)
+                    AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+            }
+            // Non-claimable VAT → fold into expense cost (NOT บัญชีภาษีซื้อ).
+            if (doc.VatAmount > 0 && defaultExpense != null)
+                AddLine(defaultExpense.Id, doc.VatAmount, 0, "ภาษีซื้อที่เคลมไม่ได้ (รวมเป็นต้นทุน) - ใบรับรองแทนใบเสร็จ");
+
+            if (moneyAccount != null)
+                AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                    $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
+
+            if (doc.WithholdingTaxAmount > 0)
+            {
+                var whtAcc = await FindAccountAsync(companyId, "21916")
+                    ?? await FindAccountAsync(companyId, "21917");
+                if (whtAcc != null)
+                    AddLine(whtAcc.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+            }
+        }
         else if (doc.DocumentType == DocumentType.PurchaseInvoice
-                 || doc.DocumentType == DocumentType.Expense
-                 || doc.DocumentType == DocumentType.CertificateInLieu)
+                 || doc.DocumentType == DocumentType.Expense)
         {
             journalType = JournalType.Purchase;
 
@@ -4490,6 +4536,18 @@ public class DocumentService : IDocumentService
         //    payee. Flag so the operator generates it (PND filing depends on it).
         if (doc.WithholdingTaxAmount > 0 && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.PurchaseInvoice or DocumentType.Expense)
             warnings.Add($"มีการหักภาษี ณ ที่จ่าย {doc.WithholdingTaxAmount:N2} THB — อย่าลืมออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ให้ผู้รับเงิน และยื่น ภ.ง.ด. ตามกำหนด");
+
+        // 2b. A VAT PurchaseInvoice needs the SUPPLIER's own tax-invoice number
+        //     + date — the input VAT must be claimed in the period of the
+        //     supplier's invoice (มาตรา 82/4), which can differ from our
+        //     booking date. Without them the ภ.พ.30 input-VAT trail is broken.
+        if (doc.DocumentType == DocumentType.PurchaseInvoice && doc.VatAmount > 0)
+        {
+            if (string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber))
+                warnings.Add("ใบแจ้งหนี้ซื้อที่มี VAT ยังไม่ได้ระบุเลขใบกำกับภาษีของผู้ขาย — ต้องมีเพื่อเคลมภาษีซื้อ (มาตรา 82/4)");
+            if (doc.SupplierTaxInvoiceDate == null)
+                warnings.Add("ใบแจ้งหนี้ซื้อที่มี VAT ยังไม่ได้ระบุวันที่ใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภ.พ.30 ที่เคลมภาษีซื้อ");
+        }
 
         // 3. Credit Note should reference the original invoice it adjusts
         //    (มาตรา 86/10). CreditNoteReason is already enforced; this nudges
