@@ -298,6 +298,14 @@
               <div><label class="check-row"><input type="checkbox" id="showCompanyStamp" onchange="Page.markDirty()"> ตราประทับ</label></div>
             </div>
             <div class="editor-row">
+              <div style="flex:1">
+                <label>รูปตราประทับบริษัท (PNG พื้นหลังโปร่งใส)</label>
+                <input type="file" id="stampFile" accept="image/png,image/jpeg,image/webp" onchange="Page.uploadStamp(this)">
+                <input type="hidden" id="stampImagePath">
+                <div id="stampPreview" style="margin-top:6px"></div>
+              </div>
+            </div>
+            <div class="editor-row">
               <div><label>ช่อง 1 (TH)</label><input id="signatureLabel1" onchange="Page.markDirty()"></div>
               <div><label>ช่อง 1 (EN)</label><input id="signatureLabel1En" onchange="Page.markDirty()"></div>
             </div>
@@ -778,6 +786,7 @@
          'amountInWordsLanguage',
          'signatureCount','signatureLabel1','signatureLabel1En',
          'signatureLabel2','signatureLabel2En','signatureLabel3','signatureLabel3En',
+         'stampImagePath',
          'watermarkText','watermarkOpacity',
          'footerNotes','footerNotesEn','bankDetailsText',
          'paperSize','orientation','marginTop','marginBottom','marginLeft','marginRight',
@@ -798,6 +807,46 @@
           const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
           set(id, t[prop]);
         });
+        this._renderStampPreview(t.stampImagePath);
+      },
+
+      _renderStampPreview(url) {
+        const box = document.getElementById('stampPreview');
+        if (!box) return;
+        box.innerHTML = url
+          ? `<img src="${url}" alt="ตราประทับ" style="max-height:64px;border:1px solid #e2e8f0;border-radius:6px;padding:4px">
+             <button type="button" class="btn btn-sm" onclick="Page.clearStamp()" style="margin-left:8px">ลบ</button>`
+          : '<span style="font-size:12px;color:#94a3b8">ยังไม่มีตราประทับ</span>';
+      },
+
+      async uploadStamp(input) {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        const token = localStorage.getItem('token');
+        try {
+          // Reuse the shared image-upload endpoint; type=logo keeps the
+          // transparent PNG intact (no square crop). Returns a relative
+          // /uploads URL the PDF renderer resolves to a physical path.
+          const r = await fetch('/api/admin/upload-image?type=logo', {
+            method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'อัพโหลดไม่สำเร็จ');
+          const url = j.data.url || j.data.relativeUrl;
+          document.getElementById('stampImagePath').value = url;
+          document.getElementById('showCompanyStamp').checked = true;
+          this._renderStampPreview(url);
+          this.markDirty();
+          Layout.toast('อัพโหลดตราประทับสำเร็จ');
+        } catch (e) { Layout.toast('อัพโหลดตราประทับไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      clearStamp() {
+        document.getElementById('stampImagePath').value = '';
+        document.getElementById('stampFile').value = '';
+        this._renderStampPreview(null);
+        this.markDirty();
       },
 
       _collectForm() {
@@ -858,6 +907,9 @@
           signatureLabel3: get('signatureLabel3'),
           signatureLabel3En: get('signatureLabel3En'),
           showCompanyStamp: getCheck('showCompanyStamp'),
+          // Send "" (not null) when cleared so the backend distinguishes
+          // "clear the stamp" from "field omitted / no change".
+          stampImagePath: get('stampImagePath'),
           showWatermark: getCheck('showWatermark'),
           watermarkText: get('watermarkText') || null,
           watermarkOpacity: Number(get('watermarkOpacity') || 0.15),

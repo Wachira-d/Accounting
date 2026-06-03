@@ -36,6 +36,21 @@ public class Document : TenantEntity
     /// documents. Independent of CreditDays which drives auto math.</summary>
     public string? PaymentTerms { get; set; }
 
+    /// <summary>Settlement basis — Cash (จ่าย/รับทันที) vs Credit (เครดิต).
+    /// Primarily for Payment Voucher (ใบสำคัญจ่าย): Cash posts straight to
+    /// Cash/Bank with no payable + no due date + no aging; Credit posts to
+    /// Accounts Payable, carries a due date, and ages until settled. Null =
+    /// not specified → the service picks a per-type default (standalone
+    /// Payment Voucher defaults to Cash).</summary>
+    public PaymentType? PaymentType { get; set; }
+
+    /// <summary>True when the unit prices on the lines were entered VAT-
+    /// INCLUSIVE (ราคารวมภาษี) — common in Thai retail. When set, the line
+    /// calculator backs the 7% VAT out of the entered price so SubTotal /
+    /// VatAmount post the correct ex-VAT base + tax. False = prices are
+    /// ex-VAT (the historical default, VAT added on top).</summary>
+    public bool PricesIncludeVat { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;

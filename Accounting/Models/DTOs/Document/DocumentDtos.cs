@@ -51,7 +51,13 @@ public record CreateDocumentRequest(
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
     int? CreditDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    // Settlement basis (Payment Voucher: เครดิต vs จ่ายทันที). Cash → straight
+    // to Cash/Bank, no payable/due/aging. Credit → AP + due date + aging.
+    // Null → service infers per type (standalone PV defaults to Cash).
+    PaymentType? PaymentType = null,
+    // Unit prices entered VAT-inclusive (ราคารวมภาษี). True → back 7% VAT out.
+    bool PricesIncludeVat = false);
 
 public record DocumentLineRequest(
     string Description,
@@ -98,7 +104,10 @@ public record UpdateDocumentRequest(
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
     int? CreditDays = null,
-    string? PaymentTerms = null);
+    string? PaymentTerms = null,
+    PaymentType? PaymentType = null,
+    // Nullable on update so omitting it preserves the stored value.
+    bool? PricesIncludeVat = null);
 
 public record DocumentResponse(
     Guid Id,
@@ -176,6 +185,10 @@ public record DocumentResponse(
     DateTime? SupplierTaxInvoiceDate = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
+    // Settlement basis — Cash (จ่ายทันที) vs Credit (เครดิต). Drives whether
+    // the UI shows a due date / outstanding balance for a Payment Voucher.
+    PaymentType? PaymentType = null,
+    bool PricesIncludeVat = false,
     // ===== Conversion lineage =====
     // Source-side view (this doc was converted from another): RelatedDocumentId
     // already carries the upstream id; the populated brief lets the UI render

@@ -211,6 +211,7 @@ public class DocumentTemplateService : IDocumentTemplateService
             SignatureLabel2 = source.SignatureLabel2,
             SignatureLabel3 = source.SignatureLabel3,
             ShowCompanyStamp = source.ShowCompanyStamp,
+            StampImagePath = source.StampImagePath,
             ShowWatermark = source.ShowWatermark,
             WatermarkText = source.WatermarkText,
             WatermarkOpacity = source.WatermarkOpacity,
@@ -337,6 +338,8 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.SignatureLabel2 != null) t.SignatureLabel2 = r.SignatureLabel2;
         if (r.SignatureLabel3 != null) t.SignatureLabel3 = r.SignatureLabel3;
         if (r.ShowCompanyStamp.HasValue) t.ShowCompanyStamp = r.ShowCompanyStamp.Value;
+        // Empty string clears the stamp; null = no change (partial-update convention).
+        if (r.StampImagePath != null) t.StampImagePath = string.IsNullOrWhiteSpace(r.StampImagePath) ? null : r.StampImagePath.Trim();
         if (r.ShowWatermark.HasValue) t.ShowWatermark = r.ShowWatermark.Value;
         if (r.WatermarkText != null) t.WatermarkText = r.WatermarkText;
         if (r.WatermarkOpacity.HasValue) t.WatermarkOpacity = r.WatermarkOpacity.Value;
@@ -420,6 +423,8 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.SignatureLabel2 != null) t.SignatureLabel2 = r.SignatureLabel2;
         if (r.SignatureLabel3 != null) t.SignatureLabel3 = r.SignatureLabel3;
         if (r.ShowCompanyStamp.HasValue) t.ShowCompanyStamp = r.ShowCompanyStamp.Value;
+        // Empty string clears the stamp; null = no change (partial-update convention).
+        if (r.StampImagePath != null) t.StampImagePath = string.IsNullOrWhiteSpace(r.StampImagePath) ? null : r.StampImagePath.Trim();
         if (r.ShowWatermark.HasValue) t.ShowWatermark = r.ShowWatermark.Value;
         if (r.WatermarkText != null) t.WatermarkText = r.WatermarkText;
         if (r.WatermarkOpacity.HasValue) t.WatermarkOpacity = r.WatermarkOpacity.Value;

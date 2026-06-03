@@ -1073,7 +1073,14 @@
         const fmtAmt = n => (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const statusColor = plan.status === 'Success' ? '#16a34a'
           : plan.status === 'Truncated' ? '#d97706'
-          : plan.status === 'AiUnavailable' ? '#dc2626' : '#64748b';
+          : plan.status === 'AiUnavailable' ? '#dc2626'
+          : plan.status === 'NoCandidates' ? '#d97706' : '#64748b';
+        // Friendlier Thai label for the badge (status is an internal code).
+        const statusLabel = ({
+          Success: 'สำเร็จ', Truncated: 'สำเร็จ (ตัดบางส่วน)',
+          AiUnavailable: 'AI ไม่พร้อม', EmptyInput: 'ไม่มีรายการ',
+          NoCandidates: 'ไม่มีรายการให้จับคู่',
+        })[plan.status] || plan.status;
         const warningsBlock = (plan.warnings || []).length === 0 ? '' : `
           <div style="background:#fef3c7;border-left:4px solid #d97706;border-radius:6px;padding:10px 14px;margin:12px 0">
             <div style="font-weight:600;color:#92400e;margin-bottom:4px">⚠️ คำเตือน</div>
@@ -1116,7 +1123,7 @@
           <h3 style="margin:0 0 4px">🧠 AI match ทั้งเดือน — ผลการวิเคราะห์</h3>
           <p style="font-size:13px;color:#64748b;margin:0 0 12px">${esc(message || '')}</p>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-            <span style="background:${statusColor};color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600">${plan.status}</span>
+            <span style="background:${statusColor};color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600">${esc(statusLabel)}</span>
             <span style="font-size:13px;color:#475569">Bank txn พิจารณา: <b>${plan.bankTxnsConsidered}</b></span>
             <span style="font-size:13px;color:#475569">ผู้สมัคร: <b>${plan.candidatesConsidered}</b></span>
             <span style="font-size:13px;color:#16a34a">Match: <b>${(plan.matches||[]).length}</b></span>

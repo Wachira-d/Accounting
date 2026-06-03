@@ -102,6 +102,7 @@ public static class ChartOfAccountTemplates
             new("21210", "เจ้าหนี้การค้า", "Trade Payables", AccountType.Liability, 4),
             new("21220", "เจ้าหนี้อื่น", "Other Current Payables", AccountType.Liability, 4),
             new("21230", "เจ้าหนี้กรรมการ/เงินทดรองรับจากกรรมการ", "Director's Advance Payable", AccountType.Liability, 4),
+            new("21240", "เจ้าหนี้-รับสินค้ายังไม่วางบิล", "Goods Received Not Invoiced", AccountType.Liability, 4),
             new("213", "เงินกู้ยืมระยะสั้น", "Short-term Borrowings / Short-term Loans", AccountType.Liability, 3),
             new("21300", "เงินกู้ยืมระยะสั้น", "Short-term Loans", AccountType.Liability, 4),
             new("214", "หนี้สินที่ถึงกำหนดชำระภายใน 1 ปี", "Current Portion of Long-term Liabilities", AccountType.Liability, 3),

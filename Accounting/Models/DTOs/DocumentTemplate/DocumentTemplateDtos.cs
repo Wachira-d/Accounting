@@ -87,6 +87,7 @@ public record CreateDocumentTemplateRequest(
     string? SignatureLabel2En,
     string? SignatureLabel3En,
     bool? ShowCompanyStamp,
+    string? StampImagePath,
 
     // Watermark
     bool? ShowWatermark,
@@ -196,6 +197,7 @@ public record UpdateDocumentTemplateRequest(
     string? SignatureLabel2En,
     string? SignatureLabel3En,
     bool? ShowCompanyStamp,
+    string? StampImagePath,
 
     bool? ShowWatermark,
     string? WatermarkText,

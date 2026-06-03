@@ -141,6 +141,22 @@
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
 
+          <!-- Payment Voucher only: เครดิต vs จ่ายทันที. Cash → no due date,
+               posts straight to Cash/Bank (no เจ้าหนี้). JS toggles via
+               .payment-voucher-only based on docType. -->
+          <div class="form-row payment-voucher-only" style="display:none">
+            <div class="form-group">
+              <label class="form-label" data-help="จ่ายทันที = เงินออกเลย ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้ | เครดิต = ตั้งเป็นเจ้าหนี้ มีวันครบกำหนด รอจ่ายภายหลัง">ประเภทการจ่าย</label>
+              <select class="form-select" id="fPaymentType" onchange="Page.onPaymentTypeChange(true)">
+                <option value="Cash">จ่ายทันที (เงินสด/โอน)</option>
+                <option value="Credit">เครดิต (ตั้งเจ้าหนี้)</option>
+              </select>
+            </div>
+            <div class="form-group" id="paymentTypeHint" style="display:flex;align-items:flex-end">
+              <span style="font-size:12px;color:#64748b"></span>
+            </div>
+          </div>
+
           <!-- Supplier-side tax-invoice metadata — only relevant on PI/CertInLieu/PV
                where the partner issues the source invoice. JS toggles `.supplier-invoice-only`
                based on docType (see togglePurchaseFields below). -->
@@ -307,6 +323,10 @@
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none">
                   <input type="checkbox" id="fStrictProducts" checked style="margin:0">
                   <span title="ติ๊กไว้ = ห้ามกรอกอิสระ ต้องเลือกจากสินค้าที่บันทึกในระบบเท่านั้น (ป้องกันชื่อสะกดผิด + ทำให้รายงานสรุปสินค้ารวมยอดได้ถูกต้อง)">เฉพาะสินค้าในระบบ</span>
+                </label>
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none">
+                  <input type="checkbox" id="fPricesIncludeVat" style="margin:0" onchange="Page.recalc && Page.recalc()">
+                  <span title="ติ๊กเมื่อราคา/หน่วยที่กรอกรวม VAT 7% แล้ว — ระบบจะถอด VAT ออกให้อัตโนมัติเพื่อแยกฐานภาษีให้ถูกต้อง">ราคารวมภาษี</span>
                 </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
@@ -771,6 +791,33 @@
         }
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
+        // For a Payment Voucher, ask the local model whether this supplier is
+        // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
+        if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
+          this.suggestPaymentType(contactId);
+        }
+      },
+
+      // Local-model suggestion for the PV settlement basis. Non-blocking:
+      // any failure just leaves the operator's manual choice untouched.
+      async suggestPaymentType(contactId) {
+        try {
+          const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/payment-voucher/suggest-type?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          const sel = document.getElementById('fPaymentType');
+          // Only auto-apply when the user hasn't already overridden this session.
+          if (sel && !this._paymentTypeTouched) {
+            sel.value = j.data.paymentType === 'Credit' ? 'Credit' : 'Cash';
+            this.onPaymentTypeChange();
+            this._lastPaymentTypeFeedbackId = j.data.feedbackId || null;
+            const hint = document.querySelector('#paymentTypeHint span');
+            if (hint && j.data.reasoning)
+              hint.textContent = '🤖 ' + j.data.reasoning + ' (' + Math.round((j.data.confidence || 0) * 100) + '%)';
+          }
+        } catch (e) { /* suggestion is best-effort */ }
       },
       /**
        * Derive a PaymentMethod enum value from the selected paymentChannel.
@@ -849,6 +896,14 @@
         document.querySelectorAll('.supplier-invoice-only').forEach(el => {
           el.style.display = supplierIssuedTypes.includes(docType) ? '' : 'none';
         });
+        // Payment Voucher: show the เครดิต/จ่ายทันที selector + apply its
+        // effect on the due-date field.
+        const isPV = docType === 'PaymentVoucher';
+        document.querySelectorAll('.payment-voucher-only').forEach(el => {
+          el.style.display = isPV ? '' : 'none';
+        });
+        if (isPV) this.onPaymentTypeChange();
+        // (onPaymentTypeChange defined on Page — see below)
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
@@ -876,6 +931,29 @@
           if (row) row.style.display = 'none';
         }
       },
+
+      /**
+       * Payment Voucher เครดิต/จ่ายทันที toggle effect. Cash (จ่ายทันที) hides
+       * + clears the due date (no outstanding balance) and shows a hint; Credit
+       * re-enables the due date so the operator can set the payable's term.
+       */
+      onPaymentTypeChange(userInitiated) {
+        const sel = document.getElementById('fPaymentType');
+        if (!sel) return;
+        // Once the operator picks manually, stop auto-overriding from the
+        // model suggestion for the rest of this form session.
+        if (userInitiated) this._paymentTypeTouched = true;
+        const isCash = sel.value === 'Cash';
+        const due = document.getElementById('fDueDate');
+        const dueGroup = due ? due.closest('.form-group') : null;
+        if (dueGroup) dueGroup.style.display = isCash ? 'none' : '';
+        if (isCash && due) due.value = '';
+        const hint = document.querySelector('#paymentTypeHint span');
+        if (hint) hint.textContent = isCash
+          ? 'เงินออกทันที — ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้'
+          : 'ตั้งเป็นเจ้าหนี้ — มีวันครบกำหนด รอจ่ายภายหลัง';
+      },
+
       /**
        * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
        * Per RD spec, only TaxInvoice/Receipt/CreditNote/DebitNote qualify for
@@ -1367,6 +1445,10 @@
         document.getElementById('fCustomFooterNotes').value = '';
         document.getElementById('fCustomTerms').value = '';
         if (this._contactAC) this._contactAC.clear();
+        // Reset PV payment-type suggestion state for the fresh form.
+        this._paymentTypeTouched = false;
+        this._lastPaymentTypeFeedbackId = null;
+        const _piv = document.getElementById('fPricesIncludeVat'); if (_piv) _piv.checked = false;
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
         // Clear CertificateInLieu fields
         if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = '';
@@ -1425,6 +1507,10 @@
           if (fCd) fCd.value = d.creditDays ?? '';
           const fPt = document.getElementById('fPaymentTerms');
           if (fPt) fPt.value = d.paymentTerms || '';
+          const fPayType = document.getElementById('fPaymentType');
+          if (fPayType && d.paymentType) fPayType.value = d.paymentType;
+          const fPiv = document.getElementById('fPricesIncludeVat');
+          if (fPiv) fPiv.checked = !!d.pricesIncludeVat;
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
           document.getElementById('fCustomAppendix').value = d.customAppendix || '';
@@ -1610,6 +1696,11 @@
           supplierTaxInvoiceDate: document.getElementById('fSupplierTaxInvoiceDate')?.value || null,
           creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
+          // Only send paymentType for Payment Voucher (the only type whose
+          // form exposes the selector); null elsewhere.
+          paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
+            ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
+          pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
         };
         try {
           let savedDocId = this.editingId;
@@ -1620,6 +1711,19 @@
             const cr = await api.createDocument(payload);
             savedDocId = cr.data?.id;
             Layout.toast('สร้างเอกสารสำเร็จ');
+            // Teach the local model: record the operator's actual payment-type
+            // choice against the suggestion it was shown (trains per-supplier).
+            if (payload.paymentType && this._lastPaymentTypeFeedbackId) {
+              try {
+                const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: this._lastPaymentTypeFeedbackId,
+                    chosenAnswer: payload.paymentType, acceptedAi: !this._paymentTypeTouched }),
+                });
+              } catch (e) { /* training is best-effort */ }
+            }
           }
 
           // Send via email if requested

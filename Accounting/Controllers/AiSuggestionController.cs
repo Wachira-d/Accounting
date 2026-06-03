@@ -35,11 +35,74 @@ public class AiSuggestionController : ControllerBase
     private readonly IBankAiAugmenter _bankAi;
     private readonly IAdvancedAiAugmenter _advAi;
     private readonly IAiOrchestrator _orchestrator;
+    private readonly IEnumerable<Accounting.Services.Ai.Distillation.ILocalDistillationModel> _localModels;
+    private readonly IAiFeedbackRecorder _feedback;
 
     public AiSuggestionController(AccountingDbContext db,
         IDocumentAiAugmenter docAi, IBankAiAugmenter bankAi,
-        IAdvancedAiAugmenter advAi, IAiOrchestrator orchestrator)
-    { _db = db; _docAi = docAi; _bankAi = bankAi; _advAi = advAi; _orchestrator = orchestrator; }
+        IAdvancedAiAugmenter advAi, IAiOrchestrator orchestrator,
+        IEnumerable<Accounting.Services.Ai.Distillation.ILocalDistillationModel> localModels,
+        IAiFeedbackRecorder feedback)
+    { _db = db; _docAi = docAi; _bankAi = bankAi; _advAi = advAi; _orchestrator = orchestrator;
+      _localModels = localModels; _feedback = feedback; }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Payment Voucher: suggest the settlement basis (Cash จ่ายทันที vs
+    //  Credit เครดิต) for a supplier. Served by the local
+    //  PaymentTypeDistillationModel — confirmed history when it has
+    //  enough samples, else a deterministic heuristic (open payables +
+    //  past PV mix). A feedback row is recorded so the operator's actual
+    //  choice trains the model over time (/ai-feedback/record).
+    // ────────────────────────────────────────────────────────────────
+    [HttpGet("payment-voucher/suggest-type")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestPaymentType(
+        Guid companyId, [FromQuery] Guid contactId, CancellationToken ct)
+    {
+        if (contactId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var model = _localModels.FirstOrDefault(m => m.FeatureKey == AiFeatureKey.PaymentTypeSuggestion);
+        if (model == null)
+            return Ok(new ApiResponse<object>(true, new { paymentType = "Cash", confidence = 0.5, reasoning = "default", feedbackId = (Guid?)null }));
+
+        var inputJson = JsonSerializer.Serialize(new { contactId = contactId.ToString() });
+        var pred = await model.PredictAsync(companyId, inputJson, ct);
+        var answer = pred?.PrimaryAnswer ?? "Cash";
+        var confidence = pred?.Confidence ?? 0.5m;
+
+        // Record so the user's eventual confirmation (via /ai-feedback/record)
+        // becomes a training row for this supplier.
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.PaymentTypeSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: answer, AiConfidence: confidence,
+                LocalModelAnswer: answer, LocalModelConfidence: confidence,
+                LocalModelVersion: pred?.ModelVersion ?? model.Version,
+                SourceEntityType: "Contact", SourceEntityId: contactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: pred?.ModelVersion, LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* feedback is best-effort */ }
+
+        var reasoning = (pred?.ModelVersion?.StartsWith("heuristic") ?? false)
+            ? (answer == "Credit"
+                ? "ผู้ขายรายนี้มีหนี้ค้าง/ประวัติซื้อเชื่อ — แนะนำตั้งเป็นเครดิต"
+                : "ไม่มีหนี้ค้างกับผู้ขายรายนี้ — แนะนำจ่ายทันที")
+            : $"เรียนรู้จากประวัติที่ยืนยันแล้ว {pred?.SupportingSamples ?? 0} ครั้ง";
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            paymentType = answer,
+            confidence,
+            supportingSamples = pred?.SupportingSamples ?? 0,
+            reasoning,
+            feedbackId,
+        }));
+    }
 
     // ────────────────────────────────────────────────────────────────
     //  GL account suggestion when composing a Payment Voucher line

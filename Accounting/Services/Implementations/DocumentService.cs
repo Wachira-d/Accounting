@@ -163,6 +163,69 @@ public class DocumentService : IDocumentService
         return rate.MidRate;
     }
 
+    /// <summary>Validate the line items on a create OR update. Same guards in
+    /// one place so an edit can't slip past the create-time checks (qty &gt; 0,
+    /// non-negative price, discount 0-100%, VAT ∈ {0,7,-1}, WHT 0-15%, valid
+    /// active account). Throws InvalidOperationException on the first failure.</summary>
+    private async Task ValidateDocumentLinesAsync(Guid companyId, List<DocumentLineRequest>? lines)
+    {
+        if (lines == null || lines.Count == 0)
+            throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
+
+        foreach (var line in lines)
+        {
+            if (line.Quantity <= 0)
+                throw new InvalidOperationException("จำนวนสินค้าต้องมากกว่า 0");
+            if (line.UnitPrice < 0)
+                throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
+            if (line.DiscountPercent < 0 || line.DiscountPercent > 100)
+                throw new InvalidOperationException("ส่วนลดต้องอยู่ระหว่าง 0-100%");
+            if (line.VatRate != 0 && line.VatRate != 7 && line.VatRate != -1)
+                throw new InvalidOperationException("อัตราภาษีมูลค่าเพิ่มต้องเป็น 0, 7 หรือ -1 (ยกเว้น)");
+            if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)
+                throw new InvalidOperationException("อัตราภาษีหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-15%");
+            if (line.AccountId.HasValue)
+            {
+                var acctExists = await _db.ChartOfAccounts.AnyAsync(a =>
+                    a.Id == line.AccountId.Value && a.CompanyId == companyId && a.IsActive);
+                if (!acctExists)
+                    throw new InvalidOperationException(
+                        $"รหัสบัญชีที่ระบุในรายการ '{line.Description}' ไม่พบในผังบัญชี หรือถูกปิดใช้งาน");
+            }
+        }
+    }
+
+    /// <summary>Computed money fields for one document line, shared by create
+    /// + update so the math (incl. VAT-inclusive back-out) never diverges.
+    /// <c>NetAmount</c> is the ex-VAT, after-discount base that posts to
+    /// revenue/expense.</summary>
+    private readonly record struct LineAmounts(decimal NetAmount, decimal DiscountAmount, decimal VatAmount, decimal WhtAmount);
+
+    private static LineAmounts ComputeLineAmounts(DocumentLineRequest line, bool pricesIncludeVat)
+    {
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        var gross = Math.Round(line.Quantity * line.UnitPrice, 2, R);
+        var discountAmt = Math.Round(gross * line.DiscountPercent / 100, 2, R);
+        var afterDiscount = gross - discountAmt;
+
+        decimal net, vatAmt;
+        if (pricesIncludeVat && line.VatRate > 0)
+        {
+            // Entered price already contains VAT → strip it out.
+            // net = incl × 100/(100+rate); vat = incl − net.
+            net = Math.Round(afterDiscount * 100m / (100m + line.VatRate), 2, R);
+            vatAmt = afterDiscount - net;
+        }
+        else
+        {
+            net = afterDiscount;
+            vatAmt = line.VatRate > 0 ? Math.Round(net * line.VatRate / 100, 2, R) : 0m;
+        }
+        // WHT is always computed on the ex-VAT base (Thai rule).
+        var whtAmt = Math.Round(net * line.WithholdingTaxRate / 100, 2, R);
+        return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
+    }
+
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
     {
         // Check usage limit
@@ -221,37 +284,18 @@ public class DocumentService : IDocumentService
                 throw new InvalidOperationException("ใบรับรองแทนใบเสร็จต้องระบุชื่อผู้รับรอง");
         }
 
-        // Validate at least 1 line item
-        if (request.Lines == null || request.Lines.Count == 0)
-            throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
+        // Validate the line items (shared with UpdateDocumentAsync so an edit
+        // can't bypass the same accounting guards a create enforces).
+        await ValidateDocumentLinesAsync(companyId, request.Lines);
 
-        // Validate each line
-        foreach (var line in request.Lines)
-        {
-            if (line.Quantity <= 0)
-                throw new InvalidOperationException("จำนวนสินค้าต้องมากกว่า 0");
-
-            if (line.UnitPrice < 0)
-                throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
-
-            if (line.DiscountPercent < 0 || line.DiscountPercent > 100)
-                throw new InvalidOperationException("ส่วนลดต้องอยู่ระหว่าง 0-100%");
-
-            if (line.VatRate != 0 && line.VatRate != 7 && line.VatRate != -1)
-                throw new InvalidOperationException("อัตราภาษีมูลค่าเพิ่มต้องเป็น 0, 7 หรือ -1 (ยกเว้น)");
-
-            if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)
-                throw new InvalidOperationException("อัตราภาษีหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-15%");
-
-            if (line.AccountId.HasValue)
-            {
-                var acctExists = await _db.ChartOfAccounts.AnyAsync(a =>
-                    a.Id == line.AccountId.Value && a.CompanyId == companyId && a.IsActive);
-                if (!acctExists)
-                    throw new InvalidOperationException(
-                        $"รหัสบัญชีที่ระบุในรายการ '{line.Description}' ไม่พบในผังบัญชี หรือถูกปิดใช้งาน");
-            }
-        }
+        // Fiscal-period lock at CREATE — don't even let a document be drafted
+        // into a closed/locked period (previously only blocked at approval,
+        // which let a doc be created then fail later). Keeps the books tidy.
+        var createPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId && f.StartDate <= request.DocumentDate && f.EndDate >= request.DocumentDate);
+        if (createPeriod != null && createPeriod.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"ไม่สามารถสร้างเอกสารที่มีวันที่ในงวด {createPeriod.Name} ได้ เนื่องจากงวดดังกล่าวมีสถานะ {createPeriod.Status} (ปิดงวดแล้ว)");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
@@ -310,10 +354,40 @@ public class DocumentService : IDocumentService
                 CreatedBy = createdBy
             };
 
+            // ===== Settlement basis (Payment Voucher: เครดิต vs จ่ายทันที) =====
+            // Resolve the effective payment type. A standalone Payment Voucher
+            // (no source PI) defaults to Cash — that mirrors the existing JE
+            // (Dr Expense / Cr Cash) and fixes the long-standing bug where such
+            // a voucher set BalanceDue = total and wrongly showed as ค้างชำระ.
+            // A PV settling a prior PurchaseInvoice (RelatedDocumentId) is, by
+            // definition, paying off a credit liability → treated as the cash
+            // outflow that clears AP (handled in posting). Non-PV documents keep
+            // their existing behaviour (type left null).
+            if (request.DocumentType == DocumentType.PaymentVoucher)
+            {
+                doc.PaymentType = request.PaymentType
+                    ?? (request.RelatedDocumentId.HasValue ? Models.Enums.PaymentType.Credit
+                                                           : Models.Enums.PaymentType.Cash);
+            }
+            else if (request.DocumentType == DocumentType.CertificateInLieu)
+            {
+                // ใบรับรองแทนใบเสร็จ is always an immediate cash payment — no
+                // payable, no outstanding balance (its JE credits Cash).
+                doc.PaymentType = Models.Enums.PaymentType.Cash;
+            }
+            else
+            {
+                doc.PaymentType = request.PaymentType;
+            }
+            var isCashSettled = doc.PaymentType == Models.Enums.PaymentType.Cash;
+
             // Auto-fill DueDate from CreditDays when caller didn't provide one
             // explicitly. Keeps DSO/DPO reports working even when the partner
-            // API only sends credit terms.
-            if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value > 0)
+            // API only sends credit terms. Cash-settled documents never carry a
+            // due date (the money already moved).
+            if (isCashSettled)
+                doc.DueDate = null;
+            else if (doc.DueDate == null && doc.CreditDays.HasValue && doc.CreditDays.Value > 0)
                 doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
 
             // Auto-link Revenue Contract via Project when not explicitly provided.
@@ -337,18 +411,15 @@ public class DocumentService : IDocumentService
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
+            doc.PricesIncludeVat = request.PricesIncludeVat;
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
-                var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
+                var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
 
-                subTotal += afterDiscount;
-                totalDiscount += discountAmt;
-                totalVat += vatAmt;
-                totalWht += whtAmt;
+                subTotal += amt.NetAmount;
+                totalDiscount += amt.DiscountAmount;
+                totalVat += amt.VatAmount;
+                totalWht += amt.WhtAmount;
 
                 _db.DocumentLines.Add(new DocumentLine
                 {
@@ -359,12 +430,12 @@ public class DocumentService : IDocumentService
                     Unit = line.Unit ?? "ชิ้น",
                     UnitPrice = line.UnitPrice,
                     DiscountPercent = line.DiscountPercent,
-                    DiscountAmount = discountAmt,
-                    Amount = afterDiscount,
+                    DiscountAmount = amt.DiscountAmount,
+                    Amount = amt.NetAmount,
                     VatRate = line.VatRate,
-                    VatAmount = vatAmt,
+                    VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
-                    WithholdingTaxAmount = whtAmt,
+                    WithholdingTaxAmount = amt.WhtAmount,
                     AccountId = line.AccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
@@ -377,7 +448,19 @@ public class DocumentService : IDocumentService
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = subTotal + totalVat - totalWht;
-            doc.BalanceDue = doc.TotalAmount;
+            // Cash-settled documents carry no outstanding balance — the cash
+            // already moved, so PaidAmount = Total and BalanceDue = 0. This is
+            // what keeps a จ่ายทันที voucher out of the aging / ค้างชำระ report
+            // (the aging query keys on PaidAmount < TotalAmount).
+            if (isCashSettled)
+            {
+                doc.PaidAmount = doc.TotalAmount;
+                doc.BalanceDue = 0m;
+            }
+            else
+            {
+                doc.BalanceDue = doc.TotalAmount;
+            }
 
             await _db.SaveChangesAsync();
             await _subscriptionService.IncrementUsageAsync(companyId, "document");
@@ -713,23 +796,25 @@ public class DocumentService : IDocumentService
 
         if (request.Lines != null)
         {
+            // Re-validate on edit — the create path's guards must hold here too
+            // (previously an edit could set qty=0 / VatRate=-99 unchecked).
+            await ValidateDocumentLinesAsync(companyId, request.Lines);
+
             _db.DocumentLines.RemoveRange(doc.Lines);
+
+            if (request.PricesIncludeVat.HasValue) doc.PricesIncludeVat = request.PricesIncludeVat.Value;
 
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
-                var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
+                var amt = ComputeLineAmounts(line, doc.PricesIncludeVat);
 
-                subTotal += afterDiscount;
-                totalDiscount += discountAmt;
-                totalVat += vatAmt;
-                totalWht += whtAmt;
+                subTotal += amt.NetAmount;
+                totalDiscount += amt.DiscountAmount;
+                totalVat += amt.VatAmount;
+                totalWht += amt.WhtAmount;
 
                 _db.DocumentLines.Add(new DocumentLine
                 {
@@ -740,12 +825,12 @@ public class DocumentService : IDocumentService
                     Unit = line.Unit ?? "ชิ้น",
                     UnitPrice = line.UnitPrice,
                     DiscountPercent = line.DiscountPercent,
-                    DiscountAmount = discountAmt,
-                    Amount = afterDiscount,
+                    DiscountAmount = amt.DiscountAmount,
+                    Amount = amt.NetAmount,
                     VatRate = line.VatRate,
-                    VatAmount = vatAmt,
+                    VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
-                    WithholdingTaxAmount = whtAmt,
+                    WithholdingTaxAmount = amt.WhtAmount,
                     AccountId = line.AccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
@@ -761,7 +846,22 @@ public class DocumentService : IDocumentService
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = subTotal + totalVat - totalWht;
-            doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+
+            // Preserve / apply the settlement basis on edit. A cash-settled
+            // voucher must stay fully paid (BalanceDue = 0, no due date) even
+            // after its lines/total change — otherwise editing it would
+            // re-introduce a phantom outstanding balance.
+            if (request.PaymentType.HasValue) doc.PaymentType = request.PaymentType;
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash)
+            {
+                doc.PaidAmount = doc.TotalAmount;
+                doc.BalanceDue = 0m;
+                doc.DueDate = null;
+            }
+            else
+            {
+                doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+            }
         }
 
         await _db.SaveChangesAsync();
@@ -900,7 +1000,13 @@ public class DocumentService : IDocumentService
                     && j.CompanyId == companyId
                     && j.Status == JournalEntryStatus.Posted);
 
-                doc.Status = DocumentStatus.Approved;
+                // A cash-settled document (จ่ายทันที) is already fully paid the
+                // moment it's approved — the JE moves real cash, not a payable.
+                // Mark it Paid so it lands in the right bucket and never shows
+                // as outstanding/ค้างชำระ; everything else goes to Approved.
+                doc.Status = (doc.PaymentType == Models.Enums.PaymentType.Cash && doc.BalanceDue <= 0)
+                    ? DocumentStatus.Paid
+                    : DocumentStatus.Approved;
                 doc.UpdatedBy = approvedBy;
                 doc.UpdatedAt = DateTime.UtcNow;
 
@@ -910,6 +1016,10 @@ public class DocumentService : IDocumentService
                     DocumentType.PurchaseInvoice, DocumentType.Expense,
                     DocumentType.Receipt, DocumentType.ReceiptVoucher,
                     DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
+                    // 3-way match: a GRN accrues goods-received-not-invoiced
+                    // (Dr Expense / Cr GR-NI) so received goods hit the books
+                    // before the supplier's invoice arrives.
+                    DocumentType.GoodsReceiptNote,
                 };
                 if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
                 {
@@ -3136,6 +3246,77 @@ public class DocumentService : IDocumentService
     /// codePrefix selects which override applies: "113" → AR, "212"
     /// → AP, "212305" → IR/GR clearing.
     /// </summary>
+    /// <summary>Resolve the WHT-payable account by the counterparty's entity
+    /// type, so the withheld tax lands in the right ภ.ง.ด. liability for the
+    /// half-yearly reconciliation:
+    ///   Individual (บุคคลธรรมดา)      → 21916 (ภ.ง.ด.3)
+    ///   JuristicPerson (นิติบุคคล)    → 21917 (ภ.ง.ด.53)
+    /// Falls back to whichever account exists when the preferred one is
+    /// missing (so a half-configured chart still posts).</summary>
+    private async Task<ChartOfAccount?> ResolveWhtPayableAccountAsync(Guid companyId, Contact? contact)
+    {
+        var preferJuristic = contact?.ContactType == ContactType.JuristicPerson;
+        var primary = preferJuristic ? "21917" : "21916";
+        var secondary = preferJuristic ? "21916" : "21917";
+        return await FindAccountAsync(companyId, primary)
+            ?? await FindAccountAsync(companyId, secondary);
+    }
+
+    /// <summary>Get (creating once if absent) the "goods received not
+    /// invoiced" accrual account (21240) used by the 3-way-match GRN flow.
+    /// Auto-creating it means the feature works for existing companies whose
+    /// chart predates it — it appears as a standard liability under 212.</summary>
+    private async Task<ChartOfAccount?> EnsureGrNiAccountAsync(Guid companyId)
+    {
+        var existing = await FindAccountAsync(companyId, "21240");
+        if (existing != null) return existing;
+
+        var parentId = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AccountCode == "212")
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync();
+
+        var acct = new ChartOfAccount
+        {
+            CompanyId = companyId,
+            AccountCode = "21240",
+            AccountName = "เจ้าหนี้-รับสินค้ายังไม่วางบิล",
+            AccountNameEn = "Goods Received Not Invoiced",
+            AccountType = AccountType.Liability,
+            ParentAccountId = parentId,
+            Level = 4,
+            IsActive = true,
+            IsSystemAccount = true,
+            Description = "ตั้งพักเจ้าหนี้สำหรับสินค้าที่รับแล้วแต่ยังไม่ได้รับใบกำกับ (3-way match)",
+        };
+        _db.ChartOfAccounts.Add(acct);
+        await _db.SaveChangesAsync();
+        return acct;
+    }
+
+    /// <summary>When a PurchaseInvoice was billed against a GoodsReceiptNote
+    /// that already accrued the goods (posted a Dr Expense / Cr GR-NI entry),
+    /// return that GR-NI account so the PI can clear the accrual instead of
+    /// re-debiting expense + re-moving stock. Returns null for a standalone
+    /// PI or a GRN that hasn't posted (so the caller falls back to the normal
+    /// expense + stock path).</summary>
+    private async Task<ChartOfAccount?> GetReceivedViaGrnAccrualAccountAsync(Guid companyId, Document doc)
+    {
+        if (doc.RelatedDocumentId == null) return null;
+        var srcType = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
+        if (srcType != DocumentType.GoodsReceiptNote) return null;
+
+        var grnPosted = await _db.JournalEntries.AsNoTracking()
+            .AnyAsync(j => j.SourceDocumentId == doc.RelatedDocumentId.Value
+                && j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted);
+        if (!grnPosted) return null;
+
+        return await FindAccountAsync(companyId, "21240");
+    }
+
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
@@ -3212,6 +3393,11 @@ public class DocumentService : IDocumentService
         int direction = doc.DocumentType switch
         {
             DocumentType.Invoice or DocumentType.TaxInvoice => -1,  // sale OUT
+            // Goods physically arrive at the GRN (3-way match) — stock moves
+            // IN there. A PurchaseInvoice raised against that GRN must NOT
+            // move stock again (handled below); a STANDALONE PurchaseInvoice
+            // (no GRN) still moves stock IN itself.
+            DocumentType.GoodsReceiptNote => +1,
             DocumentType.PurchaseInvoice => +1,                     // purchase IN
             // CreditNote only restocks when reason = Return (goods physically
             // came back). Discount / Adjustment / Writeoff are pure financial
@@ -3222,6 +3408,12 @@ public class DocumentService : IDocumentService
             _ => 0,
         };
         if (direction == 0) return;
+
+        // PurchaseInvoice billed against an accrued GRN → goods already
+        // stocked at receipt; don't double-count them now.
+        if (doc.DocumentType == DocumentType.PurchaseInvoice
+            && await GetReceivedViaGrnAccrualAccountAsync(companyId, doc) != null)
+            return;
         // sign flips on void: a sale's OUT becomes an IN; the BalanceAfter
         // walks back to where it was before.
         var effective = direction * sign;
@@ -3526,17 +3718,11 @@ public class DocumentService : IDocumentService
             // === WHT line ===
             if (doc.WithholdingTaxAmount > 0)
             {
-                // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable 21916/17
-                string whtCode;
-                if (isPurchaseSide)
-                {
-                    whtCode = await FindAccountAsync(companyId, "21916") != null ? "21916" : "21917";
-                }
-                else
-                {
-                    whtCode = "11910";
-                }
-                var whtAcc = await FindAccountAsync(companyId, whtCode);
+                // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable
+                // by counterparty type (Individual→ภ.ง.ด.3 21916, Juristic→ภ.ง.ด.53 21917).
+                var whtAcc = isPurchaseSide
+                    ? await ResolveWhtPayableAccountAsync(companyId, doc.Contact)
+                    : await FindAccountAsync(companyId, "11910");
                 if (whtAcc != null)
                 {
                     // WHT-Asset behaves like revenue (sales) — opposite for purchase
@@ -3553,18 +3739,66 @@ public class DocumentService : IDocumentService
         // ============================================================
         // PURCHASE SIDE: PurchaseInvoice / Expense / CertificateInLieu (on credit)
         // ============================================================
-        else if (doc.DocumentType == DocumentType.PurchaseInvoice
-                 || doc.DocumentType == DocumentType.Expense
-                 || doc.DocumentType == DocumentType.CertificateInLieu)
+        else if (doc.DocumentType == DocumentType.CertificateInLieu)
         {
+            // ใบรับรองแทนใบเสร็จ — used when the payee can't issue a tax
+            // invoice/receipt (street vendor, taxi, ...). Per Revenue Code
+            // §82/4 the buyer CANNOT claim input VAT without a valid tax
+            // invoice, so VAT is NOT posted to ภาษีซื้อ (116); any VAT amount
+            // is folded into the expense as part of its (non-recoverable)
+            // cost. It is a cash payment, so the credit side hits Cash/Bank,
+            // never Accounts Payable.
             journalType = JournalType.Purchase;
 
-            // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ
             foreach (var docLine in doc.Lines)
             {
                 var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
                 if (expenseAccountId.HasValue)
                     AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+            }
+            // Non-claimable VAT → fold into expense cost (NOT บัญชีภาษีซื้อ).
+            if (doc.VatAmount > 0 && defaultExpense != null)
+                AddLine(defaultExpense.Id, doc.VatAmount, 0, "ภาษีซื้อที่เคลมไม่ได้ (รวมเป็นต้นทุน) - ใบรับรองแทนใบเสร็จ");
+
+            if (moneyAccount != null)
+                AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                    $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
+
+            if (doc.WithholdingTaxAmount > 0)
+            {
+                var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                if (whtAcc != null)
+                    AddLine(whtAcc.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+            }
+        }
+        else if (doc.DocumentType == DocumentType.PurchaseInvoice
+                 || doc.DocumentType == DocumentType.Expense)
+        {
+            journalType = JournalType.Purchase;
+
+            // 3-way match: if this invoice was billed against a Goods Receipt
+            // Note that ALREADY accrued the goods (Dr Expense / Cr GR-NI when
+            // received), the expense is already in the books — so here we just
+            // CLEAR the GR-NI accrual (Dr GR-NI) instead of debiting expense
+            // again, then claim VAT + set up the payable. Otherwise (standalone
+            // PI) we debit expense as normal.
+            var grNiAccount = await GetReceivedViaGrnAccrualAccountAsync(companyId, doc);
+            if (grNiAccount != null)
+            {
+                // Dr: เจ้าหนี้-รับสินค้ายังไม่วางบิล (GR-NI) — clear the accrual
+                // for the invoiced (ex-VAT) value. Partial invoices clear only
+                // their portion; the rest of the GR-NI stays for later bills.
+                AddLine(grNiAccount.Id, doc.SubTotal, 0, $"ตัดเจ้าหนี้รับของยังไม่วางบิล - {doc.DocumentNumber}");
+            }
+            else
+            {
+                // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ (standalone purchase)
+                foreach (var docLine in doc.Lines)
+                {
+                    var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                    if (expenseAccountId.HasValue)
+                        AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+                }
             }
 
             // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30
@@ -3591,8 +3825,7 @@ public class DocumentService : IDocumentService
             // Accrual only — Cash basis defers to the PaymentVoucher path.
             if (whtBasis == Models.Enums.WhtRecognitionBasis.Accrual && doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await FindAccountAsync(companyId, "21916")
-                    ?? await FindAccountAsync(companyId, "21917");
+                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                 if (whtAccount != null)
                 {
                     // Group WHT by rate for clear audit trail
@@ -3720,8 +3953,7 @@ public class DocumentService : IDocumentService
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
                     if (thisWht > 0)
                     {
-                        var whtAccount = await FindAccountAsync(companyId, "21916")
-                            ?? await FindAccountAsync(companyId, "21917");
+                        var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                         if (whtAccount != null)
                             AddLine(whtAccount.Id, 0, thisWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
                     }
@@ -3754,18 +3986,54 @@ public class DocumentService : IDocumentService
                         AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
                 }
 
-                if (moneyAccount != null)
+                // Credit side depends on the settlement basis:
+                //   Credit (เครดิต) → book a liability to Accounts Payable (212);
+                //     the voucher carries an outstanding balance + due date and
+                //     ages until a later payment settles it.
+                //   Cash (จ่ายทันที) → money leaves now, credit Cash/Bank
+                //     directly — never touches AP.
+                if (doc.PaymentType == Models.Enums.PaymentType.Credit)
+                {
+                    var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
+                    if (apAccount != null)
+                        AddLine(apAccount.Id, 0, doc.TotalAmount,
+                            $"เจ้าหนี้ - {doc.DocumentNumber}");
+                }
+                else if (moneyAccount != null)
+                {
                     AddLine(moneyAccount.Id, 0, doc.TotalAmount,
                         $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
+                }
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
-                    var whtAccount = await FindAccountAsync(companyId, "21916")
-                        ?? await FindAccountAsync(companyId, "21917");
+                    var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                     if (whtAccount != null)
                         AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
                 }
             }
+        }
+        else if (doc.DocumentType == DocumentType.GoodsReceiptNote)
+        {
+            // 3-way match — accrue goods received but not yet invoiced.
+            //   Dr ค่าใช้จ่าย/สินค้า (per line, ex-VAT)   = goods value
+            //   Cr เจ้าหนี้-รับสินค้ายังไม่วางบิล (GR-NI)  = goods value
+            // No VAT/WHT here — those belong to the supplier's tax invoice,
+            // booked when the PurchaseInvoice is raised against this GRN
+            // (which then Dr GR-NI to clear this accrual). VAT/WHT entered on
+            // a GRN line is ignored for posting (the goods value = SubTotal).
+            journalType = JournalType.Purchase;
+            var grNi = await EnsureGrNiAccountAsync(companyId);
+            if (grNi == null) return;   // chart can't support it → no JE (legacy behaviour)
+
+            foreach (var docLine in doc.Lines)
+            {
+                var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                if (expenseAccountId.HasValue)
+                    AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+            }
+            if (doc.SubTotal > 0)
+                AddLine(grNi.Id, 0, doc.SubTotal, $"รับสินค้ายังไม่วางบิล - {doc.DocumentNumber}");
         }
         else
         {
@@ -3944,8 +4212,7 @@ public class DocumentService : IDocumentService
             // Cash basis: Cr WHT-Payable for this installment's withholding.
             if (postPerPaymentWht)
             {
-                var whtAccount = await FindAccountAsync(companyId, "21916")
-                    ?? await FindAccountAsync(companyId, "21917");
+                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                 if (whtAccount != null)
                     pendingLines.Add((whtAccount.Id, 0, thbWht, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
             }
@@ -4076,6 +4343,8 @@ public class DocumentService : IDocumentService
         SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
         CreditDays: d.CreditDays,
         PaymentTerms: d.PaymentTerms,
+        PaymentType: d.PaymentType,
+        PricesIncludeVat: d.PricesIncludeVat,
         RelatedDocument: upstream,
         ConvertedToDocuments: downstream,
         ConversionCompletionPercent: conversionPercent,
@@ -4394,6 +4663,90 @@ public class DocumentService : IDocumentService
                 warnings.Add($"ผู้ติดต่อนี้ยังค้างชำระ {overdue.Count} ใบ รวม {total:N2} THB — ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่");
             }
         }
+
+        // ===== Thai-accounting completeness checks (RD requirements) =====
+
+        // 1. Tax Invoice must carry the buyer's full address (ที่อยู่ผู้ซื้อ)
+        //    per ป.86/4 — without it the document isn't a valid full tax
+        //    invoice and the buyer can't claim input VAT.
+        if (doc.DocumentType == DocumentType.TaxInvoice && doc.Contact != null)
+        {
+            var hasAddr = !string.IsNullOrWhiteSpace(doc.Contact.Address)
+                || !string.IsNullOrWhiteSpace(doc.Contact.Province)
+                || !string.IsNullOrWhiteSpace(doc.Contact.District);
+            if (!hasAddr)
+                warnings.Add($"ใบกำกับภาษีต้องระบุที่อยู่ผู้ซื้อ ('{doc.Contact.Name}' ยังไม่มีที่อยู่) — ตามมาตรา 86/4 ผู้ซื้อใช้เป็นหลักฐานภาษีซื้อไม่ได้");
+            // Thai corporate Tax ID is exactly 13 digits.
+            var tid = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+            if (!string.IsNullOrEmpty(tid) && tid.Length != 13)
+                warnings.Add($"เลขประจำตัวผู้เสียภาษีของ '{doc.Contact.Name}' มี {tid.Length} หลัก (ต้อง 13 หลัก) — ตรวจก่อนออกใบกำกับภาษี");
+        }
+
+        // 2. When WHT is withheld, a 50 ทวิ certificate must be issued to the
+        //    payee. Flag so the operator generates it (PND filing depends on it).
+        if (doc.WithholdingTaxAmount > 0 && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.PurchaseInvoice or DocumentType.Expense)
+            warnings.Add($"มีการหักภาษี ณ ที่จ่าย {doc.WithholdingTaxAmount:N2} THB — อย่าลืมออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ให้ผู้รับเงิน และยื่น ภ.ง.ด. ตามกำหนด");
+
+        // 2b. A VAT PurchaseInvoice needs the SUPPLIER's own tax-invoice number
+        //     + date — the input VAT must be claimed in the period of the
+        //     supplier's invoice (มาตรา 82/4), which can differ from our
+        //     booking date. Without them the ภ.พ.30 input-VAT trail is broken.
+        if (doc.DocumentType == DocumentType.PurchaseInvoice && doc.VatAmount > 0)
+        {
+            if (string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber))
+                warnings.Add("ใบแจ้งหนี้ซื้อที่มี VAT ยังไม่ได้ระบุเลขใบกำกับภาษีของผู้ขาย — ต้องมีเพื่อเคลมภาษีซื้อ (มาตรา 82/4)");
+            if (doc.SupplierTaxInvoiceDate == null)
+                warnings.Add("ใบแจ้งหนี้ซื้อที่มี VAT ยังไม่ได้ระบุวันที่ใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภ.พ.30 ที่เคลมภาษีซื้อ");
+        }
+
+        // 3. Credit Note should reference the original invoice it adjusts
+        //    (มาตรา 86/10). CreditNoteReason is already enforced; this nudges
+        //    for the source link so VAT reversal ties back to the original.
+        if (doc.DocumentType == DocumentType.CreditNote && doc.RelatedDocumentId == null)
+            warnings.Add("ใบลดหนี้ยังไม่ได้อ้างอิงใบกำกับภาษี/ใบแจ้งหนี้ต้นฉบับ — ตามมาตรา 86/10 ควรระบุเลขที่และวันที่เอกสารเดิมที่ลดหนี้");
+
+        // 4. Cash-settled Payment Voucher (จ่ายทันที) must NOT post to a
+        //    payable (เจ้าหนี้) account — the money already left, so a 2xx
+        //    liability debit/credit on a line is a modelling error. This is
+        //    the consistency guard the user asked for.
+        if (doc.DocumentType == DocumentType.PaymentVoucher
+            && doc.PaymentType == Models.Enums.PaymentType.Cash)
+        {
+            var lineAccountIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+            if (lineAccountIds.Count > 0)
+            {
+                var payableCodes = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && lineAccountIds.Contains(a.Id)
+                        && (a.AccountType == AccountType.Liability || a.AccountCode.StartsWith("2")))
+                    .Select(a => a.AccountCode + " " + a.AccountName)
+                    .ToListAsync();
+                if (payableCodes.Count > 0)
+                    warnings.Add($"ใบสำคัญจ่ายแบบจ่ายทันทีไม่ควรลงบัญชีเจ้าหนี้/หนี้สิน ({string.Join(", ", payableCodes)}) — ถ้าเป็นการตั้งหนี้ ให้เลือกประเภทเป็น 'เครดิต' แทน");
+            }
+        }
+
+        // 5. Contact still active? A document whose counterparty was
+        //    deleted/deactivated between create and approve would still post
+        //    to that party's AP/AR — surface it so the operator re-checks.
+        if (doc.Contact != null && (doc.Contact.IsDeleted || !doc.Contact.IsActive))
+            warnings.Add($"ผู้ติดต่อ '{doc.Contact.Name}' ถูกลบหรือปิดใช้งานแล้ว — ตรวจสอบก่อนอนุมัติ (ยอดจะลงบัญชีลูกหนี้/เจ้าหนี้ของผู้ติดต่อรายนี้)");
+
+        // 6. Possible duplicate — another non-voided document for the SAME
+        //    contact + same total + within ±1 day. Catches a double-entry /
+        //    double-upload before it hits the GL twice.
+        var dupFrom = doc.DocumentDate.Date.AddDays(-1);
+        var dupTo = doc.DocumentDate.Date.AddDays(1);
+        var dup = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.Id != doc.Id && !d.IsDeleted
+                && d.ContactId == doc.ContactId
+                && d.DocumentType == doc.DocumentType
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                && d.TotalAmount == doc.TotalAmount
+                && d.DocumentDate >= dupFrom && d.DocumentDate <= dupTo)
+            .Select(d => d.DocumentNumber)
+            .FirstOrDefaultAsync();
+        if (dup != null)
+            warnings.Add($"อาจเป็นเอกสารซ้ำ — มี {dup} ของผู้ติดต่อรายนี้ ยอด {doc.TotalAmount:N2} ในช่วงวันที่เดียวกัน ตรวจสอบก่อนอนุมัติ");
 
         return warnings;
     }

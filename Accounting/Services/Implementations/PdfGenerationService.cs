@@ -22,12 +22,18 @@ public partial class PdfGenerationService : IPdfGenerationService
     private readonly IDocumentTemplateService _templateService;
     private readonly Pdf.IHtmlPdfRenderer? _htmlPdf;
 
+    // Captured once so the static image helpers can resolve a web-relative
+    // upload URL ("/uploads/x.png") to its physical wwwroot path — uploads
+    // (logo / company stamp) are stored as relative URLs.
+    private static string? _webRoot;
+
     public PdfGenerationService(AccountingDbContext db, IDocumentTemplateService templateService,
-        Pdf.IHtmlPdfRenderer? htmlPdf = null)
+        Pdf.IHtmlPdfRenderer? htmlPdf = null, Microsoft.AspNetCore.Hosting.IWebHostEnvironment? env = null)
     {
         _db = db;
         _templateService = templateService;
         _htmlPdf = htmlPdf;
+        if (env?.WebRootPath is { Length: > 0 } wr) _webRoot = wr;
     }
 
     public async Task<GeneratePdfResponse> GenerateDocumentPdfAsync(Guid companyId, GeneratePdfRequest request)
@@ -45,15 +51,16 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (request.TemplateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
                 t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
                 ?? CreateInMemoryDefaultTemplate(document.DocumentType);
         }
+        ApplyDefaultSignatureLabels(template, document.DocumentType);
 
         // Render order:
         //  1. Headless Chromium HTML→PDF when enabled — pixel-perfect match.
@@ -95,15 +102,16 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (request.TemplateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
                 t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
                 ?? CreateInMemoryDefaultTemplate(document.DocumentType);
         }
+        ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
     }
@@ -144,7 +152,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (request.TemplateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
@@ -170,16 +178,18 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (templateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == templateId.Value && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == templateId.Value && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
         {
             var docType = Enum.TryParse<DocumentType>(documentType, ignoreCase: true, out var dt) ? dt : DocumentType.Invoice;
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
                            t.CompanyId == companyId && t.DocumentType == docType && t.IsDefault && t.IsActive)
                        ?? CreateInMemoryDefaultTemplate(docType);
         }
+        // Preview gallery shows the real per-type signature labels too.
+        ApplyDefaultSignatureLabels(template, template.DocumentType);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
@@ -214,43 +224,88 @@ public partial class PdfGenerationService : IPdfGenerationService
         string? Name,
         string? Title);
 
-    /// <summary>Resolve up to TWO signers for a document:
-    /// signers[0] = creator (CreatedBy), signers[1] = approver (UpdatedBy when
-    /// different from the creator). Each signer carries the user's saved
-    /// signature image + their display name + title. When a user has no
-    /// signature image, the slot still records the name so the printed label
-    /// reads "ผู้รับ: <name>" with a blank line instead of mystery text.</summary>
+    /// <summary>Resolve the signers for a document, aligned positionally to the
+    /// template's signature label slots (signers[0] → SignatureLabel1, etc.):
+    ///   slot 0 = preparer  — the document creator (CreatedBy).
+    ///   slot 1 = approver  — the REAL approver recorded in DocumentApproval
+    ///            (internal, status Approved). Falls back to UpdatedBy (the
+    ///            last editor) only when no approval row exists, so when the
+    ///            editor and approver differ the correct person's signature
+    ///            prints — the previous code always used UpdatedBy.
+    ///   slot 2 = customer  — the external counterparty's signature captured
+    ///            via the customer-approval flow (e.g. a customer accepting a
+    ///            quotation through the external link). Only emitted when such
+    ///            a signature exists; pairs with SignatureLabel3 (e.g.
+    ///            "ลูกค้าอนุมัติ" which ApplyDefaultSignatureLabels sets for
+    ///            quotations). Drawn directly from DocumentApproval.SignatureData
+    ///            (base64) since the signer isn't a system user.
+    /// Each user slot carries the saved signature image + name + title; an
+    /// empty slot (no image) still records the name so the printed label reads
+    /// "<role>: <name>" above a blank line instead of mystery text.</summary>
     private async Task<List<DocumentSigner>> ResolveSignersAsync(Document doc)
     {
-        var ids = new List<Guid>();
-        if (Guid.TryParse(doc.CreatedBy, out var cId)) ids.Add(cId);
-        if (Guid.TryParse(doc.UpdatedBy, out var uId) && uId != ids.FirstOrDefault()) ids.Add(uId);
-        if (ids.Count == 0) return new();
+        Guid? creatorId = Guid.TryParse(doc.CreatedBy, out var cId) ? cId : null;
 
-        var users = await _db.Users.AsNoTracking()
-            .Where(u => ids.Contains(u.Id))
+        // Real approver from the approval audit trail (preferred over UpdatedBy).
+        var approverId = await _db.DocumentApprovals.AsNoTracking()
+            .Where(a => a.DocumentId == doc.Id
+                        && a.Status == ApprovalStatus.Approved
+                        && a.ApproverUserId != null
+                        && (a.ApprovalType == "Internal" || a.ApproverRole == "Approver"))
+            .OrderByDescending(a => a.StepOrder).ThenByDescending(a => a.ApprovedAt)
+            .Select(a => a.ApproverUserId)
+            .FirstOrDefaultAsync();
+        if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
+            approverId = uId;
+
+        var userIds = new List<Guid>();
+        if (creatorId.HasValue) userIds.Add(creatorId.Value);
+        if (approverId.HasValue && approverId != creatorId) userIds.Add(approverId.Value);
+
+        var users = userIds.Count == 0 ? new() : await _db.Users.AsNoTracking()
+            .Where(u => userIds.Contains(u.Id))
             .Select(u => new { u.Id, u.FullName, u.SignatureImageBase64, u.SignatureName, u.SignatureTitle })
             .ToListAsync();
-
         var byId = users.ToDictionary(u => u.Id);
-        var signers = new List<DocumentSigner>();
-        foreach (var id in ids)
+
+        DocumentSigner FromUser(Guid? id)
         {
-            if (!byId.TryGetValue(id, out var u)) continue;
-            string? dataUri = null;
-            byte[]? bytes = null;
+            if (id == null || !byId.TryGetValue(id.Value, out var u))
+                return new DocumentSigner(null, null, null, null);
+            string? dataUri = null; byte[]? bytes = null;
             var raw = u.SignatureImageBase64?.Trim();
             if (!string.IsNullOrWhiteSpace(raw))
             {
-                // Already a data URI? keep as-is for HTML. Otherwise wrap.
                 dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
                     ? raw : "data:image/png;base64," + raw;
                 bytes = TryDecodeBase64Image(raw);
             }
-            signers.Add(new DocumentSigner(dataUri, bytes,
+            return new DocumentSigner(dataUri, bytes,
                 !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName,
-                u.SignatureTitle));
+                u.SignatureTitle);
         }
+
+        // slot 0 + slot 1 are always present (blank when unsigned) so slot 2
+        // (customer) keeps its index even when the approver hasn't signed.
+        var signers = new List<DocumentSigner> { FromUser(creatorId), FromUser(approverId) };
+
+        // slot 2 — external/customer signature captured via the approval flow.
+        var custSig = await _db.DocumentApprovals.AsNoTracking()
+            .Where(a => a.DocumentId == doc.Id
+                        && a.SignatureData != null
+                        && (a.ApprovalType == "Customer" || a.ApprovalType == "External"))
+            .OrderByDescending(a => a.ApprovedAt)
+            .Select(a => new { a.SignatureData, a.ApproverName, a.ApproverTitle })
+            .FirstOrDefaultAsync();
+        if (custSig != null && !string.IsNullOrWhiteSpace(custSig.SignatureData))
+        {
+            var raw = custSig.SignatureData!.Trim();
+            var dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                ? raw : "data:image/png;base64," + raw;
+            signers.Add(new DocumentSigner(dataUri, TryDecodeBase64Image(raw),
+                custSig.ApproverName, custSig.ApproverTitle));
+        }
+
         return signers;
     }
 
@@ -1061,25 +1116,57 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(streetPart)) parts.Add(streetPart);
-        if (!string.IsNullOrWhiteSpace(sub)) parts.Add((isBkk ? "แขวง" : "ต.") + sub);
-        if (!string.IsNullOrWhiteSpace(dist)) parts.Add((isBkk ? "เขต" : "อ.") + dist);
-        // Bangkok prints its full canonical name (กรุงเทพมหานคร) with no จ.;
-        // other provinces get the จ. prefix.
-        if (!string.IsNullOrWhiteSpace(prov)) parts.Add(isBkk ? "กรุงเทพมหานคร" : "จ." + prov);
+        // Bangkok mis-entry guard: users frequently type a Bangkok spelling
+        // ("กทม") into the sub-district / district field too. Without this,
+        // District="กทม" + Province="กรุงเทพมหานคร" printed "เขตกทม
+        // กรุงเทพมหานคร" — the doubled "กทม กรุงเทพมหานคร" the user reported.
+        // Drop any sub/dist value that is itself a Bangkok variant so the
+        // canonical province name is printed exactly once.
+        if (!string.IsNullOrWhiteSpace(sub) && !IsBangkokToken(sub)) parts.Add((isBkk ? "แขวง" : "ต.") + sub);
+        if (!string.IsNullOrWhiteSpace(dist) && !IsBangkokToken(dist)) parts.Add((isBkk ? "เขต" : "อ.") + dist);
+        // Bangkok prints its full canonical name (กรุงเทพมหานคร) once, no จ.;
+        // other provinces get the จ. prefix (after stripping any stray
+        // prefix the user may have typed into the field).
+        if (!string.IsNullOrWhiteSpace(prov))
+            parts.Add(isBkk ? "กรุงเทพมหานคร" : "จ." + prov!.Replace("จังหวัด", "").Replace("จ.", "").Trim());
         if (!string.IsNullOrWhiteSpace(post)) parts.Add(post);
-        return string.Join(" ", parts);
+        // Final safety net: collapse any Bangkok doubling that slipped through
+        // the structured assembly (e.g. a Bangkok spelling left inside the
+        // free-text street part that the token strip missed due to spacing).
+        return CollapseBangkok(string.Join(" ", parts));
     }
 
-    /// <summary>Collapse a redundant "กทม กรุงเทพมหานคร" (or any Bangkok
-    /// abbreviation sitting next to the full name) down to the single canonical
-    /// "กรุงเทพมหานคร", for the free-text-only address path.</summary>
+    /// <summary>True when the token — after dropping any แขวง/เขต/ต./อ./จ.
+    /// prefix — is any spelling of Bangkok (full name or abbreviation).
+    /// Lets the formatter recognise a Bangkok value mis-entered into the
+    /// sub-district / district field and drop it so the province isn't
+    /// printed twice ("เขตกทม กรุงเทพมหานคร").</summary>
+    private static bool IsBangkokToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        var x = token.Trim();
+        foreach (var p in new[] { "แขวง", "เขต", "ตำบล", "อำเภอ", "จังหวัด", "ต.", "อ.", "จ." })
+            if (x.StartsWith(p)) { x = x[p.Length..].Trim(); break; }
+        return x is "กทม" or "กทม." or "กทมฯ" or "กรุงเทพ" or "กรุงเทพฯ" or "กรุงเทพมหานคร";
+    }
+
+    /// <summary>Collapse redundant Bangkok spellings down to a single canonical
+    /// "กรุงเทพมหานคร". Handles three doubling patterns:
+    ///   1. abbreviation next to full name ("กทม กรุงเทพมหานคร")
+    ///   2. the full name repeated ("กรุงเทพมหานคร กรุงเทพมหานคร")
+    ///   3. "เขต/แขวง" + Bangkok mis-entered ("เขตกทม กรุงเทพมหานคร")
+    /// Run on the FINAL assembled address in every path (not just the
+    /// free-text-only one) so no rendering route can leak a doubled province.</summary>
     private static string CollapseBangkok(string s)
     {
         if (string.IsNullOrWhiteSpace(s)) return s;
-        // Drop the abbreviation when the full name is also present.
+        // 1. Drop abbreviations when the full name is also present.
         if (s.Contains("กรุงเทพมหานคร"))
-            foreach (var abbr in new[] { "กทม.", "กทมฯ", "กทม", "กรุงเทพฯ" })
+            foreach (var abbr in new[] { "เขตกทม.", "เขตกทม", "แขวงกทม", "กทม.", "กทมฯ", "กทม", "กรุงเทพฯ", "กรุงเทพมหานครฯ" })
                 s = s.Replace(abbr, " ");
+        // 2. Squash the full name repeated consecutively (only whitespace
+        // between the copies — never swallow real content in between).
+        s = Regex.Replace(s, @"กรุงเทพมหานคร(\s+กรุงเทพมหานคร)+", "กรุงเทพมหานคร");
         return Regex.Replace(s, @"\s{2,}", " ").Trim();
     }
 
@@ -1150,12 +1237,28 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
-            var info = new FileInfo(path);
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            var resolved = ResolveImagePath(path);
+            if (resolved == null || !File.Exists(resolved)) return null;
+            var info = new FileInfo(resolved);
             if (info.Length <= 0 || info.Length > 8 * 1024 * 1024) return null;  // cap 8MB
-            return File.ReadAllBytes(path);
+            return File.ReadAllBytes(resolved);
         }
         catch { return null; }
+    }
+
+    /// <summary>Resolve an image reference that may be an absolute path OR a
+    /// web-relative upload URL ("/uploads/x.png") to a physical file path.
+    /// Logo / company-stamp uploads are persisted as relative URLs, so the
+    /// raw string isn't a valid filesystem path on its own.</summary>
+    private static string? ResolveImagePath(string path)
+    {
+        var p = path.Trim();
+        if (File.Exists(p)) return p;                 // already an absolute/real path
+        if (string.IsNullOrEmpty(_webRoot)) return p; // no web root captured → best effort
+        // Strip a leading slash + normalise separators, then anchor to wwwroot.
+        var rel = p.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar);
+        return Path.Combine(_webRoot!, rel);
     }
 
     /// <summary>Map a template font name to a family QuestPDF is likely to
@@ -1403,6 +1506,62 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         DocumentType = docType,
         CustomTitle = GetDocumentTitle(docType, "th")
     };
+
+    /// <summary>
+    /// Replace the DocumentTemplate's GENERIC signature labels with ones
+    /// that fit the document type + the signer slot model (slot0 = creator
+    /// on the left, slot1 = approver on the right). The entity ships
+    /// "ผู้รับ"/"ผู้จ่าย" defaults that only make sense for a sale receipt —
+    /// on a Payment Voucher the left box wrongly read "ผู้รับ" for what is
+    /// actually the payer's / approver's signature. Applied ONLY when the
+    /// template still carries those generic defaults (or null), so a label
+    /// the user explicitly set in the template editor is never overwritten.
+    /// </summary>
+    private static void ApplyDefaultSignatureLabels(DocumentTemplate t, DocumentType docType)
+    {
+        static bool IsGeneric(string? s) =>
+            string.IsNullOrWhiteSpace(s) || s is "ผู้รับ" or "ผู้จ่าย" or "Receiver" or "Payer";
+        // Both slots still generic → safe to apply per-type defaults.
+        // If either was customised, respect the user's full choice.
+        if (!IsGeneric(t.SignatureLabel1) || !IsGeneric(t.SignatureLabel2))
+            return;
+
+        // Quotation gets a THIRD box for the customer's acceptance signature,
+        // which the external-approval flow captures and ResolveSignersAsync
+        // now fills (slot 2). Only bump the count when the template still
+        // carries the default 2 — never shrink a user's larger custom layout.
+        if (docType == DocumentType.Quotation && t.SignatureCount <= 2)
+        {
+            t.SignatureCount = 3;
+            t.SignatureLabel3 = "ลูกค้าอนุมัติ";
+            t.SignatureLabel3En = "Customer approval";
+        }
+
+        var (th1, th2, en1, en2) = docType switch
+        {
+            DocumentType.Quotation           => ("ผู้เสนอราคา", "ผู้มีอำนาจลงนาม", "Quoted by", "Authorized"),
+            DocumentType.Invoice             => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.TaxInvoice          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.Receipt             => ("ผู้รับเงิน", "ผู้มีอำนาจลงนาม", "Received by", "Authorized"),
+            DocumentType.ReceiptVoucher      => ("ผู้รับเงิน", "ผู้อนุมัติ", "Received by", "Approved by"),
+            DocumentType.DebitNote           => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.CreditNote          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.DeliveryNote        => ("ผู้ส่งของ", "ผู้รับของ", "Delivered by", "Received by"),
+            DocumentType.BillingNote         => ("ผู้วางบิล", "ผู้รับวางบิล", "Billed by", "Received by"),
+            DocumentType.PurchaseRequisition => ("ผู้ขอซื้อ", "ผู้อนุมัติ", "Requested by", "Approved by"),
+            DocumentType.PurchaseOrder       => ("ผู้สั่งซื้อ", "ผู้อนุมัติ", "Ordered by", "Approved by"),
+            DocumentType.PurchaseInvoice     => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+            DocumentType.Expense             => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+            // ใบสำคัญจ่าย: ผู้สร้าง = ฝั่งผู้จ่าย (ซ้าย), ผู้อนุมัติ (ขวา)
+            DocumentType.PaymentVoucher      => ("ผู้จ่ายเงิน", "ผู้อนุมัติ", "Paid by", "Approved by"),
+            DocumentType.CertificateInLieu   => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+            _                                => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+        };
+        t.SignatureLabel1 = th1;
+        t.SignatureLabel2 = th2;
+        t.SignatureLabel1En = en1;
+        t.SignatureLabel2En = en2;
+    }
 
     private static string GetDocumentTitle(DocumentType type, string lang) => lang == "en" ? type switch
     {

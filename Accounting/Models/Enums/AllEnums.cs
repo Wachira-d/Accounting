@@ -322,6 +322,24 @@ public enum PaymentMethod
     Other = 99
 }
 
+/// <summary>
+/// Settlement basis for a money-movement document (primarily ใบสำคัญจ่าย /
+/// Payment Voucher, but reusable). Decides the GL posting + whether the
+/// document carries an outstanding balance:
+///   Cash   = จ่าย/รับทันที — posts straight to Cash/Bank, no payable/
+///            receivable, BalanceDue = 0, no due date, never ages.
+///   Credit = เครดิต — posts to Accounts Payable (or Receivable), carries a
+///            due date + outstanding balance, and ages until settled.
+/// Null on a document = legacy/not-applicable; the service infers a sensible
+/// default per document type (standalone Payment Voucher → Cash).
+/// </summary>
+public enum PaymentType
+{
+    Cash = 1,
+    Credit = 2
+}
+
+
 // ==================== Audit ====================
 public enum AuditAction
 {
@@ -1235,6 +1253,13 @@ public enum AiFeatureKey
     /// operator BEFORE the conflict step so issues are caught while
     /// the data is still mutable.</summary>
     ImportDataReview = 27,
+
+    /// <summary>Suggest the settlement basis (Cash จ่ายทันที vs Credit
+    /// เครดิต) for a Payment Voucher, from the supplier's own history +
+    /// open payables + agreed credit terms. Local model learns
+    /// per-supplier from confirmed choices; the heuristic cold-starts it
+    /// so it's useful from day one.</summary>
+    PaymentTypeSuggestion = 28,
 
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
