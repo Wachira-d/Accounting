@@ -45,15 +45,16 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (request.TemplateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
                 t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
                 ?? CreateInMemoryDefaultTemplate(document.DocumentType);
         }
+        ApplyDefaultSignatureLabels(template, document.DocumentType);
 
         // Render order:
         //  1. Headless Chromium HTML→PDF when enabled — pixel-perfect match.
@@ -95,15 +96,16 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (request.TemplateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
                 t.CompanyId == companyId && t.DocumentType == document.DocumentType && t.IsDefault && t.IsActive)
                 ?? CreateInMemoryDefaultTemplate(document.DocumentType);
         }
+        ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
     }
@@ -144,7 +146,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (request.TemplateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == request.TemplateId && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
@@ -170,16 +172,18 @@ public partial class PdfGenerationService : IPdfGenerationService
         DocumentTemplate template;
         if (templateId.HasValue)
         {
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t => t.Id == templateId.Value && t.CompanyId == companyId)
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == templateId.Value && t.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบเทมเพลต");
         }
         else
         {
             var docType = Enum.TryParse<DocumentType>(documentType, ignoreCase: true, out var dt) ? dt : DocumentType.Invoice;
-            template = await _db.DocumentTemplates.FirstOrDefaultAsync(t =>
+            template = await _db.DocumentTemplates.AsNoTracking().FirstOrDefaultAsync(t =>
                            t.CompanyId == companyId && t.DocumentType == docType && t.IsDefault && t.IsActive)
                        ?? CreateInMemoryDefaultTemplate(docType);
         }
+        // Preview gallery shows the real per-type signature labels too.
+        ApplyDefaultSignatureLabels(template, template.DocumentType);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
@@ -1061,13 +1065,35 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(streetPart)) parts.Add(streetPart);
-        if (!string.IsNullOrWhiteSpace(sub)) parts.Add((isBkk ? "แขวง" : "ต.") + sub);
-        if (!string.IsNullOrWhiteSpace(dist)) parts.Add((isBkk ? "เขต" : "อ.") + dist);
-        // Bangkok prints its full canonical name (กรุงเทพมหานคร) with no จ.;
-        // other provinces get the จ. prefix.
-        if (!string.IsNullOrWhiteSpace(prov)) parts.Add(isBkk ? "กรุงเทพมหานคร" : "จ." + prov);
+        // Bangkok mis-entry guard: users frequently type a Bangkok spelling
+        // ("กทม") into the sub-district / district field too. Without this,
+        // District="กทม" + Province="กรุงเทพมหานคร" printed "เขตกทม
+        // กรุงเทพมหานคร" — the doubled "กทม กรุงเทพมหานคร" the user reported.
+        // Drop any sub/dist value that is itself a Bangkok variant so the
+        // canonical province name is printed exactly once.
+        if (!string.IsNullOrWhiteSpace(sub) && !IsBangkokToken(sub)) parts.Add((isBkk ? "แขวง" : "ต.") + sub);
+        if (!string.IsNullOrWhiteSpace(dist) && !IsBangkokToken(dist)) parts.Add((isBkk ? "เขต" : "อ.") + dist);
+        // Bangkok prints its full canonical name (กรุงเทพมหานคร) once, no จ.;
+        // other provinces get the จ. prefix (after stripping any stray
+        // prefix the user may have typed into the field).
+        if (!string.IsNullOrWhiteSpace(prov))
+            parts.Add(isBkk ? "กรุงเทพมหานคร" : "จ." + prov!.Replace("จังหวัด", "").Replace("จ.", "").Trim());
         if (!string.IsNullOrWhiteSpace(post)) parts.Add(post);
         return string.Join(" ", parts);
+    }
+
+    /// <summary>True when the token — after dropping any แขวง/เขต/ต./อ./จ.
+    /// prefix — is any spelling of Bangkok (full name or abbreviation).
+    /// Lets the formatter recognise a Bangkok value mis-entered into the
+    /// sub-district / district field and drop it so the province isn't
+    /// printed twice ("เขตกทม กรุงเทพมหานคร").</summary>
+    private static bool IsBangkokToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        var x = token.Trim();
+        foreach (var p in new[] { "แขวง", "เขต", "ตำบล", "อำเภอ", "จังหวัด", "ต.", "อ.", "จ." })
+            if (x.StartsWith(p)) { x = x[p.Length..].Trim(); break; }
+        return x is "กทม" or "กทม." or "กทมฯ" or "กรุงเทพ" or "กรุงเทพฯ" or "กรุงเทพมหานคร";
     }
 
     /// <summary>Collapse a redundant "กทม กรุงเทพมหานคร" (or any Bangkok
@@ -1403,6 +1429,51 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         DocumentType = docType,
         CustomTitle = GetDocumentTitle(docType, "th")
     };
+
+    /// <summary>
+    /// Replace the DocumentTemplate's GENERIC signature labels with ones
+    /// that fit the document type + the signer slot model (slot0 = creator
+    /// on the left, slot1 = approver on the right). The entity ships
+    /// "ผู้รับ"/"ผู้จ่าย" defaults that only make sense for a sale receipt —
+    /// on a Payment Voucher the left box wrongly read "ผู้รับ" for what is
+    /// actually the payer's / approver's signature. Applied ONLY when the
+    /// template still carries those generic defaults (or null), so a label
+    /// the user explicitly set in the template editor is never overwritten.
+    /// </summary>
+    private static void ApplyDefaultSignatureLabels(DocumentTemplate t, DocumentType docType)
+    {
+        static bool IsGeneric(string? s) =>
+            string.IsNullOrWhiteSpace(s) || s is "ผู้รับ" or "ผู้จ่าย" or "Receiver" or "Payer";
+        // Both slots still generic → safe to apply per-type defaults.
+        // If either was customised, respect the user's full choice.
+        if (!IsGeneric(t.SignatureLabel1) || !IsGeneric(t.SignatureLabel2))
+            return;
+
+        var (th1, th2, en1, en2) = docType switch
+        {
+            DocumentType.Quotation           => ("ผู้เสนอราคา", "ผู้มีอำนาจลงนาม", "Quoted by", "Authorized"),
+            DocumentType.Invoice             => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.TaxInvoice          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.Receipt             => ("ผู้รับเงิน", "ผู้มีอำนาจลงนาม", "Received by", "Authorized"),
+            DocumentType.ReceiptVoucher      => ("ผู้รับเงิน", "ผู้อนุมัติ", "Received by", "Approved by"),
+            DocumentType.DebitNote           => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.CreditNote          => ("ผู้จัดทำ", "ผู้มีอำนาจลงนาม", "Prepared by", "Authorized"),
+            DocumentType.DeliveryNote        => ("ผู้ส่งของ", "ผู้รับของ", "Delivered by", "Received by"),
+            DocumentType.BillingNote         => ("ผู้วางบิล", "ผู้รับวางบิล", "Billed by", "Received by"),
+            DocumentType.PurchaseRequisition => ("ผู้ขอซื้อ", "ผู้อนุมัติ", "Requested by", "Approved by"),
+            DocumentType.PurchaseOrder       => ("ผู้สั่งซื้อ", "ผู้อนุมัติ", "Ordered by", "Approved by"),
+            DocumentType.PurchaseInvoice     => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+            DocumentType.Expense             => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+            // ใบสำคัญจ่าย: ผู้สร้าง = ฝั่งผู้จ่าย (ซ้าย), ผู้อนุมัติ (ขวา)
+            DocumentType.PaymentVoucher      => ("ผู้จ่ายเงิน", "ผู้อนุมัติ", "Paid by", "Approved by"),
+            DocumentType.CertificateInLieu   => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+            _                                => ("ผู้จัดทำ", "ผู้อนุมัติ", "Prepared by", "Approved by"),
+        };
+        t.SignatureLabel1 = th1;
+        t.SignatureLabel2 = th2;
+        t.SignatureLabel1En = en1;
+        t.SignatureLabel2En = en2;
+    }
 
     private static string GetDocumentTitle(DocumentType type, string lang) => lang == "en" ? type switch
     {
