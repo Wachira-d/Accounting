@@ -195,6 +195,37 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>Computed money fields for one document line, shared by create
+    /// + update so the math (incl. VAT-inclusive back-out) never diverges.
+    /// <c>NetAmount</c> is the ex-VAT, after-discount base that posts to
+    /// revenue/expense.</summary>
+    private readonly record struct LineAmounts(decimal NetAmount, decimal DiscountAmount, decimal VatAmount, decimal WhtAmount);
+
+    private static LineAmounts ComputeLineAmounts(DocumentLineRequest line, bool pricesIncludeVat)
+    {
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        var gross = Math.Round(line.Quantity * line.UnitPrice, 2, R);
+        var discountAmt = Math.Round(gross * line.DiscountPercent / 100, 2, R);
+        var afterDiscount = gross - discountAmt;
+
+        decimal net, vatAmt;
+        if (pricesIncludeVat && line.VatRate > 0)
+        {
+            // Entered price already contains VAT → strip it out.
+            // net = incl × 100/(100+rate); vat = incl − net.
+            net = Math.Round(afterDiscount * 100m / (100m + line.VatRate), 2, R);
+            vatAmt = afterDiscount - net;
+        }
+        else
+        {
+            net = afterDiscount;
+            vatAmt = line.VatRate > 0 ? Math.Round(net * line.VatRate / 100, 2, R) : 0m;
+        }
+        // WHT is always computed on the ex-VAT base (Thai rule).
+        var whtAmt = Math.Round(net * line.WithholdingTaxRate / 100, 2, R);
+        return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
+    }
+
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
     {
         // Check usage limit
@@ -256,6 +287,15 @@ public class DocumentService : IDocumentService
         // Validate the line items (shared with UpdateDocumentAsync so an edit
         // can't bypass the same accounting guards a create enforces).
         await ValidateDocumentLinesAsync(companyId, request.Lines);
+
+        // Fiscal-period lock at CREATE — don't even let a document be drafted
+        // into a closed/locked period (previously only blocked at approval,
+        // which let a doc be created then fail later). Keeps the books tidy.
+        var createPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId && f.StartDate <= request.DocumentDate && f.EndDate >= request.DocumentDate);
+        if (createPeriod != null && createPeriod.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"ไม่สามารถสร้างเอกสารที่มีวันที่ในงวด {createPeriod.Name} ได้ เนื่องจากงวดดังกล่าวมีสถานะ {createPeriod.Status} (ปิดงวดแล้ว)");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
@@ -371,18 +411,15 @@ public class DocumentService : IDocumentService
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
+            doc.PricesIncludeVat = request.PricesIncludeVat;
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
-                var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
+                var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
 
-                subTotal += afterDiscount;
-                totalDiscount += discountAmt;
-                totalVat += vatAmt;
-                totalWht += whtAmt;
+                subTotal += amt.NetAmount;
+                totalDiscount += amt.DiscountAmount;
+                totalVat += amt.VatAmount;
+                totalWht += amt.WhtAmount;
 
                 _db.DocumentLines.Add(new DocumentLine
                 {
@@ -393,12 +430,12 @@ public class DocumentService : IDocumentService
                     Unit = line.Unit ?? "ชิ้น",
                     UnitPrice = line.UnitPrice,
                     DiscountPercent = line.DiscountPercent,
-                    DiscountAmount = discountAmt,
-                    Amount = afterDiscount,
+                    DiscountAmount = amt.DiscountAmount,
+                    Amount = amt.NetAmount,
                     VatRate = line.VatRate,
-                    VatAmount = vatAmt,
+                    VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
-                    WithholdingTaxAmount = whtAmt,
+                    WithholdingTaxAmount = amt.WhtAmount,
                     AccountId = line.AccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
@@ -765,21 +802,19 @@ public class DocumentService : IDocumentService
 
             _db.DocumentLines.RemoveRange(doc.Lines);
 
+            if (request.PricesIncludeVat.HasValue) doc.PricesIncludeVat = request.PricesIncludeVat.Value;
+
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
             foreach (var line in request.Lines)
             {
-                var lineAmount = Math.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero);
-                var discountAmt = Math.Round(lineAmount * line.DiscountPercent / 100, 2, MidpointRounding.AwayFromZero);
-                var afterDiscount = lineAmount - discountAmt;
-                var vatAmt = line.VatRate > 0 ? Math.Round(afterDiscount * line.VatRate / 100, 2, MidpointRounding.AwayFromZero) : 0m;
-                var whtAmt = Math.Round(afterDiscount * line.WithholdingTaxRate / 100, 2, MidpointRounding.AwayFromZero);
+                var amt = ComputeLineAmounts(line, doc.PricesIncludeVat);
 
-                subTotal += afterDiscount;
-                totalDiscount += discountAmt;
-                totalVat += vatAmt;
-                totalWht += whtAmt;
+                subTotal += amt.NetAmount;
+                totalDiscount += amt.DiscountAmount;
+                totalVat += amt.VatAmount;
+                totalWht += amt.WhtAmount;
 
                 _db.DocumentLines.Add(new DocumentLine
                 {
@@ -790,12 +825,12 @@ public class DocumentService : IDocumentService
                     Unit = line.Unit ?? "ชิ้น",
                     UnitPrice = line.UnitPrice,
                     DiscountPercent = line.DiscountPercent,
-                    DiscountAmount = discountAmt,
-                    Amount = afterDiscount,
+                    DiscountAmount = amt.DiscountAmount,
+                    Amount = amt.NetAmount,
                     VatRate = line.VatRate,
-                    VatAmount = vatAmt,
+                    VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
-                    WithholdingTaxAmount = whtAmt,
+                    WithholdingTaxAmount = amt.WhtAmount,
                     AccountId = line.AccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
@@ -3207,6 +3242,22 @@ public class DocumentService : IDocumentService
     /// codePrefix selects which override applies: "113" → AR, "212"
     /// → AP, "212305" → IR/GR clearing.
     /// </summary>
+    /// <summary>Resolve the WHT-payable account by the counterparty's entity
+    /// type, so the withheld tax lands in the right ภ.ง.ด. liability for the
+    /// half-yearly reconciliation:
+    ///   Individual (บุคคลธรรมดา)      → 21916 (ภ.ง.ด.3)
+    ///   JuristicPerson (นิติบุคคล)    → 21917 (ภ.ง.ด.53)
+    /// Falls back to whichever account exists when the preferred one is
+    /// missing (so a half-configured chart still posts).</summary>
+    private async Task<ChartOfAccount?> ResolveWhtPayableAccountAsync(Guid companyId, Contact? contact)
+    {
+        var preferJuristic = contact?.ContactType == ContactType.JuristicPerson;
+        var primary = preferJuristic ? "21917" : "21916";
+        var secondary = preferJuristic ? "21916" : "21917";
+        return await FindAccountAsync(companyId, primary)
+            ?? await FindAccountAsync(companyId, secondary);
+    }
+
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
@@ -3597,17 +3648,11 @@ public class DocumentService : IDocumentService
             // === WHT line ===
             if (doc.WithholdingTaxAmount > 0)
             {
-                // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable 21916/17
-                string whtCode;
-                if (isPurchaseSide)
-                {
-                    whtCode = await FindAccountAsync(companyId, "21916") != null ? "21916" : "21917";
-                }
-                else
-                {
-                    whtCode = "11910";
-                }
-                var whtAcc = await FindAccountAsync(companyId, whtCode);
+                // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable
+                // by counterparty type (Individual→ภ.ง.ด.3 21916, Juristic→ภ.ง.ด.53 21917).
+                var whtAcc = isPurchaseSide
+                    ? await ResolveWhtPayableAccountAsync(companyId, doc.Contact)
+                    : await FindAccountAsync(companyId, "11910");
                 if (whtAcc != null)
                 {
                     // WHT-Asset behaves like revenue (sales) — opposite for purchase
@@ -3651,8 +3696,7 @@ public class DocumentService : IDocumentService
 
             if (doc.WithholdingTaxAmount > 0)
             {
-                var whtAcc = await FindAccountAsync(companyId, "21916")
-                    ?? await FindAccountAsync(companyId, "21917");
+                var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                 if (whtAcc != null)
                     AddLine(whtAcc.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
             }
@@ -3694,8 +3738,7 @@ public class DocumentService : IDocumentService
             // Accrual only — Cash basis defers to the PaymentVoucher path.
             if (whtBasis == Models.Enums.WhtRecognitionBasis.Accrual && doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await FindAccountAsync(companyId, "21916")
-                    ?? await FindAccountAsync(companyId, "21917");
+                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                 if (whtAccount != null)
                 {
                     // Group WHT by rate for clear audit trail
@@ -3823,8 +3866,7 @@ public class DocumentService : IDocumentService
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
                     if (thisWht > 0)
                     {
-                        var whtAccount = await FindAccountAsync(companyId, "21916")
-                            ?? await FindAccountAsync(companyId, "21917");
+                        var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                         if (whtAccount != null)
                             AddLine(whtAccount.Id, 0, thisWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
                     }
@@ -3878,8 +3920,7 @@ public class DocumentService : IDocumentService
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
-                    var whtAccount = await FindAccountAsync(companyId, "21916")
-                        ?? await FindAccountAsync(companyId, "21917");
+                    var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                     if (whtAccount != null)
                         AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
                 }
@@ -4062,8 +4103,7 @@ public class DocumentService : IDocumentService
             // Cash basis: Cr WHT-Payable for this installment's withholding.
             if (postPerPaymentWht)
             {
-                var whtAccount = await FindAccountAsync(companyId, "21916")
-                    ?? await FindAccountAsync(companyId, "21917");
+                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                 if (whtAccount != null)
                     pendingLines.Add((whtAccount.Id, 0, thbWht, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
             }
@@ -4195,6 +4235,7 @@ public class DocumentService : IDocumentService
         CreditDays: d.CreditDays,
         PaymentTerms: d.PaymentTerms,
         PaymentType: d.PaymentType,
+        PricesIncludeVat: d.PricesIncludeVat,
         RelatedDocument: upstream,
         ConvertedToDocuments: downstream,
         ConversionCompletionPercent: conversionPercent,
@@ -4574,6 +4615,29 @@ public class DocumentService : IDocumentService
                     warnings.Add($"ใบสำคัญจ่ายแบบจ่ายทันทีไม่ควรลงบัญชีเจ้าหนี้/หนี้สิน ({string.Join(", ", payableCodes)}) — ถ้าเป็นการตั้งหนี้ ให้เลือกประเภทเป็น 'เครดิต' แทน");
             }
         }
+
+        // 5. Contact still active? A document whose counterparty was
+        //    deleted/deactivated between create and approve would still post
+        //    to that party's AP/AR — surface it so the operator re-checks.
+        if (doc.Contact != null && (doc.Contact.IsDeleted || !doc.Contact.IsActive))
+            warnings.Add($"ผู้ติดต่อ '{doc.Contact.Name}' ถูกลบหรือปิดใช้งานแล้ว — ตรวจสอบก่อนอนุมัติ (ยอดจะลงบัญชีลูกหนี้/เจ้าหนี้ของผู้ติดต่อรายนี้)");
+
+        // 6. Possible duplicate — another non-voided document for the SAME
+        //    contact + same total + within ±1 day. Catches a double-entry /
+        //    double-upload before it hits the GL twice.
+        var dupFrom = doc.DocumentDate.Date.AddDays(-1);
+        var dupTo = doc.DocumentDate.Date.AddDays(1);
+        var dup = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.Id != doc.Id && !d.IsDeleted
+                && d.ContactId == doc.ContactId
+                && d.DocumentType == doc.DocumentType
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                && d.TotalAmount == doc.TotalAmount
+                && d.DocumentDate >= dupFrom && d.DocumentDate <= dupTo)
+            .Select(d => d.DocumentNumber)
+            .FirstOrDefaultAsync();
+        if (dup != null)
+            warnings.Add($"อาจเป็นเอกสารซ้ำ — มี {dup} ของผู้ติดต่อรายนี้ ยอด {doc.TotalAmount:N2} ในช่วงวันที่เดียวกัน ตรวจสอบก่อนอนุมัติ");
 
         return warnings;
     }

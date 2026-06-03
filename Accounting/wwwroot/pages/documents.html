@@ -324,6 +324,10 @@
                   <input type="checkbox" id="fStrictProducts" checked style="margin:0">
                   <span title="ติ๊กไว้ = ห้ามกรอกอิสระ ต้องเลือกจากสินค้าที่บันทึกในระบบเท่านั้น (ป้องกันชื่อสะกดผิด + ทำให้รายงานสรุปสินค้ารวมยอดได้ถูกต้อง)">เฉพาะสินค้าในระบบ</span>
                 </label>
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none">
+                  <input type="checkbox" id="fPricesIncludeVat" style="margin:0" onchange="Page.recalc && Page.recalc()">
+                  <span title="ติ๊กเมื่อราคา/หน่วยที่กรอกรวม VAT 7% แล้ว — ระบบจะถอด VAT ออกให้อัตโนมัติเพื่อแยกฐานภาษีให้ถูกต้อง">ราคารวมภาษี</span>
+                </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
@@ -1444,6 +1448,7 @@
         // Reset PV payment-type suggestion state for the fresh form.
         this._paymentTypeTouched = false;
         this._lastPaymentTypeFeedbackId = null;
+        const _piv = document.getElementById('fPricesIncludeVat'); if (_piv) _piv.checked = false;
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
         // Clear CertificateInLieu fields
         if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = '';
@@ -1504,6 +1509,8 @@
           if (fPt) fPt.value = d.paymentTerms || '';
           const fPayType = document.getElementById('fPaymentType');
           if (fPayType && d.paymentType) fPayType.value = d.paymentType;
+          const fPiv = document.getElementById('fPricesIncludeVat');
+          if (fPiv) fPiv.checked = !!d.pricesIncludeVat;
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
           document.getElementById('fCustomAppendix').value = d.customAppendix || '';
@@ -1693,6 +1700,7 @@
           // form exposes the selector); null elsewhere.
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
             ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
+          pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
         };
         try {
           let savedDocId = this.editingId;

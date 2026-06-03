@@ -44,6 +44,13 @@ public class Document : TenantEntity
     /// Payment Voucher defaults to Cash).</summary>
     public PaymentType? PaymentType { get; set; }
 
+    /// <summary>True when the unit prices on the lines were entered VAT-
+    /// INCLUSIVE (ราคารวมภาษี) — common in Thai retail. When set, the line
+    /// calculator backs the 7% VAT out of the entered price so SubTotal /
+    /// VatAmount post the correct ex-VAT base + tax. False = prices are
+    /// ex-VAT (the historical default, VAT added on top).</summary>
+    public bool PricesIncludeVat { get; set; }
+
     // Contact (Customer/Supplier)
     public Guid ContactId { get; set; }
     public Contact Contact { get; set; } = null!;

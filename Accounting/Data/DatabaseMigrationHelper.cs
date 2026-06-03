@@ -125,6 +125,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentType" int NULL;
             """,
 
+            // ===== Documents: PricesIncludeVat (VAT-inclusive line pricing) =====
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PricesIncludeVat" boolean NOT NULL DEFAULT false;
+            """,
+
             // ===== DocumentLines: ProductCode =====
             """
             ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "ProductCode" varchar(50) NULL;
