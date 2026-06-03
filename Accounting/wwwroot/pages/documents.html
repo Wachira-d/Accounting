@@ -141,6 +141,22 @@
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
 
+          <!-- Payment Voucher only: เครดิต vs จ่ายทันที. Cash → no due date,
+               posts straight to Cash/Bank (no เจ้าหนี้). JS toggles via
+               .payment-voucher-only based on docType. -->
+          <div class="form-row payment-voucher-only" style="display:none">
+            <div class="form-group">
+              <label class="form-label" data-help="จ่ายทันที = เงินออกเลย ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้ | เครดิต = ตั้งเป็นเจ้าหนี้ มีวันครบกำหนด รอจ่ายภายหลัง">ประเภทการจ่าย</label>
+              <select class="form-select" id="fPaymentType" onchange="Page.onPaymentTypeChange()">
+                <option value="Cash">จ่ายทันที (เงินสด/โอน)</option>
+                <option value="Credit">เครดิต (ตั้งเจ้าหนี้)</option>
+              </select>
+            </div>
+            <div class="form-group" id="paymentTypeHint" style="display:flex;align-items:flex-end">
+              <span style="font-size:12px;color:#64748b"></span>
+            </div>
+          </div>
+
           <!-- Supplier-side tax-invoice metadata — only relevant on PI/CertInLieu/PV
                where the partner issues the source invoice. JS toggles `.supplier-invoice-only`
                based on docType (see togglePurchaseFields below). -->
@@ -849,6 +865,14 @@
         document.querySelectorAll('.supplier-invoice-only').forEach(el => {
           el.style.display = supplierIssuedTypes.includes(docType) ? '' : 'none';
         });
+        // Payment Voucher: show the เครดิต/จ่ายทันที selector + apply its
+        // effect on the due-date field.
+        const isPV = docType === 'PaymentVoucher';
+        document.querySelectorAll('.payment-voucher-only').forEach(el => {
+          el.style.display = isPV ? '' : 'none';
+        });
+        if (isPV) this.onPaymentTypeChange();
+        // (onPaymentTypeChange defined on Page — see below)
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
@@ -876,6 +900,26 @@
           if (row) row.style.display = 'none';
         }
       },
+
+      /**
+       * Payment Voucher เครดิต/จ่ายทันที toggle effect. Cash (จ่ายทันที) hides
+       * + clears the due date (no outstanding balance) and shows a hint; Credit
+       * re-enables the due date so the operator can set the payable's term.
+       */
+      onPaymentTypeChange() {
+        const sel = document.getElementById('fPaymentType');
+        if (!sel) return;
+        const isCash = sel.value === 'Cash';
+        const due = document.getElementById('fDueDate');
+        const dueGroup = due ? due.closest('.form-group') : null;
+        if (dueGroup) dueGroup.style.display = isCash ? 'none' : '';
+        if (isCash && due) due.value = '';
+        const hint = document.querySelector('#paymentTypeHint span');
+        if (hint) hint.textContent = isCash
+          ? 'เงินออกทันที — ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้'
+          : 'ตั้งเป็นเจ้าหนี้ — มีวันครบกำหนด รอจ่ายภายหลัง';
+      },
+
       /**
        * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
        * Per RD spec, only TaxInvoice/Receipt/CreditNote/DebitNote qualify for
@@ -1425,6 +1469,8 @@
           if (fCd) fCd.value = d.creditDays ?? '';
           const fPt = document.getElementById('fPaymentTerms');
           if (fPt) fPt.value = d.paymentTerms || '';
+          const fPayType = document.getElementById('fPaymentType');
+          if (fPayType && d.paymentType) fPayType.value = d.paymentType;
           document.getElementById('fRef').value = d.reference || '';
           document.getElementById('fNotes').value = d.notes || '';
           document.getElementById('fCustomAppendix').value = d.customAppendix || '';
@@ -1610,6 +1656,10 @@
           supplierTaxInvoiceDate: document.getElementById('fSupplierTaxInvoiceDate')?.value || null,
           creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
+          // Only send paymentType for Payment Voucher (the only type whose
+          // form exposes the selector); null elsewhere.
+          paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
+            ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
         };
         try {
           let savedDocId = this.editingId;

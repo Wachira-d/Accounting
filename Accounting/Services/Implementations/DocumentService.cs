@@ -4468,6 +4468,55 @@ public class DocumentService : IDocumentService
             }
         }
 
+        // ===== Thai-accounting completeness checks (RD requirements) =====
+
+        // 1. Tax Invoice must carry the buyer's full address (ที่อยู่ผู้ซื้อ)
+        //    per ป.86/4 — without it the document isn't a valid full tax
+        //    invoice and the buyer can't claim input VAT.
+        if (doc.DocumentType == DocumentType.TaxInvoice && doc.Contact != null)
+        {
+            var hasAddr = !string.IsNullOrWhiteSpace(doc.Contact.Address)
+                || !string.IsNullOrWhiteSpace(doc.Contact.Province)
+                || !string.IsNullOrWhiteSpace(doc.Contact.District);
+            if (!hasAddr)
+                warnings.Add($"ใบกำกับภาษีต้องระบุที่อยู่ผู้ซื้อ ('{doc.Contact.Name}' ยังไม่มีที่อยู่) — ตามมาตรา 86/4 ผู้ซื้อใช้เป็นหลักฐานภาษีซื้อไม่ได้");
+            // Thai corporate Tax ID is exactly 13 digits.
+            var tid = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+            if (!string.IsNullOrEmpty(tid) && tid.Length != 13)
+                warnings.Add($"เลขประจำตัวผู้เสียภาษีของ '{doc.Contact.Name}' มี {tid.Length} หลัก (ต้อง 13 หลัก) — ตรวจก่อนออกใบกำกับภาษี");
+        }
+
+        // 2. When WHT is withheld, a 50 ทวิ certificate must be issued to the
+        //    payee. Flag so the operator generates it (PND filing depends on it).
+        if (doc.WithholdingTaxAmount > 0 && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.PurchaseInvoice or DocumentType.Expense)
+            warnings.Add($"มีการหักภาษี ณ ที่จ่าย {doc.WithholdingTaxAmount:N2} THB — อย่าลืมออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ให้ผู้รับเงิน และยื่น ภ.ง.ด. ตามกำหนด");
+
+        // 3. Credit Note should reference the original invoice it adjusts
+        //    (มาตรา 86/10). CreditNoteReason is already enforced; this nudges
+        //    for the source link so VAT reversal ties back to the original.
+        if (doc.DocumentType == DocumentType.CreditNote && doc.RelatedDocumentId == null)
+            warnings.Add("ใบลดหนี้ยังไม่ได้อ้างอิงใบกำกับภาษี/ใบแจ้งหนี้ต้นฉบับ — ตามมาตรา 86/10 ควรระบุเลขที่และวันที่เอกสารเดิมที่ลดหนี้");
+
+        // 4. Cash-settled Payment Voucher (จ่ายทันที) must NOT post to a
+        //    payable (เจ้าหนี้) account — the money already left, so a 2xx
+        //    liability debit/credit on a line is a modelling error. This is
+        //    the consistency guard the user asked for.
+        if (doc.DocumentType == DocumentType.PaymentVoucher
+            && doc.PaymentType == Models.Enums.PaymentType.Cash)
+        {
+            var lineAccountIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+            if (lineAccountIds.Count > 0)
+            {
+                var payableCodes = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && lineAccountIds.Contains(a.Id)
+                        && (a.AccountType == AccountType.Liability || a.AccountCode.StartsWith("2")))
+                    .Select(a => a.AccountCode + " " + a.AccountName)
+                    .ToListAsync();
+                if (payableCodes.Count > 0)
+                    warnings.Add($"ใบสำคัญจ่ายแบบจ่ายทันทีไม่ควรลงบัญชีเจ้าหนี้/หนี้สิน ({string.Join(", ", payableCodes)}) — ถ้าเป็นการตั้งหนี้ ให้เลือกประเภทเป็น 'เครดิต' แทน");
+            }
+        }
+
         return warnings;
     }
 }
