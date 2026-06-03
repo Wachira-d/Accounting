@@ -1254,6 +1254,13 @@ public enum AiFeatureKey
     /// the data is still mutable.</summary>
     ImportDataReview = 27,
 
+    /// <summary>Suggest the settlement basis (Cash จ่ายทันที vs Credit
+    /// เครดิต) for a Payment Voucher, from the supplier's own history +
+    /// open payables + agreed credit terms. Local model learns
+    /// per-supplier from confirmed choices; the heuristic cold-starts it
+    /// so it's useful from day one.</summary>
+    PaymentTypeSuggestion = 28,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

@@ -147,7 +147,7 @@
           <div class="form-row payment-voucher-only" style="display:none">
             <div class="form-group">
               <label class="form-label" data-help="จ่ายทันที = เงินออกเลย ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้ | เครดิต = ตั้งเป็นเจ้าหนี้ มีวันครบกำหนด รอจ่ายภายหลัง">ประเภทการจ่าย</label>
-              <select class="form-select" id="fPaymentType" onchange="Page.onPaymentTypeChange()">
+              <select class="form-select" id="fPaymentType" onchange="Page.onPaymentTypeChange(true)">
                 <option value="Cash">จ่ายทันที (เงินสด/โอน)</option>
                 <option value="Credit">เครดิต (ตั้งเจ้าหนี้)</option>
               </select>
@@ -787,6 +787,33 @@
         }
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
+        // For a Payment Voucher, ask the local model whether this supplier is
+        // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
+        if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
+          this.suggestPaymentType(contactId);
+        }
+      },
+
+      // Local-model suggestion for the PV settlement basis. Non-blocking:
+      // any failure just leaves the operator's manual choice untouched.
+      async suggestPaymentType(contactId) {
+        try {
+          const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/payment-voucher/suggest-type?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          const sel = document.getElementById('fPaymentType');
+          // Only auto-apply when the user hasn't already overridden this session.
+          if (sel && !this._paymentTypeTouched) {
+            sel.value = j.data.paymentType === 'Credit' ? 'Credit' : 'Cash';
+            this.onPaymentTypeChange();
+            this._lastPaymentTypeFeedbackId = j.data.feedbackId || null;
+            const hint = document.querySelector('#paymentTypeHint span');
+            if (hint && j.data.reasoning)
+              hint.textContent = '🤖 ' + j.data.reasoning + ' (' + Math.round((j.data.confidence || 0) * 100) + '%)';
+          }
+        } catch (e) { /* suggestion is best-effort */ }
       },
       /**
        * Derive a PaymentMethod enum value from the selected paymentChannel.
@@ -906,9 +933,12 @@
        * + clears the due date (no outstanding balance) and shows a hint; Credit
        * re-enables the due date so the operator can set the payable's term.
        */
-      onPaymentTypeChange() {
+      onPaymentTypeChange(userInitiated) {
         const sel = document.getElementById('fPaymentType');
         if (!sel) return;
+        // Once the operator picks manually, stop auto-overriding from the
+        // model suggestion for the rest of this form session.
+        if (userInitiated) this._paymentTypeTouched = true;
         const isCash = sel.value === 'Cash';
         const due = document.getElementById('fDueDate');
         const dueGroup = due ? due.closest('.form-group') : null;
@@ -1411,6 +1441,9 @@
         document.getElementById('fCustomFooterNotes').value = '';
         document.getElementById('fCustomTerms').value = '';
         if (this._contactAC) this._contactAC.clear();
+        // Reset PV payment-type suggestion state for the fresh form.
+        this._paymentTypeTouched = false;
+        this._lastPaymentTypeFeedbackId = null;
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
         // Clear CertificateInLieu fields
         if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = '';
@@ -1670,6 +1703,19 @@
             const cr = await api.createDocument(payload);
             savedDocId = cr.data?.id;
             Layout.toast('สร้างเอกสารสำเร็จ');
+            // Teach the local model: record the operator's actual payment-type
+            // choice against the suggestion it was shown (trains per-supplier).
+            if (payload.paymentType && this._lastPaymentTypeFeedbackId) {
+              try {
+                const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: this._lastPaymentTypeFeedbackId,
+                    chosenAnswer: payload.paymentType, acceptedAi: !this._paymentTypeTouched }),
+                });
+              } catch (e) { /* training is best-effort */ }
+            }
           }
 
           // Send via email if requested
