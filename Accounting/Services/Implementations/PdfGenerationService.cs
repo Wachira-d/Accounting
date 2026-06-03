@@ -22,12 +22,18 @@ public partial class PdfGenerationService : IPdfGenerationService
     private readonly IDocumentTemplateService _templateService;
     private readonly Pdf.IHtmlPdfRenderer? _htmlPdf;
 
+    // Captured once so the static image helpers can resolve a web-relative
+    // upload URL ("/uploads/x.png") to its physical wwwroot path — uploads
+    // (logo / company stamp) are stored as relative URLs.
+    private static string? _webRoot;
+
     public PdfGenerationService(AccountingDbContext db, IDocumentTemplateService templateService,
-        Pdf.IHtmlPdfRenderer? htmlPdf = null)
+        Pdf.IHtmlPdfRenderer? htmlPdf = null, Microsoft.AspNetCore.Hosting.IWebHostEnvironment? env = null)
     {
         _db = db;
         _templateService = templateService;
         _htmlPdf = htmlPdf;
+        if (env?.WebRootPath is { Length: > 0 } wr) _webRoot = wr;
     }
 
     public async Task<GeneratePdfResponse> GenerateDocumentPdfAsync(Guid companyId, GeneratePdfRequest request)
@@ -218,43 +224,88 @@ public partial class PdfGenerationService : IPdfGenerationService
         string? Name,
         string? Title);
 
-    /// <summary>Resolve up to TWO signers for a document:
-    /// signers[0] = creator (CreatedBy), signers[1] = approver (UpdatedBy when
-    /// different from the creator). Each signer carries the user's saved
-    /// signature image + their display name + title. When a user has no
-    /// signature image, the slot still records the name so the printed label
-    /// reads "ผู้รับ: <name>" with a blank line instead of mystery text.</summary>
+    /// <summary>Resolve the signers for a document, aligned positionally to the
+    /// template's signature label slots (signers[0] → SignatureLabel1, etc.):
+    ///   slot 0 = preparer  — the document creator (CreatedBy).
+    ///   slot 1 = approver  — the REAL approver recorded in DocumentApproval
+    ///            (internal, status Approved). Falls back to UpdatedBy (the
+    ///            last editor) only when no approval row exists, so when the
+    ///            editor and approver differ the correct person's signature
+    ///            prints — the previous code always used UpdatedBy.
+    ///   slot 2 = customer  — the external counterparty's signature captured
+    ///            via the customer-approval flow (e.g. a customer accepting a
+    ///            quotation through the external link). Only emitted when such
+    ///            a signature exists; pairs with SignatureLabel3 (e.g.
+    ///            "ลูกค้าอนุมัติ" which ApplyDefaultSignatureLabels sets for
+    ///            quotations). Drawn directly from DocumentApproval.SignatureData
+    ///            (base64) since the signer isn't a system user.
+    /// Each user slot carries the saved signature image + name + title; an
+    /// empty slot (no image) still records the name so the printed label reads
+    /// "<role>: <name>" above a blank line instead of mystery text.</summary>
     private async Task<List<DocumentSigner>> ResolveSignersAsync(Document doc)
     {
-        var ids = new List<Guid>();
-        if (Guid.TryParse(doc.CreatedBy, out var cId)) ids.Add(cId);
-        if (Guid.TryParse(doc.UpdatedBy, out var uId) && uId != ids.FirstOrDefault()) ids.Add(uId);
-        if (ids.Count == 0) return new();
+        Guid? creatorId = Guid.TryParse(doc.CreatedBy, out var cId) ? cId : null;
 
-        var users = await _db.Users.AsNoTracking()
-            .Where(u => ids.Contains(u.Id))
+        // Real approver from the approval audit trail (preferred over UpdatedBy).
+        var approverId = await _db.DocumentApprovals.AsNoTracking()
+            .Where(a => a.DocumentId == doc.Id
+                        && a.Status == ApprovalStatus.Approved
+                        && a.ApproverUserId != null
+                        && (a.ApprovalType == "Internal" || a.ApproverRole == "Approver"))
+            .OrderByDescending(a => a.StepOrder).ThenByDescending(a => a.ApprovedAt)
+            .Select(a => a.ApproverUserId)
+            .FirstOrDefaultAsync();
+        if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
+            approverId = uId;
+
+        var userIds = new List<Guid>();
+        if (creatorId.HasValue) userIds.Add(creatorId.Value);
+        if (approverId.HasValue && approverId != creatorId) userIds.Add(approverId.Value);
+
+        var users = userIds.Count == 0 ? new() : await _db.Users.AsNoTracking()
+            .Where(u => userIds.Contains(u.Id))
             .Select(u => new { u.Id, u.FullName, u.SignatureImageBase64, u.SignatureName, u.SignatureTitle })
             .ToListAsync();
-
         var byId = users.ToDictionary(u => u.Id);
-        var signers = new List<DocumentSigner>();
-        foreach (var id in ids)
+
+        DocumentSigner FromUser(Guid? id)
         {
-            if (!byId.TryGetValue(id, out var u)) continue;
-            string? dataUri = null;
-            byte[]? bytes = null;
+            if (id == null || !byId.TryGetValue(id.Value, out var u))
+                return new DocumentSigner(null, null, null, null);
+            string? dataUri = null; byte[]? bytes = null;
             var raw = u.SignatureImageBase64?.Trim();
             if (!string.IsNullOrWhiteSpace(raw))
             {
-                // Already a data URI? keep as-is for HTML. Otherwise wrap.
                 dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
                     ? raw : "data:image/png;base64," + raw;
                 bytes = TryDecodeBase64Image(raw);
             }
-            signers.Add(new DocumentSigner(dataUri, bytes,
+            return new DocumentSigner(dataUri, bytes,
                 !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName,
-                u.SignatureTitle));
+                u.SignatureTitle);
         }
+
+        // slot 0 + slot 1 are always present (blank when unsigned) so slot 2
+        // (customer) keeps its index even when the approver hasn't signed.
+        var signers = new List<DocumentSigner> { FromUser(creatorId), FromUser(approverId) };
+
+        // slot 2 — external/customer signature captured via the approval flow.
+        var custSig = await _db.DocumentApprovals.AsNoTracking()
+            .Where(a => a.DocumentId == doc.Id
+                        && a.SignatureData != null
+                        && (a.ApprovalType == "Customer" || a.ApprovalType == "External"))
+            .OrderByDescending(a => a.ApprovedAt)
+            .Select(a => new { a.SignatureData, a.ApproverName, a.ApproverTitle })
+            .FirstOrDefaultAsync();
+        if (custSig != null && !string.IsNullOrWhiteSpace(custSig.SignatureData))
+        {
+            var raw = custSig.SignatureData!.Trim();
+            var dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                ? raw : "data:image/png;base64," + raw;
+            signers.Add(new DocumentSigner(dataUri, TryDecodeBase64Image(raw),
+                custSig.ApproverName, custSig.ApproverTitle));
+        }
+
         return signers;
     }
 
@@ -1186,12 +1237,28 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
-            var info = new FileInfo(path);
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            var resolved = ResolveImagePath(path);
+            if (resolved == null || !File.Exists(resolved)) return null;
+            var info = new FileInfo(resolved);
             if (info.Length <= 0 || info.Length > 8 * 1024 * 1024) return null;  // cap 8MB
-            return File.ReadAllBytes(path);
+            return File.ReadAllBytes(resolved);
         }
         catch { return null; }
+    }
+
+    /// <summary>Resolve an image reference that may be an absolute path OR a
+    /// web-relative upload URL ("/uploads/x.png") to a physical file path.
+    /// Logo / company-stamp uploads are persisted as relative URLs, so the
+    /// raw string isn't a valid filesystem path on its own.</summary>
+    private static string? ResolveImagePath(string path)
+    {
+        var p = path.Trim();
+        if (File.Exists(p)) return p;                 // already an absolute/real path
+        if (string.IsNullOrEmpty(_webRoot)) return p; // no web root captured → best effort
+        // Strip a leading slash + normalise separators, then anchor to wwwroot.
+        var rel = p.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar);
+        return Path.Combine(_webRoot!, rel);
     }
 
     /// <summary>Map a template font name to a family QuestPDF is likely to
@@ -1458,6 +1525,17 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         // If either was customised, respect the user's full choice.
         if (!IsGeneric(t.SignatureLabel1) || !IsGeneric(t.SignatureLabel2))
             return;
+
+        // Quotation gets a THIRD box for the customer's acceptance signature,
+        // which the external-approval flow captures and ResolveSignersAsync
+        // now fills (slot 2). Only bump the count when the template still
+        // carries the default 2 — never shrink a user's larger custom layout.
+        if (docType == DocumentType.Quotation && t.SignatureCount <= 2)
+        {
+            t.SignatureCount = 3;
+            t.SignatureLabel3 = "ลูกค้าอนุมัติ";
+            t.SignatureLabel3En = "Customer approval";
+        }
 
         var (th1, th2, en1, en2) = docType switch
         {
