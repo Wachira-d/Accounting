@@ -191,16 +191,23 @@ const Layout = {
   },
 
   hasMenuAccess(menuId) {
+    // Permissions not loaded yet → don't flicker-hide; allow then re-render.
     if (!this.myPermissions) return true;
     if (this.myPermissions.isOwnerOrAdmin) return true;
-    if (!this.myPermissions.allowedMenuIds || this.myPermissions.allowedMenuIds.length === 0) return true;
-    return this.myPermissions.allowedMenuIds.includes(menuId);
+    const allowed = this.myPermissions.allowedMenuIds || [];
+    // "*" = backend sentinel = "no custom CompanyRole assigned, show all"
+    // (preserves legacy access for plain Employee / Manager UserRoles).
+    if (allowed.includes('*')) return true;
+    // STRICT mode: explicit role with empty grant list → hide everything.
+    // Admin must tick menus on the role page to expose them.
+    return allowed.includes(menuId);
   },
 
   _enforceRoleAccess() {
     if (!this.myPermissions || !this.currentPage) return;
     if (this.myPermissions.isOwnerOrAdmin) return;
-    if (!this.myPermissions.allowedMenuIds || this.myPermissions.allowedMenuIds.length === 0) return;
+    const allowed = this.myPermissions.allowedMenuIds || [];
+    if (allowed.includes('*')) return;
     if (!this.hasMenuAccess(this.currentPage)) {
       this.toast('คุณไม่มีสิทธิ์เข้าถึงหน้านี้ — กำลังพาไปหน้าแดชบอร์ด', 'error');
       setTimeout(() => { window.location.href = '/app.html'; }, 1500);

@@ -181,6 +181,7 @@ public class PermissionCatalogController : ControllerBase
                 PermissionKeys.DocumentCreate, PermissionKeys.DocumentApprove,
                 PermissionKeys.DocumentViewAll, PermissionKeys.DocumentExport,
                 PermissionKeys.BankView, PermissionKeys.BankReconcile,
+                PermissionKeys.ReportsDashboard,
                 PermissionKeys.ReportsFinancial, PermissionKeys.ReportsOperational,
                 PermissionKeys.ReportsExport,
                 PermissionKeys.TaxFile, PermissionKeys.TaxExport,
@@ -233,6 +234,7 @@ public class PermissionCatalogController : ControllerBase
         new("executive-viewer", "Executive Viewer", "👔",
             "ผู้บริหาร — ดูได้อย่างเดียว ทุกรายงาน + dashboard + KPI",
             new() {
+                PermissionKeys.ReportsDashboard,
                 PermissionKeys.ReportsExecutive, PermissionKeys.ReportsFinancial,
                 PermissionKeys.ReportsOperational, PermissionKeys.ReportsExport,
                 PermissionKeys.SensitiveDocsView, PermissionKeys.DocumentViewAll,

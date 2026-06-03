@@ -110,6 +110,7 @@ public static class PermissionKeys
     public const string BankPaymentInit   = P + "Bank.PaymentInit";   // initiate outgoing transfer
 
     // ───── Reporting ─────
+    public const string ReportsDashboard  = P + "Reports.Dashboard";   // หน้าแดชบอร์ดภาพรวม + executive-reports + fpa + financial-mgmt
     public const string ReportsExecutive  = P + "Reports.Executive";   // executive / FP&A
     public const string ReportsFinancial  = P + "Reports.Financial";   // P&L, Balance Sheet
     public const string ReportsOperational = P + "Reports.Operational"; // aging, AR/AP
@@ -201,6 +202,7 @@ public static class PermissionKeys
         new(BankPaymentInit,  "ธนาคาร",  "สั่งโอนเงิน",              "initiate transfer (open banking)"),
 
         // Reports
+        new(ReportsDashboard,  "รายงาน","ดูแดชบอร์ดภาพรวม",         "หน้าแรก · financial overview · FP&A · executive reports"),
         new(ReportsExecutive,  "รายงาน","รายงานผู้บริหาร",          "KPI · benchmark · trend"),
         new(ReportsFinancial,  "รายงาน","งบการเงิน",                "งบดุล · งบกำไรขาดทุน · กระแสเงินสด"),
         new(ReportsOperational,"รายงาน","รายงานปฏิบัติการ",         "aging · AR/AP · stock report"),

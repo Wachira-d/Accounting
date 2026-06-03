@@ -1,3 +1,5 @@
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Fpa;
 using Accounting.Services.Interfaces;
@@ -9,6 +11,7 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/fpa")]
 [Authorize]
+[RequirePermission(PermissionKeys.ReportsDashboard)]
 public class FpaController : ControllerBase
 {
     private readonly IFpaService _service;
