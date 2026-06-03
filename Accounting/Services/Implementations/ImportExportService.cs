@@ -4,6 +4,8 @@ using Accounting.Data;
 using Accounting.Models.DTOs.Import;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Ai;
+using Accounting.Services.Ai.Prompts;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,11 +15,16 @@ public class ImportExportService : IImportExportService
 {
     private readonly AccountingDbContext _db;
     private readonly IErrorLogService _errorLogService;
+    private readonly IImportAiAugmenter? _ai;
 
-    public ImportExportService(AccountingDbContext db, IErrorLogService errorLogService)
+    // _ai is optional so the service still works in tests / environments
+    // where AI isn't registered. Production wires it up in Program.cs.
+    public ImportExportService(AccountingDbContext db, IErrorLogService errorLogService,
+        IImportAiAugmenter? ai = null)
     {
         _db = db;
         _errorLogService = errorLogService;
+        _ai = ai;
     }
 
     public async Task<ImportResult> ImportAsync(Guid companyId, ImportRequest request, string performedBy)
@@ -1719,6 +1726,40 @@ public class ImportExportService : IImportExportService
             }
         }
 
+        // AI fallback for uncertain columns. Fires ONLY for columns the
+        // heuristic couldn't confidently match — the 90% case where
+        // headers are obvious stays AI-free. AI re-rank tightens the
+        // mapping for renamed columns ("ลูกค้า/ผู้ขาย" → Name) the
+        // alias table doesn't cover. Failure is silent: empty result
+        // leaves the heuristic mappings in place.
+        if (_ai != null)
+        {
+            var uncertain = mappings
+                .Where(m => m.MatchType == ColumnMatchType.Unmapped
+                    || m.Confidence == ColumnMatchConfidence.Low
+                    || m.Confidence == ColumnMatchConfidence.Medium)
+                .Select(m =>
+                {
+                    var samples = JsonSerializer.Deserialize<List<string>>(m.SampleValuesJson ?? "[]") ?? new();
+                    return new ImportPrompts.ColumnMatchInput(
+                        m.SourceIndex, m.SourceHeader, samples, m.TargetField, (double)m.ConfidenceScore);
+                })
+                .ToList();
+
+            if (uncertain.Count > 0)
+            {
+                var targets = templateFields.Select(f => new ImportPrompts.TargetField(
+                    f.FieldName, f.DisplayName, f.DataType, f.IsRequired, f.Description)).ToList();
+                var suggestions = await _ai.SuggestColumnMappingsAsync(
+                    companyId, session.Id, request.EntityType, targets, uncertain);
+                ApplyAiColumnSuggestions(mappings, suggestions, templateFields);
+                unmappedCount = mappings.Count(m =>
+                    m.MatchType == ColumnMatchType.Unmapped ||
+                    m.Confidence == ColumnMatchConfidence.Low ||
+                    m.Confidence == ColumnMatchConfidence.None);
+            }
+        }
+
         _db.SmartImportColumnMappings.AddRange(mappings);
 
         // อัพเดตสถานะ session
@@ -1726,6 +1767,141 @@ public class ImportExportService : IImportExportService
         await _db.SaveChangesAsync();
 
         return MapToSessionResponse(session, mappings, sampleRows);
+    }
+
+    /// <summary>Apply AI's column suggestions on top of the heuristic
+    /// mappings. AI wins only when (a) it picks a valid target field
+    /// and (b) its confidence beats whatever the heuristic produced.
+    /// Marks accepted picks as AiMatched so the UI can label them.</summary>
+    private static void ApplyAiColumnSuggestions(
+        List<SmartImportColumnMapping> mappings,
+        List<ImportColumnAiSuggestion> suggestions,
+        List<ImportField> templateFields)
+    {
+        var validFieldNames = templateFields.Select(f => f.FieldName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in suggestions)
+        {
+            var m = mappings.FirstOrDefault(x => x.SourceIndex == s.SourceIndex);
+            if (m == null) continue;
+            if (string.IsNullOrWhiteSpace(s.TargetField) || !validFieldNames.Contains(s.TargetField)) continue;
+            if (s.Confidence <= m.ConfidenceScore) continue;       // heuristic was already as good or better
+
+            m.TargetField = s.TargetField;
+            m.MatchType = ColumnMatchType.AiMatched;
+            m.ConfidenceScore = s.Confidence;
+            m.Confidence = s.Confidence >= 0.9m ? ColumnMatchConfidence.High
+                : s.Confidence >= 0.6m ? ColumnMatchConfidence.Medium
+                : ColumnMatchConfidence.Low;
+        }
+    }
+
+    /// <summary>One-shot AI review of the staged data BEFORE commit.
+    /// Caller (controller) invokes after the operator finishes column
+    /// mapping. Returns normalizations + dup suggestions + quality
+    /// flags + field validation + batch patterns in a single payload
+    /// the frontend can render as a review screen. Gracefully degrades
+    /// to an empty result when AI is disabled.</summary>
+    public async Task<ImportAiReviewResponse> AiReviewSessionAsync(Guid companyId, Guid sessionId)
+    {
+        var session = await _db.SmartImportSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.CompanyId == companyId)
+            ?? throw new InvalidOperationException("ไม่พบ session");
+
+        var mappings = await _db.SmartImportColumnMappings.AsNoTracking()
+            .Where(m => m.SessionId == sessionId && !string.IsNullOrEmpty(m.TargetField))
+            .OrderBy(m => m.SourceIndex)
+            .ToListAsync();
+
+        var templateFields = GetTemplateFields(session.EntityType)
+            ?? throw new InvalidOperationException($"ไม่รองรับการนำเข้า {session.EntityType}");
+
+        if (_ai == null)
+        {
+            return new ImportAiReviewResponse(sessionId, UsedAi: false,
+                "AI augmentation not configured", null,
+                new List<ImportAiNormalizationDto>(), new List<ImportAiFuzzyDuplicateDto>(),
+                new List<ImportAiQualityFlagDto>(), new List<ImportAiFieldValidationDto>(),
+                new List<string>());
+        }
+
+        // Materialize the staged file into target-field-keyed rows so
+        // the AI sees domain field names (Name / TaxId / Email …) instead
+        // of the raw source headers. 50-row cap keeps token usage bounded
+        // for big imports — the AI still spots batch-wide patterns from
+        // the sample + sees the totalRows count in the prompt.
+        var rawRows = JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson ?? "[]") ?? new();
+        var dataRows = session.HasHeaderRow ? rawRows.Skip(1).ToList() : rawRows;
+        var sampleSize = Math.Min(50, dataRows.Count);
+        var sampleRows = new List<Dictionary<string, string?>>(sampleSize);
+        for (int i = 0; i < sampleSize; i++)
+        {
+            var row = dataRows[i];
+            var dict = new Dictionary<string, string?>();
+            foreach (var m in mappings)
+            {
+                if (m.SourceIndex >= row.Count) continue;
+                var v = row[m.SourceIndex];
+                dict[m.TargetField!] = string.IsNullOrWhiteSpace(v) ? null : v;
+            }
+            sampleRows.Add(dict);
+        }
+
+        var existingSlice = await LoadExistingEntitySliceAsync(companyId, session.EntityType);
+        var targets = templateFields.Select(f => new ImportPrompts.TargetField(
+            f.FieldName, f.DisplayName, f.DataType, f.IsRequired, f.Description)).ToList();
+
+        var review = await _ai.ReviewImportAsync(companyId, sessionId, session.EntityType,
+            targets, mappings.Select(m => m.TargetField!).ToList(), sampleRows, existingSlice);
+
+        return new ImportAiReviewResponse(sessionId, review.UsedAi, review.Summary, review.OverallQualityScore,
+            review.Normalizations.Select(n => new ImportAiNormalizationDto(n.RowIndex, n.Field, n.Original, n.Normalized, n.Reason)).ToList(),
+            review.FuzzyDuplicates.Select(d => new ImportAiFuzzyDuplicateDto(d.RowIndex, d.IncomingKey, d.ExistingId, d.ExistingLabel, d.Similarity, d.Reasoning)).ToList(),
+            review.QualityFlags.Select(q => new ImportAiQualityFlagDto(q.RowIndex, q.Severity, q.Message)).ToList(),
+            review.FieldValidations.Select(v => new ImportAiFieldValidationDto(v.RowIndex, v.Field, v.Value, v.Issue, v.SuggestedFix)).ToList(),
+            review.BatchPatterns.ToList());
+    }
+
+    /// <summary>Load a representative slice of existing entities for
+    /// the AI to fuzzy-match incoming rows against. Capped at 100 rows
+    /// per entity type — enough context for "บจก.ABC vs บริษัท เอบีซี
+    /// จำกัด" recognition without blowing the token budget on companies
+    /// with 10k+ contacts.</summary>
+    private async Task<List<ImportPrompts.ExistingEntityRef>> LoadExistingEntitySliceAsync(
+        Guid companyId, string entityType)
+    {
+        const int Cap = 100;
+        var et = entityType.ToLowerInvariant();
+        if (et == "contacts")
+        {
+            return await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .OrderByDescending(c => c.UpdatedAt)
+                .Take(Cap)
+                .Select(c => new ImportPrompts.ExistingEntityRef(
+                    c.Id.ToString(), c.Name, c.TaxId))
+                .ToListAsync();
+        }
+        if (et == "products")
+        {
+            return await _db.Products.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted)
+                .OrderByDescending(p => p.UpdatedAt)
+                .Take(Cap)
+                .Select(p => new ImportPrompts.ExistingEntityRef(
+                    p.Id.ToString(), p.Name, p.Code))
+                .ToListAsync();
+        }
+        if (et == "chartofaccounts" || et == "chart-of-accounts")
+        {
+            return await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted)
+                .OrderBy(a => a.AccountCode)
+                .Take(Cap)
+                .Select(a => new ImportPrompts.ExistingEntityRef(
+                    a.Id.ToString(), a.AccountName, a.AccountCode))
+                .ToListAsync();
+        }
+        return new List<ImportPrompts.ExistingEntityRef>();
     }
 
     /// <summary>Materialise a Smart Import session into the same flat

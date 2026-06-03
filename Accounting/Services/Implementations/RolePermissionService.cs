@@ -219,13 +219,21 @@ public class RolePermissionService : IRolePermissionService
 
         if (cu.CompanyRoleId == null)
         {
+            // No custom CompanyRole assigned → backwards-compat fallback.
+            // Sentinel "*" tells layout.js "show everything" so existing
+            // members (Employee / Manager UserRole) who never had a
+            // CompanyRole picked don't suddenly lose every menu.
             return new MyPermissionsResponse(
                 cu.Role.ToString(),
                 false,
-                new List<string>(),
+                new List<string> { "*" },
                 ownerHiddenMenuIds);
         }
 
+        // CompanyRole assigned → STRICT mode. An empty granted list now
+        // means "this role grants nothing" (hide every menu) instead of
+        // the previous "show everything" fallback. Forces admins to
+        // explicitly tick the menus / actions they want enabled.
         var perms = await _db.CompanyRolePermissions
             .Where(p => p.CompanyRoleId == cu.CompanyRoleId.Value && p.CanAccess)
             .Select(p => p.MenuItemId)

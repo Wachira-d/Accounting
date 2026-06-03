@@ -153,6 +153,35 @@ public record ImportTemplateDownloadResponse(
     byte[] FileData,
     List<ImportField> Fields);
 
+// ===== AI Review (Smart Import) =====
+// Returned by POST /smart-import/sessions/{id}/ai-review — one AI call
+// after mapping, before commit. Bundles five quality concerns the UI
+// can render as a single "review" screen.
+
+public record ImportAiReviewResponse(
+    Guid SessionId,
+    bool UsedAi,
+    string? Summary,
+    decimal? OverallQualityScore,
+    List<ImportAiNormalizationDto> Normalizations,
+    List<ImportAiFuzzyDuplicateDto> FuzzyDuplicates,
+    List<ImportAiQualityFlagDto> QualityFlags,
+    List<ImportAiFieldValidationDto> FieldValidations,
+    List<string> BatchPatterns);
+
+public record ImportAiNormalizationDto(
+    int RowIndex, string Field, string? Original, string? Normalized, string? Reason);
+
+public record ImportAiFuzzyDuplicateDto(
+    int RowIndex, string? IncomingKey, string? ExistingId, string? ExistingLabel,
+    decimal Similarity, string? Reasoning);
+
+public record ImportAiQualityFlagDto(
+    int RowIndex, string Severity, string Message);
+
+public record ImportAiFieldValidationDto(
+    int RowIndex, string Field, string? Value, string Issue, string? SuggestedFix);
+
 public record ImportableEntityInfo(
     string EntityType,
     string DisplayName,

@@ -1,3 +1,5 @@
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Executive;
 using Accounting.Services.Interfaces;
@@ -9,6 +11,7 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/executive-reports")]
 [Authorize]
+[RequirePermission(PermissionKeys.ReportsDashboard)]
 public class ExecutiveReportController : ControllerBase
 {
     private readonly IExecutiveReportService _svc;

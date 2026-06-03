@@ -190,6 +190,11 @@ Strict JSON output (NO prose outside JSON):
             // orchestrator fell back to the local model, which returned
             // "Provider timeout after 10s" / no usable matches.
             ForceProviderCall = true,
+            // The response is a match-plan JSON ({matches,unmatched,...}) — NOT
+            // the standard primaryAnswer shape. Tell the orchestrator to hand
+            // the raw content back as Success instead of rejecting it as a
+            // "Schema mismatch" and falling back to the local model.
+            RawPlanResponse = true,
             MaxTokensOverride = 4000,         // bulk response can be long
             // DeepSeek with a ~150-txn + ~240-candidate prompt commonly takes
             // 20-40s. The provider-wide default (8s) was guaranteed to time

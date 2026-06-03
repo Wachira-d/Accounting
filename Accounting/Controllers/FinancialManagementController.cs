@@ -1,4 +1,6 @@
+using Accounting.Filters;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.FinancialManagement;
 using Accounting.Services.Interfaces;
@@ -10,6 +12,7 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/financial")]
 [Authorize]
+[RequirePermission(PermissionKeys.ReportsDashboard)]
 public class FinancialManagementController : ControllerBase
 {
     private readonly IFinancialManagementService _svc;

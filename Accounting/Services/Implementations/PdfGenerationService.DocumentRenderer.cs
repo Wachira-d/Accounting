@@ -27,7 +27,8 @@ using EntLine = Accounting.Models.Entities.DocumentLine;
 public partial class PdfGenerationService
 {
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
-        EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride)
+        EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
+        IReadOnlyList<DocumentSigner>? signers = null)
     {
         EnsureThaiFontsRegistered();
         var lang = langOverride ?? template.Language ?? "th";
@@ -75,10 +76,10 @@ public partial class PdfGenerationService
                     {
                         ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText);
                         ComposeContact(col, doc, template, accent);
-                        ComposeItemsTable(col, doc, template, headerBg, headerText, stripe);
+                        ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent);
                         ComposeSummary(col, doc, template, accent, layout);
                         ComposeFooter(col, doc, template);
-                        ComposeSignatures(col, template, b);
+                        ComposeSignatures(col, template, b, signers);
                     });
 
                     page.Footer().AlignRight().Text(t =>
@@ -112,28 +113,29 @@ public partial class PdfGenerationService
         switch (layout)
         {
             case "BannerHeader":
-                // Full-width colored band: logo + company info on TOP row,
-                // big title CENTERED below on a second row inside the same
-                // banner — title gets the full page width so long Thai
-                // labels never wrap mid-character.
-                col.Item().Background(headerBg).Padding(14).Column(bc =>
+                // Full-width accent band holds ONLY the logo + company info.
+                // The document title sits BELOW the band on white (accent
+                // colour) so it never competes with the coloured header and a
+                // long Thai label gets the full page width — matches the
+                // on-screen view.
+                col.Item().Background(accent).Padding(14).Row(r =>
                 {
-                    bc.Item().Row(r =>
-                    {
-                        if (b.LogoBytes is { Length: > 0 })
-                            try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                        r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
-                    });
-                    bc.Item().PaddingTop(10).AlignCenter()
-                        .Text(titleText).FontSize(titleFontSize + 2).Bold().FontColor(headerText);
+                    if (b.LogoBytes is { Length: > 0 })
+                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
                 });
-                ComposeDocInfo(col, doc, template, accent, alignRight: true);
+                col.Item().PaddingTop(14).AlignCenter()
+                    .Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
+                col.Item().PaddingTop(4).PaddingBottom(2).LineHorizontal(1).LineColor(accent);
+                col.Item().PaddingTop(8).AlignCenter().Row(r => RenderDocInfoSpans(r, doc, template, accent));
                 break;
 
             case "BoldHeader":
-                // Oversized title on a colored bar at the very top.
+                // Prominent title on a colored bar at the very top (uses the
+                // configured size — the BoldHeader preset already seeds a
+                // larger value so it reads bigger than the other layouts).
                 col.Item().Background(accent).Padding(14)
-                    .Text(titleText).FontSize(titleFontSize + 4).Bold().FontColor(headerText);
+                    .Text(titleText).FontSize(titleFontSize).Bold().FontColor(headerText);
                 col.Item().PaddingTop(10).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
@@ -320,8 +322,12 @@ public partial class PdfGenerationService
     }
 
     private static void ComposeItemsTable(ColumnDescriptor col, EntDoc doc, EntTemplate t,
-        string headerBg, string headerText, string stripe)
+        string headerBg, string headerText, string stripe, string layout = "Classic", string accent = "#1F2937")
     {
+        // Minimal & Letterhead use a borderless header — no fill, accent-coloured
+        // text and a single rule underneath — to match their on-screen look.
+        var flatHeader = layout is "Minimal" or "Letterhead";
+
         col.Item().PaddingTop(12).Table(table =>
         {
             table.ColumnsDefinition(cols =>
@@ -339,8 +345,10 @@ public partial class PdfGenerationService
             {
                 void Th(string text, string align = "left")
                 {
-                    var cell = h.Cell().Background(headerBg).Padding(6);
-                    var tx = cell.Text(text).FontSize(10).Bold().FontColor(headerText);
+                    var cell = flatHeader
+                        ? h.Cell().BorderBottom(2).BorderColor(accent).Padding(6)
+                        : h.Cell().Background(headerBg).Padding(6);
+                    var tx = cell.Text(text).FontSize(10).Bold().FontColor(flatHeader ? accent : headerText);
                     if (align == "right") tx.AlignRight();
                     else if (align == "center") tx.AlignCenter();
                 }
@@ -429,7 +437,8 @@ public partial class PdfGenerationService
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");
     }
 
-    private static void ComposeSignatures(ColumnDescriptor col, EntTemplate t, PdfBranding b)
+    private static void ComposeSignatures(ColumnDescriptor col, EntTemplate t, PdfBranding b,
+        IReadOnlyList<DocumentSigner>? signers)
     {
         if (!t.ShowSignature) return;
         var labels = new List<string>();
@@ -438,18 +447,38 @@ public partial class PdfGenerationService
         if (t.SignatureCount >= 3 && !string.IsNullOrWhiteSpace(t.SignatureLabel3)) labels.Add(t.SignatureLabel3!);
         if (labels.Count == 0) return;
 
+        DocumentSigner? signerAt(int i) => signers != null && i < signers.Count ? signers[i] : null;
+
         // Stamp above signatures (optional, defensive).
         if (b.StampBytes is { Length: > 0 })
             try { col.Item().PaddingTop(20).AlignRight().Height(22, Unit.Millimetre).Image(b.StampBytes); } catch { }
 
         col.Item().PaddingTop(b.StampBytes != null ? 6 : 40).Row(r =>
         {
-            foreach (var label in labels)
+            for (int i = 0; i < labels.Count; i++)
             {
+                var label = labels[i];
+                var s = signerAt(i);
                 r.RelativeItem().PaddingHorizontal(8).Column(c =>
                 {
-                    c.Item().PaddingTop(20).LineHorizontal(0.5f).LineColor("#333");
-                    c.Item().PaddingTop(4).AlignCenter().Text(label).FontSize(10);
+                    // Signature image, then rule, then role + name + title.
+                    // Image rendered at fixed height so a tall signature can't
+                    // throw the column off; defensive try/catch on bad bytes.
+                    if (s?.SignatureImageBytes is { Length: > 0 })
+                    {
+                        try { c.Item().AlignCenter().Height(14, Unit.Millimetre).Image(s.SignatureImageBytes); }
+                        catch { c.Item().PaddingTop(16); }
+                    }
+                    else
+                    {
+                        c.Item().PaddingTop(20);
+                    }
+                    c.Item().LineHorizontal(0.5f).LineColor("#333");
+                    c.Item().PaddingTop(4).AlignCenter().Text(label).FontSize(10).FontColor("#555");
+                    if (s != null && !string.IsNullOrWhiteSpace(s.Name))
+                        c.Item().AlignCenter().Text(s.Name!).FontSize(10).Bold();
+                    if (s != null && !string.IsNullOrWhiteSpace(s.Title))
+                        c.Item().AlignCenter().Text(s.Title!).FontSize(9).FontColor("#666");
                 });
             }
         });

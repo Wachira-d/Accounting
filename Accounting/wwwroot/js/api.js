@@ -607,6 +607,8 @@ const API = {
       importData: (d) => API.post(`${base}/import-export/import`, d),
       validateImport: (d) => API.post(`${base}/import-export/validate`, d),
       getImportTemplate: (entity) => `${base}/import-export/templates/${entity}/download`,
+      // Field metadata for the smart-import column-mapping dropdown
+      getImportTemplateMeta: (entity) => API.get(`${base}/import-export/templates/${entity}`),
       exportData: (d) => API.post(`${base}/import-export/export`, d),
       getExportableEntities: () => API.get(`${base}/import-export/exportable-entities`),
       getImportableEntities: () => API.get(`${base}/import-export/importable-entities`),
@@ -614,6 +616,10 @@ const API = {
       smartImportSession: (sid) => API.get(`${base}/import-export/smart-import/sessions/${sid}`),
       smartImportMapping: (d) => API.post(`${base}/import-export/smart-import/manual-mapping`, d),
       smartImportConfirm: (d) => API.post(`${base}/import-export/smart-import/confirm`, d),
+      // Single DeepSeek call → type normalizations + fuzzy duplicates + per-row
+      // quality flags + semantic validation + batch patterns. Called between
+      // mapping save and confirm.
+      smartImportAiReview: (sid) => API.post(`${base}/import-export/smart-import/sessions/${sid}/ai-review`),
       // Currency
       getCurrencies: () => API.get(`${base}/currency`),
       addCurrency: (d) => API.post(`${base}/currency`, d),

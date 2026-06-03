@@ -20,13 +20,23 @@ public class DocumentController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IDocumentEmailService _docEmailService;
     private readonly AccountingDbContext _db;
+    private readonly IPermissionService _permissions;
 
-    public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService, AccountingDbContext db)
+    public DocumentController(IDocumentService documentService, IDocumentEmailService docEmailService,
+        AccountingDbContext db, IPermissionService permissions)
     {
         _documentService = documentService;
         _docEmailService = docEmailService;
         _db = db;
+        _permissions = permissions;
     }
+
+    private async Task<DocumentType?> GetDocumentTypeAsync(Guid companyId, Guid documentId) =>
+        await _db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync();
+
+    private ActionResult<ApiResponse<T>> Forbid403<T>(string th)
+        => StatusCode(403, new ApiResponse<T>(false, default, th));
 
     // ===== Send document via email =====
 
@@ -85,8 +95,29 @@ public class DocumentController : ControllerBase
         [FromQuery] string? lifecycle = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
+
+        // Direction gate — Sales role with only Revenue.View can't list PVs.
+        // Explicit type query rejected with 403 so the UI surfaces the
+        // missing permission instead of silently returning an empty list.
+        var visibility = await DocumentPermissionHelper.VisibleDirectionsAsync(_permissions, companyId, userId);
+        if (type.HasValue && !visibility.Allows(type.Value))
+            return Forbid403<PagedResponse<DocumentResponse>>(
+                $"คุณไม่มีสิทธิ์ดูเอกสารประเภท {type.Value} (ต้องการ Document.Revenue.View หรือ Document.Purchase.View)");
+
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly);
+
+        // No-type list path: drop rows the user's split doesn't allow.
+        // Post-filter (not pre-) keeps service signature untouched and
+        // matches the existing lifecycle filter pattern below.
+        if (!visibility.ShowsEverything)
+        {
+            var filtered = result.Items.Where(d => visibility.Allows(d.DocumentType)).ToList();
+            result = new PagedResponse<DocumentResponse>(filtered, filtered.Count,
+                result.Page, result.PageSize,
+                (int)Math.Ceiling(filtered.Count / (double)result.PageSize));
+        }
+
         if (!string.IsNullOrWhiteSpace(lifecycle))
         {
             var filtered = result.Items
@@ -133,8 +164,11 @@ public class DocumentController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> CreateDocument(Guid companyId, [FromBody] CreateDocumentRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _documentService.CreateDocumentAsync(companyId, request, userId);
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, request.DocumentType))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์สร้างเอกสาร {request.DocumentType} (ต้องการ Document.Create หรือ Document.{(DocumentPermissionHelper.IsRevenue(request.DocumentType) ? "Revenue" : "Purchase")}.Create)");
+        var result = await _documentService.CreateDocumentAsync(companyId, request, userIdGuid.ToString());
         return StatusCode(201, new ApiResponse<DocumentResponse>(true, result, "สร้างเอกสารสำเร็จ"));
     }
 
@@ -148,7 +182,13 @@ public class DocumentController : ControllerBase
     [HttpPost("{documentId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<object>>> ApproveDocument(Guid companyId, Guid documentId, [FromBody] ApproveDocumentRequest? request = null)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<object>(
+                $"ไม่มีสิทธิ์อนุมัติเอกสาร {docType} (ต้องการ Document.Approve หรือ Document.{(DocumentPermissionHelper.IsRevenue(docType.Value) ? "Revenue" : "Purchase")}.Approve)");
+        var userId = userIdGuid.ToString();
         try
         {
             var result = await _documentService.ApproveDocumentAsync(companyId, documentId, userId, request?.AcknowledgeWarnings ?? false);
@@ -174,6 +214,12 @@ public class DocumentController : ControllerBase
     [HttpPost("{documentId:guid}/void")]
     public async Task<ActionResult<ApiResponse<string>>> VoidDocument(Guid companyId, Guid documentId)
     {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<string>(
+                $"ไม่มีสิทธิ์ยกเลิกเอกสาร {docType} (ต้องการ Document.Void หรือ Document.{(DocumentPermissionHelper.IsRevenue(docType.Value) ? "Revenue" : "Purchase")}.Void)");
         await _documentService.VoidDocumentAsync(companyId, documentId);
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกเอกสารสำเร็จ"));
     }

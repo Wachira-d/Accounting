@@ -118,6 +118,36 @@ public class ImportExportController : ControllerBase
             $"พบ {result.Conflicts.Count} รายการขัดแย้ง · ใหม่ {result.NewRowCount} · ซ้ำเหมือนกัน {result.DuplicateExactCount}"));
     }
 
+    /// <summary>AI quality review of the staged import. One DeepSeek call covers
+    /// type normalizations (Buddhist year → western, "1.234,50" → 1234.50,
+    /// "ใช่/Y" → true), fuzzy duplicate detection beyond exact-key match
+    /// (catches "บจก.ABC" vs "บริษัท เอบีซี จำกัด"), per-row quality flags
+    /// (price 10× supplier average, name is just initials), semantic field
+    /// validation (TaxId checksum, email domain plausibility), and
+    /// batch-level pattern detection (price-list vs regional dump vs
+    /// re-upload). Operator reviews the result and applies fixes before
+    /// committing. Degrades to empty result + UsedAi=false when AI is
+    /// disabled or fails — never blocks the import.</summary>
+    [HttpPost("smart-import/sessions/{sessionId:guid}/ai-review")]
+    public async Task<ActionResult<ApiResponse<ImportAiReviewResponse>>> AiReviewSession(
+        Guid companyId, Guid sessionId)
+    {
+        var result = await _importExportService.AiReviewSessionAsync(companyId, sessionId);
+        var msgParts = new List<string>();
+        if (result.UsedAi)
+        {
+            if (result.Normalizations.Count > 0) msgParts.Add($"normalize {result.Normalizations.Count}");
+            if (result.FuzzyDuplicates.Count > 0) msgParts.Add($"fuzzy dup {result.FuzzyDuplicates.Count}");
+            if (result.QualityFlags.Count > 0) msgParts.Add($"flag {result.QualityFlags.Count}");
+            if (result.FieldValidations.Count > 0) msgParts.Add($"validate {result.FieldValidations.Count}");
+            if (result.BatchPatterns.Count > 0) msgParts.Add($"pattern {result.BatchPatterns.Count}");
+        }
+        var msg = result.UsedAi
+            ? (msgParts.Count == 0 ? "AI ตรวจแล้ว ไม่พบประเด็น" : "AI พบ: " + string.Join(" · ", msgParts))
+            : "AI ปิดอยู่หรือไม่พร้อม — ใช้ heuristic อย่างเดียว";
+        return Ok(new ApiResponse<ImportAiReviewResponse>(true, result, msg));
+    }
+
     /// <summary>ยืนยันและเริ่ม Import ข้อมูล</summary>
     [HttpPost("smart-import/confirm")]
     public async Task<ActionResult<ApiResponse<SmartImportResult>>> ConfirmImport(

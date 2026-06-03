@@ -300,6 +300,49 @@ public class AiOrchestrator : IAiOrchestrator
         }
 
         // ── Step 7: parse provider content ────────────────────────────
+        // Plan-style features (bulk bank reconciliation) return a structured
+        // JSON document, not the primaryAnswer/alternatives shape. Skip the
+        // schema check and hand the raw content back as Success so the caller
+        // can parse its own schema. Only require non-empty content.
+        if (request.RawPlanResponse)
+        {
+            if (string.IsNullOrWhiteSpace(raw.Content))
+            {
+                var efid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
+                    request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, raw.Content,
+                    AiPrimaryAnswer: null, AiConfidence: null,
+                    request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
+                    request.SourceEntityType, request.SourceEntityId,
+                    AiCallStatus.InvalidResponse, providerConfig.ProviderType, raw.ModelVersion,
+                    (int)sw.ElapsedMilliseconds, raw.InputTokens, raw.OutputTokens,
+                    ComputeCost(raw, providerConfig), CacheHitOfFeedbackId: null,
+                    ErrorMessage: "Empty plan response"), ct);
+                return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: "Empty plan response", feedbackId: efid);
+            }
+
+            var planFid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
+                request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, raw.Content,
+                AiPrimaryAnswer: null, AiConfidence: null,
+                request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
+                request.SourceEntityType, request.SourceEntityId,
+                AiCallStatus.Success, providerConfig.ProviderType, raw.ModelVersion,
+                (int)sw.ElapsedMilliseconds, raw.InputTokens, raw.OutputTokens,
+                ComputeCost(raw, providerConfig), CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+
+            return new AiResponse
+            {
+                Status = AiCallStatus.Success,
+                PrimaryAnswer = null,
+                Confidence = null,
+                UsedAi = true,
+                UsedCache = false,
+                FeedbackId = planFid,
+                ProviderModel = raw.ModelVersion,
+                RawResponseJson = raw.Content,
+                LatencyMs = (int)sw.ElapsedMilliseconds,
+            };
+        }
+
         var featureResp = TryParseFeatureResponse(raw.Content);
         if (featureResp.PrimaryAnswer == null && featureResp.Alternatives.Count == 0)
         {

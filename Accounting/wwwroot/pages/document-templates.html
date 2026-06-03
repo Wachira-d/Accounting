@@ -401,16 +401,16 @@
       // click gives a finished, good-looking template. Other options are left
       // untouched so a design can be layered on an existing template.
       PRESETS: [
-        { key:'classic', name:'คลาสสิกธุรกิจ', layout:'Classic',        font:'THSarabunNew', primary:'#1F2937', accent:'#4472C4', headBg:'#4472C4', headText:'#FFFFFF', border:'Full',       stripe:'#F1F5F9', title:26 },
-        { key:'banner',  name:'แบนเนอร์น้ำเงิน', layout:'BannerHeader',  font:'Prompt',       primary:'#0F172A', accent:'#1E40AF', headBg:'#1E40AF', headText:'#FFFFFF', border:'Full',       stripe:'#EEF2FF', title:28 },
-        { key:'modern',  name:'โมเดิร์นเขียว',  layout:'ModernLeft',    font:'NotoSansThai', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDFA', title:24 },
-        { key:'formal',  name:'ทางการคลาสสิก',  layout:'CenteredFormal',font:'THSarabunNew', primary:'#1C1917', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', border:'Full',       stripe:'#FEF2F2', title:28 },
+        { key:'classic', name:'คลาสสิกธุรกิจ', layout:'Classic',        font:'THSarabunNew', primary:'#1F2937', accent:'#4472C4', headBg:'#4472C4', headText:'#FFFFFF', border:'Full',       stripe:'#F1F5F9', title:22 },
+        { key:'banner',  name:'แบนเนอร์น้ำเงิน', layout:'BannerHeader',  font:'Prompt',       primary:'#0F172A', accent:'#1E40AF', headBg:'#1E40AF', headText:'#FFFFFF', border:'Full',       stripe:'#EEF2FF', title:22 },
+        { key:'modern',  name:'โมเดิร์นเขียว',  layout:'ModernLeft',    font:'NotoSansThai', primary:'#134E4A', accent:'#0F766E', headBg:'#0F766E', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#F0FDFA', title:22 },
+        { key:'formal',  name:'ทางการคลาสสิก',  layout:'CenteredFormal',font:'THSarabunNew', primary:'#1C1917', accent:'#7F1D1D', headBg:'#991B1B', headText:'#FFFFFF', border:'Full',       stripe:'#FEF2F2', title:24 },
         { key:'minimal', name:'มินิมอลขาว',    layout:'Minimal',       font:'Sarabun',      primary:'#111827', accent:'#111827', headBg:'#111827', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFFFFF', title:22 },
         { key:'compact', name:'กระชับประหยัด',  layout:'Compact',       font:'Sarabun',      primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC', title:20 },
-        { key:'warm',    name:'อบอุ่นส้ม',     layout:'BannerHeader',  font:'Prompt',       primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', border:'Full',       stripe:'#FFF7ED', title:26 },
-        { key:'purple',  name:'โมเดิร์นม่วง',   layout:'ModernLeft',    font:'NotoSansThai', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FAF5FF', title:24 },
-        { key:'slate',   name:'เรียบหรูเทา',   layout:'CenteredFormal',font:'Prompt',       primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC', title:26 },
-        { key:'rose',    name:'พรีเมียมโรสโกลด์', layout:'ModernLeft',  font:'Prompt',       primary:'#4C0519', accent:'#9F1239', headBg:'#BE123C', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFF1F2', title:25 },
+        { key:'warm',    name:'อบอุ่นส้ม',     layout:'BannerHeader',  font:'Prompt',       primary:'#7C2D12', accent:'#C2410C', headBg:'#EA580C', headText:'#FFFFFF', border:'Full',       stripe:'#FFF7ED', title:22 },
+        { key:'purple',  name:'โมเดิร์นม่วง',   layout:'ModernLeft',    font:'NotoSansThai', primary:'#3B0764', accent:'#6D28D9', headBg:'#7C3AED', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FAF5FF', title:22 },
+        { key:'slate',   name:'เรียบหรูเทา',   layout:'CenteredFormal',font:'Prompt',       primary:'#0F172A', accent:'#334155', headBg:'#475569', headText:'#FFFFFF', border:'Full',       stripe:'#F8FAFC', title:24 },
+        { key:'rose',    name:'พรีเมียมโรสโกลด์', layout:'ModernLeft',  font:'Prompt',       primary:'#4C0519', accent:'#9F1239', headBg:'#BE123C', headText:'#FFFFFF', border:'HeaderOnly', stripe:'#FFF1F2', title:22 },
       ],
       _designFields(p) {
         return {
@@ -536,14 +536,14 @@
       // 10 structural templates — each arranges the page differently (header,
       // title, meta, contact, totals). Colour is chosen separately below.
       LAYOUTS: [
-        { key:'Classic',        name:'คลาสสิก',        desc:'โลโก้ซ้าย หัวเรื่องกึ่งกลาง', title:26 },
-        { key:'Letterhead',     name:'เลตเตอร์เฮด',     desc:'หัวกระดาษกึ่งกลาง เส้นคาดหนา', title:24 },
-        { key:'ModernLeft',     name:'โมเดิร์นซ้าย',    desc:'จัดชิดซ้าย แถบเน้นสี', title:24 },
-        { key:'BannerHeader',   name:'แบนเนอร์',        desc:'หัวกระดาษแถบสีเต็มความกว้าง', title:28 },
-        { key:'BoldHeader',     name:'หัวเรื่องเด่น',    desc:'ชื่อเอกสารตัวใหญ่อยู่บนสุด', title:30 },
-        { key:'SidebarAccent',  name:'แถบข้างสี',       desc:'หัวสี + ราวเน้นซ้าย + แถบยอดรวม', title:26 },
-        { key:'SplitHeader',    name:'สองคอลัมน์',      desc:'ข้อมูลเอกสารเป็นการ์ดมุมขวา', title:26 },
-        { key:'CenteredFormal', name:'ทางการ',         desc:'ทุกอย่างกึ่งกลาง เส้นคู่', title:28 },
+        { key:'Classic',        name:'คลาสสิก',        desc:'โลโก้ซ้าย หัวเรื่องกึ่งกลาง', title:22 },
+        { key:'Letterhead',     name:'เลตเตอร์เฮด',     desc:'หัวกระดาษกึ่งกลาง เส้นคาดหนา', title:22 },
+        { key:'ModernLeft',     name:'โมเดิร์นซ้าย',    desc:'จัดชิดซ้าย แถบเน้นสี', title:22 },
+        { key:'BannerHeader',   name:'แบนเนอร์',        desc:'หัวกระดาษแถบสีเต็มความกว้าง', title:22 },
+        { key:'BoldHeader',     name:'หัวเรื่องเด่น',    desc:'ชื่อเอกสารตัวใหญ่อยู่บนสุด', title:26 },
+        { key:'SidebarAccent',  name:'แถบข้างสี',       desc:'หัวสี + ราวเน้นซ้าย + แถบยอดรวม', title:22 },
+        { key:'SplitHeader',    name:'สองคอลัมน์',      desc:'ข้อมูลเอกสารเป็นการ์ดมุมขวา', title:22 },
+        { key:'CenteredFormal', name:'ทางการ',         desc:'ทุกอย่างกึ่งกลาง เส้นคู่', title:24 },
         { key:'Compact',        name:'กระชับ',         desc:'ตัวอักษรเล็ก ประหยัดพื้นที่', title:20 },
         { key:'Minimal',        name:'มินิมอล',        desc:'เรียบ ไม่มีกรอบ เว้นเยอะ', title:22 },
       ],
