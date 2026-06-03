@@ -365,9 +365,12 @@ public class DocumentService : IDocumentService
             // their existing behaviour (type left null).
             if (request.DocumentType == DocumentType.PaymentVoucher)
             {
+                // doc.RelatedDocumentId is set by the conversion path (PV
+                // settling a prior PurchaseInvoice); null on a directly-created
+                // PV → defaults to Cash (จ่ายทันที).
                 doc.PaymentType = request.PaymentType
-                    ?? (request.RelatedDocumentId.HasValue ? Models.Enums.PaymentType.Credit
-                                                           : Models.Enums.PaymentType.Cash);
+                    ?? (doc.RelatedDocumentId.HasValue ? Models.Enums.PaymentType.Credit
+                                                       : Models.Enums.PaymentType.Cash);
             }
             else if (request.DocumentType == DocumentType.CertificateInLieu)
             {
