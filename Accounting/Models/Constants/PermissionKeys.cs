@@ -78,11 +78,31 @@ public static class PermissionKeys
     public const string CmsSiteSettings   = P + "CMS.SiteSettings";
 
     // ───── Documents ─────
+    // Blanket keys — historical, still honoured. A user holding any blanket
+    // key bypasses the per-direction split below (so existing role templates
+    // and deployments continue to work without re-grant).
     public const string DocumentCreate    = P + "Document.Create";
     public const string DocumentApprove   = P + "Document.Approve";
     public const string DocumentVoid      = P + "Document.Void";
     public const string DocumentViewAll   = P + "Document.ViewAll";   // pass row-level scope, see all
     public const string DocumentExport    = P + "Document.Export";
+
+    // Per-direction keys — split the blanket above into revenue (sales-side:
+    // Invoice / TaxInvoice / Receipt / Quotation / DeliveryNote / BillingNote
+    // / DebitNote / CreditNote) vs purchase (cost-side: PurchaseRequisition /
+    // PurchaseOrder / GoodsReceiptNote / PurchaseInvoice / Expense /
+    // PaymentVoucher / CertificateInLieu). Enables roles like "Sales Rep can
+    // create invoices but not payment vouchers" and "AP Clerk can create
+    // payment vouchers but not invoices". Direction is decided by
+    // DocumentPermissionHelper.IsRevenue / IsPurchase.
+    public const string DocumentRevenueView    = P + "Document.Revenue.View";
+    public const string DocumentRevenueCreate  = P + "Document.Revenue.Create";
+    public const string DocumentRevenueApprove = P + "Document.Revenue.Approve";
+    public const string DocumentRevenueVoid    = P + "Document.Revenue.Void";
+    public const string DocumentPurchaseView    = P + "Document.Purchase.View";
+    public const string DocumentPurchaseCreate  = P + "Document.Purchase.Create";
+    public const string DocumentPurchaseApprove = P + "Document.Purchase.Approve";
+    public const string DocumentPurchaseVoid    = P + "Document.Purchase.Void";
 
     // ───── Banking / Reconciliation ─────
     public const string BankView          = P + "Bank.View";
@@ -158,12 +178,22 @@ public static class PermissionKeys
         new(CmsOrderManage,   "CMS",      "จัดการ Order ที่ลูกค้าสั่งจากเว็บ", "shopping cart orders"),
         new(CmsSiteSettings,  "CMS",      "ตั้งค่าเว็บไซต์",          "subdomain · theme · SEO"),
 
-        // Documents
-        new(DocumentCreate,   "เอกสาร",  "สร้างเอกสาร",              "สร้าง invoice · PI · etc."),
-        new(DocumentApprove,  "เอกสาร",  "อนุมัติเอกสาร",            "Draft → Approve"),
-        new(DocumentVoid,     "เอกสาร",  "ยกเลิกเอกสาร",             "void approved doc"),
-        new(DocumentViewAll,  "เอกสาร",  "ดูเอกสารทุกคน",            "bypass row-level filter"),
+        // Documents — blanket (ทำได้ทุกประเภท)
+        new(DocumentCreate,   "เอกสาร",  "สร้างเอกสาร (ทุกประเภท)",   "blanket — invoice + PI + PV + etc."),
+        new(DocumentApprove,  "เอกสาร",  "อนุมัติเอกสาร (ทุกประเภท)", "blanket — Draft → Approve ได้ทุกประเภท"),
+        new(DocumentVoid,     "เอกสาร",  "ยกเลิกเอกสาร (ทุกประเภท)",  "blanket — void approved doc"),
+        new(DocumentViewAll,  "เอกสาร",  "ดูเอกสารทุกคน",            "bypass row-level filter (เห็นของคนอื่น)"),
         new(DocumentExport,   "เอกสาร",  "ส่งออกเอกสาร",             "export Excel · PDF · CSV"),
+
+        // Documents — split by direction (เลือกเฉพาะรายรับ/รายจ่าย)
+        new(DocumentRevenueView,    "เอกสาร", "ดูเอกสารฝั่งรายรับ",      "Invoice · Tax · Receipt · Quotation"),
+        new(DocumentRevenueCreate,  "เอกสาร", "สร้างเอกสารฝั่งรายรับ",   "ออก Invoice/Quotation/Receipt"),
+        new(DocumentRevenueApprove, "เอกสาร", "อนุมัติเอกสารฝั่งรายรับ",  "อนุมัติเฉพาะเอกสารขาย"),
+        new(DocumentRevenueVoid,    "เอกสาร", "ยกเลิกเอกสารฝั่งรายรับ",   "void เฉพาะเอกสารขาย"),
+        new(DocumentPurchaseView,   "เอกสาร", "ดูเอกสารฝั่งรายจ่าย",     "PI · PV · Expense · PO"),
+        new(DocumentPurchaseCreate, "เอกสาร", "สร้างเอกสารฝั่งรายจ่าย",  "ออก PI/PO/PV/Expense"),
+        new(DocumentPurchaseApprove,"เอกสาร", "อนุมัติเอกสารฝั่งรายจ่าย", "อนุมัติเฉพาะเอกสารซื้อ/จ่าย"),
+        new(DocumentPurchaseVoid,   "เอกสาร", "ยกเลิกเอกสารฝั่งรายจ่าย",  "void เฉพาะเอกสารซื้อ/จ่าย"),
 
         // Banking
         new(BankView,         "ธนาคาร",  "ดูบัญชีธนาคาร",            "ยอดคงเหลือ · transactions"),
