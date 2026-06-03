@@ -292,49 +292,66 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             LinkedDocumentType: p.DocType.ToString())).ToList();
 
         // ── 6. Open journal entries (Posted, not yet linked to a bank
-        // ── txn). Lines summed by abs(net) so AI compares amounts only.
-        // No row cap — instead, prefilter by amount: keep every JE whose
-        // |net| matches ANY bank-txn amount within ±5 baht. AI then sees
-        // every CANDIDATE that could possibly match, with all noise dropped.
+        // ── txn) — BOTH directions (เงินรับ + เงินจ่าย). Per user request
+        // send EVERY JE in a tight ±5-day window around the selected period
+        // (not the wider -90/+30 doc window) so the AI sees the complete set
+        // and does the matching itself instead of us pre-filtering by amount.
+        //
+        // CRITICAL bug fix: the amount must NOT be Sum(Debit − Credit) — a
+        // posted JE is always balanced so that sum is ALWAYS 0, which made
+        // every JE look like a zero-amount entry and get dropped by the old
+        // amount prefilter (→ 0 JE candidates every run). Use the amount on
+        // the line that hits the bank's linked GL account (the precise match
+        // target); fall back to the gross debit total (= credit total = the
+        // entry's transaction size) when the bank account isn't linked.
+        var jeWindowStart = fromDate.AddDays(-5);
+        var jeWindowEnd = toDate.AddDays(5);
         var matchedJeIdsRaw = await _db.BankTransactions.AsNoTracking()
             .Where(t => t.BankAccountId == bankAccountId
                         && t.MatchedJournalEntryId != null)
             .Select(t => t.MatchedJournalEntryId!.Value)
             .ToListAsync(ct);
         var matchedJeIds = matchedJeIdsRaw.ToHashSet();
-        var allJes = await _db.JournalEntries.AsNoTracking()
+        // Guid.Empty when no bank account is linked → the AccountId equality
+        // below matches no line → BankLineNet = 0 → falls back to GrossAmount.
+        // (Comparing to a captured Guid translates to SQL cleanly; a nullable
+        // .HasValue ternary inside the projection does not.)
+        var linkedAcct = bank.LinkedAccountId ?? Guid.Empty;
+        var jeRows = await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && !j.IsDeleted
                         && j.Status == JournalEntryStatus.Posted
-                        && j.EntryDate >= windowStart && j.EntryDate <= windowEnd)
+                        && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd)
             .Where(j => !matchedJeIds.Contains(j.Id))
-            .Include(j => j.Lines)
             .OrderByDescending(j => j.EntryDate)
             .Select(j => new
             {
                 j.Id, j.EntryNumber, j.EntryDate, j.Description, j.Reference,
-                NetAmount = j.Lines.Sum(l => l.DebitAmount - l.CreditAmount),
+                // Amount on the bank-linked line (signed: +debit = money in,
+                // −credit = money out). Zero when the JE doesn't touch the
+                // bank account or no account is linked.
+                BankLineNet = j.Lines.Where(l => l.AccountId == linkedAcct)
+                             .Sum(l => l.DebitAmount - l.CreditAmount),
+                // Gross transaction size — total debits (= total credits).
+                GrossAmount = j.Lines.Sum(l => l.DebitAmount),
             })
             .ToListAsync(ct);
 
-        // Round bank-txn amounts to 2dp once for the lookup set.
-        var bankAmounts = txns.Select(t => Math.Round(t.Amount, 2)).ToHashSet();
-        bool amountMatches(decimal x)
-        {
-            var a = Math.Abs(Math.Round(x, 2));
-            // ±5 THB tolerance (covers small bank fees / withholding-tax rounding).
-            for (decimal d = -5; d <= 5; d++)
-                if (bankAmounts.Contains(Math.Round(a + d, 2))) return true;
-            return false;
-        }
-        var jeRows = allJes.Where(j => amountMatches(j.NetAmount)).ToList();
-        // Hard ceiling as a final safety net so a pathological dataset can
-        // never exceed a sane prompt size (DeepSeek-V3 context = 128k tokens).
+        // Hard ceiling so a pathological dataset can't exceed a sane prompt
+        // size (DeepSeek-V3 context = 128k tokens). With a ±5-day window the
+        // count is normally well under this.
         const int HardJeCeiling = 600;
         var truncatedJes = jeRows.Count > HardJeCeiling;
         if (truncatedJes) jeRows = jeRows.Take(HardJeCeiling).ToList();
-        var openJes = jeRows.Select(j => new BulkBankMatchPrompt.OpenJeInput(
-            j.Id.ToString(), j.EntryNumber, j.EntryDate, Math.Abs(j.NetAmount),
-            j.Description, j.Reference)).ToList();
+        var openJes = jeRows.Select(j =>
+        {
+            // Prefer the bank-line amount (exact match target); fall back to
+            // gross. abs() because the prompt compares magnitudes — direction
+            // is conveyed separately by the bank txn's In/Out.
+            var amount = j.BankLineNet != 0m ? Math.Abs(j.BankLineNet) : j.GrossAmount;
+            return new BulkBankMatchPrompt.OpenJeInput(
+                j.Id.ToString(), j.EntryNumber, j.EntryDate, amount,
+                j.Description, j.Reference);
+        }).ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────
         // If nothing made it through the AR/AP-doc + payment + JE filters,
@@ -357,10 +374,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var paymentsInWindow = await _db.Payments.AsNoTracking()
                 .CountAsync(p => p.CompanyId == companyId && !p.IsDeleted
                     && p.PaymentDate >= windowStart && p.PaymentDate <= windowEnd, ct);
+            // JEs are loaded from the tighter ±5-day window — count there so
+            // the diagnostic reason matches the actual filter.
             var jesInWindow = await _db.JournalEntries.AsNoTracking()
                 .CountAsync(j => j.CompanyId == companyId && !j.IsDeleted
                     && j.Status == JournalEntryStatus.Posted
-                    && j.EntryDate >= windowStart && j.EntryDate <= windowEnd, ct);
+                    && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd, ct);
+            var jesAllMatched = await _db.JournalEntries.AsNoTracking()
+                .CountAsync(j => j.CompanyId == companyId && !j.IsDeleted
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd
+                    && matchedJeIds.Contains(j.Id), ct);
 
             var diag = new List<string>
             {
@@ -377,7 +401,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 if (paymentsInWindow > 0)
                     diag.Add($"• มี Payment {paymentsInWindow} รายการในช่วงนี้ แต่ทั้งหมดถูกจับคู่กับ bank txn อื่นไปแล้ว");
                 if (jesInWindow > 0)
-                    diag.Add($"• มี Journal Entry {jesInWindow} รายการในช่วงนี้ แต่ยอดไม่ตรงกับ bank txn ใด (ต่างเกิน ±5 บาท) หรือถูกจับคู่ไปแล้ว");
+                    diag.Add($"• มี Journal Entry {jesInWindow} รายการในช่วง ±5 วัน แต่{(jesAllMatched >= jesInWindow ? "ทั้งหมดถูกจับคู่กับ bank txn อื่นไปแล้ว" : "ถูกจับคู่ไปแล้วบางส่วน")}");
                 diag.Add("→ ตรวจว่าได้สร้าง Invoice/Payment/JE สำหรับเงินรับเหล่านี้แล้วหรือยัง");
             }
 
@@ -446,7 +470,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         if (truncatedPayments)
             warnings.Add($"จำกัด open payments ที่ {MaxCandidatesPerKind} รายการ");
         if (truncatedJes)
-            warnings.Add($"open JEs ที่ผ่านเงื่อนไขยอดเงินมากเกิน {HardJeCeiling} รายการ — ใช้แค่ {HardJeCeiling} ตัวล่าสุด");
+            warnings.Add($"JE ในช่วง ±5 วันมีมากกว่า {HardJeCeiling} รายการ — ส่งให้ AI แค่ {HardJeCeiling} ตัวล่าสุด");
         if (resp.Status == AiCallStatus.Failed || resp.Status == AiCallStatus.NoProvider
             || resp.Status == AiCallStatus.BudgetExceeded)
             warnings.Add($"AI ไม่ทำงาน ({resp.Status}): {resp.Reasoning ?? "—"}. กรุณา match ด้วยมือ");
