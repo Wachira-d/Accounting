@@ -432,7 +432,39 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         var resp = await _orchestrator.AskAsync(req, ct);
 
         // ── 8. Parse — defensive because AI output is JSON-but-fallible ─
-        var parsed = ParseResponse(resp.RawResponseJson ?? resp.PrimaryAnswer);
+        // Prefer RawResponseJson when present (RawPlanResponse path); fall
+        // back to PrimaryAnswer for older code paths.
+        var rawOut = !string.IsNullOrWhiteSpace(resp.RawResponseJson) ? resp.RawResponseJson : resp.PrimaryAnswer;
+        var parsed = ParseResponse(rawOut);
+
+        // Diagnostic: when AI ran successfully but produced ZERO outputs of
+        // every kind (no matches, no unmatched, no missing_data), surface the
+        // actual content so the operator isn't staring at a silent "0/0/0".
+        // Common causes: AI emitted a different top-level key, returned an
+        // empty {} object, or replied with prose instead of strict JSON.
+        var aiSucceeded = resp.Status == AiCallStatus.Success || resp.Status == AiCallStatus.Cached;
+        var allEmpty = parsed.Matches.Count == 0 && parsed.Unmatched.Count == 0 && parsed.MissingData.Count == 0;
+        if (aiSucceeded && allEmpty)
+        {
+            _logger.LogWarning(
+                "Bulk AI match returned empty result. Status={Status} Provider={Provider} BankTxns={Txns} Candidates={Cands} (docs={D}/payments={P}/jes={J}) RawLen={Len}\nRaw response:\n{Raw}",
+                resp.Status, resp.ProviderModel, txns.Count,
+                openDocs.Count + openPayments.Count + openJes.Count,
+                openDocs.Count, openPayments.Count, openJes.Count,
+                rawOut?.Length ?? 0, rawOut ?? "(null)");
+
+            if (string.IsNullOrWhiteSpace(rawOut))
+                parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
+                    "AI ตอบกลับเป็นว่าง (status=" + resp.Status + ") — ลองอีกครั้ง หรือเช็คการตั้งค่า AI provider"
+                }).ToList() };
+            else
+            {
+                var preview = rawOut.Length > 600 ? rawOut[..600] + "..." : rawOut;
+                parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
+                    $"AI ตอบมาแล้ว ({rawOut.Length} chars) แต่ parse ไม่เจอ matches/unmatched/missing_data — ตัวอย่างคำตอบ: " + preview
+                }).ToList() };
+            }
+        }
 
         // ── 8b. Per-match child feedback rows — so when user accepts /
         // ── edits each row in the modal, BankMatchDistillationModel can
@@ -529,6 +561,23 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
+            // DeepSeek occasionally wraps the plan under "result" / "response" /
+            // "data" / "output" or a leading "plan" key. Unwrap one level when
+            // none of the expected top-level keys are present at the root.
+            if (root.ValueKind == JsonValueKind.Object
+                && !root.TryGetProperty("matches", out _)
+                && !root.TryGetProperty("unmatched", out _)
+                && !root.TryGetProperty("missing_data", out _))
+            {
+                foreach (var wrap in new[] { "result", "response", "data", "output", "plan", "match_plan" })
+                {
+                    if (root.TryGetProperty(wrap, out var inner) && inner.ValueKind == JsonValueKind.Object)
+                    {
+                        root = inner;
+                        break;
+                    }
+                }
+            }
             if (root.TryGetProperty("matches", out var ms) && ms.ValueKind == JsonValueKind.Array)
             {
                 foreach (var m in ms.EnumerateArray())
@@ -596,6 +645,9 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     private static Guid? TryGuid(JsonElement el, string prop)
     {
         if (!el.TryGetProperty(prop, out var p)) return null;
+        // GetString() throws on non-string nodes (e.g. AI returned a number
+        // or null); guard so a malformed item doesn't kill the whole parse.
+        if (p.ValueKind != JsonValueKind.String) return null;
         var s = p.GetString();
         return Guid.TryParse(s, out var g) ? g : null;
     }
