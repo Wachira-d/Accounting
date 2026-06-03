@@ -1784,11 +1784,14 @@ public class ImportExportService : IImportExportService
             var m = mappings.FirstOrDefault(x => x.SourceIndex == s.SourceIndex);
             if (m == null) continue;
             if (string.IsNullOrWhiteSpace(s.TargetField) || !validFieldNames.Contains(s.TargetField)) continue;
-            if (s.Confidence <= m.ConfidenceScore) continue;       // heuristic was already as good or better
+            // s.Confidence is decimal (AI contract), ConfidenceScore is double
+            // (entity) — cast for the comparison + assignment.
+            var aiScore = (double)s.Confidence;
+            if (aiScore <= m.ConfidenceScore) continue;       // heuristic was already as good or better
 
             m.TargetField = s.TargetField;
             m.MatchType = ColumnMatchType.AiMatched;
-            m.ConfidenceScore = s.Confidence;
+            m.ConfidenceScore = aiScore;
             m.Confidence = s.Confidence >= 0.9m ? ColumnMatchConfidence.High
                 : s.Confidence >= 0.6m ? ColumnMatchConfidence.Medium
                 : ColumnMatchConfidence.Low;
