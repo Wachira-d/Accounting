@@ -1079,7 +1079,10 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         if (!string.IsNullOrWhiteSpace(prov))
             parts.Add(isBkk ? "กรุงเทพมหานคร" : "จ." + prov!.Replace("จังหวัด", "").Replace("จ.", "").Trim());
         if (!string.IsNullOrWhiteSpace(post)) parts.Add(post);
-        return string.Join(" ", parts);
+        // Final safety net: collapse any Bangkok doubling that slipped through
+        // the structured assembly (e.g. a Bangkok spelling left inside the
+        // free-text street part that the token strip missed due to spacing).
+        return CollapseBangkok(string.Join(" ", parts));
     }
 
     /// <summary>True when the token — after dropping any แขวง/เขต/ต./อ./จ.
@@ -1096,16 +1099,23 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         return x is "กทม" or "กทม." or "กทมฯ" or "กรุงเทพ" or "กรุงเทพฯ" or "กรุงเทพมหานคร";
     }
 
-    /// <summary>Collapse a redundant "กทม กรุงเทพมหานคร" (or any Bangkok
-    /// abbreviation sitting next to the full name) down to the single canonical
-    /// "กรุงเทพมหานคร", for the free-text-only address path.</summary>
+    /// <summary>Collapse redundant Bangkok spellings down to a single canonical
+    /// "กรุงเทพมหานคร". Handles three doubling patterns:
+    ///   1. abbreviation next to full name ("กทม กรุงเทพมหานคร")
+    ///   2. the full name repeated ("กรุงเทพมหานคร กรุงเทพมหานคร")
+    ///   3. "เขต/แขวง" + Bangkok mis-entered ("เขตกทม กรุงเทพมหานคร")
+    /// Run on the FINAL assembled address in every path (not just the
+    /// free-text-only one) so no rendering route can leak a doubled province.</summary>
     private static string CollapseBangkok(string s)
     {
         if (string.IsNullOrWhiteSpace(s)) return s;
-        // Drop the abbreviation when the full name is also present.
+        // 1. Drop abbreviations when the full name is also present.
         if (s.Contains("กรุงเทพมหานคร"))
-            foreach (var abbr in new[] { "กทม.", "กทมฯ", "กทม", "กรุงเทพฯ" })
+            foreach (var abbr in new[] { "เขตกทม.", "เขตกทม", "แขวงกทม", "กทม.", "กทมฯ", "กทม", "กรุงเทพฯ", "กรุงเทพมหานครฯ" })
                 s = s.Replace(abbr, " ");
+        // 2. Squash the full name repeated consecutively (only whitespace
+        // between the copies — never swallow real content in between).
+        s = Regex.Replace(s, @"กรุงเทพมหานคร(\s+กรุงเทพมหานคร)+", "กรุงเทพมหานคร");
         return Regex.Replace(s, @"\s{2,}", " ").Trim();
     }
 
