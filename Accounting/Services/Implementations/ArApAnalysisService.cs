@@ -9,8 +9,21 @@ namespace Accounting.Services.Implementations;
 public class ArApAnalysisService : IArApAnalysisService
 {
     private readonly AccountingDbContext _db;
-    private static readonly DocumentType[] ArTypes = { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote };
-    private static readonly DocumentType[] ApTypes = { DocumentType.PurchaseInvoice, DocumentType.CertificateInLieu };
+
+    // OUTSTANDING receivable / payable types — these carry a BalanceDue when
+    // sold/bought on credit. (Cash Receipts / cash Payment Vouchers also fall
+    // here for AP but net to zero balance, so they never inflate the open
+    // figures — but they DO belong in the revenue/cost base below.)
+    private static readonly DocumentType[] ArOpenTypes = { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote };
+    private static readonly DocumentType[] ApOpenTypes = { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+
+    // REVENUE / COST base — the full sales + purchase volume, INCLUDING the
+    // cash documents (Receipt / ReceiptVoucher for revenue; the cash Payment
+    // Vouchers already in ApOpenTypes for cost). Without these a cash-based
+    // business (hotel/shop booking via ใบสำคัญรับ/ใบสำคัญจ่าย) showed 0 for
+    // revenue, DSO/DPO and the whole monthly trend.
+    private static readonly DocumentType[] RevenueTypes = { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote, DocumentType.Receipt, DocumentType.ReceiptVoucher };
+    private static readonly DocumentType[] CostTypes = { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
 
     public ArApAnalysisService(AccountingDbContext db) => _db = db;
 
@@ -22,8 +35,12 @@ public class ArApAnalysisService : IArApAnalysisService
             .Where(d => d.CompanyId == companyId && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .ToListAsync();
 
-        var arDocs = docs.Where(d => ArTypes.Contains(d.DocumentType)).ToList();
-        var apDocs = docs.Where(d => ApTypes.Contains(d.DocumentType)).ToList();
+        // Outstanding (credit) sets drive the AR/AP balances; revenue/cost sets
+        // (incl. cash docs) drive DSO/DPO denominators + the trend volumes.
+        var arDocs = docs.Where(d => ArOpenTypes.Contains(d.DocumentType)).ToList();
+        var apDocs = docs.Where(d => ApOpenTypes.Contains(d.DocumentType)).ToList();
+        var revenueDocs = docs.Where(d => RevenueTypes.Contains(d.DocumentType)).ToList();
+        var costDocs = docs.Where(d => CostTypes.Contains(d.DocumentType)).ToList();
 
         var arOpen = arDocs.Where(d => d.BalanceDue > 0).ToList();
         var apOpen = apDocs.Where(d => d.BalanceDue > 0).ToList();
@@ -34,17 +51,17 @@ public class ArApAnalysisService : IArApAnalysisService
         var overdueAr = arOpen.Where(d => d.DueDate.HasValue && d.DueDate.Value < now).ToList();
         var overdueAp = apOpen.Where(d => d.DueDate.HasValue && d.DueDate.Value < now).ToList();
 
-        // DSO = (AR / Revenue last 12 months) * 365
+        // DSO = (AR / Revenue last 12 months) * 365 — revenue base includes cash sales.
         var yearAgo = now.AddMonths(-12);
-        var revenue12 = arDocs.Where(d => d.DocumentDate >= yearAgo).Sum(d => d.TotalAmount);
+        var revenue12 = revenueDocs.Where(d => d.DocumentDate >= yearAgo).Sum(d => d.TotalAmount);
         var dso = revenue12 > 0 ? (double)totalAr / (double)revenue12 * 365 : 0;
 
-        // DPO = (AP / COGS last 12 months) * 365
-        var cogs12 = apDocs.Where(d => d.DocumentDate >= yearAgo).Sum(d => d.TotalAmount);
+        // DPO = (AP / COGS last 12 months) * 365 — cost base includes cash purchases.
+        var cogs12 = costDocs.Where(d => d.DocumentDate >= yearAgo).Sum(d => d.TotalAmount);
         var dpo = cogs12 > 0 ? (double)totalAp / (double)cogs12 * 365 : 0;
 
-        // Collection rate: invoices paid within terms / total invoices (last 12m)
-        var arPaid12 = arDocs.Where(d => d.DocumentDate >= yearAgo && d.Status == DocumentStatus.Paid).ToList();
+        // Collection rate: revenue docs paid within terms / total (last 12m).
+        var arPaid12 = revenueDocs.Where(d => d.DocumentDate >= yearAgo && d.Status == DocumentStatus.Paid).ToList();
         var onTime = arPaid12.Count(d => d.DueDate == null || d.PaidAmount >= d.TotalAmount);
         var collRate = arPaid12.Count > 0 ? (double)onTime / arPaid12.Count * 100 : 100;
 
@@ -56,10 +73,12 @@ public class ArApAnalysisService : IArApAnalysisService
             var mStart = new DateTime(m.Year, m.Month, 1);
             var mEnd = mStart.AddMonths(1);
 
-            var arNew = arDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.TotalAmount);
-            var arPaid = arDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.PaidAmount);
-            var apNew = apDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.TotalAmount);
-            var apPaid = apDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.PaidAmount);
+            // Trend "new" = total sales/purchase volume that month (incl. cash);
+            // "paid" = cash collected/disbursed.
+            var arNew = revenueDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.TotalAmount);
+            var arPaid = revenueDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.PaidAmount);
+            var apNew = costDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.TotalAmount);
+            var apPaid = costDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.PaidAmount);
 
             var arBal = arDocs.Where(d => d.DocumentDate < mEnd).Sum(d => d.BalanceDue);
             var apBal = apDocs.Where(d => d.DocumentDate < mEnd).Sum(d => d.BalanceDue);
@@ -102,7 +121,9 @@ public class ArApAnalysisService : IArApAnalysisService
     {
         var now = DateTime.UtcNow.Date;
         var isAr = type.Equals("ar", StringComparison.OrdinalIgnoreCase);
-        var docTypes = isAr ? ArTypes : ApTypes;
+        // Per-contact view shows the full sales/purchase ledger (incl. cash
+        // documents) so a cash-heavy counterparty isn't blank.
+        var docTypes = isAr ? RevenueTypes : CostTypes;
 
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
@@ -191,7 +212,7 @@ public class ArApAnalysisService : IArApAnalysisService
         var now = DateTime.UtcNow.Date;
         var arOpen = await _db.Documents
             .Include(d => d.Contact)
-            .Where(d => d.CompanyId == companyId && ArTypes.Contains(d.DocumentType)
+            .Where(d => d.CompanyId == companyId && ArOpenTypes.Contains(d.DocumentType)
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                 && d.BalanceDue > 0)
             .ToListAsync();
