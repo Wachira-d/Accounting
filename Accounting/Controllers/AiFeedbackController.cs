@@ -88,4 +88,42 @@ public class AiFeedbackController : ControllerBase
             createdAt = row.CreatedAt,
         }));
     }
+
+    /// <summary>Latest feedback row for a feature on this company — used by
+    /// 'ดู AI response เต็ม' when the caller doesn't already hold a feedback
+    /// id (e.g. an older page render predating the wired-through id, or any
+    /// generic 'show me what AI just said' diagnostic).</summary>
+    [HttpGet("latest")]
+    public async Task<ActionResult<ApiResponse<object>>> GetLatest(
+        Guid companyId, [FromQuery] string? featureKey, CancellationToken ct)
+    {
+        var q = _db.AiSuggestionFeedbacks.AsNoTracking()
+            .Where(f => f.CompanyId == companyId);
+        if (!string.IsNullOrWhiteSpace(featureKey))
+            q = q.Where(f => f.FeatureKey == featureKey);
+        var row = await q.OrderByDescending(f => f.CreatedAt).FirstOrDefaultAsync(ct);
+        if (row == null)
+            return Ok(new ApiResponse<object>(true, null, "ยังไม่มี feedback row"));
+        return Ok(new ApiResponse<object>(true, new
+        {
+            id = row.Id,
+            featureKey = row.FeatureKey,
+            status = row.Status.ToString(),
+            providerUsed = row.ProviderUsed.ToString(),
+            modelVersion = row.ModelVersion,
+            latencyMs = row.LatencyMs,
+            inputTokens = row.InputTokens,
+            outputTokens = row.OutputTokens,
+            costUsd = row.CostUsd,
+            errorMessage = row.ErrorMessage,
+            aiPrimaryAnswer = row.AiPrimaryAnswer,
+            aiConfidence = row.AiConfidence,
+            promptJson = row.PromptJson,
+            responseJson = row.ResponseJson,
+            localModelAnswer = row.LocalModelAnswer,
+            localModelConfidence = row.LocalModelConfidence,
+            localModelVersion = row.LocalModelVersion,
+            createdAt = row.CreatedAt,
+        }));
+    }
 }
