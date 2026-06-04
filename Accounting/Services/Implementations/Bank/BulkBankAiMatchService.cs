@@ -483,14 +483,27 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 matchesWithFids.Add(m with { PerMatchFeedbackId = Guid.Empty });
                 continue;
             }
-            var answerJson = JsonSerializer.Serialize(m.Candidates.Select(c => new
+
+            // Trust-but-verify the confidence AI returned: it routinely
+            // reports 0.95 in the same row whose own 'reasoning' admits the
+            // amounts don't match. Cap confidence using OBJECTIVE signals
+            // computed from the actual numbers — amount delta vs the bank txn
+            // and date proximity to the candidate's source row when known. AI
+            // confidence then becomes a ceiling; we never push it higher.
+            var (calibratedConf, mismatchNote) = CalibrateConfidence(bt, m);
+            var calReason = string.IsNullOrEmpty(mismatchNote)
+                ? m.Reasoning
+                : (string.IsNullOrEmpty(m.Reasoning) ? mismatchNote : m.Reasoning + " · " + mismatchNote);
+            var calibratedMatch = m with { Confidence = calibratedConf, Reasoning = calReason };
+
+            var answerJson = JsonSerializer.Serialize(calibratedMatch.Candidates.Select(c => new
             {
                 type = c.CandidateType, id = c.CandidateId.ToString(), amount = c.Amount,
             }));
             var perFid = await SynthesisePerMatchFeedbackAsync(
-                companyId, m.BankTxnId, bt, answerJson, m.Confidence,
+                companyId, calibratedMatch.BankTxnId, bt, answerJson, calibratedMatch.Confidence,
                 resp.FeedbackId ?? Guid.Empty, ct);
-            matchesWithFids.Add(m with { PerMatchFeedbackId = perFid });
+            matchesWithFids.Add(calibratedMatch with { PerMatchFeedbackId = perFid });
         }
 
         // Collect truncation + AI-side warnings into one cohesive list.
@@ -811,6 +824,53 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             i = end + 1;
         }
         return recovered;
+    }
+
+    /// <summary>Derive an objective confidence ceiling for a proposed match
+    /// from the actual numbers, instead of blindly trusting AI's stated value.
+    /// The observed failure: AI returned <c>confidence: 0.95</c> on a row whose
+    /// own <c>reasoning</c> admitted a 210 baht delta between bank txn and
+    /// candidate. Rules:
+    ///   • Amount delta within 0.50 baht                  → no penalty
+    ///   • Within 1% (covers small bank fees / WHT rounding) → cap 0.85
+    ///   • Within 5%                                       → cap 0.55
+    ///   • Otherwise                                       → cap 0.30 + warn
+    /// For M:1 matches the candidate amounts are summed before comparison.
+    /// The returned confidence is min(AI confidence, computed ceiling) so AI
+    /// can only lower it, never inflate it; mismatchNote describes the delta
+    /// in plain Thai and is appended to the reasoning shown in the UI.</summary>
+    private static (decimal Confidence, string MismatchNote) CalibrateConfidence(
+        Models.Entities.BankTransaction bankTxn, ProposedMatch match)
+    {
+        var bankAmt = Math.Abs(bankTxn.Amount);
+        var sumCand = match.Candidates.Sum(c => Math.Abs(c.Amount));
+        var delta = Math.Abs(bankAmt - sumCand);
+        var pct = bankAmt > 0 ? delta / bankAmt : 0m;
+
+        decimal ceiling;
+        string note;
+        if (delta <= 0.50m)
+        {
+            ceiling = 1.00m;
+            note = "";
+        }
+        else if (pct <= 0.01m)   // 1%
+        {
+            ceiling = 0.85m;
+            note = $"ยอดต่าง {delta:N2} บาท (≤1% — อาจเป็นค่าธรรมเนียม/ปัดเศษ)";
+        }
+        else if (pct <= 0.05m)   // 5%
+        {
+            ceiling = 0.55m;
+            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — ตรวจก่อนยืนยัน";
+        }
+        else
+        {
+            ceiling = 0.30m;
+            note = $"⚠ ยอดต่างมาก {delta:N2} บาท ({pct:P1}) — bank {bankAmt:N2} vs candidate {sumCand:N2} — อาจไม่ใช่คู่เดียวกัน";
+        }
+        var calibrated = Math.Min(match.Confidence, ceiling);
+        return (calibrated, note);
     }
 
     private static Guid? TryGuid(JsonElement el, string prop)

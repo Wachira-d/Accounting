@@ -1101,7 +1101,14 @@
             </table>
             <div style="font-size:11px;color:#7f1d1d;margin-top:6px">💡 สร้างเอกสารที่ขาดก่อน แล้วยิง AI อีกครั้ง — รายการที่เคยขาดจะ match ได้</div>
           </div>`;
-        const matchRows = (plan.matches || []).map((m, idx) => {
+        // Show calibrated-low-confidence matches FIRST so the operator reviews
+        // suspects (amount mismatches the server downgraded) before the easy
+        // wins. Stable order: lower confidence first; ties keep arrival order.
+        const sortedMatches = [...(plan.matches || [])]
+          .map((m, idx) => ({ m, idx }))
+          .sort((a, b) => (a.m.confidence ?? 1) - (b.m.confidence ?? 1) || a.idx - b.idx)
+          .map(x => x.m);
+        const matchRows = sortedMatches.map((m, idx) => {
           const conf = (m.confidence * 100).toFixed(0);
           const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
           const cands = (m.candidates || []).map(c => `${c.candidateType}:${c.candidateId.slice(0,8)}… (${fmtAmt(c.amount)})`).join(' + ');
