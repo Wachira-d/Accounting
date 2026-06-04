@@ -25,7 +25,8 @@ public partial class ExecutiveReportService
         var revDocs = docs.Where(d =>
             d.DocumentType == DocumentType.Invoice
             || d.DocumentType == DocumentType.TaxInvoice
-            || d.DocumentType == DocumentType.Receipt).ToList();
+            || d.DocumentType == DocumentType.Receipt
+            || d.DocumentType == DocumentType.ReceiptVoucher).ToList();
         var billable = revDocs.Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft).ToList();
 
         var totalRevenue = billable.Sum(d => d.TotalAmount);
