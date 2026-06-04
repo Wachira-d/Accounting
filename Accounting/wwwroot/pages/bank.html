@@ -1111,13 +1111,22 @@
         const matchRows = sortedMatches.map((m, idx) => {
           const conf = (m.confidence * 100).toFixed(0);
           const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
+          const confBg = m.confidence >= 0.8 ? '#dcfce7' : m.confidence >= 0.6 ? '#fef3c7' : '#fee2e2';
           const cands = (m.candidates || []).map(c => `${c.candidateType}:${c.candidateId.slice(0,8)}… (${fmtAmt(c.amount)})`).join(' + ');
-          return `<tr>
-            <td><input type="checkbox" checked data-bulkidx="${idx}" class="bulkMatchCheck"></td>
-            <td style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</td>
+          // Enrich with the real bank line so the operator reviews date +
+          // amount + payee instead of an opaque GUID prefix.
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          const bankCell = bt
+            ? `<div style="font-weight:600">${Layout.money(bt.amount)} <span style="font-size:10px;color:${bt.transactionType==='Deposit'?'#16a34a':'#dc2626'}">${bt.transactionType==='Deposit'?'รับ':'จ่าย'}</span></div>
+               <div style="font-size:10px;color:#64748b">${Layout.date(bt.transactionDate)}</div>
+               <div style="font-size:10px;color:#94a3b8">${esc((bt.payee||bt.description||'').slice(0,28))}</div>`
+            : `<span style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</span>`;
+          return `<tr style="border-bottom:1px solid #f1f5f9">
+            <td><input type="checkbox" ${m.confidence>=0.6?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
+            <td>${bankCell}</td>
             <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
             <td style="font-size:12px">${esc(cands)}</td>
-            <td style="text-align:right;color:${confColor};font-weight:600">${conf}%</td>
+            <td style="text-align:right"><span style="background:${confBg};color:${confColor};font-weight:700;padding:2px 8px;border-radius:6px">${conf}%</span></td>
             <td style="font-size:11px;color:#475569">${esc(m.reasoning || '')}</td>
           </tr>`;
         }).join('');
@@ -1142,7 +1151,15 @@
           ${warningsBlock}
           ${missingBlock}
           ${(plan.matches||[]).length === 0 ? '' : `
-          <h4 style="margin:18px 0 6px">✅ Match ที่เสนอ (เลือกที่ต้องการแล้วกดยืนยัน)</h4>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 6px;flex-wrap:wrap;gap:8px">
+            <h4 style="margin:0">✅ Match ที่เสนอ <span style="font-weight:400;color:#94a3b8;font-size:12px">(เรียงตามความมั่นใจ — ที่ต้องตรวจอยู่บนสุด)</span></h4>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="Page.bulkSelect('high')">✓ เฉพาะมั่นใจ ≥85%</button>
+              <button class="btn btn-sm" style="background:#f1f5f9" onclick="Page.bulkSelect('all')">เลือกทั้งหมด</button>
+              <button class="btn btn-sm" style="background:#f1f5f9" onclick="Page.bulkSelect('none')">ล้าง</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">📅 ผู้สมัครครอบคลุม: เอกสารย้อนหลัง 90 วัน + JE ในช่วง ±5 วันของเดือนที่เลือก (กันใบที่ออกก่อนแต่จ่ายในเดือนนี้)</div>
           <div style="overflow:auto;max-height:380px;border:1px solid #e2e8f0;border-radius:8px">
             <table style="width:100%;font-size:12px">
               <thead style="position:sticky;top:0;background:#f1f5f9">
@@ -1163,6 +1180,19 @@
               `<button class="btn btn-primary" onclick="Page.applyBulkPlan()">ยืนยัน match ที่เลือก</button>`}
           </div>`;
         Layout.openModal('bulkAiPlanModal');
+      },
+
+      // Quick-select helpers on the bulk plan modal: 'high' keeps only the
+      // calibrated-confident rows (the ones safe to rubber-stamp), 'all' /
+      // 'none' are the obvious bulk toggles. Uses the data-conf attribute set
+      // per row from the server-calibrated confidence.
+      bulkSelect(mode) {
+        document.querySelectorAll('.bulkMatchCheck').forEach(el => {
+          const c = parseFloat(el.dataset.conf || '0');
+          el.checked = mode === 'all' ? true
+            : mode === 'none' ? false
+            : c >= 0.85;   // 'high'
+        });
       },
 
       async applyBulkPlan() {
