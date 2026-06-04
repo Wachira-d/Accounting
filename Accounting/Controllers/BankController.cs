@@ -451,15 +451,38 @@ public class BankController : ControllerBase
             }
         }
 
+        // Legacy M:1 list (AI bulk match) — the full set lives in JSON, while
+        // MatchedJournalEntryId only holds the FIRST id. Must include all of
+        // them or the popup under-reports (showing 2,200 of a 5,800 match).
+        if (!string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson))
+        {
+            List<Guid> jsonIds = new();
+            try { jsonIds = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!) ?? new(); } catch { }
+            if (jsonIds.Count > 0)
+            {
+                var jsonPayIds = await _db.Payments.AsNoTracking()
+                    .Where(p => jsonIds.Contains(p.Id) && p.CompanyId == companyId)
+                    .Select(p => p.Id).ToListAsync();
+                payIds.AddRange(jsonPayIds);
+                jeIds.AddRange(jsonIds.Except(jsonPayIds));   // non-payments treated as JEs
+            }
+        }
+
         payIds = payIds.Distinct().ToList();
         jeIds = jeIds.Distinct().ToList();
         docIds = docIds.Distinct().ToList();
+
+        // Bank's own GL account — so a JE counterpart is measured by what it
+        // actually posted to the bank (matches the match-issues / guard logic).
+        var bankCoaId = await _db.Set<BankAccount>().AsNoTracking()
+            .Where(a => a.Id == t.BankAccountId && a.CompanyId == companyId)
+            .Select(a => a.LinkedAccountId).FirstOrDefaultAsync();
 
         if (payIds.Count > 0)
         {
             var pays = await _db.Set<Payment>().AsNoTracking().Include(p => p.Document)
                 .Where(p => payIds.Contains(p.Id))
-                .Select(p => new { p.PaymentNumber, p.Amount, p.PaymentDate, DocNo = p.Document.DocumentNumber })
+                .Select(p => new { p.Id, p.PaymentNumber, p.Amount, p.PaymentDate, DocNo = p.Document.DocumentNumber })
                 .ToListAsync();
             items.AddRange(pays.Select(p => new MatchInfoItem("💳 Payment",
                 p.DocNo ?? p.PaymentNumber, p.PaymentDate, p.Amount)));
@@ -468,10 +491,20 @@ public class BankController : ControllerBase
         {
             var jes = await _db.JournalEntries.AsNoTracking()
                 .Where(j => jeIds.Contains(j.Id))
-                .Select(j => new { j.EntryNumber, j.EntryDate, j.TotalDebit, j.Description })
+                .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.Description })
                 .ToListAsync();
+            // Net movement on the bank account per JE (fallback to total).
+            var jeBankNet = new Dictionary<Guid, decimal>();
+            if (bankCoaId.HasValue)
+            {
+                var lines = await _db.JournalEntryLines.AsNoTracking()
+                    .Where(l => jeIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
+                    .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount }).ToListAsync();
+                jeBankNet = lines.GroupBy(l => l.JournalEntryId).ToDictionary(g => g.Key, g => Math.Abs(g.Sum(x => x.Net)));
+            }
             items.AddRange(jes.Select(j => new MatchInfoItem("📒 JE",
-                j.EntryNumber + (j.Description != null ? $" — {j.Description}" : ""), j.EntryDate, j.TotalDebit)));
+                j.EntryNumber + (j.Description != null ? $" — {j.Description}" : ""), j.EntryDate,
+                jeBankNet.TryGetValue(j.Id, out var net) ? net : j.TotalDebit)));
         }
         if (docIds.Count > 0)
         {
