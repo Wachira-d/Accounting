@@ -1,9 +1,11 @@
+using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
 using Accounting.Services.Implementations.Consignment;
 using Accounting.Services.Implementations.Production;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -17,6 +19,100 @@ namespace Accounting.Controllers;
 [Authorize]
 public class ProductionConsignmentController : ControllerBase
 {
+    // ── Bill of Materials (BOM) ─────────────────────────────────────
+    // The production-order form needs a BOM to reference; without a way to
+    // list/create BOMs the operator had to paste a raw GUID (which they
+    // never have) so 'create production order' silently failed validation.
+
+    public sealed record BomListItem(Guid Id, string ParentProductName, string ParentProductCode,
+        string Version, bool IsActive, int ComponentCount);
+
+    [HttpGet("boms")]
+    public async Task<ActionResult<ApiResponse<List<BomListItem>>>> ListBoms(
+        Guid companyId, [FromServices] AccountingDbContext db, CancellationToken ct)
+    {
+        var boms = await db.BillsOfMaterials.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted)
+            .OrderByDescending(b => b.IsActive).ThenByDescending(b => b.EffectiveFrom)
+            .Select(b => new BomListItem(
+                b.Id,
+                b.ParentProduct.Name,
+                b.ParentProduct.Code,
+                b.Version,
+                b.IsActive,
+                b.Lines.Count))
+            .ToListAsync(ct);
+        return Ok(new ApiResponse<List<BomListItem>>(true, boms));
+    }
+
+    [HttpGet("boms/{bomId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> GetBom(
+        Guid companyId, Guid bomId, [FromServices] AccountingDbContext db, CancellationToken ct)
+    {
+        var bom = await db.BillsOfMaterials.AsNoTracking()
+            .Where(b => b.Id == bomId && b.CompanyId == companyId && !b.IsDeleted)
+            .Select(b => new
+            {
+                b.Id, b.Version, b.IsActive, b.Notes,
+                parentProductId = b.ParentProductId,
+                parentProductName = b.ParentProduct.Name,
+                lines = b.Lines.Select(l => new
+                {
+                    l.Id, l.ComponentProductId,
+                    componentName = l.ComponentProduct.Name,
+                    componentCode = l.ComponentProduct.Code,
+                    l.QuantityPerParent, l.Notes,
+                }).ToList(),
+            })
+            .FirstOrDefaultAsync(ct);
+        if (bom == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ BOM"));
+        return Ok(new ApiResponse<object>(true, bom));
+    }
+
+    public sealed record CreateBomLineRequest(Guid ComponentProductId, decimal QuantityPerParent, string? Notes);
+    public sealed record CreateBomRequest(Guid ParentProductId, string? Version, string? Notes,
+        List<CreateBomLineRequest> Lines);
+
+    [HttpPost("boms")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateBom(
+        Guid companyId, [FromBody] CreateBomRequest req,
+        [FromServices] AccountingDbContext db, CancellationToken ct)
+    {
+        if (req.ParentProductId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องเลือกสินค้าที่ผลิต (parent product)"));
+        if (req.Lines == null || req.Lines.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องมีวัตถุดิบ (component) อย่างน้อย 1 รายการ"));
+
+        // Validate every referenced product belongs to this company.
+        var productIds = req.Lines.Select(l => l.ComponentProductId).Append(req.ParentProductId).Distinct().ToList();
+        var validCount = await db.Products.CountAsync(p => p.CompanyId == companyId && productIds.Contains(p.Id), ct);
+        if (validCount != productIds.Count)
+            return BadRequest(new ApiResponse<object>(false, null, "มีสินค้าบางรายการไม่อยู่ในบริษัทนี้"));
+        if (req.Lines.Any(l => l.QuantityPerParent <= 0))
+            return BadRequest(new ApiResponse<object>(false, null, "จำนวนต่อหน่วยต้องมากกว่า 0"));
+        if (req.Lines.Any(l => l.ComponentProductId == req.ParentProductId))
+            return BadRequest(new ApiResponse<object>(false, null, "วัตถุดิบต้องไม่ใช่สินค้าที่ผลิตเอง"));
+
+        var bom = new BillOfMaterials
+        {
+            CompanyId = companyId,
+            ParentProductId = req.ParentProductId,
+            Version = string.IsNullOrWhiteSpace(req.Version) ? "v1" : req.Version!.Trim(),
+            Notes = req.Notes,
+            IsActive = true,
+            EffectiveFrom = DateTime.UtcNow,
+            Lines = req.Lines.Select(l => new BomLine
+            {
+                ComponentProductId = l.ComponentProductId,
+                QuantityPerParent = l.QuantityPerParent,
+                Notes = l.Notes,
+            }).ToList(),
+        };
+        db.BillsOfMaterials.Add(bom);
+        await db.SaveChangesAsync(ct);
+        return Ok(new ApiResponse<object>(true, new { bom.Id, bom.Version }, "สร้าง BOM สำเร็จ"));
+    }
+
     public sealed record CreateOrderRequest(string OrderNumber, Guid BomId,
         decimal PlannedQty, DateTime PlannedStartAt, string? Notes);
 
