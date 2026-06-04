@@ -1,9 +1,14 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.DTOs.Bank;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Accounting.Data;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -13,10 +18,14 @@ namespace Accounting.Controllers;
 public class BankController : ControllerBase
 {
     private readonly IBankService _bankService;
+    private readonly IAccountingService _accounting;
+    private readonly AccountingDbContext _db;
 
-    public BankController(IBankService bankService)
+    public BankController(IBankService bankService, IAccountingService accounting, AccountingDbContext db)
     {
         _bankService = bankService;
+        _accounting = accounting;
+        _db = db;
     }
 
     [HttpGet("accounts")]
@@ -204,6 +213,78 @@ public class BankController : ControllerBase
     {
         var result = await _bankService.SuggestMatchAsync(companyId, transactionId);
         return Ok(new ApiResponse<AiMatchSuggestionResponse>(true, result, result.Message));
+    }
+
+    public sealed record CreateJeFromTxnRequest(Guid CounterpartAccountId, string? Description);
+
+    /// <summary>
+    /// One-click for an unmatched bank line that has NO document/JE behind it
+    /// yet (e.g. a customer deposit the shop never raised a receipt for). Posts
+    /// a balanced journal entry against the bank's GL account + the chosen
+    /// counterpart account, then reconciles the transaction to it — so the
+    /// operator clears 'orphan' bank lines without leaving the page.
+    ///   Deposit (เงินเข้า)   → Dr Bank / Cr counterpart (usually a revenue 4xxx)
+    ///   Withdrawal (เงินออก) → Dr counterpart (usually an expense 5xxx) / Cr Bank
+    /// </summary>
+    [HttpPost("transactions/{transactionId:guid}/create-je")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateJeFromTransaction(
+        Guid companyId, Guid transactionId, [FromBody] CreateJeFromTxnRequest req)
+    {
+        var txn = await _db.Set<BankTransaction>()
+            .FirstOrDefaultAsync(t => t.Id == transactionId && t.CompanyId == companyId && !t.IsDeleted);
+        if (txn == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการธนาคาร"));
+        if (txn.ReconciliationStatus == ReconciliationStatus.Matched)
+            return BadRequest(new ApiResponse<object>(false, null, "รายการนี้กระทบยอดแล้ว"));
+
+        var bank = await _db.Set<BankAccount>()
+            .FirstOrDefaultAsync(b => b.Id == txn.BankAccountId && b.CompanyId == companyId);
+        if (bank?.LinkedAccountId == null)
+            return BadRequest(new ApiResponse<object>(false, null,
+                "บัญชีธนาคารยังไม่ได้ผูกกับผังบัญชี (GL) — ตั้งค่าบัญชีธนาคารก่อน"));
+
+        var counter = await _db.ChartOfAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == req.CounterpartAccountId && a.CompanyId == companyId && a.IsActive);
+        if (counter == null)
+            return BadRequest(new ApiResponse<object>(false, null, "ไม่พบบัญชีคู่ที่เลือก หรือถูกปิดใช้งาน"));
+
+        var amount = Math.Abs(txn.Amount);
+        if (amount <= 0)
+            return BadRequest(new ApiResponse<object>(false, null, "ยอดเงินต้องมากกว่า 0"));
+
+        var isIn = txn.TransactionType is BankTransactionType.Deposit or BankTransactionType.Interest;
+        var bankLineDesc = $"{bank.AccountName} - {txn.Description ?? txn.Payee ?? "bank txn"}";
+        var counterDesc = req.Description ?? txn.Description ?? txn.Payee ?? counter.AccountName;
+
+        var lines = isIn
+            ? new List<JournalLineRequest>
+              {
+                  new(bank.LinkedAccountId.Value, amount, 0, bankLineDesc),   // Dr Bank
+                  new(counter.Id, 0, amount, counterDesc),                    // Cr Revenue/other
+              }
+            : new List<JournalLineRequest>
+              {
+                  new(counter.Id, amount, 0, counterDesc),                    // Dr Expense/other
+                  new(bank.LinkedAccountId.Value, 0, amount, bankLineDesc),   // Cr Bank
+              };
+
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "bank-recon";
+        var je = await _accounting.CreateJournalEntryAsync(companyId, new CreateJournalEntryRequest(
+            EntryDate: txn.TransactionDate.Date,
+            Description: $"กระทบยอดธนาคาร: {bankLineDesc}",
+            Reference: txn.Reference,
+            Lines: lines,
+            JournalType: isIn ? JournalType.CashReceipts : JournalType.CashPayments), actor);
+
+        // CreateJournalEntryAsync already persists the entry as Posted, so it
+        // is immediately a real GL entry — just reconcile the txn to it.
+        await _bankService.ReconcileAsync(companyId, new ReconcileRequest(
+            BankTransactionId: transactionId,
+            MatchedPaymentId: null,
+            MatchedJournalEntryId: je.Id));
+
+        return Ok(new ApiResponse<object>(true, new { journalEntryId = je.Id, journalEntryNumber = je.EntryNumber },
+            $"สร้างรายการบัญชี {je.EntryNumber} และกระทบยอดสำเร็จ"));
     }
 
     [HttpDelete("transactions/{transactionId:guid}")]

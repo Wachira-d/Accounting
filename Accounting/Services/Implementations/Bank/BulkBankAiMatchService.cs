@@ -224,8 +224,14 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
 
         // ── 4. Open documents — AR (Invoice/TaxInvoice/BillingNote) +
         // ── AP (PurchaseInvoice/Expense) with BalanceDue > 0 ────────────
+        // Look BACK 90 days (an invoice raised in Jan can be paid in Apr) but
+        // only a few days FORWARD past the selected period — a deposit on the
+        // last day of the month may settle a receipt dated 1-2 days into the
+        // next month, but pulling a full +30 days dragged genuinely-next-month
+        // documents into the picture and confused the operator (April scope
+        // showing May docs). +5 days covers settlement lag without the bleed.
         var windowStart = fromDate.AddDays(-90);
-        var windowEnd = toDate.AddDays(30);
+        var windowEnd = toDate.AddDays(5);
         var docs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                         && d.Status != DocumentStatus.Voided
@@ -366,7 +372,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // Prefer the bank-line amount (exact match target); fall back to
             // gross. abs() because the prompt compares magnitudes — direction
             // is conveyed separately by the bank txn's In/Out.
-            var amount = j.BankLineNet != 0m ? Math.Abs(j.BankLineNet) : j.GrossAmount;
+            // Primary amount = bank-line net when the JE touches the linked
+            // bank GL account (the precise figure that hit the statement),
+            // else the gross transaction size. BUT also pass gross_amount
+            // separately so AI can match a deposit against EITHER — a
+            // withholding-tax receipt nets the bank line below gross, while
+            // a plain receipt has bank-line == gross. Sending only one was
+            // why an exact same-day 5,000 receipt got missed when its JE
+            // bank line differed from the gross.
+            var bankLine = Math.Abs(j.BankLineNet);
+            var gross = j.GrossAmount;
+            var amount = bankLine != 0m ? bankLine : gross;
             return new BulkBankMatchPrompt.OpenJeInput(
                 j.Id.ToString(), j.EntryNumber, j.EntryDate, amount,
                 j.Description, j.Reference,
@@ -374,7 +390,9 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 j.SourceDocType?.ToString(),
                 j.SourceDocDate,
                 j.ContactName,
-                j.ContactTaxId);
+                j.ContactTaxId,
+                // Only worth sending when it differs from `amount`.
+                gross != amount ? gross : (decimal?)null);
         }).ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────

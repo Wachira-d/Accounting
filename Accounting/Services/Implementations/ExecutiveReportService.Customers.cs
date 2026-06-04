@@ -12,7 +12,7 @@ public partial class ExecutiveReportService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             .Where(d => d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.Receipt)
+                     || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new
@@ -79,7 +79,7 @@ public partial class ExecutiveReportService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             .Where(d => d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.Receipt)
+                     || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= historicCutoff && d.DocumentDate <= toDate)
             .Select(d => new { d.ContactId, ContactName = d.Contact.Name, d.DocumentDate, d.TotalAmount })
@@ -113,7 +113,7 @@ public partial class ExecutiveReportService
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             .Where(d => d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.Receipt)
+                     || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new { d.ContactId, ContactName = d.Contact.Name, d.TotalAmount })

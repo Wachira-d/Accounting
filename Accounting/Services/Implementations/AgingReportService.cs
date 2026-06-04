@@ -36,10 +36,13 @@ public class AgingReportService : IAgingReportService
     {
         var asOfDate = request.AsOfDate ?? DateTime.UtcNow.Date;
 
-        // Determine document types based on report type
+        // Determine document types based on report type. AR adds DebitNote
+        // (ใบเพิ่มหนี้ raises a receivable); AP adds Expense + PaymentVoucher
+        // so a voucher-based shop's CREDIT payables actually age (cash ones
+        // have BalanceDue 0 and are filtered out below, so no false aging).
         var documentTypes = reportType == AgingReportType.AccountsReceivable
-            ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote }
-            : new[] { DocumentType.PurchaseInvoice, DocumentType.CertificateInLieu };
+            ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote }
+            : new[] { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
 
         var query = _db.Documents
             .Include(d => d.Contact)

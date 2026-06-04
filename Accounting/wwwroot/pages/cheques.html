@@ -67,7 +67,7 @@
       <div class="card-header"><h3 class="card-title">ออกเช็คใหม่ (Outbound)</h3></div>
       <div style="padding:18px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:760px">
         <div><label>เล่มเช็ค</label><select id="issueBook" class="form-input"></select></div>
-        <div><label>ผู้รับ (Contact)</label><input id="issueContact" placeholder="contact id" class="form-input"></div>
+        <div><label>ผู้รับ (Contact)</label><select id="issueContact" class="form-input"><option value="">— เลือกผู้รับ —</option></select></div>
         <div><label>วันที่</label><input id="issueDate" type="date" class="form-input"></div>
         <div><label>จำนวนเงิน</label><input id="issueAmount" type="number" step="0.01" min="0" class="form-input"></div>
         <div><label>โครงการ (optional)</label><select id="issueProject" class="form-input"><option value="">— ไม่ระบุ —</option></select></div>
@@ -92,8 +92,22 @@
         await this.loadBanks();
         await this.loadBooks();
         await this.loadProjects();
+        await this.loadContacts();
         await this.loadOutstanding();
       },
+
+      _contacts: [],
+      async loadContacts() {
+        try {
+          const cid = Layout.getCompanyId(); if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/document/contacts?pageSize=500`);
+          this._contacts = r.data?.items || r.data || [];
+          const sel = document.getElementById('issueContact');
+          if (sel) sel.innerHTML = '<option value="">— เลือกผู้รับ —</option>' +
+            this._contacts.map(c => `<option value="${c.id}">${(c.name||'').replace(/</g,'&lt;')}${c.taxId ? ' ('+c.taxId+')' : ''}</option>`).join('');
+        } catch (e) { /* keep the empty placeholder */ }
+      },
+      _contactName(id) { const c = this._contacts.find(x => x.id === id); return c ? c.name : (id ? id.toString().slice(0,8)+'…' : '-'); },
 
       async loadProjects() {
         try {
@@ -185,7 +199,7 @@
             <td><b>${c.chequeNumber}</b></td>
             <td>${new Date(c.chequeDate).toLocaleDateString('th-TH')}</td>
             <td style="text-align:right">${this._fmt(c.amount)}</td>
-            <td style="font-family:monospace;font-size:11px">${(c.contactId || '-').toString().slice(0,8)}…</td>
+            <td>${this._contactName(c.contactId)}</td>
             <td>${c.isInbound ? '⬇️ รับ' : '⬆️ จ่าย'}</td>
             <td><span class="badge b-${c.status}">${c.status}</span></td>
             <td>

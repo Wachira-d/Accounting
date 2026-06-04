@@ -20,11 +20,17 @@ public partial class ExecutiveReportService
         // These are receivables/payables we already know about. Holt-
         // Winters only fills in the "what about recurring revenue /
         // recurring expense we don't have a document for yet" gap.
+        // OUTSTANDING receivables/payables only (BalanceDue > 0). Cash docs
+        // (Receipt/ReceiptVoucher, cash PaymentVoucher) net to 0 balance so
+        // they correctly never appear here, but the AP set must still include
+        // CREDIT PaymentVouchers + CertificateInLieu or a voucher-based shop
+        // sees no upcoming payables.
         var ar = await _db.Documents
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             .Where(d => d.DocumentType == DocumentType.Invoice
                      || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.BillingNote)
+                     || d.DocumentType == DocumentType.BillingNote
+                     || d.DocumentType == DocumentType.DebitNote)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.BalanceDue > 0)
             .Select(d => new { d.DueDate, d.DocumentDate, d.BalanceDue, d.DocumentNumber })
@@ -33,7 +39,9 @@ public partial class ExecutiveReportService
         var ap = await _db.Documents
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             .Where(d => d.DocumentType == DocumentType.PurchaseInvoice
-                     || d.DocumentType == DocumentType.Expense)
+                     || d.DocumentType == DocumentType.Expense
+                     || d.DocumentType == DocumentType.PaymentVoucher
+                     || d.DocumentType == DocumentType.CertificateInLieu)
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.BalanceDue > 0)
             .Select(d => new { d.DueDate, d.DocumentDate, d.BalanceDue, d.DocumentNumber })
@@ -56,12 +64,16 @@ public partial class ExecutiveReportService
             .Where(p => p.DocumentType == DocumentType.Invoice
                      || p.DocumentType == DocumentType.TaxInvoice
                      || p.DocumentType == DocumentType.BillingNote
-                     || p.DocumentType == DocumentType.Receipt)
+                     || p.DocumentType == DocumentType.DebitNote
+                     || p.DocumentType == DocumentType.Receipt
+                     || p.DocumentType == DocumentType.ReceiptVoucher)
             .Select(p => (p.PaymentDate, p.Amount)),
             historyStart, historyWeeks);
         var outflowSeries = BucketWeekly(paymentHistory
             .Where(p => p.DocumentType == DocumentType.PurchaseInvoice
-                     || p.DocumentType == DocumentType.Expense)
+                     || p.DocumentType == DocumentType.Expense
+                     || p.DocumentType == DocumentType.PaymentVoucher
+                     || p.DocumentType == DocumentType.CertificateInLieu)
             .Select(p => (p.PaymentDate, p.Amount)),
             historyStart, historyWeeks);
 

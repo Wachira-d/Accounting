@@ -88,44 +88,81 @@
 
     <!-- Reconciliation Tab -->
     <div id="tabReconcile" style="display:none">
-      <!-- Summary Cards -->
-      <div class="grid grid-4 gap-4" style="margin-bottom:16px" id="reconSummaryCards">
-        <div class="card"><div class="text-gray-500 text-xs">บัญชีที่เลือก</div><div class="text-lg font-bold" id="reconAccountName">ยังไม่ได้เลือก</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">ยอดตาม Statement</div><div class="text-xl font-bold" id="reconBankBal">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">ยอดตามบัญชี (GL)</div><div class="text-xl font-bold" id="reconBookBal">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">ผลต่าง</div><div class="text-xl font-bold" id="reconDiff" style="color:var(--danger)">-</div></div>
-      </div>
-      <div class="grid grid-3 gap-4" style="margin-bottom:16px">
-        <div class="card"><div class="text-gray-500 text-xs">ยอดตามเอกสาร (รับ-จ่าย)</div><div class="text-xl font-bold" id="reconDocBal">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">รวมรับ (ใบเสร็จ/ใบสำคัญรับ)</div><div class="text-lg font-bold text-success" id="reconReceipts">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">รวมจ่าย (ใบสำคัญจ่าย/ค่าใช้จ่าย)</div><div class="text-lg font-bold text-danger" id="reconPVs">-</div></div>
-      </div>
-      <div class="grid grid-4 gap-4" style="margin-bottom:16px">
-        <div class="card text-center"><div class="text-gray-500 text-xs">รายการทั้งหมด</div><div class="text-2xl font-bold" id="reconTotal">0</div></div>
-        <div class="card text-center"><div class="text-gray-500 text-xs">จับคู่แล้ว</div><div class="text-2xl font-bold text-success" id="reconMatched">0</div></div>
-        <div class="card text-center"><div class="text-gray-500 text-xs">รอจับคู่</div><div class="text-2xl font-bold text-warning" id="reconCount">0</div></div>
-        <div class="card text-center"><div class="text-gray-500 text-xs">ไม่รวม</div><div class="text-2xl font-bold text-gray-400" id="reconExcluded">0</div></div>
+      <!-- Single consolidated header — 4 key metrics + bank context.
+           Replaces the previous 7-card / 3-row layout that made the
+           operator scan too much before getting to the action.  -->
+      <div class="card" style="margin-bottom:16px;padding:18px 20px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+          <div>
+            <div style="font-size:12px;color:#64748b">บัญชีที่กำลังกระทบยอด</div>
+            <div style="font-weight:700;font-size:16px" id="reconAccountName">ยังไม่ได้เลือก</div>
+            <div style="font-size:11px;color:#94a3b8" id="reconAccountHint">เลือกจากแท็บ "บัญชีธนาคาร" ก่อน</div>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ยอดตาม Statement</div>
+              <div style="font-weight:700;font-size:18px" id="reconBankBal">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ยอดตามบัญชี (GL)</div>
+              <div style="font-weight:700;font-size:18px" id="reconBookBal">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ผลต่าง</div>
+              <div style="font-weight:700;font-size:18px;color:#dc2626" id="reconDiff">—</div>
+            </div>
+            <div style="text-align:right;border-left:1px solid #e2e8f0;padding-left:16px">
+              <div style="font-size:11px;color:#94a3b8">ยอดเอกสาร (รับ−จ่าย)</div>
+              <div style="font-weight:700;font-size:18px" id="reconDocBal">—</div>
+              <div style="font-size:10px;color:#94a3b8">
+                รับ <span class="text-success" id="reconReceipts">—</span> ·
+                จ่าย <span class="text-danger" id="reconPVs">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Match status pills — replaces the 4 individual cards. -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px solid #f1f5f9">
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;border-radius:999px;font-size:13px">
+            รายการทั้งหมด <b id="reconTotal">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#dcfce7;color:#166534;border-radius:999px;font-size:13px">
+            ✓ จับคู่แล้ว <b id="reconMatched">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#fef3c7;color:#92400e;border-radius:999px;font-size:13px">
+            ⏳ รอจับคู่ <b id="reconCount">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;color:#64748b;border-radius:999px;font-size:13px">
+            🚫 ไม่รวม <b id="reconExcluded">0</b>
+          </div>
+        </div>
       </div>
 
       <!-- AI Match Controls -->
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-header">
-          <h3 class="card-title">AI กระทบยอดอัตโนมัติ</h3>
+      <div class="card" style="margin-bottom:16px;border:1px solid #e0e7ff;background:linear-gradient(180deg,#fafbff,#ffffff)">
+        <div class="card-header" style="padding:14px 18px">
+          <div>
+            <h3 class="card-title" style="margin:0">🧠 กระทบยอดอัตโนมัติ</h3>
+            <p style="font-size:11px;color:#64748b;margin:2px 0 0">AI จะดูเอกสาร/JE/Payment ในช่วงเดือนที่เลือก (±5 วัน) + ย้อนหลัง 90 วันสำหรับเอกสารค้างชำระ</p>
+          </div>
           <div class="flex gap-2" style="align-items:center;flex-wrap:wrap">
-            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่พื้นฐาน</button>
-            <button class="btn btn-sm btn-primary" onclick="Page.runAiMatch()" id="btnAiMatch" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">AI จับคู่ (heuristic)</button>
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569">
               เดือน
               <input type="month" id="aiMatchMonth" class="form-input"
                      style="width:auto;font-size:13px;padding:4px 8px"
-                     title="เลือกเดือนที่จะให้ AI กระทบยอด — ค่าเริ่มต้นคือเดือนปัจจุบัน">
+                     title="เลือกเดือนที่จะให้ AI กระทบยอด">
             </label>
-            <button class="btn btn-sm btn-primary" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
-              title="โยน bank txn ที่ยังไม่กระทบยอด + เอกสารเปิด + payment + JE + บริบทบริษัทของเดือนที่เลือก ให้ DeepSeek match พร้อมกัน — รายงานข้อมูลที่ขาดด้วย"
-              style="background:linear-gradient(135deg,#ec4899,#f43f5e)">🧠 AI match ทั้งเดือน (ปุ่มเดียว)</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()" title="จับคู่ตามกฎตายตัว (ยอด+วันที่+อ้างอิง) — เร็ว ไม่ใช้ AI">⚡ จับคู่พื้นฐาน</button>
+            <button class="btn btn-sm" onclick="Page.runAiMatch()" id="btnAiMatch"
+                    style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
+                    title="Heuristic + local model — ไม่ส่งไป provider">🤖 AI (local)</button>
+            <button class="btn btn-sm" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
+                    title="ส่งทุก txn ที่ค้าง + เอกสารเปิด + JE ของเดือนนี้ไป DeepSeek match ทีเดียว"
+                    style="background:linear-gradient(135deg,#ec4899,#f43f5e);color:#fff">🧠 AI match ทั้งเดือน</button>
           </div>
         </div>
-        <div id="aiMatchStatus" style="padding:0 16px 12px;display:none">
+        <div id="aiMatchStatus" style="padding:0 18px 14px;display:none">
           <div style="background:var(--bg-secondary);border-radius:8px;padding:12px 16px">
             <div class="flex items-center gap-2" style="margin-bottom:8px">
               <div style="width:8px;height:8px;border-radius:50%;background:var(--primary);animation:pulse 1.5s infinite" id="aiDot"></div>
@@ -879,7 +916,12 @@
           ].sort((a, b) => b.score - a.score);
           document.getElementById('compCandCount').textContent = all.length;
           if (!all.length) {
-            container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ไม่พบรายการบัญชีที่ตรงกัน<br><div style="margin-top:8px"><button class="btn btn-sm btn-primary" onclick="Page.openReconcileOne(\'' + txnId + '\')">🔍 เปิดตัวเลือกเต็ม</button></div></div>';
+            // No existing Payment/JE matches this bank line — offer to CREATE
+            // a journal entry + reconcile in one step (the Take-Time-style
+            // orphan-deposit case). Picks revenue accounts for deposits,
+            // expense for withdrawals, by default.
+            container.innerHTML = this._renderCreateJePanel(txnId);
+            this._populateCreateJeAccounts(txnId);
             return;
           }
           container.innerHTML = `<div style="padding:8px 12px;background:#f8fafc;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
@@ -951,6 +993,88 @@
           if (this.allTransactions?.length) await this.loadTransactions();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+
+      // ── Create-JE-from-orphan-bank-line (Phase 3) ──────────────────────
+      _renderCreateJePanel(txnId) {
+        const t = (this._compUnreconciled || []).find(x => x.id === txnId);
+        const isIn = t && (t.transactionType === 'Deposit' || t.transactionType === 'Interest');
+        const sideLabel = isIn ? 'รายรับ (บัญชีรายได้)' : 'รายจ่าย (บัญชีค่าใช้จ่าย)';
+        const amount = t ? Layout.money(t.amount) : '';
+        return `<div style="padding:20px 16px">
+          <div style="text-align:center;color:#94a3b8;margin-bottom:14px">
+            <div style="font-size:28px;margin-bottom:6px">🧾</div>
+            ไม่พบรายการบัญชีที่ตรงกัน — สร้างใหม่แล้วกระทบยอดได้เลย
+          </div>
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px">
+            <div style="font-size:12px;color:#64748b;margin-bottom:4px">${isIn ? '💰 เงินเข้า' : '💸 เงินออก'} · ฿${amount} · ${t ? Layout.date(t.transactionDate) : ''}</div>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">${sideLabel} *</label>
+            <select id="createJeAccount_${txnId}" class="form-select" style="width:100%;margin-bottom:8px"><option value="">กำลังโหลดผังบัญชี…</option></select>
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">คำอธิบาย</label>
+            <input id="createJeDesc_${txnId}" class="form-input" style="width:100%;margin-bottom:10px"
+                   value="${this.esc(t ? (t.payee || t.description || '') : '')}" placeholder="เช่น รับเงินค่าบริการ">
+            <button class="btn btn-primary" style="width:100%" onclick="Page.submitCreateJe('${txnId}')">
+              ➕ สร้างรายการบัญชี + กระทบยอด
+            </button>
+            <div style="font-size:11px;color:#94a3b8;margin-top:6px">
+              ระบบจะลง ${isIn ? 'Dr ธนาคาร / Cr บัญชีที่เลือก' : 'Dr บัญชีที่เลือก / Cr ธนาคาร'} แล้วผูกกับรายการนี้อัตโนมัติ
+            </div>
+          </div>
+          <div style="text-align:center;margin-top:10px">
+            <button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${txnId}')" style="font-size:11px">หรือ 🔍 เปิดตัวเลือกจับคู่เต็ม</button>
+          </div>
+        </div>`;
+      },
+
+      async _populateCreateJeAccounts(txnId) {
+        const sel = document.getElementById('createJeAccount_' + txnId);
+        if (!sel) return;
+        const t = (this._compUnreconciled || []).find(x => x.id === txnId);
+        const isIn = t && (t.transactionType === 'Deposit' || t.transactionType === 'Interest');
+        try {
+          // Cache the chart once per session.
+          if (!this._chartCache) {
+            const api = Layout.api();
+            const r = await api.getAccounts();
+            this._chartCache = (r.data?.items || r.data || []);
+          }
+          // Income → revenue (type 4 / code 4xxx); expense → expense (type 5 / 5xxx).
+          const wanted = this._chartCache.filter(a => {
+            const code = (a.accountCode || '').toString();
+            const type = a.accountType;
+            return isIn ? (type === 'Revenue' || type === 4 || code.startsWith('4'))
+                        : (type === 'Expense' || type === 5 || code.startsWith('5'));
+          });
+          const list = wanted.length ? wanted : this._chartCache;
+          sel.innerHTML = '<option value="">— เลือกบัญชี —</option>' +
+            list.map(a => `<option value="${a.id}">${this.esc(a.accountCode)} - ${this.esc(a.accountName)}</option>`).join('');
+        } catch (e) {
+          sel.innerHTML = '<option value="">โหลดผังบัญชีไม่สำเร็จ</option>';
+        }
+      },
+
+      async submitCreateJe(txnId) {
+        const accId = document.getElementById('createJeAccount_' + txnId)?.value;
+        if (!accId) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
+        const desc = document.getElementById('createJeDesc_' + txnId)?.value || null;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.createJeFromTxn(txnId, { counterpartAccountId: accId, description: desc });
+          Layout.toast(r.message || 'สร้างรายการบัญชีและกระทบยอดสำเร็จ', 'success');
+          this._compUnreconciled = (this._compUnreconciled || []).filter(t => t.id !== txnId);
+          this._compSelectedTxnId = null;
+          document.getElementById('compBankCount').textContent = this._compUnreconciled.length;
+          this.renderCompBankList();
+          document.getElementById('compCandidateList').innerHTML = `<div style="text-align:center;padding:40px">
+            <div style="font-size:28px;margin-bottom:8px">✅</div>
+            <div style="color:#10b981;font-weight:600">สร้าง + กระทบยอดสำเร็จ</div>
+            <div style="color:#64748b;font-size:12px;margin-top:4px">เลือกรายการถัดไปด้านซ้าย</div>
+          </div>`;
+          document.getElementById('compCandCount').textContent = '-';
+          await this.loadReconciliationSummary();
+          if (this.allTransactions?.length) await this.loadTransactions();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       toggleAllRecon(cb) {
         document.querySelectorAll('.recon-check').forEach(c => c.checked = cb.checked);
       },
@@ -1111,13 +1235,22 @@
         const matchRows = sortedMatches.map((m, idx) => {
           const conf = (m.confidence * 100).toFixed(0);
           const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
+          const confBg = m.confidence >= 0.8 ? '#dcfce7' : m.confidence >= 0.6 ? '#fef3c7' : '#fee2e2';
           const cands = (m.candidates || []).map(c => `${c.candidateType}:${c.candidateId.slice(0,8)}… (${fmtAmt(c.amount)})`).join(' + ');
-          return `<tr>
-            <td><input type="checkbox" checked data-bulkidx="${idx}" class="bulkMatchCheck"></td>
-            <td style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</td>
+          // Enrich with the real bank line so the operator reviews date +
+          // amount + payee instead of an opaque GUID prefix.
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          const bankCell = bt
+            ? `<div style="font-weight:600">${Layout.money(bt.amount)} <span style="font-size:10px;color:${bt.transactionType==='Deposit'?'#16a34a':'#dc2626'}">${bt.transactionType==='Deposit'?'รับ':'จ่าย'}</span></div>
+               <div style="font-size:10px;color:#64748b">${Layout.date(bt.transactionDate)}</div>
+               <div style="font-size:10px;color:#94a3b8">${esc((bt.payee||bt.description||'').slice(0,28))}</div>`
+            : `<span style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</span>`;
+          return `<tr style="border-bottom:1px solid #f1f5f9">
+            <td><input type="checkbox" ${m.confidence>=0.6?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
+            <td>${bankCell}</td>
             <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
             <td style="font-size:12px">${esc(cands)}</td>
-            <td style="text-align:right;color:${confColor};font-weight:600">${conf}%</td>
+            <td style="text-align:right"><span style="background:${confBg};color:${confColor};font-weight:700;padding:2px 8px;border-radius:6px">${conf}%</span></td>
             <td style="font-size:11px;color:#475569">${esc(m.reasoning || '')}</td>
           </tr>`;
         }).join('');
@@ -1142,7 +1275,15 @@
           ${warningsBlock}
           ${missingBlock}
           ${(plan.matches||[]).length === 0 ? '' : `
-          <h4 style="margin:18px 0 6px">✅ Match ที่เสนอ (เลือกที่ต้องการแล้วกดยืนยัน)</h4>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 6px;flex-wrap:wrap;gap:8px">
+            <h4 style="margin:0">✅ Match ที่เสนอ <span style="font-weight:400;color:#94a3b8;font-size:12px">(เรียงตามความมั่นใจ — ที่ต้องตรวจอยู่บนสุด)</span></h4>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="Page.bulkSelect('high')">✓ เฉพาะมั่นใจ ≥85%</button>
+              <button class="btn btn-sm" style="background:#f1f5f9" onclick="Page.bulkSelect('all')">เลือกทั้งหมด</button>
+              <button class="btn btn-sm" style="background:#f1f5f9" onclick="Page.bulkSelect('none')">ล้าง</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">📅 ผู้สมัครครอบคลุม: เอกสารย้อนหลัง 90 วัน + JE ในช่วง ±5 วันของเดือนที่เลือก (กันใบที่ออกก่อนแต่จ่ายในเดือนนี้)</div>
           <div style="overflow:auto;max-height:380px;border:1px solid #e2e8f0;border-radius:8px">
             <table style="width:100%;font-size:12px">
               <thead style="position:sticky;top:0;background:#f1f5f9">
@@ -1163,6 +1304,19 @@
               `<button class="btn btn-primary" onclick="Page.applyBulkPlan()">ยืนยัน match ที่เลือก</button>`}
           </div>`;
         Layout.openModal('bulkAiPlanModal');
+      },
+
+      // Quick-select helpers on the bulk plan modal: 'high' keeps only the
+      // calibrated-confident rows (the ones safe to rubber-stamp), 'all' /
+      // 'none' are the obvious bulk toggles. Uses the data-conf attribute set
+      // per row from the server-calibrated confidence.
+      bulkSelect(mode) {
+        document.querySelectorAll('.bulkMatchCheck').forEach(el => {
+          const c = parseFloat(el.dataset.conf || '0');
+          el.checked = mode === 'all' ? true
+            : mode === 'none' ? false
+            : c >= 0.85;   // 'high'
+        });
       },
 
       async applyBulkPlan() {

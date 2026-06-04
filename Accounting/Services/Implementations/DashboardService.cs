@@ -97,13 +97,18 @@ public class DashboardService : IDashboardService
         // Sequential queries — DbContext is NOT thread-safe, cannot use Task.WhenAll
         var receivables = await _db.Documents
             .Where(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.BillingNote || d.DocumentType == DocumentType.DebitNote)
                 && arApStatuses.Contains(d.Status))
             .SumAsync(d => d.BalanceDue);
 
+        // AP includes Expense + PaymentVoucher (a CREDIT voucher is a payable;
+        // cash vouchers are Status=Paid/BalanceDue=0 and excluded by the
+        // status set + the SumAsync of BalanceDue, so no false payable).
         var payables = await _db.Documents
             .Where(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.CertificateInLieu)
+                && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense
+                    || d.DocumentType == DocumentType.PaymentVoucher || d.DocumentType == DocumentType.CertificateInLieu)
                 && arApStatuses.Contains(d.Status))
             .SumAsync(d => d.BalanceDue);
 
@@ -255,7 +260,8 @@ public class DashboardService : IDashboardService
         // Server-side GroupBy + OrderBy + Take — only top N rows returned
         var rawData = await _db.Documents
             .Where(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
                 && d.Status != DocumentStatus.Voided
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : null, d.TotalAmount })

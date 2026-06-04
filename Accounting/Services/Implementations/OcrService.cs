@@ -2961,6 +2961,12 @@ public class OcrService : IOcrService
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
 
+        // Normalise createdBy to a real user GUID so the document's creator
+        // signature resolves (caller may pass an email/empty for headless/API
+        // paths). Prefer the passed user, else the scan's operator, else owner.
+        createdBy = await ResolveOcrCreatorAsync(companyId,
+            Guid.TryParse(createdBy, out _) ? createdBy : result.CreatedBy, createdBy);
+
         if (result.ScanStatus != "Completed")
             throw new InvalidOperationException("OCR scan is not yet completed.");
 
@@ -3472,6 +3478,29 @@ public class OcrService : IOcrService
         return MapToResponse(result);
     }
 
+    /// <summary>Resolve a REAL user GUID to stamp as a document's CreatedBy so
+    /// signature resolution works (ResolveSignersAsync parses CreatedBy as a
+    /// Guid → looks up the user's signature). OCR auto-create previously stamped
+    /// a literal like "OCR-AutoCreate" which isn't a GUID, so the creator's
+    /// signature slot (e.g. ผู้จ่ายเงิน on a Payment Voucher) stayed blank.
+    /// Order: the scan's own creator (the operator who ran OCR) → the company
+    /// Owner (covers API/headless scans where no operator is known) → the
+    /// literal fallback only if neither exists.</summary>
+    private async Task<string> ResolveOcrCreatorAsync(Guid companyId, string? scanCreatedBy, string fallback)
+    {
+        if (Guid.TryParse(scanCreatedBy, out var opId))
+        {
+            var ok = await _db.Set<CompanyUser>().AsNoTracking()
+                .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == opId);
+            if (ok) return opId.ToString();
+        }
+        var ownerId = await _db.Set<CompanyUser>().AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.Role == Models.Enums.UserRole.Owner)
+            .Select(cu => (Guid?)cu.UserId)
+            .FirstOrDefaultAsync();
+        return ownerId?.ToString() ?? fallback;
+    }
+
     private async Task AutoCreateDocumentAsync(Guid companyId, OcrScanResult scan, OcrExtractedData? extractedData = null)
     {
         // Prefer the inferred TargetDocumentType (set by OcrDocumentRoleInferrer).
@@ -3529,7 +3558,7 @@ public class OcrService : IOcrService
             BalanceDue = scan.ExtractedTotalAmount ?? 0,
             Reference = scan.ExtractedDocumentNumber,
             Notes = $"Auto-created from OCR scan (confidence: {scan.Confidence:P0}): {scan.OriginalFileName}",
-            CreatedBy = "OCR-AutoCreate"
+            CreatedBy = await ResolveOcrCreatorAsync(companyId, scan.CreatedBy, "OCR-AutoCreate")
         };
 
         // Create document lines from extracted items or a single line

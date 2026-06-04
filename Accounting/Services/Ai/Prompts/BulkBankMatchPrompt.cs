@@ -35,7 +35,7 @@ Each open_journal_entries[] item now carries:
   • number, date, amount, description, reference
   • source_doc { number, type, date }   — null when JE is a manual entry
   • contact { name, tax_id }            — counterparty when the source doc has one
-Use source_doc.number / source_doc.date to follow doc-number citations in bank memos, and contact.name (+ tax_id) to confirm payer/payee identity.
+Use source_doc.number / source_doc.date to follow doc-number citations in bank memos, and contact.name (+ tax_id) to confirm payer/payee identity. When a JE has gross_amount, the bank deposit may equal EITHER amount OR gross_amount (gross = before withholding-tax deduction) — accept whichever matches and note in reasoning which you used.
 
 Matching priority — apply IN ORDER, stop when a confident pick is found:
 
@@ -113,7 +113,11 @@ Strict JSON output (NO prose outside JSON):
         string? SourceDocType = null,
         DateTime? SourceDocDate = null,
         string? ContactName = null,
-        string? ContactTaxId = null);
+        string? ContactTaxId = null,
+        // The entry's GROSS amount when it differs from `amount` (e.g. a
+        // withholding-tax receipt whose bank line is net of WHT). AI may
+        // match the bank deposit against EITHER figure.
+        decimal? GrossAmount = null);
 
     public sealed record CompanyContext(
         string Name, string? TaxId, string BaseCurrency,
@@ -197,6 +201,9 @@ Strict JSON output (NO prose outside JSON):
                 id = j.Id, number = j.Number,
                 date = j.Date.ToString("yyyy-MM-dd"),
                 amount = j.NetAmount,
+                // gross_amount present only when ≠ amount — match the bank
+                // deposit against EITHER (handles WHT-netted receipts).
+                gross_amount = j.GrossAmount,
                 description = j.Description,
                 reference = j.Reference,
                 // Source document + contact — drives contact-aware matching.

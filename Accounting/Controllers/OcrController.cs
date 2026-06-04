@@ -181,7 +181,11 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(
         Guid companyId, Guid scanId, [FromQuery] string? targetType = null)
         => Ok(new ApiResponse<OcrResultResponse>(true,
-            await _service.CreateDocumentFromScanAsync(companyId, scanId, User.Identity?.Name ?? "", targetType)));
+            // Pass the user GUID (not Identity.Name, which is the email) so the
+            // created document's CreatedBy resolves to a real user → its
+            // signature prints. The service still owner-falls-back if empty.
+            await _service.CreateDocumentFromScanAsync(companyId, scanId,
+                JwtHelper.GetUserIdFromClaims(User).ToString(), targetType)));
 
     /// <summary>Rebuild an OCR-created document's lines from the original scan
     /// when it was created empty. Looked up by documentId (the document edit
