@@ -86,7 +86,7 @@
       </div>
 
       <!-- Per-row matched-counterpart popup -->
-      <div id="matchInfoModal" class="modal-overlay" style="display:none">
+      <div id="matchInfoModal" class="modal-overlay">
         <div class="modal" style="max-width:480px;width:92%">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <h3 style="margin:0">🔍 รายการนี้จับคู่กับ</h3>
@@ -155,7 +155,7 @@
       </div>
 
       <!-- Matched detail + difference explainer modal -->
-      <div id="reconDetailModal" class="modal-overlay" style="display:none">
+      <div id="reconDetailModal" class="modal-overlay">
         <div class="modal" style="max-width:880px;width:94%;max-height:88vh;overflow:auto">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <h3 style="margin:0">🔍 รายการที่จับคู่ & ที่มาของผลต่าง</h3>
@@ -762,9 +762,8 @@
 
       // Per-row "what did this match to?" popup.
       async showMatchInfo(txnId) {
-        const modal = document.getElementById('matchInfoModal');
         const body = document.getElementById('matchInfoBody');
-        modal.style.display = 'flex';
+        Layout.openModal('matchInfoModal');
         body.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด…</div>';
         const api = Layout.api(); if (!api) return;
         try {
@@ -790,7 +789,7 @@
           body.innerHTML = `<div style="text-align:center;color:#dc2626;padding:30px">❌ ${this.esc(e.message)}</div>`;
         }
       },
-      closeMatchInfo() { document.getElementById('matchInfoModal').style.display = 'none'; },
+      closeMatchInfo() { Layout.closeModal('matchInfoModal'); },
 
       // === DELETE: selection + bulk + by-date-range ===
       selectedTxnIds: new Set(),
@@ -1136,10 +1135,10 @@
       },
 
       // ── Matched-detail + difference explainer ─────────────────────
-      closeReconDetail() { document.getElementById('reconDetailModal').style.display = 'none'; },
+      closeReconDetail() { Layout.closeModal('reconDetailModal'); },
       async openReconDetail() {
         if (!this.selectedAccount) { Layout.toast('เลือกบัญชีก่อน', 'error'); return; }
-        document.getElementById('reconDetailModal').style.display = 'flex';
+        Layout.openModal('reconDetailModal');
         const body = document.getElementById('reconDetailBody');
         body.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8">กำลังโหลด…</div>';
         const api = Layout.api(); if (!api) return;
