@@ -206,6 +206,22 @@
             <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
           </div>
 
+          <!-- File attachments — queued at create time, flushed via the
+               attachments API once the document id is known. Operators
+               were previously forced to save the doc first, reopen it,
+               then go to the detail modal to attach evidence. -->
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
+              <input type="file" class="form-input" id="fAttachments" multiple
+                     accept="image/*,application/pdf"
+                     onchange="Page.onAttachmentsPicked(this)"
+                     style="padding:6px">
+              <div id="fAttachmentsPreview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">เลือกได้หลายไฟล์ — อัปโหลดจะทำตอนกดบันทึก (สูงสุด 25 MB/ไฟล์)</div>
+            </div>
+          </div>
+
           <!-- Cash-sale shortcut: ขายเงินสด + บริการ ตามประมวลรัษฎากร §78/1
                ต้องออกใบกำกับภาษีตอนได้รับเงิน — flow default ของระบบ
                (issue → wait → record payment) บังคับให้กด 2 ครั้งซึ่งผิด
@@ -932,6 +948,54 @@
         }
       },
 
+      // Hold the FileList chosen on the create form until the doc id exists.
+      // We can't POST to /attachments/Document/{id} before /documents is called.
+      _attachmentQueue: [],
+
+      onAttachmentsPicked(input) {
+        this._attachmentQueue = Array.from(input.files || []);
+        const box = document.getElementById('fAttachmentsPreview');
+        if (!box) return;
+        if (this._attachmentQueue.length === 0) { box.innerHTML = ''; return; }
+        box.innerHTML = this._attachmentQueue.map((f, i) => {
+          const sizeKb = Math.round(f.size / 1024);
+          const isImage = f.type.startsWith('image/');
+          return `<span style="display:inline-flex;align-items:center;gap:6px;background:#eef2ff;color:#3730a3;padding:4px 10px;border-radius:14px;font-size:12px">
+            ${isImage ? '🖼️' : '📄'} ${(f.name || '').slice(0, 40)} <span style="color:#94a3b8;font-size:11px">(${sizeKb} KB)</span>
+            <button type="button" onclick="Page._removeQueuedAttachment(${i})" style="background:none;border:none;cursor:pointer;color:#6366f1;padding:0 2px">×</button>
+          </span>`;
+        }).join('');
+      },
+
+      _removeQueuedAttachment(idx) {
+        this._attachmentQueue.splice(idx, 1);
+        // Force the input to re-emit so the visible filename list refreshes.
+        const input = document.getElementById('fAttachments');
+        if (input) input.value = '';
+        this.onAttachmentsPicked({ files: this._attachmentQueue });
+      },
+
+      async flushAttachmentQueue(documentId) {
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        if (!cid || !token) return;
+        const failures = [];
+        for (const file of this._attachmentQueue) {
+          const fd = new FormData(); fd.append('file', file);
+          try {
+            const r = await fetch(`/api/companies/${cid}/attachments/Document/${documentId}`,
+              { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || j.success === false) failures.push(file.name + ': ' + (j.message || r.status));
+          } catch (e) { failures.push(file.name + ': ' + e.message); }
+        }
+        if (failures.length) Layout.toast('แนบไฟล์บางตัวไม่สำเร็จ: ' + failures.join(' | '), 'warning');
+        else if (this._attachmentQueue.length) Layout.toast(`แนบไฟล์ ${this._attachmentQueue.length} ไฟล์สำเร็จ`);
+        this._attachmentQueue = [];
+        const box = document.getElementById('fAttachmentsPreview'); if (box) box.innerHTML = '';
+        const input = document.getElementById('fAttachments'); if (input) input.value = '';
+      },
+
       /**
        * Payment Voucher เครดิต/จ่ายทันที toggle effect. Cash (จ่ายทันที) hides
        * + clears the due date (no outstanding balance) and shows a hint; Credit
@@ -1449,6 +1513,9 @@
         this._paymentTypeTouched = false;
         this._lastPaymentTypeFeedbackId = null;
         const _piv = document.getElementById('fPricesIncludeVat'); if (_piv) _piv.checked = false;
+        this._attachmentQueue = [];
+        const _att = document.getElementById('fAttachments'); if (_att) _att.value = '';
+        const _attPv = document.getElementById('fAttachmentsPreview'); if (_attPv) _attPv.innerHTML = '';
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
         // Clear CertificateInLieu fields
         if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = '';
@@ -1724,6 +1791,13 @@
                 });
               } catch (e) { /* training is best-effort */ }
             }
+          }
+
+          // Upload any files the operator queued on the create form. Best-
+          // effort: failures toast a warning so the document still saves +
+          // they can retry from the detail modal's attachment section.
+          if (savedDocId && this._attachmentQueue && this._attachmentQueue.length) {
+            await this.flushAttachmentQueue(savedDocId);
           }
 
           // Send via email if requested
@@ -2107,17 +2181,37 @@
       },
 
       // 🤖 Ask AI to suggest the GL expense category. Uses the document's
-      // existing fields (contact, totals, notes) — works whether the doc
-      // is saved or not because the AI sees the in-progress form values.
+      // existing fields (contact, line descriptions, totals, notes) — works
+      // whether the doc is saved or not because the AI sees the in-progress
+      // form values, not the persisted entity.
       askAiExpenseCategory(ev) {
         const cid = Layout.getCompanyId();
         if (!cid) return;
-        const contactSearchInput = document.getElementById('fContactSearch');
-        const vendorName = contactSearchInput?.value || '';
-        const lineDesc = document.getElementById('fNotes')?.value
-          || vendorName || 'ค่าใช้จ่ายทั่วไป';
-        const totalEl = document.getElementById('fTotal');
-        const amount = parseFloat(totalEl?.value || '0') || 0;
+        // The vendor name lives on the contact autocomplete; read its visible
+        // text (the hidden fContactId carries the GUID). The previous build
+        // referenced the wrong input id ('fContactSearch') and silently
+        // shipped an empty vendor every time, starving AI of context.
+        const vendorName = (document.getElementById('fContact')?.value || '').trim();
+        // Build the line description from the ACTUAL line table — fallback
+        // to notes/vendor only when the operator hasn't keyed anything yet.
+        // Concatenate up to 5 lines so AI sees the real expense detail
+        // ('ค่าธรรมเนียมวิชาชีพ บริการตรวจสอบบัญชี' >> 'ค่าใช้จ่ายทั่วไป').
+        const lineParts = [];
+        let amountFromLines = 0;
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          const d = row.querySelector('[data-f="desc"]')?.value?.trim();
+          if (d) lineParts.push(d);
+          const q = parseFloat(row.querySelector('[data-f="qty"]')?.value) || 0;
+          const p = parseFloat(row.querySelector('[data-f="price"]')?.value) || 0;
+          const dc = parseFloat(row.querySelector('[data-f="disc"]')?.value) || 0;
+          amountFromLines += Math.round(q * p * (1 - dc / 100) * 100) / 100;
+        });
+        const lineDesc = lineParts.slice(0, 5).join(' · ')
+          || (document.getElementById('fNotes')?.value || '').trim()
+          || vendorName
+          || 'ค่าใช้จ่ายทั่วไป';
+        const amount = amountFromLines > 0 ? amountFromLines
+          : (parseFloat(document.getElementById('fTotal')?.value || '0') || 0);
         const currency = document.getElementById('fCurrency')?.value || 'THB';
         const currentAccountId = document.getElementById('fExpenseCategory')?.value || null;
         const currentAccountCode = currentAccountId
@@ -2128,12 +2222,14 @@
         // it as ad-hoc (no source-invoice grounding).
         const sourceId = this.editingId || '00000000-0000-0000-0000-000000000000';
         const btn = ev?.currentTarget;
+        const contactId = document.getElementById('fContactId')?.value || null;
         AiSuggestion.show({
           anchorEl: btn,
           fetch: () => API.post(`/api/companies/${cid}/ai/payment-voucher/suggest-account`, {
             sourceInvoiceId: sourceId,
             lineDescription: lineDesc,
             amount, currency, currentAccountCode,
+            contactId,
           }),
           applyAnswer: (code) => {
             // AI returns an account CODE; map to the option value (account id).

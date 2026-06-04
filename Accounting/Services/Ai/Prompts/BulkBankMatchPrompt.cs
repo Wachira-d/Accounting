@@ -31,14 +31,37 @@ public static class BulkBankMatchPrompt
 
 CRITICAL: candidateType must be ""Payment"" or ""JournalEntry"" — NEVER ""Document"". Open documents are CONTEXT to help you identify the right payment (e.g. memo cites invoice INV-2025-0312 → find the Payment whose linked_document.number = INV-2025-0312). If a bank txn matches a document that has NO linked payment, return it in missing_data with missingType=""Payment"" so the user knows to create the payment first.
 
-How to match:
-1. Identify EXACT 1:1 matches first (amount + date ± 7 days + same direction).
-2. Then identify M:1 splits (one bank txn = sum of multiple payments/JEs — confirm sum matches).
-3. Then identify 1:M aggregations (multiple bank txns = one larger payment/JE — confirm sum matches).
-4. Bank memos often contain doc numbers (INV-2025-0312, PV/2025/00045) — strong signal. Cross-reference against open_payments[].linked_document and open_documents[].
-5. Recurring same-vendor same-amount weekly/monthly = likely subscription / rent / utility.
-6. If a memo cites a doc number that's NOT in candidates → flag as missing_data with the cited number.
-7. If a bank txn has no plausible match (no candidate within 30 days + 15% amount) → unmatched_reason.
+Each open_journal_entries[] item now carries:
+  • number, date, amount, description, reference
+  • source_doc { number, type, date }   — null when JE is a manual entry
+  • contact { name, tax_id }            — counterparty when the source doc has one
+Use source_doc.number / source_doc.date to follow doc-number citations in bank memos, and contact.name (+ tax_id) to confirm payer/payee identity.
+
+Matching priority — apply IN ORDER, stop when a confident pick is found:
+
+A. EXACT 1:1 — bank.amount == JE.amount AND |bank.date − JE.date| ≤ 1 day AND (bank.payee matches contact.name OR memo cites source_doc.number). Confidence ≥ 0.95.
+
+B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
+
+C. AGGREGATOR / WALLET BUNDLING (KSHOP, TrueMoney, ShopeePay, Lazada Wallet, marketplace settlement):
+   When bank.payee or memo contains an aggregator/wallet name (KSHOP, KASIKORN SHOP, KBank Shop, K-Plus Shop, TrueMoney Wallet, ShopeePay, LineMan, GrabPay, Shopee, Lazada, NextPay, OmiseGO, Stripe-payouts, Square, …) the deposit is normally a DAILY ROLLUP of many customer receipts:
+     • Treat it as M:1 with the day's open_payments / JEs whose contacts are the END CUSTOMERS who paid via that channel.
+     • Same calendar day is the strongest signal; allow ±1 day for cut-off lag.
+     • The sum may be slightly less than the gross (aggregator fee deducted). If sum exceeds bank.amount by ≤ 3% flag the candidate set anyway — note the fee in reasoning.
+
+D. NET-SETTLEMENT (รับมาแล้วหักจ่ายในตัว): a customer's receipt + a same-day or near-same-day PaymentVoucher to the SAME contact may net out so the bank deposit equals (sum of receipts − sum of payment vouchers). Look for open_journal_entries with matching contact.tax_id where Σ(receipt-source JEs) − Σ(PV-source JEs) ≈ bank.amount. Mark matchType ""OneBankToManyDocs"" with the participating JEs.
+
+E. M:1 SPLITS (multi-invoice settlement): bank.amount = exact sum of 2-5 JEs for ONE contact within ±5 days. Confirm Σ matches within 0.50 baht.
+
+F. 1:M AGGREGATIONS: multiple small bank txns sum to one larger open JE/Payment.
+
+G. RECURRING: same-vendor same-amount weekly/monthly is a subscription / rent / utility — match against the recurring JE.
+
+H. If memo cites a doc number that's NOT in candidates → missing_data with the cited number.
+
+I. If nothing within 30 days + 15% amount AND no contact / memo signal → unmatched with a short reason.
+
+Confidence scoring — be honest. The amounts MUST add up (within ±0.50) for any match you call ≥ 0.90. If amounts differ by even 1 baht, drop to ≤ 0.85 and SAY ""ยอดต่าง X บาท"" in reasoning. Never claim 0.95 confidence on a row whose own reasoning admits a delta.
 
 Strict JSON output (NO prose outside JSON):
 {
@@ -79,7 +102,18 @@ Strict JSON output (NO prose outside JSON):
 
     public sealed record OpenJeInput(
         string Id, string Number, DateTime Date, decimal NetAmount,
-        string? Description, string? Reference);
+        string? Description, string? Reference,
+        // Source-document context — populated when the JE came from a sale /
+        // purchase / receipt / payment-voucher. NULL on manual JEs. Lets AI
+        // do contact-aware 1:1 matching ("bank payee = Take Time Nature
+        // Resort → JE whose source Receipt belongs to that contact") and
+        // aggregator detection ("KSHOP deposit = sum of JEs for customers
+        // who paid via KSHOP on the same day").
+        string? SourceDocNumber = null,
+        string? SourceDocType = null,
+        DateTime? SourceDocDate = null,
+        string? ContactName = null,
+        string? ContactTaxId = null);
 
     public sealed record CompanyContext(
         string Name, string? TaxId, string BaseCurrency,
@@ -165,6 +199,18 @@ Strict JSON output (NO prose outside JSON):
                 amount = j.NetAmount,
                 description = j.Description,
                 reference = j.Reference,
+                // Source document + contact — drives contact-aware matching.
+                source_doc = j.SourceDocNumber == null ? null : new
+                {
+                    number = j.SourceDocNumber,
+                    type = j.SourceDocType,
+                    date = j.SourceDocDate?.ToString("yyyy-MM-dd"),
+                },
+                contact = j.ContactName == null ? null : new
+                {
+                    name = j.ContactName,
+                    tax_id = j.ContactTaxId,
+                },
             }),
         };
         return new AiRequest

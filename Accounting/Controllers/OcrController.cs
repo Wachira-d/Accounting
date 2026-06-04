@@ -960,7 +960,15 @@ public class OcrController : ControllerBase
         if (file == null || !System.IO.File.Exists(file.StoragePath))
             return NotFound();
 
-        return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream", file.OriginalFileName);
+        // Force inline display — passing the filename makes ASP.NET emit
+        // 'Content-Disposition: attachment', which triggered a download on the
+        // OCR review page instead of showing the document inside the viewer.
+        // Set the header manually with 'inline' + escape the filename for a
+        // safe RFC 6266 fallback (Thai filenames pass through fine on RFC 5987
+        // user-agents and the percent-encoded form is the strict fallback).
+        var safeName = Uri.EscapeDataString(file.OriginalFileName ?? "document");
+        Response.Headers.ContentDisposition = $"inline; filename=\"{safeName}\"; filename*=UTF-8''{safeName}";
+        return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream");
     }
 
     /// <summary>

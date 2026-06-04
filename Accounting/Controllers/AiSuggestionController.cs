@@ -114,7 +114,11 @@ public class AiSuggestionController : ControllerBase
         string LineDescription,
         decimal Amount,
         string? Currency,
-        string? CurrentAccountCode);
+        string? CurrentAccountCode,
+        // Direct counterparty hint — for documents still in the create form
+        // where no source invoice exists yet but the operator has already
+        // picked the contact. Used when SourceInvoiceId is Empty.
+        Guid? ContactId = null);
 
     [HttpPost("payment-voucher/suggest-account")]
     public async Task<ActionResult<ApiResponse<object>>> SuggestPaymentVoucherAccount(
@@ -123,23 +127,39 @@ public class AiSuggestionController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.LineDescription))
             return BadRequest(new ApiResponse<object>(false, null, "LineDescription ห้ามว่าง"));
 
-        // Load source invoice for vendor context. NULL = treat as ad-hoc.
-        // (Contact has no Industry column today, so vendorIndustry stays
-        // null. Future enrichment can fill from DBD business-type lookup.)
-        var src = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == req.SourceInvoiceId && d.CompanyId == companyId && !d.IsDeleted)
-            .Select(d => new
-            {
-                d.Id, d.DocumentNumber, d.DocumentType, d.ContactId,
-                ContactName = d.Contact != null ? d.Contact.Name : null,
-                ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
-            })
-            .FirstOrDefaultAsync(ct);
+        // Resolve vendor context. Source invoice takes priority (richest
+        // signal — gives doc type / amount baseline). Otherwise fall back to
+        // the contact id passed directly from the in-progress create form so
+        // AI still sees the supplier name + tax id when classifying a
+        // brand-new document the operator hasn't saved yet.
+        string? vendorName = null, vendorTaxId = null;
+        if (req.SourceInvoiceId != Guid.Empty)
+        {
+            var src = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == req.SourceInvoiceId && d.CompanyId == companyId && !d.IsDeleted)
+                .Select(d => new
+                {
+                    ContactName = d.Contact != null ? d.Contact.Name : null,
+                    ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
+                })
+                .FirstOrDefaultAsync(ct);
+            vendorName = src?.ContactName;
+            vendorTaxId = src?.ContactTaxId;
+        }
+        if (vendorName == null && req.ContactId.HasValue && req.ContactId.Value != Guid.Empty)
+        {
+            var c = await _db.Contacts.AsNoTracking()
+                .Where(x => x.Id == req.ContactId.Value && x.CompanyId == companyId)
+                .Select(x => new { x.Name, x.TaxId })
+                .FirstOrDefaultAsync(ct);
+            vendorName = c?.Name;
+            vendorTaxId = c?.TaxId;
+        }
 
         var result = await _docAi.SuggestPaymentVoucherAccountingAsync(
             companyId, req.SourceInvoiceId,
-            vendorName: src?.ContactName,
-            vendorTaxId: src?.ContactTaxId,
+            vendorName: vendorName,
+            vendorTaxId: vendorTaxId,
             vendorIndustry: null,
             lineDescription: req.LineDescription,
             amount: req.Amount,

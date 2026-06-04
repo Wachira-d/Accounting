@@ -1101,7 +1101,14 @@
             </table>
             <div style="font-size:11px;color:#7f1d1d;margin-top:6px">💡 สร้างเอกสารที่ขาดก่อน แล้วยิง AI อีกครั้ง — รายการที่เคยขาดจะ match ได้</div>
           </div>`;
-        const matchRows = (plan.matches || []).map((m, idx) => {
+        // Show calibrated-low-confidence matches FIRST so the operator reviews
+        // suspects (amount mismatches the server downgraded) before the easy
+        // wins. Stable order: lower confidence first; ties keep arrival order.
+        const sortedMatches = [...(plan.matches || [])]
+          .map((m, idx) => ({ m, idx }))
+          .sort((a, b) => (a.m.confidence ?? 1) - (b.m.confidence ?? 1) || a.idx - b.idx)
+          .map(x => x.m);
+        const matchRows = sortedMatches.map((m, idx) => {
           const conf = (m.confidence * 100).toFixed(0);
           const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
           const cands = (m.candidates || []).map(c => `${c.candidateType}:${c.candidateId.slice(0,8)}… (${fmtAmt(c.amount)})`).join(' + ');
@@ -1129,7 +1136,7 @@
             <span style="font-size:13px;color:#16a34a">Match: <b>${(plan.matches||[]).length}</b></span>
             <span style="font-size:13px;color:#d97706">Unmatched: <b>${(plan.unmatched||[]).length}</b></span>
             <span style="font-size:13px;color:#dc2626">Missing data: <b>${(plan.missingData||[]).length}</b></span>
-            ${plan.feedbackId ? `<button class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#0f172a" onclick="Page.viewBulkAiRaw('${esc(plan.feedbackId)}')">🔍 ดู AI response เต็ม</button>` : ''}
+            <button class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#0f172a" onclick="Page.viewBulkAiRaw('${esc(plan.feedbackId || '')}')">🔍 ดู AI response เต็ม</button>
           </div>
           ${plan.reasoning ? `<div style="background:#f8fafc;padding:10px 14px;border-radius:6px;font-size:13px;color:#475569;margin-bottom:12px">💭 ${esc(plan.reasoning)}</div>` : ''}
           ${warningsBlock}
@@ -1242,7 +1249,14 @@
           <div id="bulkAiRawContent" style="overflow:auto;flex:1;font-size:12px"><div class="text-sm" style="color:#64748b">กำลังโหลด…</div></div>
         </div>`;
         try {
-          const r = await fetch(`/api/companies/${cid}/ai-feedback/${feedbackId}/raw`,
+          // Use the specific feedback id when present, else fall back to the
+          // latest BulkBankStatementMatch row for this company — covers the
+          // old build that didn't carry feedbackId through to the plan, plus
+          // any future page that wants a 'show me last AI call' affordance.
+          const url = feedbackId
+            ? `/api/companies/${cid}/ai-feedback/${feedbackId}/raw`
+            : `/api/companies/${cid}/ai-feedback/latest?featureKey=BulkBankStatementMatch`;
+          const r = await fetch(url,
             { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } });
           const j = await r.json();
           if (!j.success || !j.data) throw new Error(j.message || 'ไม่พบข้อมูล');

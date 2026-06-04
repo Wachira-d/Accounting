@@ -317,13 +317,24 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // (Comparing to a captured Guid translates to SQL cleanly; a nullable
         // .HasValue ternary inside the projection does not.)
         var linkedAcct = bank.LinkedAccountId ?? Guid.Empty;
-        var jeRows = await _db.JournalEntries.AsNoTracking()
-            .Where(j => j.CompanyId == companyId && !j.IsDeleted
-                        && j.Status == JournalEntryStatus.Posted
-                        && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd)
-            .Where(j => !matchedJeIds.Contains(j.Id))
-            .OrderByDescending(j => j.EntryDate)
-            .Select(j => new
+        // Pull the JE + (when it originated from a Document) the source
+        // document's number/type/date and the counterparty contact. AI was
+        // previously seeing only entry number + amount, so it could not do
+        // payee-based 1:1 matching ('bank Payee=Take Time Nature Resort →
+        // JE whose source Receipt was for that contact'). Joining via
+        // SourceDocumentId fixes that without an extra round-trip.
+        var jeRows = await (
+            from j in _db.JournalEntries.AsNoTracking()
+            where j.CompanyId == companyId && !j.IsDeleted
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd
+                && !matchedJeIds.Contains(j.Id)
+            from src in _db.Documents.AsNoTracking()
+                .Where(d => j.SourceDocumentId != null && d.Id == j.SourceDocumentId).DefaultIfEmpty()
+            from c in _db.Contacts.AsNoTracking()
+                .Where(co => src != null && co.Id == src.ContactId).DefaultIfEmpty()
+            orderby j.EntryDate descending
+            select new
             {
                 j.Id, j.EntryNumber, j.EntryDate, j.Description, j.Reference,
                 // Amount on the bank-linked line (signed: +debit = money in,
@@ -333,8 +344,16 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                              .Sum(l => l.DebitAmount - l.CreditAmount),
                 // Gross transaction size — total debits (= total credits).
                 GrossAmount = j.Lines.Sum(l => l.DebitAmount),
-            })
-            .ToListAsync(ct);
+                // Source document context — null when this JE was a manual
+                // entry not tied to a sale/purchase document. AI uses these
+                // to do contact-aware matching + aggregator (KSHOP-style)
+                // pattern detection.
+                SourceDocNumber = src != null ? src.DocumentNumber : null,
+                SourceDocType = src != null ? (DocumentType?)src.DocumentType : null,
+                SourceDocDate = src != null ? (DateTime?)src.DocumentDate : null,
+                ContactName = c != null ? c.Name : null,
+                ContactTaxId = c != null ? c.TaxId : null,
+            }).ToListAsync(ct);
 
         // Hard ceiling so a pathological dataset can't exceed a sane prompt
         // size (DeepSeek-V3 context = 128k tokens). With a ±5-day window the
@@ -350,7 +369,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var amount = j.BankLineNet != 0m ? Math.Abs(j.BankLineNet) : j.GrossAmount;
             return new BulkBankMatchPrompt.OpenJeInput(
                 j.Id.ToString(), j.EntryNumber, j.EntryDate, amount,
-                j.Description, j.Reference);
+                j.Description, j.Reference,
+                j.SourceDocNumber,
+                j.SourceDocType?.ToString(),
+                j.SourceDocDate,
+                j.ContactName,
+                j.ContactTaxId);
         }).ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────
@@ -466,6 +490,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             }
         }
 
+        // ── 8a. Post-AI subset-sum sweep — DeepSeek consistently leaves
+        // ── 'one bank deposit = many JEs' style lumps in the unmatched
+        // ── list because trying combinations is combinatorial and the
+        // ── chat model doesn't enumerate them. We do that locally here:
+        // ── for each unmatched bank txn, search the unmatched-JE pool
+        // ── (within a date window) for a subset whose signed sum equals
+        // ── the bank amount within ±0.50 baht. Sizes 2-4 covered, both
+        // ── 'all in' (+ + +) and 'offset' patterns (+ −, etc.) so cases
+        // ── like 'รับ 21,700 − ค่าธรรมเนียม 200 = 21,500 ในบัญชี' fly.
+        parsed = TryCombineLumpedJes(parsed, txns, openJes);
+
         // ── 8b. Per-match child feedback rows — so when user accepts /
         // ── edits each row in the modal, BankMatchDistillationModel can
         // ── learn per-signature instead of one big undifferentiated row.
@@ -483,14 +518,27 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 matchesWithFids.Add(m with { PerMatchFeedbackId = Guid.Empty });
                 continue;
             }
-            var answerJson = JsonSerializer.Serialize(m.Candidates.Select(c => new
+
+            // Trust-but-verify the confidence AI returned: it routinely
+            // reports 0.95 in the same row whose own 'reasoning' admits the
+            // amounts don't match. Cap confidence using OBJECTIVE signals
+            // computed from the actual numbers — amount delta vs the bank txn
+            // and date proximity to the candidate's source row when known. AI
+            // confidence then becomes a ceiling; we never push it higher.
+            var (calibratedConf, mismatchNote) = CalibrateConfidence(bt, m);
+            var calReason = string.IsNullOrEmpty(mismatchNote)
+                ? m.Reasoning
+                : (string.IsNullOrEmpty(m.Reasoning) ? mismatchNote : m.Reasoning + " · " + mismatchNote);
+            var calibratedMatch = m with { Confidence = calibratedConf, Reasoning = calReason };
+
+            var answerJson = JsonSerializer.Serialize(calibratedMatch.Candidates.Select(c => new
             {
                 type = c.CandidateType, id = c.CandidateId.ToString(), amount = c.Amount,
             }));
             var perFid = await SynthesisePerMatchFeedbackAsync(
-                companyId, m.BankTxnId, bt, answerJson, m.Confidence,
+                companyId, calibratedMatch.BankTxnId, bt, answerJson, calibratedMatch.Confidence,
                 resp.FeedbackId ?? Guid.Empty, ct);
-            matchesWithFids.Add(m with { PerMatchFeedbackId = perFid });
+            matchesWithFids.Add(calibratedMatch with { PerMatchFeedbackId = perFid });
         }
 
         // Collect truncation + AI-side warnings into one cohesive list.
@@ -811,6 +859,216 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             i = end + 1;
         }
         return recovered;
+    }
+
+    /// <summary>Post-AI sweep that promotes lumped-deposit unmatched lines
+    /// into M:1 matches. For each still-unmatched bank txn it searches the
+    /// pool of still-unmatched JEs within ±7 days for a 2-4 JE subset whose
+    /// signed sum equals the bank amount within ±0.50 baht. Sign mixing
+    /// (e.g. รับ 1000 − ส่วนลด 50 = 950 ในบัญชี) is enumerated for sizes 2
+    /// and 3 so income-offsets-expense cases match. Sizes ≥4 stay all-
+    /// positive to keep the search tractable. Pure server-side — no extra
+    /// AI call, so it costs nothing per use. Returns an updated
+    /// ParsedResponse with the new matches added + the matched bank txns
+    /// removed from Unmatched + a warning summarising the recovery.</summary>
+    private static ParsedResponse TryCombineLumpedJes(
+        ParsedResponse parsed,
+        IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> bankTxns,
+        IReadOnlyList<BulkBankMatchPrompt.OpenJeInput> jes)
+    {
+        // Bank ids AI already matched + JE ids it already consumed.
+        var matchedBankIds = parsed.Matches.Select(m => m.BankTxnId).ToHashSet();
+        var consumedJeIds = parsed.Matches.SelectMany(m => m.Candidates)
+            .Where(c => c.CandidateType.Equals("JournalEntry", StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.CandidateId).ToHashSet();
+
+        // Resolve the unmatched bank txns + remaining JE pool to Guid+decimal.
+        var unmatchedBank = new List<(Guid Id, DateTime Date, decimal Amount, string? Memo)>();
+        foreach (var t in bankTxns)
+        {
+            if (!Guid.TryParse(t.Id, out var bid)) continue;
+            if (matchedBankIds.Contains(bid)) continue;
+            // AI was told amount=Abs(bank), so use the same sign-free magnitude.
+            unmatchedBank.Add((bid, t.Date, Math.Abs(t.Amount), t.Memo));
+        }
+        var pool = new List<(Guid Id, DateTime Date, decimal Amount, string Number)>();
+        foreach (var j in jes)
+        {
+            if (!Guid.TryParse(j.Id, out var jid)) continue;
+            if (consumedJeIds.Contains(jid)) continue;
+            pool.Add((jid, j.Date, Math.Abs(j.NetAmount), j.Number));
+        }
+        if (unmatchedBank.Count == 0 || pool.Count < 2)
+            return parsed;
+
+        var added = new List<ProposedMatch>();
+        var clearedBankIds = new HashSet<Guid>();
+
+        foreach (var bt in unmatchedBank)
+        {
+            // Date-window pre-filter — typical lumped deposits land within a
+            // week of the underlying receipts. Reduces n from ~200 to ~30 for
+            // the size-3 / size-4 inner loops.
+            var window = pool
+                .Where(p => Math.Abs((p.Date - bt.Date).TotalDays) <= 7)
+                .Where(p => !consumedJeIds.Contains(p.Id))   // re-check (previous loop may have taken some)
+                .ToList();
+            if (window.Count < 2) continue;
+
+            var best = FindBestCombination(bt.Amount, window);
+            if (best == null) continue;
+
+            // Build the match — store SIGNED amounts on each candidate so
+            // CalibrateConfidence's signed-sum vs bank check shows delta≈0
+            // instead of overshooting on the unsigned magnitude.
+            var cands = best.Items
+                .Select(i => new MatchCandidate(i.Je.Id, "JournalEntry", i.Sign * i.Je.Amount))
+                .ToList();
+            var signedParts = string.Join(" ", best.Items
+                .Select((i, idx) =>
+                {
+                    var sign = i.Sign >= 0 ? (idx == 0 ? "" : "+ ") : "− ";
+                    return $"{sign}{i.Je.Number}({i.Je.Amount:N2})";
+                }));
+            var reason = $"รวม {best.Items.Count} JE: {signedParts} = {best.Items.Sum(i => i.Sign * i.Je.Amount):N2}";
+            // Confidence starts lower than AI's 1:1 picks (bigger guess space)
+            // and decays with subset size; calibrator runs next and may lower
+            // further if delta is non-zero.
+            var baseConf = best.Items.Count switch { 2 => 0.80m, 3 => 0.70m, _ => 0.60m };
+            added.Add(new ProposedMatch(bt.Id, "OneBankToManyDocs", cands, baseConf, reason, Guid.Empty));
+            clearedBankIds.Add(bt.Id);
+            // Mark these JEs as taken so the next bank txn can't claim them.
+            foreach (var item in best.Items) consumedJeIds.Add(item.Je.Id);
+        }
+
+        if (added.Count == 0) return parsed;
+
+        var newMatches = parsed.Matches.Concat(added).ToList();
+        var newUnmatched = parsed.Unmatched.Where(u => !clearedBankIds.Contains(u.BankTxnId)).ToList();
+        var newWarnings = parsed.Warnings.Concat(new[]
+        {
+            $"พบเพิ่ม {added.Count} รายการที่เป็นการรวม JE หลายตัวเป็นยอดเดียว (server-side combination search)"
+        }).ToList();
+        return parsed with { Matches = newMatches, Unmatched = newUnmatched, Warnings = newWarnings };
+    }
+
+    private sealed record JeCombo(IReadOnlyList<(JeCand Je, int Sign)> Items, decimal Delta);
+    private sealed record JeCand(Guid Id, DateTime Date, decimal Amount, string Number);
+
+    /// <summary>Subset-sum search for the best (smallest delta, smallest size)
+    /// JE combination matching target ±0.50. Sizes 2-4 with sign mixing on
+    /// 2-3 (the M:1 + offset case the user described); size 4 stays all-
+    /// positive to keep the inner loop bounded.</summary>
+    private static JeCombo? FindBestCombination(decimal target, List<(Guid Id, DateTime Date, decimal Amount, string Number)> pool)
+    {
+        const decimal Tol = 0.50m;
+        var p = pool.Select(x => new JeCand(x.Id, x.Date, x.Amount, x.Number)).ToList();
+        JeCombo? best = null;
+
+        bool Improves(JeCombo? cur, decimal delta, int size)
+            => cur == null || delta < cur.Delta || (delta == cur.Delta && size < cur.Items.Count);
+
+        // Size 2 — 4 sign patterns (++, +−, −+ won't add anything new since
+        // |−A+B| == |A−B|; skip −− since both negative can't sum to positive target).
+        for (int i = 0; i < p.Count; i++)
+        for (int j = i + 1; j < p.Count; j++)
+        {
+            (int si, int sj)[] signs = { (+1, +1), (+1, -1), (-1, +1) };
+            foreach (var (si, sj) in signs)
+            {
+                var s = si * p[i].Amount + sj * p[j].Amount;
+                if (s <= 0) continue;
+                var d = Math.Abs(s - target);
+                if (d <= Tol && Improves(best, d, 2))
+                    best = new JeCombo(new (JeCand, int)[] { (p[i], si), (p[j], sj) }, d);
+            }
+        }
+        if (best is { Delta: <= 0.01m }) return best;   // exact size-2 → take it
+
+        // Size 3 — all-positive + each one-negative variant (covers 'รับ 3
+        // ใบ หัก ค่าธรรมเนียม 1 ใบ').
+        for (int i = 0; i < p.Count; i++)
+        for (int j = i + 1; j < p.Count; j++)
+        for (int k = j + 1; k < p.Count; k++)
+        {
+            (int si, int sj, int sk)[] signs = {
+                (+1, +1, +1),
+                (-1, +1, +1), (+1, -1, +1), (+1, +1, -1),
+            };
+            foreach (var (si, sj, sk) in signs)
+            {
+                var s = si * p[i].Amount + sj * p[j].Amount + sk * p[k].Amount;
+                if (s <= 0) continue;
+                var d = Math.Abs(s - target);
+                if (d <= Tol && Improves(best, d, 3))
+                    best = new JeCombo(new (JeCand, int)[] { (p[i], si), (p[j], sj), (p[k], sk) }, d);
+            }
+        }
+        if (best != null) return best;
+
+        // Size 4 — all-positive only. Pool already trimmed by date window so
+        // this is normally < 30C4 ≈ 27k iterations, fast enough.
+        for (int a = 0; a < p.Count; a++)
+        for (int b = a + 1; b < p.Count; b++)
+        for (int c = b + 1; c < p.Count; c++)
+        for (int e = c + 1; e < p.Count; e++)
+        {
+            var s = p[a].Amount + p[b].Amount + p[c].Amount + p[e].Amount;
+            var d = Math.Abs(s - target);
+            if (d <= Tol && Improves(best, d, 4))
+                best = new JeCombo(new (JeCand, int)[] { (p[a], +1), (p[b], +1), (p[c], +1), (p[e], +1) }, d);
+        }
+        return best;
+    }
+
+    /// <summary>Derive an objective confidence ceiling for a proposed match
+    /// from the actual numbers, instead of blindly trusting AI's stated value.
+    /// The observed failure: AI returned <c>confidence: 0.95</c> on a row whose
+    /// own <c>reasoning</c> admitted a 210 baht delta between bank txn and
+    /// candidate. Rules:
+    ///   • Amount delta within 0.50 baht                  → no penalty
+    ///   • Within 1% (covers small bank fees / WHT rounding) → cap 0.85
+    ///   • Within 5%                                       → cap 0.55
+    ///   • Otherwise                                       → cap 0.30 + warn
+    /// For M:1 matches the candidate amounts are summed before comparison.
+    /// The returned confidence is min(AI confidence, computed ceiling) so AI
+    /// can only lower it, never inflate it; mismatchNote describes the delta
+    /// in plain Thai and is appended to the reasoning shown in the UI.</summary>
+    private static (decimal Confidence, string MismatchNote) CalibrateConfidence(
+        Models.Entities.BankTransaction bankTxn, ProposedMatch match)
+    {
+        var bankAmt = Math.Abs(bankTxn.Amount);
+        // Signed sum so combination matches that include negative offsets
+        // (รับ - หัก) come out correct. For AI-emitted 1:1 / M:1 the amounts
+        // are always positive so signed sum equals unsigned sum.
+        var sumCand = match.Candidates.Sum(c => c.Amount);
+        var delta = Math.Abs(bankAmt - sumCand);
+        var pct = bankAmt > 0 ? delta / bankAmt : 0m;
+
+        decimal ceiling;
+        string note;
+        if (delta <= 0.50m)
+        {
+            ceiling = 1.00m;
+            note = "";
+        }
+        else if (pct <= 0.01m)   // 1%
+        {
+            ceiling = 0.85m;
+            note = $"ยอดต่าง {delta:N2} บาท (≤1% — อาจเป็นค่าธรรมเนียม/ปัดเศษ)";
+        }
+        else if (pct <= 0.05m)   // 5%
+        {
+            ceiling = 0.55m;
+            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — ตรวจก่อนยืนยัน";
+        }
+        else
+        {
+            ceiling = 0.30m;
+            note = $"⚠ ยอดต่างมาก {delta:N2} บาท ({pct:P1}) — bank {bankAmt:N2} vs candidate {sumCand:N2} — อาจไม่ใช่คู่เดียวกัน";
+        }
+        var calibrated = Math.Min(match.Confidence, ceiling);
+        return (calibrated, note);
     }
 
     private static Guid? TryGuid(JsonElement el, string prop)
