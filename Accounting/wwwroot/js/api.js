@@ -293,6 +293,7 @@ const API = {
       getMatchCandidates: (txnId) => API.get(`${base}/bank/transactions/${txnId}/match-candidates`),
       createJeFromTxn: (txnId, d) => API.post(`${base}/bank/transactions/${txnId}/create-je`, d),
       getReconciliationDetail: (accountId) => API.get(`${base}/bank/accounts/${accountId}/reconciliation-detail`),
+      getMatchInfo: (txnId) => API.get(`${base}/bank/transactions/${txnId}/match-info`),
       aiSuggestMatch: (txnId) => API.get(`${base}/bank/transactions/${txnId}/ai-suggest-match`),
       bulkDeleteBankTransactions: (d) => API.post(`${base}/bank/transactions/bulk-delete`, d),
       // Reconciliation Group (M:N + Net-off)
