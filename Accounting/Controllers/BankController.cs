@@ -490,6 +490,103 @@ public class BankController : ControllerBase
             items, cpTotal, agree, groupNumber)));
     }
 
+    public sealed record MatchIssue(Guid TxnId, DateTime Date, string Type, string? Description,
+        decimal BankAmount, decimal MatchedAmount, decimal Difference, string CounterpartLabel);
+    public sealed record MatchIssuesResponse(int Count, decimal TotalDifference, List<MatchIssue> Issues);
+
+    /// <summary>
+    /// Lists already-matched bank lines whose counterpart amount(s) do NOT equal
+    /// the bank amount — the legacy bad matches made before the amount guard
+    /// existed. Lets the UI flag them and the operator unmatch + redo.
+    /// </summary>
+    [HttpGet("accounts/{accountId:guid}/match-issues")]
+    public async Task<ActionResult<ApiResponse<MatchIssuesResponse>>> MatchIssues(
+        Guid companyId, Guid accountId)
+    {
+        var bankCoaId = await _db.Set<BankAccount>().AsNoTracking()
+            .Where(a => a.Id == accountId && a.CompanyId == companyId)
+            .Select(a => a.LinkedAccountId).FirstOrDefaultAsync();
+
+        var txns = await _db.Set<BankTransaction>().AsNoTracking()
+            .Where(t => t.BankAccountId == accountId && t.CompanyId == companyId && !t.IsDeleted
+                && t.ReconciliationStatus == ReconciliationStatus.Matched)
+            .OrderByDescending(t => t.TransactionDate)
+            .ToListAsync();
+
+        // Expand every txn's counterpart id set (single + legacy JSON + group).
+        var groupIds = txns.Where(t => t.ReconciliationGroupId.HasValue)
+            .Select(t => t.ReconciliationGroupId!.Value).Distinct().ToList();
+        // Empty groupIds → Contains yields an empty set, so this is safe.
+        var groupItems = await _db.ReconciliationGroupItems.AsNoTracking()
+            .Where(i => groupIds.Contains(i.GroupId) && i.ItemType != ReconciliationItemType.BankTransaction)
+            .Select(i => new { i.GroupId, i.ItemId }).ToListAsync();
+
+        var idsByTxn = new Dictionary<Guid, List<Guid>>();
+        foreach (var t in txns)
+        {
+            var ids = new List<Guid>();
+            if (t.MatchedPaymentId.HasValue) ids.Add(t.MatchedPaymentId.Value);
+            if (t.MatchedJournalEntryId.HasValue) ids.Add(t.MatchedJournalEntryId.Value);
+            if (!string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson))
+                try { ids.AddRange(System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!) ?? new()); } catch { }
+            if (t.ReconciliationGroupId.HasValue)
+                ids.AddRange(groupItems.Where(g => g.GroupId == t.ReconciliationGroupId.Value).Select(g => g.ItemId));
+            idsByTxn[t.Id] = ids.Where(i => i != Guid.Empty).Distinct().ToList();
+        }
+
+        var allIds = idsByTxn.Values.SelectMany(x => x).Distinct().ToList();
+        var payAmts = await _db.Payments.AsNoTracking()
+            .Where(p => allIds.Contains(p.Id) && p.CompanyId == companyId)
+            .Select(p => new { p.Id, p.Amount }).ToListAsync();
+        var payMap = payAmts.ToDictionary(p => p.Id, p => p.Amount);
+        var payIdSet = payMap.Keys.ToHashSet();
+
+        // JE net on the bank account (per JE), with total fallback for JEs that
+        // don't post to it.
+        var jeIds = allIds.Where(i => !payIdSet.Contains(i)).ToList();
+        var jeNet = new Dictionary<Guid, decimal>();
+        if (jeIds.Count > 0 && bankCoaId.HasValue)
+        {
+            var lines = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => jeIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
+                .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount }).ToListAsync();
+            jeNet = lines.GroupBy(l => l.JournalEntryId).ToDictionary(g => g.Key, g => Math.Abs(g.Sum(x => x.Net)));
+        }
+        var jeNoBankLine = jeIds.Where(id => !jeNet.ContainsKey(id)).ToList();
+        if (jeNoBankLine.Count > 0)
+        {
+            var totals = await _db.JournalEntries.AsNoTracking()
+                .Where(j => jeNoBankLine.Contains(j.Id))
+                .Select(j => new { j.Id, j.TotalDebit }).ToListAsync();
+            foreach (var x in totals) jeNet[x.Id] = x.TotalDebit;
+        }
+
+        var typeMap = new Dictionary<BankTransactionType, string>
+        {
+            [BankTransactionType.Deposit] = "ฝาก", [BankTransactionType.Withdrawal] = "ถอน",
+            [BankTransactionType.Transfer] = "โอน", [BankTransactionType.Fee] = "ค่าธรรมเนียม",
+            [BankTransactionType.Interest] = "ดอกเบี้ย",
+        };
+
+        var issues = new List<MatchIssue>();
+        foreach (var t in txns)
+        {
+            var ids = idsByTxn[t.Id];
+            if (ids.Count == 0) continue;   // matched but no resolvable counterpart — skip (separate concern)
+            decimal matchedAmt = ids.Sum(id => payMap.TryGetValue(id, out var pa) ? pa : jeNet.GetValueOrDefault(id, 0));
+            var bankAmt = Math.Abs(t.Amount);
+            var diff = Math.Abs(matchedAmt - bankAmt);
+            if (diff <= 0.01m) continue;
+            issues.Add(new MatchIssue(t.Id, t.TransactionDate,
+                typeMap.GetValueOrDefault(t.TransactionType, t.TransactionType.ToString()),
+                t.Description ?? t.Payee, bankAmt, matchedAmt, matchedAmt - bankAmt,
+                ids.Count > 1 ? $"{ids.Count} รายการ" : ""));
+        }
+
+        return Ok(new ApiResponse<MatchIssuesResponse>(true, new MatchIssuesResponse(
+            issues.Count, issues.Sum(i => Math.Abs(i.Difference)), issues)));
+    }
+
     [HttpDelete("transactions/{transactionId:guid}")]
     public async Task<ActionResult<ApiResponse<int>>> DeleteTransaction(Guid companyId, Guid transactionId)
     {

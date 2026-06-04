@@ -294,6 +294,7 @@ const API = {
       createJeFromTxn: (txnId, d) => API.post(`${base}/bank/transactions/${txnId}/create-je`, d),
       getReconciliationDetail: (accountId) => API.get(`${base}/bank/accounts/${accountId}/reconciliation-detail`),
       getMatchInfo: (txnId) => API.get(`${base}/bank/transactions/${txnId}/match-info`),
+      getMatchIssues: (accountId) => API.get(`${base}/bank/accounts/${accountId}/match-issues`),
       aiSuggestMatch: (txnId) => API.get(`${base}/bank/transactions/${txnId}/ai-suggest-match`),
       bulkDeleteBankTransactions: (d) => API.post(`${base}/bank/transactions/bulk-delete`, d),
       // Reconciliation Group (M:N + Net-off)
