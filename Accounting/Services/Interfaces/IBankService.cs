@@ -19,6 +19,10 @@ public interface IBankService
     Task<List<BankTransactionResponse>> GetUnreconciledAsync(Guid companyId, Guid bankAccountId);
     Task<List<BankTransactionResponse>> AutoMatchAsync(Guid companyId, Guid bankAccountId);
 
+    // Shared match resolution — single source of truth for "what matched to what".
+    Task<ResolvedMatchDto?> ResolveMatchAsync(Guid companyId, Guid txnId);
+    Task<List<ResolvedMatchDto>> ResolveMatchesAsync(Guid companyId, Guid bankAccountId);
+
     // AI Reconciliation
     Task<AiReconciliationResult> AiSmartMatchAsync(Guid companyId, Guid bankAccountId, AiReconciliationRequest request);
     Task<ReconciliationSummaryDto> GetReconciliationSummaryAsync(Guid companyId, Guid bankAccountId);

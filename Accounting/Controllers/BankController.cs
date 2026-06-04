@@ -289,7 +289,7 @@ public class BankController : ControllerBase
 
     public sealed record MatchedLine(Guid TxnId, DateTime Date, decimal Amount, string Type,
         string? Description, string? Reference, string CounterpartKind, string CounterpartLabel,
-        decimal CounterpartAmount);
+        decimal CounterpartAmount, bool AmountsAgree);
     public sealed record GlPosting(string JeNumber, DateTime Date, string? Description,
         decimal Net, bool LinkedToBankTxn);
     public sealed record ReconDetailResponse(decimal BankBalance, decimal BookBalance, decimal Difference,
@@ -311,54 +311,32 @@ public class BankController : ControllerBase
             .FirstOrDefaultAsync(a => a.Id == accountId && a.CompanyId == companyId);
         if (account == null) return NotFound(new ApiResponse<ReconDetailResponse>(false, null, "ไม่พบบัญชีธนาคาร"));
 
-        var txns = await _db.Set<BankTransaction>().AsNoTracking()
+        // Resolve every matched line through the shared resolver — so the
+        // counterpart amount reflects the FULL match (single + M:1 JSON + M:N
+        // group), identical to the popup / issues list.
+        var resolved = await _bankService.ResolveMatchesAsync(companyId, accountId);
+        var txnRef = await _db.Set<BankTransaction>().AsNoTracking()
             .Where(t => t.BankAccountId == accountId && t.CompanyId == companyId && !t.IsDeleted
                 && t.ReconciliationStatus == ReconciliationStatus.Matched)
-            .OrderByDescending(t => t.TransactionDate)
-            .ToListAsync();
+            .Select(t => new { t.Id, t.Reference }).ToListAsync();
+        var refById = txnRef.ToDictionary(x => x.Id, x => x.Reference);
 
-        // Resolve counterpart labels in bulk.
-        var payIds = txns.Where(t => t.MatchedPaymentId.HasValue).Select(t => t.MatchedPaymentId!.Value).Distinct().ToList();
-        var jeIds = txns.Where(t => t.MatchedJournalEntryId.HasValue).Select(t => t.MatchedJournalEntryId!.Value).Distinct().ToList();
-        var payments = await _db.Set<Payment>().AsNoTracking().Include(p => p.Document)
-            .Where(p => payIds.Contains(p.Id))
-            .Select(p => new { p.Id, p.PaymentNumber, p.Amount, p.PaymentDate, DocNo = p.Document.DocumentNumber })
-            .ToListAsync();
-        var jes = await _db.JournalEntries.AsNoTracking()
-            .Where(j => jeIds.Contains(j.Id))
-            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.Description })
-            .ToListAsync();
-
-        var typeMap = new Dictionary<BankTransactionType, string>
+        var matched = resolved.Select(r =>
         {
-            [BankTransactionType.Deposit] = "ฝาก", [BankTransactionType.Withdrawal] = "ถอน",
-            [BankTransactionType.Transfer] = "โอน", [BankTransactionType.Fee] = "ค่าธรรมเนียม",
-            [BankTransactionType.Interest] = "ดอกเบี้ย",
-        };
+            string kind, label;
+            if (r.Counterparts.Count == 0) { kind = "—"; label = r.HasMissingCounterpart ? "(คู่ที่จับถูกลบ)" : "(จับคู่แล้ว แต่ไม่พบรายละเอียด)"; }
+            else if (r.IsGroup) { kind = "Group"; label = $"กลุ่ม {r.GroupNumber} ({r.Counterparts.Count} รายการ)"; }
+            else if (r.Counterparts.Count == 1) { kind = r.Counterparts[0].ItemType; label = r.Counterparts[0].Label; }
+            else { kind = "Multiple"; label = $"{r.Counterparts.Count} รายการ"; }
+            return new MatchedLine(r.TxnId, r.Date, r.BankAmount, r.Type,
+                r.Description, refById.GetValueOrDefault(r.TxnId), kind, label, r.MatchedAmount, r.AmountsAgree);
+        }).ToList();
 
-        var matched = new List<MatchedLine>();
-        foreach (var t in txns)
-        {
-            string kind = "—", label = "(จับคู่แล้ว แต่ไม่พบรายละเอียด)";
-            decimal cpAmount = 0;
-            if (t.MatchedPaymentId.HasValue)
-            {
-                var p = payments.FirstOrDefault(x => x.Id == t.MatchedPaymentId.Value);
-                if (p != null) { kind = "Payment"; label = $"{p.DocNo ?? p.PaymentNumber}"; cpAmount = p.Amount; }
-            }
-            else if (t.MatchedJournalEntryId.HasValue)
-            {
-                var j = jes.FirstOrDefault(x => x.Id == t.MatchedJournalEntryId.Value);
-                if (j != null) { kind = "JournalEntry"; label = $"{j.EntryNumber}" + (j.Description != null ? $" — {j.Description}" : ""); cpAmount = j.TotalDebit; }
-            }
-            else if (t.ReconciliationGroupId.HasValue)
-            {
-                kind = "Group"; label = "กลุ่มกระทบยอด (หลายรายการ)";
-            }
-            matched.Add(new MatchedLine(t.Id, t.TransactionDate, t.Amount,
-                typeMap.GetValueOrDefault(t.TransactionType, t.TransactionType.ToString()),
-                t.Description ?? t.Payee, t.Reference, kind, label, cpAmount));
-        }
+        // Every JE id any matched line points at (single + JSON + group) — so a
+        // JE backed by a bank txn is NOT mis-counted as an unlinked GL posting.
+        var matchedJeIdSet = resolved
+            .SelectMany(r => r.Counterparts.Where(c => c.ItemType == "JournalEntry").Select(c => c.ItemId))
+            .ToHashSet();
 
         // GL postings to the linked account, flagged by whether a matched bank
         // txn points at that JE. Unlinked ones explain the bank-vs-GL gap.
@@ -367,8 +345,7 @@ public class BankController : ControllerBase
         decimal unlinkedTotal = 0;
         if (account.LinkedAccountId.HasValue)
         {
-            var matchedJeIds = txns.Where(t => t.MatchedJournalEntryId.HasValue)
-                .Select(t => t.MatchedJournalEntryId!.Value).ToHashSet();
+            var matchedJeIds = matchedJeIdSet;
 
             // Net per JE on the linked account (two simple queries, then map).
             var glLines = await _db.JournalEntryLines.AsNoTracking()
@@ -408,119 +385,32 @@ public class BankController : ControllerBase
 
     public sealed record MatchInfoItem(string Kind, string Label, DateTime? Date, decimal Amount);
     public sealed record MatchInfoResponse(Guid TxnId, decimal TxnAmount, string Status,
-        List<MatchInfoItem> Counterparts, decimal CounterpartTotal, bool AmountsAgree, string? GroupNumber);
+        List<MatchInfoItem> Counterparts, decimal CounterpartTotal, bool AmountsAgree,
+        bool HasMissingCounterpart, string? GroupNumber);
 
-    /// <summary>Per-row "what did this bank line match to?" — resolves the
-    /// single Payment/JE link, the legacy M:1 id list, or the full M:N
-    /// ReconciliationGroup items, so the movement list can show the matched
-    /// counterpart(s) inline.</summary>
+    // Map the shared resolver's clean ItemType to the UI icon label.
+    private static string KindLabel(string itemType) => itemType switch
+    {
+        "Payment" => "💳 Payment",
+        "JournalEntry" => "📒 JE",
+        "Document" => "📄 เอกสาร",
+        _ => itemType,
+    };
+
+    /// <summary>Per-row "what did this bank line match to?" — delegates to the
+    /// shared resolver so it can never disagree with the issues list / detail
+    /// view / save-time guard.</summary>
     [HttpGet("transactions/{transactionId:guid}/match-info")]
     public async Task<ActionResult<ApiResponse<MatchInfoResponse>>> MatchInfo(
         Guid companyId, Guid transactionId)
     {
-        var t = await _db.Set<BankTransaction>().AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == transactionId && x.CompanyId == companyId && !x.IsDeleted);
-        if (t == null) return NotFound(new ApiResponse<MatchInfoResponse>(false, null, "ไม่พบรายการ"));
-
-        var items = new List<MatchInfoItem>();
-        string? groupNumber = null;
-
-        // Collect the ids this txn points at (single + legacy multi).
-        var payIds = new List<Guid>();
-        var jeIds = new List<Guid>();
-        var docIds = new List<Guid>();
-        if (t.MatchedPaymentId.HasValue) payIds.Add(t.MatchedPaymentId.Value);
-        if (t.MatchedJournalEntryId.HasValue) jeIds.Add(t.MatchedJournalEntryId.Value);
-
-        // M:N group expansion (authoritative when present).
-        if (t.ReconciliationGroupId.HasValue)
-        {
-            var group = await _db.Set<ReconciliationGroup>().AsNoTracking()
-                .FirstOrDefaultAsync(g => g.Id == t.ReconciliationGroupId.Value && g.CompanyId == companyId);
-            groupNumber = group?.GroupNumber;
-            var gItems = await _db.ReconciliationGroupItems.AsNoTracking()
-                .Where(i => i.GroupId == t.ReconciliationGroupId.Value
-                    && i.ItemType != ReconciliationItemType.BankTransaction)
-                .Select(i => new { i.ItemType, i.ItemId })
-                .ToListAsync();
-            foreach (var gi in gItems)
-            {
-                if (gi.ItemType == ReconciliationItemType.Payment) payIds.Add(gi.ItemId);
-                else if (gi.ItemType == ReconciliationItemType.JournalEntry) jeIds.Add(gi.ItemId);
-                else if (gi.ItemType == ReconciliationItemType.Document) docIds.Add(gi.ItemId);
-            }
-        }
-
-        // Legacy M:1 list (AI bulk match) — the full set lives in JSON, while
-        // MatchedJournalEntryId only holds the FIRST id. Must include all of
-        // them or the popup under-reports (showing 2,200 of a 5,800 match).
-        if (!string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson))
-        {
-            List<Guid> jsonIds = new();
-            try { jsonIds = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!) ?? new(); } catch { }
-            if (jsonIds.Count > 0)
-            {
-                var jsonPayIds = await _db.Payments.AsNoTracking()
-                    .Where(p => jsonIds.Contains(p.Id) && p.CompanyId == companyId)
-                    .Select(p => p.Id).ToListAsync();
-                payIds.AddRange(jsonPayIds);
-                jeIds.AddRange(jsonIds.Except(jsonPayIds));   // non-payments treated as JEs
-            }
-        }
-
-        payIds = payIds.Distinct().ToList();
-        jeIds = jeIds.Distinct().ToList();
-        docIds = docIds.Distinct().ToList();
-
-        // Bank's own GL account — so a JE counterpart is measured by what it
-        // actually posted to the bank (matches the match-issues / guard logic).
-        var bankCoaId = await _db.Set<BankAccount>().AsNoTracking()
-            .Where(a => a.Id == t.BankAccountId && a.CompanyId == companyId)
-            .Select(a => a.LinkedAccountId).FirstOrDefaultAsync();
-
-        if (payIds.Count > 0)
-        {
-            var pays = await _db.Set<Payment>().AsNoTracking().Include(p => p.Document)
-                .Where(p => payIds.Contains(p.Id))
-                .Select(p => new { p.Id, p.PaymentNumber, p.Amount, p.PaymentDate, DocNo = p.Document.DocumentNumber })
-                .ToListAsync();
-            items.AddRange(pays.Select(p => new MatchInfoItem("💳 Payment",
-                p.DocNo ?? p.PaymentNumber, p.PaymentDate, p.Amount)));
-        }
-        if (jeIds.Count > 0)
-        {
-            var jes = await _db.JournalEntries.AsNoTracking()
-                .Where(j => jeIds.Contains(j.Id))
-                .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.Description })
-                .ToListAsync();
-            // Net movement on the bank account per JE (fallback to total).
-            var jeBankNet = new Dictionary<Guid, decimal>();
-            if (bankCoaId.HasValue)
-            {
-                var lines = await _db.JournalEntryLines.AsNoTracking()
-                    .Where(l => jeIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
-                    .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount }).ToListAsync();
-                jeBankNet = lines.GroupBy(l => l.JournalEntryId).ToDictionary(g => g.Key, g => Math.Abs(g.Sum(x => x.Net)));
-            }
-            items.AddRange(jes.Select(j => new MatchInfoItem("📒 JE",
-                j.EntryNumber + (j.Description != null ? $" — {j.Description}" : ""), j.EntryDate,
-                jeBankNet.TryGetValue(j.Id, out var net) ? net : j.TotalDebit)));
-        }
-        if (docIds.Count > 0)
-        {
-            var docs = await _db.Documents.AsNoTracking()
-                .Where(d => docIds.Contains(d.Id))
-                .Select(d => new { d.DocumentNumber, d.DocumentDate, d.TotalAmount })
-                .ToListAsync();
-            items.AddRange(docs.Select(d => new MatchInfoItem("📄 เอกสาร",
-                d.DocumentNumber, d.DocumentDate, d.TotalAmount)));
-        }
-
-        var cpTotal = items.Sum(i => i.Amount);
-        var agree = items.Count == 0 || Math.Abs(cpTotal - Math.Abs(t.Amount)) < 0.01m;
+        var r = await _bankService.ResolveMatchAsync(companyId, transactionId);
+        if (r == null) return NotFound(new ApiResponse<MatchInfoResponse>(false, null, "ไม่พบรายการ"));
+        var items = r.Counterparts
+            .Select(c => new MatchInfoItem(KindLabel(c.ItemType), c.Label, c.Date, c.Amount)).ToList();
         return Ok(new ApiResponse<MatchInfoResponse>(true, new MatchInfoResponse(
-            t.Id, Math.Abs(t.Amount), t.ReconciliationStatus.ToString(),
-            items, cpTotal, agree, groupNumber)));
+            r.TxnId, r.BankAmount, "Matched", items, r.MatchedAmount,
+            r.AmountsAgree, r.HasMissingCounterpart, r.GroupNumber)));
     }
 
     public sealed record MatchIssue(Guid TxnId, DateTime Date, string Type, string? Description,
@@ -528,94 +418,23 @@ public class BankController : ControllerBase
     public sealed record MatchIssuesResponse(int Count, decimal TotalDifference, List<MatchIssue> Issues);
 
     /// <summary>
-    /// Lists already-matched bank lines whose counterpart amount(s) do NOT equal
-    /// the bank amount — the legacy bad matches made before the amount guard
-    /// existed. Lets the UI flag them and the operator unmatch + redo.
+    /// Lists already-matched bank lines that don't reconcile — either the
+    /// counterpart amount(s) don't equal the bank amount, OR a counterpart was
+    /// deleted after matching. Delegates resolution to the shared resolver so it
+    /// agrees with the per-row popup / detail view. Balanced M:N groups are
+    /// never flagged.
     /// </summary>
     [HttpGet("accounts/{accountId:guid}/match-issues")]
     public async Task<ActionResult<ApiResponse<MatchIssuesResponse>>> MatchIssues(
         Guid companyId, Guid accountId)
     {
-        var bankCoaId = await _db.Set<BankAccount>().AsNoTracking()
-            .Where(a => a.Id == accountId && a.CompanyId == companyId)
-            .Select(a => a.LinkedAccountId).FirstOrDefaultAsync();
-
-        var txns = await _db.Set<BankTransaction>().AsNoTracking()
-            .Where(t => t.BankAccountId == accountId && t.CompanyId == companyId && !t.IsDeleted
-                && t.ReconciliationStatus == ReconciliationStatus.Matched)
-            .OrderByDescending(t => t.TransactionDate)
-            .ToListAsync();
-
-        // Expand every txn's counterpart id set (single + legacy JSON + group).
-        var groupIds = txns.Where(t => t.ReconciliationGroupId.HasValue)
-            .Select(t => t.ReconciliationGroupId!.Value).Distinct().ToList();
-        // Empty groupIds → Contains yields an empty set, so this is safe.
-        var groupItems = await _db.ReconciliationGroupItems.AsNoTracking()
-            .Where(i => groupIds.Contains(i.GroupId) && i.ItemType != ReconciliationItemType.BankTransaction)
-            .Select(i => new { i.GroupId, i.ItemId }).ToListAsync();
-
-        var idsByTxn = new Dictionary<Guid, List<Guid>>();
-        foreach (var t in txns)
-        {
-            var ids = new List<Guid>();
-            if (t.MatchedPaymentId.HasValue) ids.Add(t.MatchedPaymentId.Value);
-            if (t.MatchedJournalEntryId.HasValue) ids.Add(t.MatchedJournalEntryId.Value);
-            if (!string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson))
-                try { ids.AddRange(System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!) ?? new()); } catch { }
-            if (t.ReconciliationGroupId.HasValue)
-                ids.AddRange(groupItems.Where(g => g.GroupId == t.ReconciliationGroupId.Value).Select(g => g.ItemId));
-            idsByTxn[t.Id] = ids.Where(i => i != Guid.Empty).Distinct().ToList();
-        }
-
-        var allIds = idsByTxn.Values.SelectMany(x => x).Distinct().ToList();
-        var payAmts = await _db.Payments.AsNoTracking()
-            .Where(p => allIds.Contains(p.Id) && p.CompanyId == companyId)
-            .Select(p => new { p.Id, p.Amount }).ToListAsync();
-        var payMap = payAmts.ToDictionary(p => p.Id, p => p.Amount);
-        var payIdSet = payMap.Keys.ToHashSet();
-
-        // JE net on the bank account (per JE), with total fallback for JEs that
-        // don't post to it.
-        var jeIds = allIds.Where(i => !payIdSet.Contains(i)).ToList();
-        var jeNet = new Dictionary<Guid, decimal>();
-        if (jeIds.Count > 0 && bankCoaId.HasValue)
-        {
-            var lines = await _db.JournalEntryLines.AsNoTracking()
-                .Where(l => jeIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
-                .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount }).ToListAsync();
-            jeNet = lines.GroupBy(l => l.JournalEntryId).ToDictionary(g => g.Key, g => Math.Abs(g.Sum(x => x.Net)));
-        }
-        var jeNoBankLine = jeIds.Where(id => !jeNet.ContainsKey(id)).ToList();
-        if (jeNoBankLine.Count > 0)
-        {
-            var totals = await _db.JournalEntries.AsNoTracking()
-                .Where(j => jeNoBankLine.Contains(j.Id))
-                .Select(j => new { j.Id, j.TotalDebit }).ToListAsync();
-            foreach (var x in totals) jeNet[x.Id] = x.TotalDebit;
-        }
-
-        var typeMap = new Dictionary<BankTransactionType, string>
-        {
-            [BankTransactionType.Deposit] = "ฝาก", [BankTransactionType.Withdrawal] = "ถอน",
-            [BankTransactionType.Transfer] = "โอน", [BankTransactionType.Fee] = "ค่าธรรมเนียม",
-            [BankTransactionType.Interest] = "ดอกเบี้ย",
-        };
-
-        var issues = new List<MatchIssue>();
-        foreach (var t in txns)
-        {
-            var ids = idsByTxn[t.Id];
-            if (ids.Count == 0) continue;   // matched but no resolvable counterpart — skip (separate concern)
-            decimal matchedAmt = ids.Sum(id => payMap.TryGetValue(id, out var pa) ? pa : jeNet.GetValueOrDefault(id, 0));
-            var bankAmt = Math.Abs(t.Amount);
-            var diff = Math.Abs(matchedAmt - bankAmt);
-            if (diff <= 0.01m) continue;
-            issues.Add(new MatchIssue(t.Id, t.TransactionDate,
-                typeMap.GetValueOrDefault(t.TransactionType, t.TransactionType.ToString()),
-                t.Description ?? t.Payee, bankAmt, matchedAmt, matchedAmt - bankAmt,
-                ids.Count > 1 ? $"{ids.Count} รายการ" : ""));
-        }
-
+        var resolved = await _bankService.ResolveMatchesAsync(companyId, accountId);
+        var issues = resolved
+            .Where(r => !r.AmountsAgree)
+            .Select(r => new MatchIssue(r.TxnId, r.Date, r.Type, r.Description,
+                r.BankAmount, r.MatchedAmount, r.MatchedAmount - r.BankAmount,
+                r.HasMissingCounterpart ? "คู่ที่จับถูกลบ" : (r.Counterparts.Count > 1 ? $"{r.Counterparts.Count} รายการ" : "")))
+            .ToList();
         return Ok(new ApiResponse<MatchIssuesResponse>(true, new MatchIssuesResponse(
             issues.Count, issues.Sum(i => Math.Abs(i.Difference)), issues)));
     }
