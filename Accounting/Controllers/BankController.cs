@@ -287,6 +287,209 @@ public class BankController : ControllerBase
             $"สร้างรายการบัญชี {je.EntryNumber} และกระทบยอดสำเร็จ"));
     }
 
+    public sealed record MatchedLine(Guid TxnId, DateTime Date, decimal Amount, string Type,
+        string? Description, string? Reference, string CounterpartKind, string CounterpartLabel,
+        decimal CounterpartAmount);
+    public sealed record GlPosting(string JeNumber, DateTime Date, string? Description,
+        decimal Net, bool LinkedToBankTxn);
+    public sealed record ReconDetailResponse(decimal BankBalance, decimal BookBalance, decimal Difference,
+        List<MatchedLine> Matched, List<GlPosting> UnlinkedGlPostings, decimal UnlinkedGlTotal, string Explanation);
+
+    /// <summary>
+    /// Answers "everything is matched, so why is there still a difference?".
+    /// Returns (a) every matched bank line with WHAT it was reconciled to, and
+    /// (b) the GL postings to this bank's linked account that are NOT backed by
+    /// a matched bank transaction — those unlinked postings (opening balance,
+    /// manual JEs, direct document postings) are exactly what makes the GL
+    /// balance differ from the bank statement.
+    /// </summary>
+    [HttpGet("accounts/{accountId:guid}/reconciliation-detail")]
+    public async Task<ActionResult<ApiResponse<ReconDetailResponse>>> ReconciliationDetail(
+        Guid companyId, Guid accountId)
+    {
+        var account = await _db.Set<BankAccount>().AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == accountId && a.CompanyId == companyId);
+        if (account == null) return NotFound(new ApiResponse<ReconDetailResponse>(false, null, "ไม่พบบัญชีธนาคาร"));
+
+        var txns = await _db.Set<BankTransaction>().AsNoTracking()
+            .Where(t => t.BankAccountId == accountId && t.CompanyId == companyId && !t.IsDeleted
+                && t.ReconciliationStatus == ReconciliationStatus.Matched)
+            .OrderByDescending(t => t.TransactionDate)
+            .ToListAsync();
+
+        // Resolve counterpart labels in bulk.
+        var payIds = txns.Where(t => t.MatchedPaymentId.HasValue).Select(t => t.MatchedPaymentId!.Value).Distinct().ToList();
+        var jeIds = txns.Where(t => t.MatchedJournalEntryId.HasValue).Select(t => t.MatchedJournalEntryId!.Value).Distinct().ToList();
+        var payments = await _db.Set<Payment>().AsNoTracking().Include(p => p.Document)
+            .Where(p => payIds.Contains(p.Id))
+            .Select(p => new { p.Id, p.PaymentNumber, p.Amount, p.PaymentDate, DocNo = p.Document.DocumentNumber })
+            .ToListAsync();
+        var jes = await _db.JournalEntries.AsNoTracking()
+            .Where(j => jeIds.Contains(j.Id))
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.Description })
+            .ToListAsync();
+
+        var typeMap = new Dictionary<BankTransactionType, string>
+        {
+            [BankTransactionType.Deposit] = "ฝาก", [BankTransactionType.Withdrawal] = "ถอน",
+            [BankTransactionType.Transfer] = "โอน", [BankTransactionType.Fee] = "ค่าธรรมเนียม",
+            [BankTransactionType.Interest] = "ดอกเบี้ย",
+        };
+
+        var matched = new List<MatchedLine>();
+        foreach (var t in txns)
+        {
+            string kind = "—", label = "(จับคู่แล้ว แต่ไม่พบรายละเอียด)";
+            decimal cpAmount = 0;
+            if (t.MatchedPaymentId.HasValue)
+            {
+                var p = payments.FirstOrDefault(x => x.Id == t.MatchedPaymentId.Value);
+                if (p != null) { kind = "Payment"; label = $"{p.DocNo ?? p.PaymentNumber}"; cpAmount = p.Amount; }
+            }
+            else if (t.MatchedJournalEntryId.HasValue)
+            {
+                var j = jes.FirstOrDefault(x => x.Id == t.MatchedJournalEntryId.Value);
+                if (j != null) { kind = "JournalEntry"; label = $"{j.EntryNumber}" + (j.Description != null ? $" — {j.Description}" : ""); cpAmount = j.TotalDebit; }
+            }
+            else if (t.ReconciliationGroupId.HasValue)
+            {
+                kind = "Group"; label = "กลุ่มกระทบยอด (หลายรายการ)";
+            }
+            matched.Add(new MatchedLine(t.Id, t.TransactionDate, t.Amount,
+                typeMap.GetValueOrDefault(t.TransactionType, t.TransactionType.ToString()),
+                t.Description ?? t.Payee, t.Reference, kind, label, cpAmount));
+        }
+
+        // GL postings to the linked account, flagged by whether a matched bank
+        // txn points at that JE. Unlinked ones explain the bank-vs-GL gap.
+        decimal bookBalance = 0;
+        var unlinked = new List<GlPosting>();
+        decimal unlinkedTotal = 0;
+        if (account.LinkedAccountId.HasValue)
+        {
+            var matchedJeIds = txns.Where(t => t.MatchedJournalEntryId.HasValue)
+                .Select(t => t.MatchedJournalEntryId!.Value).ToHashSet();
+
+            // Net per JE on the linked account (two simple queries, then map).
+            var glLines = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => l.AccountId == account.LinkedAccountId.Value
+                    && _db.JournalEntries.Any(j => j.Id == l.JournalEntryId && j.CompanyId == companyId
+                        && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)))
+                .Select(l => new { l.JournalEntryId, l.DebitAmount, l.CreditAmount })
+                .ToListAsync();
+
+            var netByJe = glLines.GroupBy(x => x.JournalEntryId)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.DebitAmount) - g.Sum(x => x.CreditAmount));
+            bookBalance = netByJe.Values.Sum();
+
+            var unlinkedJeIds = netByJe.Keys.Where(id => !matchedJeIds.Contains(id)).ToList();
+            var jeHeaders = await _db.JournalEntries.AsNoTracking()
+                .Where(j => unlinkedJeIds.Contains(j.Id))
+                .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.Description })
+                .ToListAsync();
+
+            foreach (var h in jeHeaders)
+            {
+                var net = netByJe[h.Id];
+                unlinked.Add(new GlPosting(h.EntryNumber, h.EntryDate, h.Description, net, false));
+                unlinkedTotal += net;
+            }
+            unlinked = unlinked.OrderByDescending(u => Math.Abs(u.Net)).ToList();
+        }
+
+        var diff = account.CurrentBalance - bookBalance;
+        var explanation = Math.Abs(diff) < 0.01m
+            ? "ยอดธนาคารตรงกับ GL — ไม่มีผลต่าง"
+            : $"ผลต่าง {diff:N2} เกิดจากรายการใน GL ของบัญชีธนาคารนี้ที่ไม่ได้มาจากรายการเดินบัญชี (bank txn) — มักเป็นยอดยกมา/JE ตั้งต้น หรือเอกสารที่ลงบัญชีธนาคารตรงๆ โดยไม่มี statement line. ดูรายการด้านล่าง (รวม {unlinkedTotal:N2}).";
+
+        return Ok(new ApiResponse<ReconDetailResponse>(true, new ReconDetailResponse(
+            account.CurrentBalance, bookBalance, diff, matched, unlinked, unlinkedTotal, explanation)));
+    }
+
+    public sealed record MatchInfoItem(string Kind, string Label, DateTime? Date, decimal Amount);
+    public sealed record MatchInfoResponse(Guid TxnId, decimal TxnAmount, string Status,
+        List<MatchInfoItem> Counterparts, decimal CounterpartTotal, bool AmountsAgree, string? GroupNumber);
+
+    /// <summary>Per-row "what did this bank line match to?" — resolves the
+    /// single Payment/JE link, the legacy M:1 id list, or the full M:N
+    /// ReconciliationGroup items, so the movement list can show the matched
+    /// counterpart(s) inline.</summary>
+    [HttpGet("transactions/{transactionId:guid}/match-info")]
+    public async Task<ActionResult<ApiResponse<MatchInfoResponse>>> MatchInfo(
+        Guid companyId, Guid transactionId)
+    {
+        var t = await _db.Set<BankTransaction>().AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == transactionId && x.CompanyId == companyId && !x.IsDeleted);
+        if (t == null) return NotFound(new ApiResponse<MatchInfoResponse>(false, null, "ไม่พบรายการ"));
+
+        var items = new List<MatchInfoItem>();
+        string? groupNumber = null;
+
+        // Collect the ids this txn points at (single + legacy multi).
+        var payIds = new List<Guid>();
+        var jeIds = new List<Guid>();
+        var docIds = new List<Guid>();
+        if (t.MatchedPaymentId.HasValue) payIds.Add(t.MatchedPaymentId.Value);
+        if (t.MatchedJournalEntryId.HasValue) jeIds.Add(t.MatchedJournalEntryId.Value);
+
+        // M:N group expansion (authoritative when present).
+        if (t.ReconciliationGroupId.HasValue)
+        {
+            var group = await _db.Set<ReconciliationGroup>().AsNoTracking()
+                .FirstOrDefaultAsync(g => g.Id == t.ReconciliationGroupId.Value && g.CompanyId == companyId);
+            groupNumber = group?.GroupNumber;
+            var gItems = await _db.ReconciliationGroupItems.AsNoTracking()
+                .Where(i => i.GroupId == t.ReconciliationGroupId.Value
+                    && i.ItemType != ReconciliationItemType.BankTransaction)
+                .Select(i => new { i.ItemType, i.ItemId })
+                .ToListAsync();
+            foreach (var gi in gItems)
+            {
+                if (gi.ItemType == ReconciliationItemType.Payment) payIds.Add(gi.ItemId);
+                else if (gi.ItemType == ReconciliationItemType.JournalEntry) jeIds.Add(gi.ItemId);
+                else if (gi.ItemType == ReconciliationItemType.Document) docIds.Add(gi.ItemId);
+            }
+        }
+
+        payIds = payIds.Distinct().ToList();
+        jeIds = jeIds.Distinct().ToList();
+        docIds = docIds.Distinct().ToList();
+
+        if (payIds.Count > 0)
+        {
+            var pays = await _db.Set<Payment>().AsNoTracking().Include(p => p.Document)
+                .Where(p => payIds.Contains(p.Id))
+                .Select(p => new { p.PaymentNumber, p.Amount, p.PaymentDate, DocNo = p.Document.DocumentNumber })
+                .ToListAsync();
+            items.AddRange(pays.Select(p => new MatchInfoItem("💳 Payment",
+                p.DocNo ?? p.PaymentNumber, p.PaymentDate, p.Amount)));
+        }
+        if (jeIds.Count > 0)
+        {
+            var jes = await _db.JournalEntries.AsNoTracking()
+                .Where(j => jeIds.Contains(j.Id))
+                .Select(j => new { j.EntryNumber, j.EntryDate, j.TotalDebit, j.Description })
+                .ToListAsync();
+            items.AddRange(jes.Select(j => new MatchInfoItem("📒 JE",
+                j.EntryNumber + (j.Description != null ? $" — {j.Description}" : ""), j.EntryDate, j.TotalDebit)));
+        }
+        if (docIds.Count > 0)
+        {
+            var docs = await _db.Documents.AsNoTracking()
+                .Where(d => docIds.Contains(d.Id))
+                .Select(d => new { d.DocumentNumber, d.DocumentDate, d.TotalAmount })
+                .ToListAsync();
+            items.AddRange(docs.Select(d => new MatchInfoItem("📄 เอกสาร",
+                d.DocumentNumber, d.DocumentDate, d.TotalAmount)));
+        }
+
+        var cpTotal = items.Sum(i => i.Amount);
+        var agree = items.Count == 0 || Math.Abs(cpTotal - Math.Abs(t.Amount)) < 0.01m;
+        return Ok(new ApiResponse<MatchInfoResponse>(true, new MatchInfoResponse(
+            t.Id, Math.Abs(t.Amount), t.ReconciliationStatus.ToString(),
+            items, cpTotal, agree, groupNumber)));
+    }
+
     [HttpDelete("transactions/{transactionId:guid}")]
     public async Task<ActionResult<ApiResponse<int>>> DeleteTransaction(Guid companyId, Guid transactionId)
     {
