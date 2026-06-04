@@ -55,15 +55,22 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
 
     public async Task<Guid> RecordCallAsync(AiFeedbackRecord record, CancellationToken ct)
     {
+        AiSuggestionFeedback? row = null;
         try
         {
-            var row = new AiSuggestionFeedback
+            row = new AiSuggestionFeedback
             {
                 CompanyId = record.CompanyId,
                 FeatureKey = record.FeatureKey.ToString(),
                 PromptHash = record.PromptHash,
-                PromptJson = record.PromptJson,
-                ResponseJson = record.ResponseJson,
+                // Both columns are jsonb in Postgres — any non-JSON string here
+                // throws 22P02 and leaves the entity stuck in the change tracker,
+                // which then poisons every later SaveChanges in the request
+                // (including AuditMiddleware's, observed in production). Coerce
+                // anything that isn't already valid JSON into {"raw":"..."} so
+                // the row always saves.
+                PromptJson = CoerceJsonNonNull(record.PromptJson),
+                ResponseJson = CoerceJsonNullable(record.ResponseJson),
                 AiPrimaryAnswer = record.AiPrimaryAnswer,
                 AiConfidence = record.AiConfidence,
                 LocalModelAnswer = record.LocalModelAnswer,
@@ -96,11 +103,38 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         }
         catch (Exception ex)
         {
-            // Recording failure must NEVER bring the call site down —
-            // worst case the admin widget under-counts.
+            // Recording failure must NEVER bring the call site down — worst
+            // case the admin widget under-counts. DETACH the failed entity
+            // so it doesn't sit Added in the change tracker and re-throw on
+            // the next SaveChangesAsync in this scope (e.g. AuditMiddleware).
+            if (row != null)
+            {
+                try { _db.Entry(row).State = Microsoft.EntityFrameworkCore.EntityState.Detached; }
+                catch { /* nothing else to do */ }
+            }
             _logger.LogError(ex, "AiFeedback record failed for {Feature}", record.FeatureKey);
             return Guid.Empty;
         }
+    }
+
+    /// <summary>Return s when it parses as JSON; otherwise wrap it as a JSON
+    /// object {"raw":"..."} so the jsonb column accepts it. Used because the
+    /// AI provider's raw text isn't always JSON-formatted but the column is
+    /// jsonb-typed; without this we hit Postgres 22P02 and the failed entity
+    /// poisons later SaveChanges in the same request.</summary>
+    private static string CoerceJsonNonNull(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return "{}";
+        try { using var _ = System.Text.Json.JsonDocument.Parse(s); return s; }
+        catch { return System.Text.Json.JsonSerializer.Serialize(new { raw = s }); }
+    }
+
+    private static string? CoerceJsonNullable(string? s)
+    {
+        if (s == null) return null;
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        try { using var _ = System.Text.Json.JsonDocument.Parse(s); return s; }
+        catch { return System.Text.Json.JsonSerializer.Serialize(new { raw = s }); }
     }
 
     public async Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi, CancellationToken ct)

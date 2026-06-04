@@ -74,6 +74,12 @@ public class AiResponseCacheService : IAiResponseCacheService
         AiProviderType provider, string? modelVersion, decimal? confidence,
         Guid companyId, int ttlDays, CancellationToken ct)
     {
+        // ResponseJson is jsonb — coerce non-JSON content (AI can reply with
+        // prose) into a wrapper so the column accepts it. Without this the
+        // SaveChangesAsync hit Postgres 22P02 and the failed entity poisoned
+        // every subsequent SaveChanges in the same request scope.
+        responseJson = CoerceJson(responseJson);
+        AiResponseCache? row = null;
         try
         {
             var existing = await _db.AiResponseCaches
@@ -93,7 +99,7 @@ public class AiResponseCacheService : IAiResponseCacheService
             }
             else
             {
-                _db.AiResponseCaches.Add(new AiResponseCache
+                row = new AiResponseCache
                 {
                     PromptHash = promptHash,
                     FeatureKey = featureKey,
@@ -103,15 +109,29 @@ public class AiResponseCacheService : IAiResponseCacheService
                     Confidence = confidence,
                     CompanyId = companyId,
                     ExpiresAt = expires,
-                });
+                };
+                _db.AiResponseCaches.Add(row);
             }
             await _db.SaveChangesAsync(ct);
         }
         catch (Exception ex)
         {
             // Cache write failure must NEVER bubble up — orchestrator
-            // already returned the response to the caller.
+            // already returned the response to the caller. Detach the bad
+            // entity so it doesn't taint the next SaveChanges in the request.
+            if (row != null)
+            {
+                try { _db.Entry(row).State = Microsoft.EntityFrameworkCore.EntityState.Detached; }
+                catch { }
+            }
             _logger.LogWarning(ex, "AiResponseCache put failed for {Feature}", featureKey);
         }
+    }
+
+    private static string CoerceJson(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return "{}";
+        try { using var _ = System.Text.Json.JsonDocument.Parse(s); return s; }
+        catch { return System.Text.Json.JsonSerializer.Serialize(new { raw = s }); }
     }
 }
