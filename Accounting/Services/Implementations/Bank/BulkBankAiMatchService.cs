@@ -690,7 +690,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         {
             _logger.LogWarning(ex, "Bulk AI match: JSON parse failed at {Path} (line {Line} col {Col}); raw length {Len}",
                 ex.Path, ex.LineNumber, ex.BytePositionInLine, json.Length);
-            warnings.Add($"AI JSON parse error: {ex.Message} (path={ex.Path} line={ex.LineNumber} pos={ex.BytePositionInLine})");
+
+            // Salvage path — AI ran out of tokens and the response was
+            // truncated mid-string. The complete match objects BEFORE the
+            // truncation are still parseable individually. Walk the
+            // "matches" array, find each complete {...} object inside,
+            // try to parse each, accumulate the successful ones. This
+            // recovers most of the value even when the tail is gone.
+            int salvaged = TrySalvageMatches(json, matches);
+            warnings.Add(salvaged > 0
+                ? $"AI ตอบยาวเกินจำกัด token ระบบกู้ match ได้ {salvaged} รายการ — ส่วนที่เหลือถูกตัดทิ้ง (parse error: {ex.Message} line={ex.LineNumber} pos={ex.BytePositionInLine})"
+                : $"AI JSON parse error: {ex.Message} (path={ex.Path} line={ex.LineNumber} pos={ex.BytePositionInLine}) — ลองอีกครั้ง");
         }
         return new(matches, unmatched, missing, warnings);
     }
@@ -722,6 +732,85 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             sb.Append(ch);
         }
         return sb.ToString();
+    }
+
+    /// <summary>Recover complete match objects from a TRUNCATED bulk response.
+    /// When DeepSeek hits the output-token ceiling mid-string, the overall
+    /// JSON is unparseable, but every match object emitted BEFORE the cut is
+    /// itself a well-formed {...} block. Walk the text after the "matches": [
+    /// marker and try parsing each balanced {...} block individually; append
+    /// the parseable ones to <paramref name="matches"/>. Returns the count
+    /// recovered.</summary>
+    private static int TrySalvageMatches(string json, List<ProposedMatch> matches)
+    {
+        var marker = json.IndexOf("\"matches\"", StringComparison.Ordinal);
+        if (marker < 0) return 0;
+        var arrayStart = json.IndexOf('[', marker);
+        if (arrayStart < 0) return 0;
+
+        int recovered = 0;
+        int i = arrayStart + 1;
+        var opts = new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
+        while (i < json.Length)
+        {
+            // Skip whitespace + commas between elements.
+            while (i < json.Length && (char.IsWhiteSpace(json[i]) || json[i] == ',')) i++;
+            if (i >= json.Length || json[i] == ']') break;
+            if (json[i] != '{') { i++; continue; }
+
+            // Walk to the matching '}' with string-aware brace counting.
+            int depth = 0, end = -1;
+            bool inString = false, esc = false;
+            for (int k = i; k < json.Length; k++)
+            {
+                var ch = json[k];
+                if (esc) { esc = false; continue; }
+                if (inString)
+                {
+                    if (ch == '\\') esc = true;
+                    else if (ch == '"') inString = false;
+                    continue;
+                }
+                if (ch == '"') { inString = true; continue; }
+                if (ch == '{') depth++;
+                else if (ch == '}') { depth--; if (depth == 0) { end = k; break; } }
+            }
+            if (end < 0) break;   // ran off the end → truncation point reached.
+
+            var block = json[i..(end + 1)];
+            try
+            {
+                using var doc = JsonDocument.Parse(StripControlCharsInsideStrings(block), opts);
+                var m = doc.RootElement;
+                var bid = TryGuid(m, "bankTxnId");
+                if (bid != null)
+                {
+                    var type = m.TryGetProperty("matchType", out var tEl) && tEl.ValueKind == JsonValueKind.String ? tEl.GetString() ?? "OneToOne" : "OneToOne";
+                    var conf = m.TryGetProperty("confidence", out var cEl) && cEl.TryGetDecimal(out var c) ? c : 0m;
+                    var reasoning = m.TryGetProperty("reasoning", out var rEl) && rEl.ValueKind == JsonValueKind.String ? rEl.GetString() : null;
+                    var cands = new List<MatchCandidate>();
+                    if (m.TryGetProperty("candidates", out var cs) && cs.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var ce in cs.EnumerateArray())
+                        {
+                            var cid = TryGuid(ce, "candidateId");
+                            if (cid == null) continue;
+                            var ctype = ce.TryGetProperty("candidateType", out var ctEl) && ctEl.ValueKind == JsonValueKind.String ? ctEl.GetString() ?? "Document" : "Document";
+                            var amt = ce.TryGetProperty("amount", out var aEl) && aEl.TryGetDecimal(out var a) ? a : 0m;
+                            cands.Add(new MatchCandidate(cid.Value, ctype, amt));
+                        }
+                    }
+                    if (cands.Count > 0)
+                    {
+                        matches.Add(new ProposedMatch(bid.Value, type, cands, conf, reasoning, Guid.Empty));
+                        recovered++;
+                    }
+                }
+            }
+            catch { /* skip this block, try the next */ }
+            i = end + 1;
+        }
+        return recovered;
     }
 
     private static Guid? TryGuid(JsonElement el, string prop)
