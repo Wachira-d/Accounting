@@ -557,6 +557,37 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             json = json.Trim();
         }
 
+        // AI sometimes prefixes or suffixes the JSON with prose ("Here is
+        // the plan: { ... }" or "{ ... } Notes: ..."). JsonDocument.Parse
+        // fails strict on any character outside the document, so extract
+        // just the outermost {...} block (first '{' through the matching
+        // last '}'). Brace-counting tolerates nested objects + braces
+        // inside string values reliably for well-formed JSON.
+        var startBrace = json.IndexOf('{');
+        if (startBrace >= 0)
+        {
+            int depth = 0, endBrace = -1; bool inString = false, esc = false;
+            for (int i = startBrace; i < json.Length; i++)
+            {
+                var ch = json[i];
+                if (esc) { esc = false; continue; }
+                if (inString)
+                {
+                    if (ch == '\\') esc = true;
+                    else if (ch == '"') inString = false;
+                    continue;
+                }
+                if (ch == '"') { inString = true; continue; }
+                if (ch == '{') depth++;
+                else if (ch == '}')
+                {
+                    depth--;
+                    if (depth == 0) { endBrace = i; break; }
+                }
+            }
+            if (endBrace > startBrace) json = json[startBrace..(endBrace + 1)];
+        }
+
         try
         {
             using var doc = JsonDocument.Parse(json);
