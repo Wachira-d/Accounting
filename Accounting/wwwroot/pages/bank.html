@@ -73,6 +73,11 @@
           <button class="btn btn-sm btn-danger" onclick="Page.deleteSelectedTransactions()">ลบที่เลือกทั้งหมด</button>
           <button class="btn btn-sm btn-ghost" onclick="Page.clearTransSelection()" data-i18n="common.cancel">ยกเลิก</button>
         </div>
+        <!-- Mismatched-match warning (legacy bad matches) -->
+        <div id="matchIssuesBar" style="display:none;margin:0 0 10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;align-items:center;gap:12px">
+          <span style="font-weight:600;color:#b91c1c" id="matchIssuesText">⚠️ พบรายการที่จับคู่แล้วแต่ยอดไม่ตรง</span>
+          <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="Page.showMatchIssues()">ดูรายการที่ยอดไม่ตรง</button>
+        </div>
         <div class="table-container" style="border:none">
           <table class="table">
             <thead><tr>
@@ -83,6 +88,17 @@
           </table>
         </div>
         <div id="transPagination" style="padding:12px 16px"></div>
+      </div>
+
+      <!-- Mismatched-matches list -->
+      <div id="matchIssuesModal" class="modal-overlay">
+        <div class="modal" style="max-width:760px;width:94%;max-height:86vh;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0;color:#b91c1c">⚠️ รายการที่จับคู่แล้วแต่ยอดไม่ตรง</h3>
+            <button class="btn btn-sm btn-ghost" onclick="Layout.closeModal('matchIssuesModal')">✕</button>
+          </div>
+          <div id="matchIssuesBody" style="margin-top:12px"></div>
+        </div>
       </div>
 
       <!-- Per-row matched-counterpart popup -->
@@ -728,6 +744,7 @@
           this.renderTransactions();
           const totalPages = data?.totalPages || 1;
           document.getElementById('transPagination').innerHTML = Layout.renderPagination(this.transPage, totalPages, 'Page.goTransPage');
+          this.loadMatchIssues();   // surface legacy mismatched matches
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       filterTrans() { this.renderTransactions(); },
@@ -751,7 +768,7 @@
           <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
           <td class="text-right">${Layout.money(t.balanceAfter)}</td>
           <td>${t.description || t.payee || '-'}${t.reference ? ' <span class="text-xs text-gray-400">('+t.reference+')</span>' : ''}</td>
-          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Suggested' ? '<span class="badge" style="background:#ddd6fe;color:#5b21b6">🤖 AI แนะนำ — รอยืนยัน</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${(this._matchIssueIds && this._matchIssueIds.has(t.id)) ? ' <span class="badge badge-danger" title="ยอดที่จับไม่ตรงกับยอดธนาคาร">⚠️ ยอดไม่ตรง</span>' : ''}${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Suggested' ? '<span class="badge" style="background:#ddd6fe;color:#5b21b6">🤖 AI แนะนำ — รอยืนยัน</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
           <td>
             ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost" onclick="Page.showMatchInfo('${t.id}')" title="ดูว่าจับคู่กับเอกสาร/JE อะไร">🔍 ดูคู่</button><button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>${t.reconciliationStatus !== 'Suggested' ? `<button class="btn btn-sm btn-ghost" onclick="Page.askAiBankMatch(event, '${t.id}')" title="ขอความเห็น AI">🤖</button>` : ''}`}
             <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>
@@ -790,6 +807,48 @@
         }
       },
       closeMatchInfo() { Layout.closeModal('matchInfoModal'); },
+
+      // Detect already-matched lines whose amounts don't agree (legacy bad
+      // matches) so they can be flagged in the list + listed for fixing.
+      _matchIssues: [],
+      _matchIssueIds: new Set(),
+      async loadMatchIssues() {
+        const bar = document.getElementById('matchIssuesBar');
+        if (!this.selectedAccount) { if (bar) bar.style.display = 'none'; return; }
+        try {
+          const r = await Layout.api().getMatchIssues(this.selectedAccount.id);
+          const d = r.data || { count: 0, issues: [] };
+          this._matchIssues = d.issues || [];
+          this._matchIssueIds = new Set(this._matchIssues.map(i => i.txnId));
+          if (d.count > 0) {
+            const m = v => (v||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+            document.getElementById('matchIssuesText').textContent =
+              `⚠️ พบ ${d.count} รายการที่จับคู่แล้วแต่ยอดไม่ตรง (ผลต่างรวม ฿${m(d.totalDifference)})`;
+            bar.style.display = 'flex';
+          } else { bar.style.display = 'none'; }
+          // Re-render so row flags appear.
+          if (this.allTransactions?.length) this.renderTransactions();
+        } catch (e) { if (bar) bar.style.display = 'none'; }
+      },
+      showMatchIssues() {
+        const body = document.getElementById('matchIssuesBody');
+        Layout.openModal('matchIssuesModal');
+        const m = v => (v||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+        if (!this._matchIssues.length) { body.innerHTML = '<div style="padding:20px;color:#16a34a">✓ ไม่พบรายการที่ยอดไม่ตรง</div>'; return; }
+        body.innerHTML = `<div style="font-size:13px;color:#64748b;margin-bottom:10px">รายการเหล่านี้ยอดธนาคารกับเอกสาร/JE ที่จับไว้ไม่เท่ากัน — กด "ยกเลิกการจับคู่" แล้วจับใหม่ให้ยอดตรง (หรือใช้กลุ่มกระทบยอด M:N ถ้าครอบหลายเอกสาร)</div>
+          <table class="table"><thead><tr>
+            <th>วันที่</th><th>ประเภท</th><th>คำอธิบาย</th><th class="text-right">ยอดธนาคาร</th><th class="text-right">ยอดที่จับ</th><th class="text-right">ผลต่าง</th><th></th>
+          </tr></thead><tbody>` +
+          this._matchIssues.map(i => `<tr>
+            <td>${Layout.date(i.date)}</td>
+            <td>${this.esc(i.type)}</td>
+            <td style="font-size:12px;color:#475569;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(i.description||'-')}${i.counterpartLabel?` <span style="color:#94a3b8">(${this.esc(i.counterpartLabel)})</span>`:''}</td>
+            <td class="text-right font-medium">${m(i.bankAmount)}</td>
+            <td class="text-right">${m(i.matchedAmount)}</td>
+            <td class="text-right" style="color:#dc2626;font-weight:600">${m(i.difference)}</td>
+            <td><button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${i.txnId}')">ยกเลิกการจับคู่</button></td>
+          </tr>`).join('') + `</tbody></table>`;
+      },
 
       // === DELETE: selection + bulk + by-date-range ===
       selectedTxnIds: new Set(),
@@ -1712,6 +1771,9 @@
           await this.loadTransactions();
           await this.loadUnreconciled();
           await this.loadReconciliationSummary();
+          await this.loadMatchIssues();
+          // Refresh the issues modal in place if it's open.
+          if (document.getElementById('matchIssuesModal')?.classList.contains('active')) this.showMatchIssues();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // === MANUAL RECONCILE PICKER (multi-select capable) ===

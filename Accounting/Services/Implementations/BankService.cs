@@ -264,6 +264,67 @@ public partial class BankService : IBankService
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
 
+    /// <summary>
+    /// Amount-integrity guard for reconciliation. A bank line must be matched to
+    /// counterpart(s) whose amount(s) SUM to the bank amount — otherwise part of
+    /// the money is left unaccounted (the 7,140 bank line vs a 2,200 JE bug).
+    /// Resolves each id as a Payment (uses Payment.Amount) or a JournalEntry
+    /// (uses the net movement on the bank's own GL account, so compound entries
+    /// are measured by what actually hit the bank). Throws when the totals differ
+    /// beyond a 0.01 tolerance.
+    /// </summary>
+    private async Task ValidateMatchAmountAsync(Guid companyId, BankTransaction txn, IEnumerable<Guid> matchedIds)
+    {
+        var ids = matchedIds.Where(i => i != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var bankCoaId = await _db.Set<BankAccount>().AsNoTracking()
+            .Where(a => a.Id == txn.BankAccountId && a.CompanyId == companyId)
+            .Select(a => a.LinkedAccountId)
+            .FirstOrDefaultAsync();
+
+        // Payments among the ids → take Payment.Amount.
+        var pays = await _db.Payments.AsNoTracking()
+            .Where(p => ids.Contains(p.Id) && p.CompanyId == companyId)
+            .Select(p => new { p.Id, p.Amount })
+            .ToListAsync();
+        var payIds = pays.Select(p => p.Id).ToHashSet();
+        decimal matched = pays.Sum(p => p.Amount);
+
+        // The rest are treated as JournalEntries.
+        var jeIds = ids.Where(i => !payIds.Contains(i)).ToList();
+        if (jeIds.Count > 0)
+        {
+            if (bankCoaId.HasValue)
+            {
+                var lines = await _db.JournalEntryLines.AsNoTracking()
+                    .Where(l => jeIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
+                    .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount })
+                    .ToListAsync();
+                var withBankLine = lines.Select(l => l.JournalEntryId).ToHashSet();
+                // Per-JE net movement on the bank account (abs — direction-agnostic).
+                matched += lines.GroupBy(l => l.JournalEntryId).Sum(g => Math.Abs(g.Sum(x => x.Net)));
+                // JEs that don't post to the bank account at all → fall back to total.
+                var noBankLine = jeIds.Where(id => !withBankLine.Contains(id)).ToList();
+                if (noBankLine.Count > 0)
+                    matched += await _db.JournalEntries.AsNoTracking()
+                        .Where(j => noBankLine.Contains(j.Id)).SumAsync(j => j.TotalDebit);
+            }
+            else
+            {
+                matched += await _db.JournalEntries.AsNoTracking()
+                    .Where(j => jeIds.Contains(j.Id)).SumAsync(j => j.TotalDebit);
+            }
+        }
+
+        var target = Math.Abs(txn.Amount);
+        var diff = Math.Abs(Math.Abs(matched) - target);
+        if (diff > 0.01m)
+            throw new InvalidOperationException(
+                $"ยอดที่จับคู่ ({Math.Abs(matched):N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {diff:N2} บาท. " +
+                "ยอดต้องเท่ากันเสมอ: เลือกเอกสาร/JE ให้ถูกต้อง หรือถ้ารายการธนาคารนี้ครอบหลายเอกสาร ให้ใช้ \"กลุ่มกระทบยอด (M:N)\" รวมหลายรายการให้ผลรวมเท่ายอดธนาคาร.");
+    }
+
     public async Task<BankTransactionResponse> ReconcileAsync(Guid companyId, ReconcileRequest request)
     {
         var transaction = await _db.Set<BankTransaction>()
@@ -300,6 +361,10 @@ public partial class BankService : IBankService
             if (alreadyMatched)
                 throw new InvalidOperationException("สมุดรายวันนี้ถูกจับคู่กับรายการธนาคารอื่นแล้ว");
         }
+
+        // Amounts must agree — block partial/mismatched 1:1 matches.
+        var matchId = request.MatchedPaymentId ?? request.MatchedJournalEntryId;
+        await ValidateMatchAmountAsync(companyId, transaction, new[] { matchId!.Value });
 
         transaction.ReconciliationStatus = ReconciliationStatus.Matched;
         transaction.MatchedPaymentId = request.MatchedPaymentId;
@@ -382,14 +447,13 @@ public partial class BankService : IBankService
                 {
                     decimal score = 0;
 
-                    // Exact amount match = 50 points
-                    if (payment.Amount == txn.Amount)
+                    // Amount must match EXACTLY (within 1 satang) — auto-match
+                    // never leaves an unaccounted remainder. Near-but-not-equal
+                    // amounts are left for the operator to match manually / group.
+                    if (Math.Abs(payment.Amount - txn.Amount) <= 0.01m)
                         score += 50;
-                    // Close amount (within 1%) = 30 points
-                    else if (Math.Abs(payment.Amount - txn.Amount) / Math.Max(txn.Amount, 1) < 0.01m)
-                        score += 30;
                     else
-                        continue; // Amount must be close
+                        continue;
 
                     // Date proximity: same day = 30 points, within 3 days = 20, within 7 days = 10
                     var daysDiff = Math.Abs((payment.PaymentDate - txn.TransactionDate).TotalDays);

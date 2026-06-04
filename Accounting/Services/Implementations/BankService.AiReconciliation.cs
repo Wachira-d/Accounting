@@ -757,6 +757,13 @@ public partial class BankService
                     .FirstOrDefaultAsync(t => t.Id == item.BankTransactionId && t.CompanyId == companyId)
                     ?? throw new KeyNotFoundException($"ไม่พบรายการธนาคาร {item.BankTransactionId}");
 
+                // Amounts must agree for every item (single or many-to-one).
+                var ids = new List<Guid>();
+                if (item.MatchType == "Payment" && item.MatchedPaymentId.HasValue) ids.Add(item.MatchedPaymentId.Value);
+                else if (item.MatchType == "JournalEntry" && item.MatchedJournalEntryId.HasValue) ids.Add(item.MatchedJournalEntryId.Value);
+                else if (item.MatchType == "Multiple" && item.MatchedEntryIds?.Any() == true) ids.AddRange(item.MatchedEntryIds);
+                await ValidateMatchAmountAsync(companyId, txn, ids);
+
                 txn.ReconciliationStatus = ReconciliationStatus.Matched;
                 txn.ReconciledAt = DateTime.UtcNow;
                 txn.ReconciledBy = "AI-Batch";

@@ -87,14 +87,17 @@ public partial class BankService
             totalMatched += item.AllocatedAmount;
         }
 
-        // Balance check (net-off check): bank side = item side ± tolerance
+        // Balance check (net-off check): bank side MUST equal item side within
+        // tolerance. A group that doesn't balance leaves money unaccounted, so
+        // we block it outright — the operator adds a fee / difference line (or
+        // fixes the selection) until both sides match.
         var diff = Math.Abs(totalBank - totalMatched);
         var tolerance = request.Tolerance > 0 ? request.Tolerance : 0.01m;
         var balanced = diff <= tolerance;
-        if (!balanced && diff > 1000m)
+        if (!balanced)
             throw new InvalidOperationException(
-                $"ยอดสองฝั่งห่างกันเกินไป — Bank {totalBank:N2} vs รายการ {totalMatched:N2} ต่างกัน {diff:N2} บาท. " +
-                "หากจงใจให้ไม่ลงตัว ลองปรับ Tolerance หรือเพิ่มรายการค่าธรรมเนียม/ส่วนต่าง.");
+                $"ยอดสองฝั่งไม่ตรงกัน — Bank {totalBank:N2} vs รายการ {totalMatched:N2} ต่างกัน {diff:N2} บาท. " +
+                "ยอดต้องเท่ากันเสมอ: เพิ่ม/แก้รายการให้ผลรวมเท่ากัน (เช่น เพิ่มรายการค่าธรรมเนียม/ส่วนต่าง) หรือปรับ Tolerance หากเป็นเศษปัดเศษเล็กน้อย.");
 
         var groupNumber = await NextReconciliationGroupNumberAsync(companyId);
 
