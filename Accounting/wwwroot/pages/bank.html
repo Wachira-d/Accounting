@@ -1250,7 +1250,7 @@
               <th>วันที่</th><th>ประเภท</th><th class="text-right">ยอดธนาคาร</th><th>จับคู่กับ</th><th class="text-right">ยอดที่จับ</th>
             </tr></thead><tbody>` +
               d.matched.map(x => {
-                const mismatch = x.counterpartAmount && Math.abs(x.counterpartAmount - x.amount) > 0.01;
+                const mismatch = x.amountsAgree === false;
                 return `<tr>
                   <td>${Layout.date(x.date)}</td>
                   <td>${this.esc(x.type)}</td>

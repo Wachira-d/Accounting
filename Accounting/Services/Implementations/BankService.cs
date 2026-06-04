@@ -392,6 +392,12 @@ public partial class BankService : IBankService
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // Bank's GL account — lets JE matching use the net that actually hit
+            // the bank (compound entries), consistent with the shared resolver.
+            var autoBankCoaId = await _db.Set<BankAccount>().AsNoTracking()
+                .Where(a => a.Id == bankAccountId && a.CompanyId == companyId)
+                .Select(a => a.LinkedAccountId).FirstOrDefaultAsync();
+
             var unmatched = await _db.Set<BankTransaction>()
                 .Where(t => t.CompanyId == companyId
                     && t.BankAccountId == bankAccountId
@@ -501,8 +507,15 @@ public partial class BankService : IBankService
                 {
                     decimal jeScore = 0;
 
-                    // Match on total debit or credit amount
-                    if (je.TotalDebit == txn.Amount || je.TotalCredit == txn.Amount)
+                    // Match on the NET that posts to the bank account (compound
+                    // entries valued by what actually hit the bank); fall back to
+                    // the JE total when it doesn't post to the bank account.
+                    decimal jeBankAmt = autoBankCoaId.HasValue
+                        ? Math.Abs(je.Lines.Where(l => l.AccountId == autoBankCoaId.Value)
+                            .Sum(l => l.DebitAmount - l.CreditAmount))
+                        : 0m;
+                    if (jeBankAmt <= 0.01m) jeBankAmt = Math.Max(je.TotalDebit, je.TotalCredit);
+                    if (Math.Abs(jeBankAmt - Math.Abs(txn.Amount)) <= 0.01m)
                         jeScore += 50;
                     else
                         continue;
