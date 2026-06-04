@@ -317,13 +317,24 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // (Comparing to a captured Guid translates to SQL cleanly; a nullable
         // .HasValue ternary inside the projection does not.)
         var linkedAcct = bank.LinkedAccountId ?? Guid.Empty;
-        var jeRows = await _db.JournalEntries.AsNoTracking()
-            .Where(j => j.CompanyId == companyId && !j.IsDeleted
-                        && j.Status == JournalEntryStatus.Posted
-                        && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd)
-            .Where(j => !matchedJeIds.Contains(j.Id))
-            .OrderByDescending(j => j.EntryDate)
-            .Select(j => new
+        // Pull the JE + (when it originated from a Document) the source
+        // document's number/type/date and the counterparty contact. AI was
+        // previously seeing only entry number + amount, so it could not do
+        // payee-based 1:1 matching ('bank Payee=Take Time Nature Resort →
+        // JE whose source Receipt was for that contact'). Joining via
+        // SourceDocumentId fixes that without an extra round-trip.
+        var jeRows = await (
+            from j in _db.JournalEntries.AsNoTracking()
+            where j.CompanyId == companyId && !j.IsDeleted
+                && j.Status == JournalEntryStatus.Posted
+                && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd
+                && !matchedJeIds.Contains(j.Id)
+            from src in _db.Documents.AsNoTracking()
+                .Where(d => j.SourceDocumentId != null && d.Id == j.SourceDocumentId).DefaultIfEmpty()
+            from c in _db.Contacts.AsNoTracking()
+                .Where(co => src != null && co.Id == src.ContactId).DefaultIfEmpty()
+            orderby j.EntryDate descending
+            select new
             {
                 j.Id, j.EntryNumber, j.EntryDate, j.Description, j.Reference,
                 // Amount on the bank-linked line (signed: +debit = money in,
@@ -333,8 +344,16 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                              .Sum(l => l.DebitAmount - l.CreditAmount),
                 // Gross transaction size — total debits (= total credits).
                 GrossAmount = j.Lines.Sum(l => l.DebitAmount),
-            })
-            .ToListAsync(ct);
+                // Source document context — null when this JE was a manual
+                // entry not tied to a sale/purchase document. AI uses these
+                // to do contact-aware matching + aggregator (KSHOP-style)
+                // pattern detection.
+                SourceDocNumber = src != null ? src.DocumentNumber : null,
+                SourceDocType = src != null ? (DocumentType?)src.DocumentType : null,
+                SourceDocDate = src != null ? (DateTime?)src.DocumentDate : null,
+                ContactName = c != null ? c.Name : null,
+                ContactTaxId = c != null ? c.TaxId : null,
+            }).ToListAsync(ct);
 
         // Hard ceiling so a pathological dataset can't exceed a sane prompt
         // size (DeepSeek-V3 context = 128k tokens). With a ±5-day window the
@@ -350,7 +369,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var amount = j.BankLineNet != 0m ? Math.Abs(j.BankLineNet) : j.GrossAmount;
             return new BulkBankMatchPrompt.OpenJeInput(
                 j.Id.ToString(), j.EntryNumber, j.EntryDate, amount,
-                j.Description, j.Reference);
+                j.Description, j.Reference,
+                j.SourceDocNumber,
+                j.SourceDocType?.ToString(),
+                j.SourceDocDate,
+                j.ContactName,
+                j.ContactTaxId);
         }).ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────
