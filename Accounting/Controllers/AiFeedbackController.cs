@@ -3,6 +3,7 @@ using Accounting.Models.DTOs;
 using Accounting.Services.Ai;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -59,10 +60,9 @@ public class AiFeedbackController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> GetRaw(
         Guid companyId, Guid feedbackId, CancellationToken ct)
     {
-        var row = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions
-            .FirstOrDefaultAsync(_db.AiSuggestionFeedbacks
-                .AsNoTracking()
-                .Where(f => f.Id == feedbackId && f.CompanyId == companyId), ct);
+        var row = await _db.AiSuggestionFeedbacks
+            .AsNoTracking()
+            .FirstOrDefaultAsync(f => f.Id == feedbackId && f.CompanyId == companyId, ct);
         if (row == null)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบ feedback id (อาจหมดอายุหรือคนละบริษัท)"));
 
