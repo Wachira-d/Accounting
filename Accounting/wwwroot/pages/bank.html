@@ -88,44 +88,81 @@
 
     <!-- Reconciliation Tab -->
     <div id="tabReconcile" style="display:none">
-      <!-- Summary Cards -->
-      <div class="grid grid-4 gap-4" style="margin-bottom:16px" id="reconSummaryCards">
-        <div class="card"><div class="text-gray-500 text-xs">บัญชีที่เลือก</div><div class="text-lg font-bold" id="reconAccountName">ยังไม่ได้เลือก</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">ยอดตาม Statement</div><div class="text-xl font-bold" id="reconBankBal">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">ยอดตามบัญชี (GL)</div><div class="text-xl font-bold" id="reconBookBal">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">ผลต่าง</div><div class="text-xl font-bold" id="reconDiff" style="color:var(--danger)">-</div></div>
-      </div>
-      <div class="grid grid-3 gap-4" style="margin-bottom:16px">
-        <div class="card"><div class="text-gray-500 text-xs">ยอดตามเอกสาร (รับ-จ่าย)</div><div class="text-xl font-bold" id="reconDocBal">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">รวมรับ (ใบเสร็จ/ใบสำคัญรับ)</div><div class="text-lg font-bold text-success" id="reconReceipts">-</div></div>
-        <div class="card"><div class="text-gray-500 text-xs">รวมจ่าย (ใบสำคัญจ่าย/ค่าใช้จ่าย)</div><div class="text-lg font-bold text-danger" id="reconPVs">-</div></div>
-      </div>
-      <div class="grid grid-4 gap-4" style="margin-bottom:16px">
-        <div class="card text-center"><div class="text-gray-500 text-xs">รายการทั้งหมด</div><div class="text-2xl font-bold" id="reconTotal">0</div></div>
-        <div class="card text-center"><div class="text-gray-500 text-xs">จับคู่แล้ว</div><div class="text-2xl font-bold text-success" id="reconMatched">0</div></div>
-        <div class="card text-center"><div class="text-gray-500 text-xs">รอจับคู่</div><div class="text-2xl font-bold text-warning" id="reconCount">0</div></div>
-        <div class="card text-center"><div class="text-gray-500 text-xs">ไม่รวม</div><div class="text-2xl font-bold text-gray-400" id="reconExcluded">0</div></div>
+      <!-- Single consolidated header — 4 key metrics + bank context.
+           Replaces the previous 7-card / 3-row layout that made the
+           operator scan too much before getting to the action.  -->
+      <div class="card" style="margin-bottom:16px;padding:18px 20px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+          <div>
+            <div style="font-size:12px;color:#64748b">บัญชีที่กำลังกระทบยอด</div>
+            <div style="font-weight:700;font-size:16px" id="reconAccountName">ยังไม่ได้เลือก</div>
+            <div style="font-size:11px;color:#94a3b8" id="reconAccountHint">เลือกจากแท็บ "บัญชีธนาคาร" ก่อน</div>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ยอดตาม Statement</div>
+              <div style="font-weight:700;font-size:18px" id="reconBankBal">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ยอดตามบัญชี (GL)</div>
+              <div style="font-weight:700;font-size:18px" id="reconBookBal">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">ผลต่าง</div>
+              <div style="font-weight:700;font-size:18px;color:#dc2626" id="reconDiff">—</div>
+            </div>
+            <div style="text-align:right;border-left:1px solid #e2e8f0;padding-left:16px">
+              <div style="font-size:11px;color:#94a3b8">ยอดเอกสาร (รับ−จ่าย)</div>
+              <div style="font-weight:700;font-size:18px" id="reconDocBal">—</div>
+              <div style="font-size:10px;color:#94a3b8">
+                รับ <span class="text-success" id="reconReceipts">—</span> ·
+                จ่าย <span class="text-danger" id="reconPVs">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Match status pills — replaces the 4 individual cards. -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px solid #f1f5f9">
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;border-radius:999px;font-size:13px">
+            รายการทั้งหมด <b id="reconTotal">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#dcfce7;color:#166534;border-radius:999px;font-size:13px">
+            ✓ จับคู่แล้ว <b id="reconMatched">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#fef3c7;color:#92400e;border-radius:999px;font-size:13px">
+            ⏳ รอจับคู่ <b id="reconCount">0</b>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f1f5f9;color:#64748b;border-radius:999px;font-size:13px">
+            🚫 ไม่รวม <b id="reconExcluded">0</b>
+          </div>
+        </div>
       </div>
 
       <!-- AI Match Controls -->
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-header">
-          <h3 class="card-title">AI กระทบยอดอัตโนมัติ</h3>
+      <div class="card" style="margin-bottom:16px;border:1px solid #e0e7ff;background:linear-gradient(180deg,#fafbff,#ffffff)">
+        <div class="card-header" style="padding:14px 18px">
+          <div>
+            <h3 class="card-title" style="margin:0">🧠 กระทบยอดอัตโนมัติ</h3>
+            <p style="font-size:11px;color:#64748b;margin:2px 0 0">AI จะดูเอกสาร/JE/Payment ในช่วงเดือนที่เลือก (±5 วัน) + ย้อนหลัง 90 วันสำหรับเอกสารค้างชำระ</p>
+          </div>
           <div class="flex gap-2" style="align-items:center;flex-wrap:wrap">
-            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()">จับคู่พื้นฐาน</button>
-            <button class="btn btn-sm btn-primary" onclick="Page.runAiMatch()" id="btnAiMatch" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">AI จับคู่ (heuristic)</button>
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569">
               เดือน
               <input type="month" id="aiMatchMonth" class="form-input"
                      style="width:auto;font-size:13px;padding:4px 8px"
-                     title="เลือกเดือนที่จะให้ AI กระทบยอด — ค่าเริ่มต้นคือเดือนปัจจุบัน">
+                     title="เลือกเดือนที่จะให้ AI กระทบยอด">
             </label>
-            <button class="btn btn-sm btn-primary" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
-              title="โยน bank txn ที่ยังไม่กระทบยอด + เอกสารเปิด + payment + JE + บริบทบริษัทของเดือนที่เลือก ให้ DeepSeek match พร้อมกัน — รายงานข้อมูลที่ขาดด้วย"
-              style="background:linear-gradient(135deg,#ec4899,#f43f5e)">🧠 AI match ทั้งเดือน (ปุ่มเดียว)</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()" title="จับคู่ตามกฎตายตัว (ยอด+วันที่+อ้างอิง) — เร็ว ไม่ใช้ AI">⚡ จับคู่พื้นฐาน</button>
+            <button class="btn btn-sm" onclick="Page.runAiMatch()" id="btnAiMatch"
+                    style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
+                    title="Heuristic + local model — ไม่ส่งไป provider">🤖 AI (local)</button>
+            <button class="btn btn-sm" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
+                    title="ส่งทุก txn ที่ค้าง + เอกสารเปิด + JE ของเดือนนี้ไป DeepSeek match ทีเดียว"
+                    style="background:linear-gradient(135deg,#ec4899,#f43f5e);color:#fff">🧠 AI match ทั้งเดือน</button>
           </div>
         </div>
-        <div id="aiMatchStatus" style="padding:0 16px 12px;display:none">
+        <div id="aiMatchStatus" style="padding:0 18px 14px;display:none">
           <div style="background:var(--bg-secondary);border-radius:8px;padding:12px 16px">
             <div class="flex items-center gap-2" style="margin-bottom:8px">
               <div style="width:8px;height:8px;border-radius:50%;background:var(--primary);animation:pulse 1.5s infinite" id="aiDot"></div>
