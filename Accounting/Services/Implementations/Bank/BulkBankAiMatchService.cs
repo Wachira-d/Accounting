@@ -590,7 +590,28 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            // Tolerant parse options for AI-generated JSON:
+            //   • AllowTrailingCommas: DeepSeek frequently emits "[…,]" / "{…,}"
+            //     which strict Json.NET-style parsing rejects.
+            //   • CommentHandling=Skip: AI sometimes inlines "// note" comments.
+            //   • MaxDepth bump: nested candidate arrays don't go deep but
+            //     stays defensive.
+            JsonDocumentOptions opts = new()
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip,
+                MaxDepth = 64,
+            };
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(json, opts); }
+            catch (JsonException)
+            {
+                // Last-ditch: strip raw control chars that escaped into string
+                // values (unescaped newlines / tabs in 'reasoning' text are the
+                // common offender from chat-model outputs).
+                doc = JsonDocument.Parse(StripControlCharsInsideStrings(json), opts);
+            }
+            using var _docDispose = doc;
             var root = doc.RootElement;
             // DeepSeek occasionally wraps the plan under "result" / "response" /
             // "data" / "output" or a leading "plan" key. Unwrap one level when
@@ -667,10 +688,40 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "Bulk AI match: JSON parse failed; output kept as warning");
-            warnings.Add("AI ตอบกลับเป็น JSON ที่ไม่ valid — กรุณา match ด้วยมือสำหรับรอบนี้");
+            _logger.LogWarning(ex, "Bulk AI match: JSON parse failed at {Path} (line {Line} col {Col}); raw length {Len}",
+                ex.Path, ex.LineNumber, ex.BytePositionInLine, json.Length);
+            warnings.Add($"AI JSON parse error: {ex.Message} (path={ex.Path} line={ex.LineNumber} pos={ex.BytePositionInLine})");
         }
         return new(matches, unmatched, missing, warnings);
+    }
+
+    /// <summary>Rewrite literal control characters (newline, tab, carriage
+    /// return) that sit INSIDE JSON string literals into their JSON-escape
+    /// form (\n, \t, \r). Chat-model outputs sometimes embed real newlines
+    /// in 'reasoning' strings, which is invalid JSON. Control chars OUTSIDE
+    /// strings are left alone (JsonDocument tolerates whitespace).</summary>
+    private static string StripControlCharsInsideStrings(string s)
+    {
+        var sb = new System.Text.StringBuilder(s.Length + 32);
+        bool inString = false, esc = false;
+        foreach (var ch in s)
+        {
+            if (esc) { sb.Append(ch); esc = false; continue; }
+            if (inString)
+            {
+                if (ch == '\\') { sb.Append(ch); esc = true; continue; }
+                if (ch == '"')  { sb.Append(ch); inString = false; continue; }
+                if (ch == '\n') { sb.Append("\\n"); continue; }
+                if (ch == '\r') { sb.Append("\\r"); continue; }
+                if (ch == '\t') { sb.Append("\\t"); continue; }
+                if (ch < 0x20)  { sb.Append("\\u").Append(((int)ch).ToString("X4")); continue; }
+                sb.Append(ch);
+                continue;
+            }
+            if (ch == '"') { sb.Append(ch); inString = true; continue; }
+            sb.Append(ch);
+        }
+        return sb.ToString();
     }
 
     private static Guid? TryGuid(JsonElement el, string prop)
