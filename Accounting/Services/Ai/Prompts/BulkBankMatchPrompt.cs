@@ -195,11 +195,19 @@ Strict JSON output (NO prose outside JSON):
             // the raw content back as Success instead of rejecting it as a
             // "Schema mismatch" and falling back to the local model.
             RawPlanResponse = true,
-            MaxTokensOverride = 4000,         // bulk response can be long
+            // Thai reasoning text on every match (~60-100 chars each) plus
+            // long candidate arrays adds up: 4000 tokens truncated mid-
+            // response on a typical month (44 txns), leaving the JSON
+            // incomplete and unparseable ("Expected end of string..."). 16k
+            // covers a month with ~150 txns; if we still hit the ceiling
+            // the salvage parser recovers whatever match objects already
+            // arrived complete.
+            MaxTokensOverride = 16000,
             // DeepSeek with a ~150-txn + ~240-candidate prompt commonly takes
             // 20-40s. The provider-wide default (8s) was guaranteed to time
-            // out for this feature — raise just this one call to 60s.
-            TimeoutSecondsOverride = 60,
+            // out for this feature — raise just this one call to 90s for the
+            // bigger token budget.
+            TimeoutSecondsOverride = 90,
         };
     }
 }

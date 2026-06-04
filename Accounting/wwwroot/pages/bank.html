@@ -1122,13 +1122,14 @@
         document.getElementById('bulkPlanBody').innerHTML = `
           <h3 style="margin:0 0 4px">🧠 AI match ทั้งเดือน — ผลการวิเคราะห์</h3>
           <p style="font-size:13px;color:#64748b;margin:0 0 12px">${esc(message || '')}</p>
-          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
             <span style="background:${statusColor};color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600">${esc(statusLabel)}</span>
             <span style="font-size:13px;color:#475569">Bank txn พิจารณา: <b>${plan.bankTxnsConsidered}</b></span>
             <span style="font-size:13px;color:#475569">ผู้สมัคร: <b>${plan.candidatesConsidered}</b></span>
             <span style="font-size:13px;color:#16a34a">Match: <b>${(plan.matches||[]).length}</b></span>
             <span style="font-size:13px;color:#d97706">Unmatched: <b>${(plan.unmatched||[]).length}</b></span>
             <span style="font-size:13px;color:#dc2626">Missing data: <b>${(plan.missingData||[]).length}</b></span>
+            ${plan.feedbackId ? `<button class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#0f172a" onclick="Page.viewBulkAiRaw('${esc(plan.feedbackId)}')">🔍 ดู AI response เต็ม</button>` : ''}
           </div>
           ${plan.reasoning ? `<div style="background:#f8fafc;padding:10px 14px;border-radius:6px;font-size:13px;color:#475569;margin-bottom:12px">💭 ${esc(plan.reasoning)}</div>` : ''}
           ${warningsBlock}
@@ -1218,6 +1219,63 @@
           await this.loadTransactions();
           await this.loadReconciliationSummary();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // Fetch the raw AI payload behind a bulk-match result and show it in
+      // an overlay. Lets the operator inspect exactly what DeepSeek replied
+      // (incl. truncation tails / prose around the JSON) without digging in
+      // server logs or the DB.
+      async viewBulkAiRaw(feedbackId) {
+        const cid = Layout.getCompanyId(); if (!cid || !feedbackId) return;
+        const overlay = document.getElementById('bulkAiRawOverlay') || (() => {
+          const el = document.createElement('div');
+          el.id = 'bulkAiRawOverlay';
+          el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:9999';
+          document.body.appendChild(el);
+          return el;
+        })();
+        overlay.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:1100px;width:95%;max-height:88vh;display:flex;flex-direction:column;padding:18px 20px;box-shadow:0 8px 30px rgba(0,0,0,.25)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:12px">
+            <h3 style="margin:0">🔍 AI raw response</h3>
+            <button class="btn btn-sm" onclick="document.getElementById('bulkAiRawOverlay').remove()">ปิด</button>
+          </div>
+          <div id="bulkAiRawContent" style="overflow:auto;flex:1;font-size:12px"><div class="text-sm" style="color:#64748b">กำลังโหลด…</div></div>
+        </div>`;
+        try {
+          const r = await fetch(`/api/companies/${cid}/ai-feedback/${feedbackId}/raw`,
+            { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } });
+          const j = await r.json();
+          if (!j.success || !j.data) throw new Error(j.message || 'ไม่พบข้อมูล');
+          const d = j.data;
+          const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const pretty = v => {
+            if (v == null) return '(null)';
+            try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); }
+            catch { return String(v); }
+          };
+          const meta = (label, val) => `<tr><td style="padding:3px 8px;color:#64748b;white-space:nowrap">${label}</td><td style="padding:3px 8px"><code>${esc(val)}</code></td></tr>`;
+          const block = (title, val, hint) => `<div style="margin-top:10px"><div style="font-weight:600;margin-bottom:4px">${title} ${hint ? `<span style="font-weight:400;color:#94a3b8;font-size:11px">${hint}</span>` : ''}</div>
+            <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5">${esc(pretty(val))}</pre></div>`;
+          document.getElementById('bulkAiRawContent').innerHTML = `
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              ${meta('Feedback id', d.id)}
+              ${meta('Feature', d.featureKey)}
+              ${meta('Status', d.status)}
+              ${meta('Provider', d.providerUsed + (d.modelVersion ? ' · ' + d.modelVersion : ''))}
+              ${meta('Latency', (d.latencyMs ?? '?') + ' ms')}
+              ${meta('Tokens', `in=${d.inputTokens ?? '?'}  out=${d.outputTokens ?? '?'}`)}
+              ${meta('Cost', '$' + (d.costUsd ?? 0))}
+              ${d.errorMessage ? meta('Error', d.errorMessage) : ''}
+              ${meta('Created', d.createdAt)}
+            </table>
+            ${block('Response JSON', d.responseJson, d.responseJson ? (String(d.responseJson).length + ' chars') : '')}
+            ${block('Primary answer (raw)', d.aiPrimaryAnswer)}
+            ${d.localModelAnswer ? block('Local model answer', d.localModelAnswer, 'version: ' + (d.localModelVersion ?? '?')) : ''}
+            ${block('Prompt JSON (sent to AI)', d.promptJson)}`;
+        } catch (e) {
+          document.getElementById('bulkAiRawContent').innerHTML =
+            `<div class="text-danger" style="padding:12px">โหลดไม่สำเร็จ: ${e.message}</div>`;
+        }
       },
 
       renderAiSuggestions() {
