@@ -95,12 +95,23 @@ public class AiFeedbackController : ControllerBase
     /// generic 'show me what AI just said' diagnostic).</summary>
     [HttpGet("latest")]
     public async Task<ActionResult<ApiResponse<object>>> GetLatest(
-        Guid companyId, [FromQuery] string? featureKey, CancellationToken ct)
+        Guid companyId,
+        [FromQuery] string? featureKey,
+        [FromQuery] Guid? sourceEntityId,
+        [FromQuery] string? sourceEntityType,
+        CancellationToken ct)
     {
+        // Per-entity filter: 'show me what AI said about THIS OCR scan' uses
+        // sourceEntityId. Per-feature filter alone gives 'last bulk bank
+        // match' style affordances. Either or both can be combined.
         var q = _db.AiSuggestionFeedbacks.AsNoTracking()
             .Where(f => f.CompanyId == companyId);
         if (!string.IsNullOrWhiteSpace(featureKey))
             q = q.Where(f => f.FeatureKey == featureKey);
+        if (sourceEntityId.HasValue && sourceEntityId.Value != Guid.Empty)
+            q = q.Where(f => f.SourceEntityId == sourceEntityId.Value);
+        if (!string.IsNullOrWhiteSpace(sourceEntityType))
+            q = q.Where(f => f.SourceEntityType == sourceEntityType);
         var row = await q.OrderByDescending(f => f.CreatedAt).FirstOrDefaultAsync(ct);
         if (row == null)
             return Ok(new ApiResponse<object>(true, null, "ยังไม่มี feedback row"));

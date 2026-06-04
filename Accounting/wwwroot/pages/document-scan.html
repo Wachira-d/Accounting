@@ -1006,6 +1006,83 @@
         if (this._duplicateResolve) { this._duplicateResolve('skip'); this._duplicateResolve = null; }
       },
 
+      // Surface what AI actually replied for THIS OCR scan — the suggestion
+      // panel only shows the chosen GL code, but AI typically returned a much
+      // bigger payload (vendor canonicalization, corrections, line items,
+      // confidence flags). Falls back to the latest scan-scoped row if no
+      // explicit feedbackId was wired through.
+      async viewOcrAiRaw(scanId) {
+        const cid = Layout.getCompanyId();
+        if (!cid || !scanId) return;
+        const overlay = document.getElementById('ocrAiRawOverlay') || (() => {
+          const el = document.createElement('div');
+          el.id = 'ocrAiRawOverlay';
+          el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:9999';
+          document.body.appendChild(el);
+          return el;
+        })();
+        overlay.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:1100px;width:95%;max-height:88vh;display:flex;flex-direction:column;padding:18px 20px;box-shadow:0 8px 30px rgba(0,0,0,.25)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:12px">
+            <h3 style="margin:0">🔍 AI raw response (OCR scan)</h3>
+            <button class="btn btn-sm" onclick="document.getElementById('ocrAiRawOverlay').remove()">ปิด</button>
+          </div>
+          <div id="ocrAiRawContent" style="overflow:auto;flex:1;font-size:12px"><div class="text-sm" style="color:#64748b">กำลังโหลด…</div></div>
+        </div>`;
+        try {
+          const token = localStorage.getItem('token');
+          // Try OcrFullReview first (the rich-corrections call), then the
+          // narrower GL-account suggestion as a fallback.
+          let payload = null;
+          for (const featureKey of ['OcrFullReview', 'GlAccountSuggestion', 'DocumentConversionSuggestion']) {
+            const r = await fetch(`/api/companies/${cid}/ai-feedback/latest?featureKey=${featureKey}&sourceEntityId=${scanId}&sourceEntityType=OcrScanResult`,
+              { headers: { 'Authorization': 'Bearer ' + token } });
+            const j = await r.json();
+            if (j.success && j.data) { payload = j.data; break; }
+          }
+          if (!payload) {
+            // Last resort: any feedback row touching this scan id regardless of feature.
+            const r = await fetch(`/api/companies/${cid}/ai-feedback/latest?sourceEntityId=${scanId}`,
+              { headers: { 'Authorization': 'Bearer ' + token } });
+            const j = await r.json();
+            payload = j.success ? j.data : null;
+          }
+          if (!payload) {
+            document.getElementById('ocrAiRawContent').innerHTML =
+              '<div style="padding:12px;color:#64748b">ยังไม่มี AI response สำหรับ scan นี้ (อาจยังไม่ได้กด "🤖 AI ตรวจสอบ & แก้ไข" หรือ AI ไม่ทำงาน)</div>';
+            return;
+          }
+          const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const pretty = v => {
+            if (v == null) return '(null)';
+            try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); }
+            catch { return String(v); }
+          };
+          const d = payload;
+          const meta = (label, val) => `<tr><td style="padding:3px 8px;color:#64748b;white-space:nowrap">${label}</td><td style="padding:3px 8px"><code>${esc(val)}</code></td></tr>`;
+          const block = (title, val, hint) => `<div style="margin-top:10px"><div style="font-weight:600;margin-bottom:4px">${title} ${hint ? `<span style="font-weight:400;color:#94a3b8;font-size:11px">${hint}</span>` : ''}</div>
+            <pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5">${esc(pretty(val))}</pre></div>`;
+          document.getElementById('ocrAiRawContent').innerHTML = `
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              ${meta('Feedback id', d.id)}
+              ${meta('Feature', d.featureKey)}
+              ${meta('Status', d.status)}
+              ${meta('Provider', d.providerUsed + (d.modelVersion ? ' · ' + d.modelVersion : ''))}
+              ${meta('Latency', (d.latencyMs ?? '?') + ' ms')}
+              ${meta('Tokens', `in=${d.inputTokens ?? '?'}  out=${d.outputTokens ?? '?'}`)}
+              ${meta('Cost', '$' + (d.costUsd ?? 0))}
+              ${d.errorMessage ? meta('Error', d.errorMessage) : ''}
+              ${meta('Created', d.createdAt)}
+            </table>
+            ${block('Response JSON', d.responseJson, d.responseJson ? (String(d.responseJson).length + ' chars') : '')}
+            ${block('Primary answer (raw)', d.aiPrimaryAnswer)}
+            ${d.localModelAnswer ? block('Local model answer', d.localModelAnswer, 'version: ' + (d.localModelVersion ?? '?')) : ''}
+            ${block('Prompt JSON (sent to AI)', d.promptJson)}`;
+        } catch (e) {
+          document.getElementById('ocrAiRawContent').innerHTML =
+            `<div class="text-danger" style="padding:12px">โหลดไม่สำเร็จ: ${e.message}</div>`;
+        }
+      },
+
       proceedDuplicate() {
         Layout.closeModal('duplicateModal');
         if (this._duplicateResolve) { this._duplicateResolve('proceed'); this._duplicateResolve = null; }
@@ -1667,7 +1744,14 @@
             </div>
 
             <div class="review-section">
-              <div class="review-section-title">📊 ผังบัญชีที่แนะนำ ${scan.suggestedAccounts ? '<span style="float:right;font-size:11px;color:#059669;font-weight:400">🤖 AI แนะนำ</span>' : ''}</div>
+              <div class="review-section-title">📊 ผังบัญชีที่แนะนำ
+                <span style="float:right;display:inline-flex;gap:6px;align-items:center">
+                  ${scan.suggestedAccounts ? '<span style="font-size:11px;color:#059669;font-weight:400">🤖 AI แนะนำ</span>' : ''}
+                  <button type="button" class="btn btn-sm"
+                    style="background:#fff;border:1px solid #bae6fd;color:#0369a1;padding:2px 8px;font-size:11px;font-weight:500"
+                    onclick="Page.viewOcrAiRaw('${scan.id}')">🔍 ดู AI response เต็ม</button>
+                </span>
+              </div>
               <div class="review-field">
                 <label>หมวดค่าใช้จ่าย</label>
                 <select class="form-input" id="revExpenseCategory" style="flex:1">
