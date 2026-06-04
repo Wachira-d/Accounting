@@ -2181,17 +2181,37 @@
       },
 
       // 🤖 Ask AI to suggest the GL expense category. Uses the document's
-      // existing fields (contact, totals, notes) — works whether the doc
-      // is saved or not because the AI sees the in-progress form values.
+      // existing fields (contact, line descriptions, totals, notes) — works
+      // whether the doc is saved or not because the AI sees the in-progress
+      // form values, not the persisted entity.
       askAiExpenseCategory(ev) {
         const cid = Layout.getCompanyId();
         if (!cid) return;
-        const contactSearchInput = document.getElementById('fContactSearch');
-        const vendorName = contactSearchInput?.value || '';
-        const lineDesc = document.getElementById('fNotes')?.value
-          || vendorName || 'ค่าใช้จ่ายทั่วไป';
-        const totalEl = document.getElementById('fTotal');
-        const amount = parseFloat(totalEl?.value || '0') || 0;
+        // The vendor name lives on the contact autocomplete; read its visible
+        // text (the hidden fContactId carries the GUID). The previous build
+        // referenced the wrong input id ('fContactSearch') and silently
+        // shipped an empty vendor every time, starving AI of context.
+        const vendorName = (document.getElementById('fContact')?.value || '').trim();
+        // Build the line description from the ACTUAL line table — fallback
+        // to notes/vendor only when the operator hasn't keyed anything yet.
+        // Concatenate up to 5 lines so AI sees the real expense detail
+        // ('ค่าธรรมเนียมวิชาชีพ บริการตรวจสอบบัญชี' >> 'ค่าใช้จ่ายทั่วไป').
+        const lineParts = [];
+        let amountFromLines = 0;
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          const d = row.querySelector('[data-f="desc"]')?.value?.trim();
+          if (d) lineParts.push(d);
+          const q = parseFloat(row.querySelector('[data-f="qty"]')?.value) || 0;
+          const p = parseFloat(row.querySelector('[data-f="price"]')?.value) || 0;
+          const dc = parseFloat(row.querySelector('[data-f="disc"]')?.value) || 0;
+          amountFromLines += Math.round(q * p * (1 - dc / 100) * 100) / 100;
+        });
+        const lineDesc = lineParts.slice(0, 5).join(' · ')
+          || (document.getElementById('fNotes')?.value || '').trim()
+          || vendorName
+          || 'ค่าใช้จ่ายทั่วไป';
+        const amount = amountFromLines > 0 ? amountFromLines
+          : (parseFloat(document.getElementById('fTotal')?.value || '0') || 0);
         const currency = document.getElementById('fCurrency')?.value || 'THB';
         const currentAccountId = document.getElementById('fExpenseCategory')?.value || null;
         const currentAccountCode = currentAccountId
@@ -2202,12 +2222,14 @@
         // it as ad-hoc (no source-invoice grounding).
         const sourceId = this.editingId || '00000000-0000-0000-0000-000000000000';
         const btn = ev?.currentTarget;
+        const contactId = document.getElementById('fContactId')?.value || null;
         AiSuggestion.show({
           anchorEl: btn,
           fetch: () => API.post(`/api/companies/${cid}/ai/payment-voucher/suggest-account`, {
             sourceInvoiceId: sourceId,
             lineDescription: lineDesc,
             amount, currency, currentAccountCode,
+            contactId,
           }),
           applyAnswer: (code) => {
             // AI returns an account CODE; map to the option value (account id).
