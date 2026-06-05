@@ -352,10 +352,18 @@ public partial class BankService : IBankService
         var net = sameDirSum - oppDirSum;
         var diff = Math.Abs(net - target);
         if (diff > 0.01m)
+        {
+            // Identify the offending bank line so the operator can find it.
+            var sign = txn.TransactionType == BankTransactionType.Deposit ? "+" : "-";
+            var desc = (txn.Description ?? txn.Payee ?? "").Trim();
+            if (desc.Length > 40) desc = desc[..40] + "…";
+            var who = $"รายการธนาคาร {txn.TransactionDate:dd/MM/yyyy} {sign}{target:N2}" +
+                      (string.IsNullOrWhiteSpace(desc) ? "" : $" ({desc})");
             throw new InvalidOperationException(
-                $"ยอดที่จับคู่ ({net:N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {diff:N2} บาท. " +
+                $"{who}: ยอดที่จับคู่ ({net:N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {diff:N2} บาท. " +
                 "ฝั่งเดียวกันบวกกัน, ข้ามฝั่งหักกัน (เช่น Receipt 2,500 − PaymentVoucher 500 = 2,000 net เข้าบัญชี). " +
                 "ใบรับ 2 ใบไม่สามารถนำมาลบกันได้ — เลือกเอกสาร/JE ให้ถูก หรือใช้กลุ่มกระทบยอด M:N.");
+        }
     }
 
     public async Task<BankTransactionResponse> ReconcileAsync(Guid companyId, ReconcileRequest request)

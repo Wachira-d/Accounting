@@ -53,9 +53,21 @@ public partial class BankService
                 || !string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson))
             .ToList();
         if (alreadyReconciled.Count > 0)
+        {
+            // Show date + amount + a snippet of the memo so the operator can
+            // actually FIND the offending lines (a truncated GUID is useless).
+            string Describe(BankTransaction t)
+            {
+                var sign = t.TransactionType == BankTransactionType.Deposit ? "+" : "-";
+                var desc = (t.Description ?? t.Payee ?? "").Trim();
+                if (desc.Length > 40) desc = desc[..40] + "…";
+                return $"{t.TransactionDate:dd/MM/yyyy} {sign}{Math.Abs(t.Amount):N2}" +
+                       (string.IsNullOrWhiteSpace(desc) ? "" : $" ({desc})");
+            }
             throw new InvalidOperationException(
-                "Bank transaction ต่อไปนี้ถูกกระทบยอดไปแล้ว — กรุณายกเลิกการจับคู่เดิมก่อน: " +
-                string.Join(", ", alreadyReconciled.Select(t => t.Id.ToString("N")[..8])));
+                "Bank transaction ต่อไปนี้ถูกกระทบยอดไปแล้ว — กรุณายกเลิกการจับคู่เดิมก่อน:\n• " +
+                string.Join("\n• ", alreadyReconciled.Select(Describe)));
+        }
 
         // Bank-side signed sum: deposits are positive, withdrawals negative,
         // but operator may override per-item. Default-fill amount from txn
