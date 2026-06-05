@@ -491,17 +491,15 @@ public partial class BankService : IBankService
                     else
                         continue;
 
-                    // Directional date proximity. A receipt is dated AT or
-                    // BEFORE the money lands, so a payment dated MORE than 1 day
-                    // AFTER the bank txn can't have funded it — reject. Backward
-                    // up to 7 days (cheque clearing / entry lag) still scores.
-                    var signedDiff = (payment.PaymentDate.Date - txn.TransactionDate.Date).TotalDays;
-                    if (signedDiff > 1) continue;              // future-dated receipt — impossible
-                    var daysDiff = Math.Abs(signedDiff);
+                    // Flow-aware directional window (shared classifier) — a
+                    // KSHOP/Thai-QR deposit only reaches back 1 day, a cheque
+                    // 7, etc.; a receipt dated after the deposit can't fund it.
+                    var autoWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
+                    if (!Bank.BankFlowClassifier.InWindow(payment.PaymentDate, txn.TransactionDate, autoWin)) continue;
+                    var daysDiff = Math.Abs((payment.PaymentDate.Date - txn.TransactionDate.Date).TotalDays);
                     if (daysDiff <= 0) score += 30;
                     else if (daysDiff <= 3) score += 20;
-                    else if (daysDiff <= 7) score += 10;
-                    else continue; // Too far in the past
+                    else score += 10;
 
                     // Reference match = 20 points
                     if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(payment.Reference)
@@ -559,11 +557,13 @@ public partial class BankService : IBankService
                     else
                         continue;
 
-                    // Date proximity
-                    var jeDaysDiff = Math.Abs((je.EntryDate - txn.TransactionDate).TotalDays);
+                    // Flow-aware directional window (shared classifier).
+                    var jeWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
+                    if (!Bank.BankFlowClassifier.InWindow(je.EntryDate, txn.TransactionDate, jeWin)) continue;
+                    var jeDaysDiff = Math.Abs((je.EntryDate.Date - txn.TransactionDate.Date).TotalDays);
                     if (jeDaysDiff <= 0) jeScore += 30;
                     else if (jeDaysDiff <= 3) jeScore += 20;
-                    else if (jeDaysDiff <= 7) jeScore += 10;
+                    else jeScore += 10;
 
                     // Reference match
                     if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(je.Reference)
