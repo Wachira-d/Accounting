@@ -1003,24 +1003,42 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // KSHOP) only contain SAME-DAY sales (max +1 for cut-off), so
             // candidates from other days are never part of the bundle.
             var windowDays = CandidateWindowDays(bt.Memo, bt.Payee, bt.Reference);
+            var memoBlob = ((bt.Memo ?? "") + " " + (bt.Reference ?? "") + " " + (bt.Payee ?? ""));
+            var memoLc = memoBlob.ToLowerInvariant();
+            // Document/reference codes the bank memo cites (REC.../PAY.../INV...
+            // /BILL...). A candidate whose ref/doc matches one of these is a
+            // near-certain 1:1 regardless of name.
+            var memoRefs = ExtractRefCodes(memoBlob);
 
-            // Score by (smallest amount delta, smallest date gap, contact/ref signal).
+            // Score by (signal desc, amount delta asc, date gap asc). Also
+            // count how many in-window candidates share the exact amount —
+            // when >1 and NONE carries an identity signal, the pick is
+            // ambiguous and confidence must drop (Gap 1.4: two same-amount
+            // same-day receipts from different customers).
             (Guid Id, string Kind, decimal Amt, int DateGap, int Signal)? best = null;
+            int exactAmountInWindow = 0;
             void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo)
             {
                 if (Math.Abs(amt - target) > Tol) return;
                 var gap = (int)Math.Abs((date - bt.Date).TotalDays);
                 if (gap > windowDays) return;
                 if (clearedBankIds.Contains(bid)) return;       // already taken in this loop
+                exactAmountInWindow++;
                 int signal = 0;
-                var memo = (bt.Memo ?? "") + " " + (bt.Reference ?? "") + " " + (bt.Payee ?? "");
-                if (!string.IsNullOrWhiteSpace(contact) && memo.Contains(contact, StringComparison.OrdinalIgnoreCase)) signal += 2;
-                if (!string.IsNullOrWhiteSpace(docNo)   && memo.Contains(docNo,   StringComparison.OrdinalIgnoreCase)) signal += 3;
-                if (!string.IsNullOrWhiteSpace(rf)      && memo.Contains(rf,      StringComparison.OrdinalIgnoreCase)) signal += 1;
+                // Strong: the candidate's own reference/doc code is cited in memo
+                // (memoRefs is already a case-insensitive set).
+                if (!string.IsNullOrWhiteSpace(rf) && memoRefs.Contains(rf!.Replace(" ", ""))) signal += 4;
+                if (!string.IsNullOrWhiteSpace(docNo) && memoRefs.Contains(docNo!.Replace(" ", ""))) signal += 4;
+                // Medium: substring of the code appears anywhere in the memo.
+                if (signal == 0 && !string.IsNullOrWhiteSpace(docNo) && memoLc.Contains(docNo!.ToLowerInvariant())) signal += 3;
+                if (signal == 0 && !string.IsNullOrWhiteSpace(rf) && memoLc.Contains(rf!.ToLowerInvariant())) signal += 1;
+                // Contact identity: exact substring or fuzzy token overlap with
+                // the masked name in the memo ("จาก X3349 VEENA SRIKA++").
+                if (!string.IsNullOrWhiteSpace(contact) && ContactMatchesMemo(contact!, memoLc)) signal += 2;
                 if (best is null
-                    || Math.Abs(amt - target) < Math.Abs(best.Value.Amt - target)
-                    || (amt == best.Value.Amt && (gap < best.Value.DateGap
-                        || (gap == best.Value.DateGap && signal > best.Value.Signal))))
+                    || signal > best.Value.Signal
+                    || (signal == best.Value.Signal && Math.Abs(amt - target) < Math.Abs(best.Value.Amt - target))
+                    || (signal == best.Value.Signal && amt == best.Value.Amt && gap < best.Value.DateGap))
                     best = (id, kind, amt, gap, signal);
             }
 
@@ -1033,17 +1051,29 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             }
             if (best is null) continue;
 
-            // Confidence: tight match (same day + signal) → 0.95, else taper.
-            decimal conf = 0.75m;
-            if (best.Value.DateGap == 0) conf += 0.10m;
-            if (best.Value.Signal >= 3) conf += 0.10m;
-            else if (best.Value.Signal >= 1) conf += 0.05m;
+            // AMBIGUITY GUARD: several candidates share the exact amount but the
+            // chosen one has NO identity signal → we can't be sure it's the
+            // right customer. Skip it (leave for AI / manual) rather than risk
+            // pairing the wrong receipt.
+            bool ambiguous = exactAmountInWindow > 1 && best.Value.Signal == 0;
+            if (ambiguous) continue;
+
+            // Confidence: identity signal dominates; same-day + unique amount
+            // add. A signalled match (ref/doc/contact) can reach 0.95; a bare
+            // amount+date unique match caps lower (0.80) since names weren't
+            // confirmed.
+            decimal conf;
+            if (best.Value.Signal >= 4) conf = 0.95m;        // ref/doc code cited
+            else if (best.Value.Signal >= 2) conf = 0.88m;   // contact/doc substring
+            else if (best.Value.Signal >= 1) conf = 0.82m;
+            else conf = 0.80m;                                // unique amount, no name
+            if (best.Value.DateGap == 0) conf += 0.02m;
             if (conf > 0.98m) conf = 0.98m;
 
             added.Add(new ProposedMatch(bid, "OneToOne",
                 new List<MatchCandidate> { new(best.Value.Id, best.Value.Kind, best.Value.Amt) },
                 conf,
-                $"1:1 exact (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, signal={best.Value.Signal})",
+                $"1:1 (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, signal={best.Value.Signal}{(exactAmountInWindow > 1 ? $", {exactAmountInWindow} ตัวยอดเท่ากัน" : "")})",
                 Guid.Empty));
             clearedBankIds.Add(bid);
             consumed.Add(best.Value.Id);
@@ -1122,8 +1152,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             if (!IsAggregatorFlow(cat)) continue;   // 1:1-only flow — let TryExactOneToOne handle it
             int wDays = CandidateWindowDays(bt.Memo);
             bool W(DateTime d) => Math.Abs((d - bt.Date).TotalDays) <= wDays;
+            // Amount pre-filter: no single same-side item can exceed the target
+            // (all-positive sum), so drop them before the O(n^4) subset search.
+            // Opposite-side (subtract) items can be any size. Cuts the same-side
+            // pool dramatically on a busy day (Gap 1.5 perf).
             var same = (bt.Direction == "Out" ? poolOut : poolIn)
-                .Where(p => W(p.Date) && !consumedJeIds.Contains(p.Id)).ToList();
+                .Where(p => W(p.Date) && !consumedJeIds.Contains(p.Id) && p.Amount <= bt.Amount + 0.50m).ToList();
             var opp  = (bt.Direction == "Out" ? poolIn  : poolOut)
                 .Where(p => W(p.Date) && !consumedJeIds.Contains(p.Id)).ToList();
             if (same.Count + opp.Count < 2) continue;
@@ -1394,6 +1428,38 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     // Back-compat shim used by callers that only need the aggregator flag.
     private static bool IsAggregatorMemo(string? memo, string? payee = null, string? reference = null)
         => IsAggregatorFlow(ClassifyBankMemo(memo, payee, reference));
+
+    private static readonly System.Text.RegularExpressions.Regex _refCodeRx =
+        new(@"\b(REC|PAY|INV|BILL|PV|RV|JV|DN|CN|TI|BN)[-\s]?\d{2,}[-\d]*\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Pull document/reference codes (REC260401001, PAY-202604-0001,
+    /// INV2025..., RV-..., PV-...) out of a bank memo so a candidate whose own
+    /// number/reference equals one of them is a near-certain 1:1 hit.</summary>
+    private static HashSet<string> ExtractRefCodes(string? memo)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(memo)) return set;
+        foreach (System.Text.RegularExpressions.Match m in _refCodeRx.Matches(memo))
+            set.Add(m.Value.Replace(" ", "").Trim());
+        return set;
+    }
+
+    /// <summary>Loose name match against a masked bank memo. Bank memos mask
+    /// names like "จาก X3349 VEENA SRIKA++" — we match when ANY name token of
+    /// length ≥ 3 (e.g. "VEENA", "SRIKA") appears in the memo, which is enough
+    /// signal to break a tie but deliberately not enough to force a match on
+    /// its own (the ambiguity guard still applies). Account suffix tokens like
+    /// "X3349" also count when present in both.</summary>
+    private static bool ContactMatchesMemo(string contact, string memoLc)
+    {
+        if (string.IsNullOrWhiteSpace(contact)) return false;
+        var c = contact.ToLowerInvariant();
+        if (memoLc.Contains(c)) return true;
+        foreach (var tok in c.Split(new[] { ' ', '.', ',', '(', ')', '-' }, StringSplitOptions.RemoveEmptyEntries))
+            if (tok.Length >= 3 && memoLc.Contains(tok)) return true;
+        return false;
+    }
 
     private static (decimal Confidence, string MismatchNote) CalibrateConfidence(
         Models.Entities.BankTransaction bankTxn, ProposedMatch match)

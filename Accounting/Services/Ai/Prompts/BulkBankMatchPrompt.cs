@@ -91,7 +91,12 @@ Matching priority — apply IN ORDER, stop when a confident pick is found. Every
 
 PRIORITY ORDER — ALWAYS EXHAUST 1:1 FIRST. Run A → B for every bank txn before considering any M:1 / aggregator / net-settlement strategy below. Most real deposits ARE 1:1; reach for multi-item only when no single candidate fits.
 
-A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.date| ≤ 7 days. Even WITHOUT a contact / memo signal, a unique candidate whose amount matches within 0.50 baht and falls in the date window is a valid 1:1 (confidence 0.85 if no signal, 0.95 with payee/contact/doc-number signal). Try this for EVERY unmatched bank txn before reaching for any combination.
+A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.date| within the flow window (C below). Confidence by identity signal:
+   • A candidate whose reference / source_doc.number is CITED in the bank memo (e.g. memo contains ""REC260401001"" and that's the JE's reference) → 0.95.
+   • Contact name / account suffix from the memo matches the candidate's contact → 0.90.
+   • UNIQUE in-window amount, no name signal → 0.80.
+   • AMBIGUOUS (2+ in-window candidates share the exact amount and NONE has a name/ref signal) → do NOT guess: return unmatched with reason ""มีหลายรายการยอดเท่ากัน ไม่มีตัวระบุ"" so the operator picks. Pairing the wrong customer's receipt is worse than leaving it.
+   Try 1:1 for EVERY unmatched bank txn before any combination.
 
 B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
 
