@@ -19,6 +19,7 @@ public enum BankFlowCategory
     Refund,        // Refund / กลับรายการ — 1:1 reversal, wide backward
     Loan,          // Loan disbursement / เบิกสินเชื่อ / OD — 1:1, [T−2..T+2]
     CardSettle,    // Card / Visa/MC settlement — daily M:1, [T−2..T]
+    OtaSettlement, // Booking.com / Agoda / Expedia — Σ receipts − commission, wide back
     TaxRefund,     // คืนภาษี / RD refund — 1:1 wide forward
     Other,         // unclassified — conservative 1:1, [T−3..T+2]
 }
@@ -46,6 +47,15 @@ public static class BankFlowClassifier
             || s.Contains("card settle") || s.Contains("card net") || s.Contains("merchant settle")
             || s.Contains("posnet"))
             return BankFlowCategory.CardSettle;
+
+        // OTA travel agents remit the booking total NET of their commission, so
+        // the deposit = Σ(booking receipts) − commission PV. Check before the
+        // SMART/auto-credit rule because OTA payouts often arrive via SMART.
+        if (s.Contains("booking.c") || s.Contains("booking.com") || s.Contains("agoda")
+            || s.Contains("expedia") || s.Contains("traveloka") || s.Contains("ctrip")
+            || s.Contains("trip.com") || s.Contains("hotels.com") || s.Contains("makemytrip")
+            || s.Contains("airbnb") || s.Contains("nrba"))
+            return BankFlowCategory.OtaSettlement;
 
         if (s.Contains("smart") || s.Contains(" ats ") || s.Contains("รับโอนเงินอัตโนมัติ")
             || s.Contains("โอนเข้าอัตโนมัติ") || s.Contains("หักบัญชีอัตโนมัติ")
@@ -104,6 +114,7 @@ public static class BankFlowClassifier
         {
             BankFlowCategory.Aggregator  => (1, 0),
             BankFlowCategory.CardSettle  => (2, 0),
+            BankFlowCategory.OtaSettlement => (45, 2), // booking receipts span weeks before payout
             BankFlowCategory.Transfer    => (1, 1),
             BankFlowCategory.AutoCredit  => (2, 1),
             BankFlowCategory.BillPayment => (3, 1),
