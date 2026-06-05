@@ -624,6 +624,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         foreach (var p in openPayments) { labelById[p.Id] = p.Number; realAmountById[p.Id] = p.Amount; }
         foreach (var d in openDocs) { labelById[d.Id] = d.Number; realAmountById[d.Id] = d.Outstanding; }
 
+        // Identity + source-date lookup so a CONFIRMED 1:1 can be upgraded to
+        // 0.99 even when the AI proposed it (the server sweep skips bank lines
+        // the AI already claimed, so the boost there alone wouldn't reach them).
+        var idInfoById = new Dictionary<string, MatchIdentity>(StringComparer.OrdinalIgnoreCase);
+        foreach (var j in openJes)
+            idInfoById[j.Id] = new(j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, null, j.Date);
+        foreach (var p in openPayments)
+            idInfoById[p.Id] = new(p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber, p.Date);
+        foreach (var d in openDocs)
+            idInfoById[d.Id] = new(d.ContactName, null, d.Number, d.ContactTaxId, null, d.Date);
+
         // First pass: calibrate every match (CPU only) and build its feedback
         // record. Second pass: ONE batch insert for all records (was N separate
         // SaveChanges — 100 matches = 100 DB round-trips blocking the response).
@@ -670,6 +681,25 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // and date proximity to the candidate's source row when known. AI
             // confidence then becomes a ceiling; we never push it higher.
             var (calibratedConf, mismatchNote) = CalibrateConfidence(bt, m);
+
+            // CONFIRMED 1:1 → 0.99. A single-candidate match whose amount agrees
+            // to the satang, sits within a day of its source document, and whose
+            // IDENTITY (contact name / reference / doc-no / tax id / bank-account
+            // tail) is quoted in the bank memo is as certain as reconciliation
+            // gets — the bank line is merely net of a small fee/WHT. Works for
+            // BOTH AI- and server-proposed matches so it sorts + auto-checks
+            // first. Only when calibration found no amount mismatch.
+            if (string.IsNullOrEmpty(mismatchNote) && m.MatchGroupId is null
+                && m.Candidates.Count == 1
+                && idInfoById.TryGetValue(m.Candidates[0].CandidateId.ToString(), out var idInfo))
+            {
+                var bankAmt = Math.Abs(bt.Amount);
+                bool exactToSatang = Math.Abs(bankAmt - m.Candidates[0].Amount) <= 0.01m;
+                bool nearDay = Math.Abs((idInfo.Date.Date - bt.TransactionDate.Date).TotalDays) <= 1;
+                var memoBlob = (bt.Description ?? "") + " " + (bt.Reference ?? "") + " " + (bt.Payee ?? "");
+                if (exactToSatang && nearDay && MemoConfirmsIdentity(memoBlob, idInfo))
+                    calibratedConf = Math.Max(calibratedConf, 0.99m);
+            }
             // AI sometimes writes contradictory reasoning ("พอดี" alongside
             // "ยอดต่าง 80") — strip the AI's misleading sum claim when our
             // computed delta says otherwise, then append the honest note.
@@ -1178,10 +1208,22 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             if (best.Value.DateGap == 0) conf += 0.02m;
             if (conf > 0.98m) conf = 0.98m;
 
+            // FULLY-CONFIRMED 1:1 → 0.99. When the candidate's IDENTITY is
+            // confirmed (name / ref / doc-no / taxid / account-tail, signal ≥ 2)
+            // AND the amount agrees to the satang AND it sits on the same or
+            // adjacent day, the pairing is certain — the bank line may merely be
+            // net of a small fee/WHT. This is the strongest case in the whole
+            // book, so it gets the top score and (via the best-first dedup) is
+            // applied before anything else.
+            bool identityConfirmed = best.Value.Signal >= 2;
+            bool exactToSatang = Math.Abs(best.Value.Amt - target) <= 0.01m;
+            if (identityConfirmed && exactToSatang && best.Value.DateGap <= 1)
+                conf = 0.99m;
+
             added.Add(new ProposedMatch(bid, "OneToOne",
                 new List<MatchCandidate> { new(best.Value.Id, best.Value.Kind, best.Value.Amt) },
                 conf,
-                $"1:1 (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, signal={best.Value.Signal}{(exactAmountInWindow > 1 ? $", {exactAmountInWindow} ตัวยอดเท่ากัน" : "")})",
+                $"1:1 (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, signal={best.Value.Signal}{(conf >= 0.99m ? ", ยืนยันชื่อ+ยอด+วันตรง" : "")}{(exactAmountInWindow > 1 ? $", {exactAmountInWindow} ตัวยอดเท่ากัน" : "")})",
                 Guid.Empty));
             clearedBankIds.Add(bid);
             consumed.Add(best.Value.Id);
@@ -1735,6 +1777,46 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         if (memoLc.Contains(c)) return true;
         foreach (var tok in c.Split(new[] { ' ', '.', ',', '(', ')', '-' }, StringSplitOptions.RemoveEmptyEntries))
             if (tok.Length >= 3 && memoLc.Contains(tok)) return true;
+        return false;
+    }
+
+    /// <summary>Candidate identity fields used to confirm a 1:1 against a bank
+    /// memo (name / reference / doc-no / tax id / payer-account tail + the
+    /// source-document date).</summary>
+    private readonly record struct MatchIdentity(
+        string? Contact, string? Reference, string? DocNo,
+        string? TaxId, string? Account, DateTime Date);
+
+    /// <summary>True when the bank memo quotes ANY of the candidate's identity
+    /// fields — the same signals the 1:1 sweep scores, reused so an AI-proposed
+    /// match can be upgraded to a confirmed 0.99.</summary>
+    private static bool MemoConfirmsIdentity(string memoBlob, MatchIdentity info)
+    {
+        if (string.IsNullOrWhiteSpace(memoBlob)) return false;
+        var memoLc = memoBlob.ToLowerInvariant();
+        var refs = ExtractRefCodes(memoBlob);
+        if (!string.IsNullOrWhiteSpace(info.Reference)
+            && (refs.Contains(info.Reference!.Replace(" ", "")) || memoLc.Contains(info.Reference!.ToLowerInvariant())))
+            return true;
+        if (!string.IsNullOrWhiteSpace(info.DocNo)
+            && (refs.Contains(info.DocNo!.Replace(" ", "")) || memoLc.Contains(info.DocNo!.ToLowerInvariant())))
+            return true;
+        if (!string.IsNullOrWhiteSpace(info.Contact) && ContactMatchesMemo(info.Contact!, memoLc))
+            return true;
+        if (!string.IsNullOrWhiteSpace(info.TaxId))
+        {
+            var tid = new string(info.TaxId!.Where(char.IsDigit).ToArray());
+            if (tid.Length >= 10 && memoBlob.Replace(" ", "").Replace("-", "").Contains(tid)) return true;
+        }
+        if (!string.IsNullOrWhiteSpace(info.Account))
+        {
+            var digits = new string(info.Account!.Where(char.IsDigit).ToArray());
+            if (digits.Length >= 3)
+            {
+                var tail = digits.Substring(digits.Length - Math.Min(4, digits.Length));
+                if (memoLc.Replace(" ", "").Contains(tail.ToLowerInvariant())) return true;
+            }
+        }
         return false;
     }
 
