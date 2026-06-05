@@ -291,11 +291,29 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .ToListAsync(ct);
         var truncatedPayments = payments.Count > MaxCandidatesPerKind;
         if (truncatedPayments) payments = payments.Take(MaxCandidatesPerKind).ToList();
-        var openPayments = payments.Select(p => new BulkBankMatchPrompt.OpenPaymentInput(
-            p.Id.ToString(), p.PaymentNumber, p.PaymentDate, p.Amount,
-            p.PaymentMethod.ToString(), p.Reference, p.ContactName,
-            LinkedDocumentNumber: p.DocNumber,
-            LinkedDocumentType: p.DocType.ToString())).ToList();
+        var openPayments = payments.Select(p =>
+        {
+            string? dir = p.DocType switch
+            {
+                Models.Enums.DocumentType.Receipt or
+                Models.Enums.DocumentType.ReceiptVoucher or
+                Models.Enums.DocumentType.Invoice or
+                Models.Enums.DocumentType.TaxInvoice or
+                Models.Enums.DocumentType.BillingNote or
+                Models.Enums.DocumentType.DebitNote => "In",
+                Models.Enums.DocumentType.PaymentVoucher or
+                Models.Enums.DocumentType.Expense or
+                Models.Enums.DocumentType.PurchaseInvoice or
+                Models.Enums.DocumentType.CertificateInLieu => "Out",
+                _ => null,
+            };
+            return new BulkBankMatchPrompt.OpenPaymentInput(
+                p.Id.ToString(), p.PaymentNumber, p.PaymentDate, p.Amount,
+                p.PaymentMethod.ToString(), p.Reference, p.ContactName,
+                LinkedDocumentNumber: p.DocNumber,
+                LinkedDocumentType: p.DocType.ToString(),
+                Direction: dir);
+        }).ToList();
 
         // ── 6. Open journal entries (Posted, not yet linked to a bank
         // ── txn) — BOTH directions (เงินรับ + เงินจ่าย). Per user request
@@ -380,9 +398,25 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // a plain receipt has bank-line == gross. Sending only one was
             // why an exact same-day 5,000 receipt got missed when its JE
             // bank line differed from the gross.
-            var bankLine = Math.Abs(j.BankLineNet);
+            var bankLine = j.BankLineNet;                                  // SIGNED
             var gross = j.GrossAmount;
-            var amount = bankLine != 0m ? bankLine : gross;
+            var amount = bankLine != 0m ? Math.Abs(bankLine) : gross;
+            // SourceDocType is the authoritative direction hint when present;
+            // otherwise we infer from the bank-line sign (Debit > Credit = In).
+            string? dir = j.SourceDocType switch
+            {
+                Models.Enums.DocumentType.Receipt or
+                Models.Enums.DocumentType.ReceiptVoucher or
+                Models.Enums.DocumentType.Invoice or
+                Models.Enums.DocumentType.TaxInvoice or
+                Models.Enums.DocumentType.BillingNote or
+                Models.Enums.DocumentType.DebitNote => "In",
+                Models.Enums.DocumentType.PaymentVoucher or
+                Models.Enums.DocumentType.Expense or
+                Models.Enums.DocumentType.PurchaseInvoice or
+                Models.Enums.DocumentType.CertificateInLieu => "Out",
+                _ => bankLine > 0 ? "In" : (bankLine < 0 ? "Out" : null),
+            };
             return new BulkBankMatchPrompt.OpenJeInput(
                 j.Id.ToString(), j.EntryNumber, j.EntryDate, amount,
                 j.Description, j.Reference,
@@ -392,7 +426,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 j.ContactName,
                 j.ContactTaxId,
                 // Only worth sending when it differs from `amount`.
-                gross != amount ? gross : (decimal?)null);
+                gross != amount ? gross : (decimal?)null,
+                dir);
         }).ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────
@@ -714,6 +749,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                             if (cid == null) continue;
                             var ctype = ce.TryGetProperty("candidateType", out var ctEl) ? ctEl.GetString() ?? "Document" : "Document";
                             var amt = ce.TryGetProperty("amount", out var aEl) && aEl.TryGetDecimal(out var a) ? a : 0m;
+                            // Hard rule H2 (prompt): candidates must be positive.
+                            // Negative emissions = invalid signal (the −500 + 2,500
+                            // bug). Convert to magnitude and let the downstream
+                            // sum-vs-bank validator catch the wrong total.
+                            if (amt < 0) amt = Math.Abs(amt);
                             cands.Add(new MatchCandidate(cid.Value, ctype, amt));
                         }
                     }
@@ -863,6 +903,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                             if (cid == null) continue;
                             var ctype = ce.TryGetProperty("candidateType", out var ctEl) && ctEl.ValueKind == JsonValueKind.String ? ctEl.GetString() ?? "Document" : "Document";
                             var amt = ce.TryGetProperty("amount", out var aEl) && aEl.TryGetDecimal(out var a) ? a : 0m;
+                            if (amt < 0) amt = Math.Abs(amt);   // hard rule H2
                             cands.Add(new MatchCandidate(cid.Value, ctype, amt));
                         }
                     }
@@ -901,22 +942,30 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .Select(c => c.CandidateId).ToHashSet();
 
         // Resolve the unmatched bank txns + remaining JE pool to Guid+decimal.
-        var unmatchedBank = new List<(Guid Id, DateTime Date, decimal Amount, string? Memo)>();
+        var unmatchedBank = new List<(Guid Id, DateTime Date, decimal Amount, string? Memo, string Direction)>();
         foreach (var t in bankTxns)
         {
             if (!Guid.TryParse(t.Id, out var bid)) continue;
             if (matchedBankIds.Contains(bid)) continue;
-            // AI was told amount=Abs(bank), so use the same sign-free magnitude.
-            unmatchedBank.Add((bid, t.Date, Math.Abs(t.Amount), t.Memo));
+            unmatchedBank.Add((bid, t.Date, Math.Abs(t.Amount), t.Memo, t.Direction));
         }
-        var pool = new List<(Guid Id, DateTime Date, decimal Amount, string Number)>();
+        // Split the JE pool by direction so the search per bank txn only
+        // considers JEs that ACTUALLY hit the bank account on the matching
+        // side. This is what blocks the "2,000 = −500 + 2,500 with two RVs"
+        // bug at the source: an In bank txn can never see Out JEs at all.
+        var poolIn = new List<(Guid Id, DateTime Date, decimal Amount, string Number)>();
+        var poolOut = new List<(Guid Id, DateTime Date, decimal Amount, string Number)>();
         foreach (var j in jes)
         {
             if (!Guid.TryParse(j.Id, out var jid)) continue;
             if (consumedJeIds.Contains(jid)) continue;
-            pool.Add((jid, j.Date, Math.Abs(j.NetAmount), j.Number));
+            var item = (jid, j.Date, Math.Abs(j.NetAmount), j.Number);
+            if (j.Direction == "In") poolIn.Add(item);
+            else if (j.Direction == "Out") poolOut.Add(item);
+            // JEs with no known direction are excluded from server-side combo
+            // search (we'd be guessing which side they belong to).
         }
-        if (unmatchedBank.Count == 0 || pool.Count < 2)
+        if (unmatchedBank.Count == 0 || (poolIn.Count + poolOut.Count) < 2)
             return parsed;
 
         var added = new List<ProposedMatch>();
@@ -927,7 +976,9 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // Date-window pre-filter — typical lumped deposits land within a
             // week of the underlying receipts. Reduces n from ~200 to ~30 for
             // the size-3 / size-4 inner loops.
-            var window = pool
+            // Direction-uniform pool only — In bank txn searches In JEs, etc.
+            var sourcePool = bt.Direction == "Out" ? poolOut : poolIn;
+            var window = sourcePool
                 .Where(p => Math.Abs((p.Date - bt.Date).TotalDays) <= 7)
                 .Where(p => !consumedJeIds.Contains(p.Id))   // re-check (previous loop may have taken some)
                 .ToList();
@@ -936,19 +987,13 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var best = FindBestCombination(bt.Amount, window);
             if (best == null) continue;
 
-            // Build the match — store SIGNED amounts on each candidate so
-            // CalibrateConfidence's signed-sum vs bank check shows delta≈0
-            // instead of overshooting on the unsigned magnitude.
+            // Positive sums only — all candidates are same-direction with the
+            // bank txn (see pool split above).
             var cands = best.Items
-                .Select(i => new MatchCandidate(i.Je.Id, "JournalEntry", i.Sign * i.Je.Amount))
+                .Select(i => new MatchCandidate(i.Je.Id, "JournalEntry", i.Je.Amount))
                 .ToList();
-            var signedParts = string.Join(" ", best.Items
-                .Select((i, idx) =>
-                {
-                    var sign = i.Sign >= 0 ? (idx == 0 ? "" : "+ ") : "− ";
-                    return $"{sign}{i.Je.Number}({i.Je.Amount:N2})";
-                }));
-            var reason = $"รวม {best.Items.Count} JE: {signedParts} = {best.Items.Sum(i => i.Sign * i.Je.Amount):N2}";
+            var parts = string.Join(" + ", best.Items.Select(i => $"{i.Je.Number}({i.Je.Amount:N2})"));
+            var reason = $"รวม {best.Items.Count} JE ({bt.Direction}): {parts} = {best.Items.Sum(i => i.Je.Amount):N2}";
             // Confidence starts lower than AI's 1:1 picks (bigger guess space)
             // and decays with subset size; calibrator runs next and may lower
             // further if delta is non-zero.
@@ -974,9 +1019,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     private sealed record JeCand(Guid Id, DateTime Date, decimal Amount, string Number);
 
     /// <summary>Subset-sum search for the best (smallest delta, smallest size)
-    /// JE combination matching target ±0.50. Sizes 2-4 with sign mixing on
-    /// 2-3 (the M:1 + offset case the user described); size 4 stays all-
-    /// positive to keep the inner loop bounded.</summary>
+    /// JE combination matching target ±0.50. POSITIVE SUMS ONLY — the previous
+    /// version flipped signs (+/−) to "balance" two items to a target, which
+    /// produced nonsense matches like a 2,000 deposit "= −500 + 2,500" with two
+    /// Receipt Vouchers (both are inflows; you can't subtract one from another).
+    /// The candidate pool is already direction-uniform (built per bank-line
+    /// direction) so all amounts add positively.</summary>
     private static JeCombo? FindBestCombination(decimal target, List<(Guid Id, DateTime Date, decimal Amount, string Number)> pool)
     {
         const decimal Tol = 0.50m;
@@ -986,46 +1034,30 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         bool Improves(JeCombo? cur, decimal delta, int size)
             => cur == null || delta < cur.Delta || (delta == cur.Delta && size < cur.Items.Count);
 
-        // Size 2 — 4 sign patterns (++, +−, −+ won't add anything new since
-        // |−A+B| == |A−B|; skip −− since both negative can't sum to positive target).
+        // Size 2 — positive sum only.
         for (int i = 0; i < p.Count; i++)
         for (int j = i + 1; j < p.Count; j++)
         {
-            (int si, int sj)[] signs = { (+1, +1), (+1, -1), (-1, +1) };
-            foreach (var (si, sj) in signs)
-            {
-                var s = si * p[i].Amount + sj * p[j].Amount;
-                if (s <= 0) continue;
-                var d = Math.Abs(s - target);
-                if (d <= Tol && Improves(best, d, 2))
-                    best = new JeCombo(new (JeCand, int)[] { (p[i], si), (p[j], sj) }, d);
-            }
+            var s = p[i].Amount + p[j].Amount;
+            var d = Math.Abs(s - target);
+            if (d <= Tol && Improves(best, d, 2))
+                best = new JeCombo(new (JeCand, int)[] { (p[i], +1), (p[j], +1) }, d);
         }
-        if (best is { Delta: <= 0.01m }) return best;   // exact size-2 → take it
+        if (best is { Delta: <= 0.01m }) return best;
 
-        // Size 3 — all-positive + each one-negative variant (covers 'รับ 3
-        // ใบ หัก ค่าธรรมเนียม 1 ใบ').
+        // Size 3 — positive sum only.
         for (int i = 0; i < p.Count; i++)
         for (int j = i + 1; j < p.Count; j++)
         for (int k = j + 1; k < p.Count; k++)
         {
-            (int si, int sj, int sk)[] signs = {
-                (+1, +1, +1),
-                (-1, +1, +1), (+1, -1, +1), (+1, +1, -1),
-            };
-            foreach (var (si, sj, sk) in signs)
-            {
-                var s = si * p[i].Amount + sj * p[j].Amount + sk * p[k].Amount;
-                if (s <= 0) continue;
-                var d = Math.Abs(s - target);
-                if (d <= Tol && Improves(best, d, 3))
-                    best = new JeCombo(new (JeCand, int)[] { (p[i], si), (p[j], sj), (p[k], sk) }, d);
-            }
+            var s = p[i].Amount + p[j].Amount + p[k].Amount;
+            var d = Math.Abs(s - target);
+            if (d <= Tol && Improves(best, d, 3))
+                best = new JeCombo(new (JeCand, int)[] { (p[i], +1), (p[j], +1), (p[k], +1) }, d);
         }
         if (best != null) return best;
 
-        // Size 4 — all-positive only. Pool already trimmed by date window so
-        // this is normally < 30C4 ≈ 27k iterations, fast enough.
+        // Size 4 — positive sum only.
         for (int a = 0; a < p.Count; a++)
         for (int b = a + 1; b < p.Count; b++)
         for (int c = b + 1; c < p.Count; c++)
