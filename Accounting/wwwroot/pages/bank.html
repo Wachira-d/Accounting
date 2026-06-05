@@ -1514,8 +1514,55 @@
         if (!this.bulkPlan) return;
         const checks = Array.from(document.querySelectorAll('.bulkMatchCheck:checked'));
         if (checks.length === 0) { Layout.toast('เลือกอย่างน้อย 1 รายการ', 'error'); return; }
-        const matches = checks.map(el => this.bulkPlan.matches[+el.dataset.bulkidx]);
+        let matches = checks.map(el => this.bulkPlan.matches[+el.dataset.bulkidx]);
         const api = Layout.api(); if (!api) return;
+
+        // Human-readable label for a plan row (date + amount + memo snippet) so
+        // every skip/failure can name the actual transaction, not a GUID.
+        const rowLabel = (m) => {
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          if (!bt) return m.bankTxnId.slice(0, 8) + '…';
+          const d = bt.transactionDate ? Layout.date(bt.transactionDate) : '';
+          const sign = (bt.transactionType === 'Deposit' || bt.transactionType === 'Interest') ? '+' : '-';
+          const desc = (bt.description || bt.payee || '').slice(0, 36);
+          return `${d} ${sign}${Layout.money(Math.abs(bt.amount))}${desc ? ' ('+desc+')' : ''}`;
+        };
+        const skips = [];   // {label, reason}
+
+        // A row is unusable if its bank line is already reconciled (would blow
+        // up the atomic batch with a cryptic error). If ANY member of an M:N
+        // group is already matched, the WHOLE group is invalid (can't settle
+        // one doc against a partial set), so drop the entire group.
+        const isMatched = (m) => {
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          return bt && bt.reconciliationStatus === 'Matched';
+        };
+        const brokenGroups = new Set(
+          matches.filter(m => m.matchGroupId && isMatched(m)).map(m => m.matchGroupId));
+
+        matches = matches.filter(m => {
+          if (m.matchGroupId && brokenGroups.has(m.matchGroupId)) {
+            skips.push({ label: rowLabel(m), reason: 'กลุ่มนี้มีรายการที่จับคู่ไปแล้ว — ยกเลิกของเดิมก่อน' });
+            return false;
+          }
+          if (isMatched(m)) {
+            skips.push({ label: rowLabel(m), reason: 'จับคู่ไปแล้วก่อนหน้า' });
+            return false;
+          }
+          // Amount sanity (non-group rows). Sum of candidate amounts must equal
+          // the bank amount within 1 satang — protects the atomic batch from a
+          // low-confidence AI guess. (Group rows are validated server-side.)
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          if (bt && !m.matchGroupId) {
+            const sum = (m.candidates || []).reduce((s, c) => s + (c.amount || 0), 0);
+            if (Math.abs(sum - Math.abs(bt.amount)) > 0.01) {
+              skips.push({ label: rowLabel(m),
+                reason: `ยอดรวมที่จับ (${Layout.money(sum)}) ≠ ยอดธนาคาร (${Layout.money(Math.abs(bt.amount))})` });
+              return false;
+            }
+          }
+          return true;
+        });
 
         // Many-banks-to-one rows (several deposits settling ONE document) share
         // a matchGroupId and CANNOT go through BatchReconcile (each deposit's
@@ -1525,13 +1572,14 @@
         const groupRows = matches.filter(m => m.matchGroupId);
         const normalRows = matches.filter(m => !m.matchGroupId);
         let groupsApplied = 0;
-        try {
-          const byGroup = {};
-          groupRows.forEach(m => { (byGroup[m.matchGroupId] = byGroup[m.matchGroupId] || []).push(m); });
-          for (const gid of Object.keys(byGroup)) {
-            const rows = byGroup[gid];
-            const doc = rows[0].candidates[0];           // shared document across the group
-            const itemType = doc.candidateType;          // Payment | JournalEntry
+        const byGroup = {};
+        groupRows.forEach(m => { (byGroup[m.matchGroupId] = byGroup[m.matchGroupId] || []).push(m); });
+        for (const gid of Object.keys(byGroup)) {
+          const rows = byGroup[gid];
+          const doc = rows[0].candidates[0];           // shared document across the group
+          const itemType = doc.candidateType;          // Payment | JournalEntry
+          try {
+            // Each group applied independently so one failure doesn't abort the rest.
             await api.createReconciliationGroup({
               bankAccountId: this.selectedAccount.id,
               reconciledDate: new Date().toISOString(),
@@ -1543,19 +1591,20 @@
               notes: 'AI: หลายโอนรวมเป็นเอกสารเดียว', tolerance: 0.01,
             });
             groupsApplied += rows.length;
+          } catch (e) {
+            rows.forEach(m => skips.push({ label: rowLabel(m), reason: 'กลุ่ม M:N: ' + e.message }));
           }
-        } catch (e) { Layout.toast('กลุ่ม M:N: ' + e.message, 'error'); }
+        }
 
         // Translate the remaining AI plan into the existing BatchReconcileRequest
         // contract (MatchType: "Payment" | "JournalEntry" | "Multiple")
         // so we route through the same audited apply path.
-        const skipped = [];
         const items = normalRows.flatMap(m => {
           const payIds = m.candidates.filter(c => c.candidateType === 'Payment').map(c => c.candidateId);
           const jeIds  = m.candidates.filter(c => c.candidateType === 'JournalEntry').map(c => c.candidateId);
           const allIds = [...payIds, ...jeIds];
           if (allIds.length === 0) {
-            skipped.push(m.bankTxnId); return [];
+            skips.push({ label: rowLabel(m), reason: 'ไม่มี Payment/JE ให้จับคู่' }); return [];
           }
           if (allIds.length === 1 && payIds.length === 1) {
             return [{ bankTransactionId: m.bankTxnId, matchType: 'Payment',
@@ -1570,7 +1619,8 @@
                     matchedPaymentId: null, matchedJournalEntryId: null, matchedEntryIds: allIds }];
         });
         if (items.length === 0 && groupsApplied === 0) {
-          Layout.toast('ไม่มีรายการ match ที่ทำได้ (อาจต้องสร้าง Payment ก่อน)', 'error');
+          if (skips.length > 0) { Layout.toast(`ข้ามทั้งหมด ${skips.length} รายการ`, 'error'); this._showBulkSkips(skips); }
+          else Layout.toast('ไม่มีรายการ match ที่ทำได้ (อาจต้องสร้าง Payment ก่อน)', 'error');
           return;
         }
         try {
@@ -1596,12 +1646,38 @@
           } catch (e) { /* training feedback is best-effort */ }
           let msg = `ยืนยัน match แล้ว ${items.length + groupsApplied} รายการ`;
           if (groupsApplied > 0) msg += ` (รวมกลุ่ม M:N ${groupsApplied})`;
-          if (skipped.length > 0) msg += ` (ข้าม ${skipped.length} รายการที่ไม่มี Payment/JE)`;
           Layout.toast(msg);
+          if (skips.length > 0) this._showBulkSkips(skips);
           Layout.closeModal('bulkAiPlanModal');
           await this.loadTransactions();
           await this.loadReconciliationSummary();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          // The batch is atomic — name the failing line if the server told us.
+          Layout.toast(e.message, 'error');
+          if (skips.length > 0) this._showBulkSkips(skips);
+        }
+      },
+
+      // Render a clear, scrollable list of skipped/failed rows (date + amount +
+      // memo + reason) so the operator knows EXACTLY which transactions to fix.
+      _showBulkSkips(skips) {
+        const id = 'bulkSkipOverlay';
+        document.getElementById(id)?.remove();
+        const el = document.createElement('div');
+        el.id = id;
+        el.className = 'modal-overlay active';
+        el.style.zIndex = '2000';
+        el.innerHTML = `<div class="modal" style="max-width:640px;width:94%;max-height:80vh;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0;color:#b45309">⚠️ ข้าม/ทำไม่สำเร็จ ${skips.length} รายการ</h3>
+            <button class="btn btn-sm btn-ghost" onclick="document.getElementById('${id}').remove()">✕</button>
+          </div>
+          <p style="font-size:12px;color:#64748b;margin:8px 0">รายการเหล่านี้ไม่ถูกจับคู่ — ตรวจแล้วจับด้วยมือ หรือยกเลิกการจับคู่เดิมก่อน</p>
+          <table class="table"><thead><tr><th>รายการธนาคาร</th><th>เหตุผล</th></tr></thead><tbody>${
+            skips.map(s => `<tr><td>${this.esc(s.label)}</td><td style="color:#dc2626;font-size:12px">${this.esc(s.reason)}</td></tr>`).join('')
+          }</tbody></table>
+        </div>`;
+        document.body.appendChild(el);
       },
 
       // Fetch the raw AI payload behind a bulk-match result and show it in
