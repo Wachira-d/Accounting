@@ -364,6 +364,10 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             from j in _db.JournalEntries.AsNoTracking()
             where j.CompanyId == companyId && !j.IsDeleted
                 && j.Status == JournalEntryStatus.Posted
+                // Exclude entries that were later reversed (superseded) — a
+                // reversed RV/PV must never be offered as a live candidate, or
+                // the matcher could pick the cancelled original over the truth.
+                && j.ReversedByEntryId == null
                 && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd
                 && !matchedJeIds.Contains(j.Id)
             from src in _db.Documents.AsNoTracking()
@@ -1492,20 +1496,26 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
 
         decimal ceiling;
         string note;
-        if (delta <= 0.50m)
+        // Sums of 2-decimal documents are exact — a true match has delta 0.
+        // The SAVE-time guard (ValidateMatchAmountAsync) rejects anything over
+        // 0.01 baht, so ONLY a ≤0.01 match may be presented as ready-to-confirm
+        // (high confidence). Anything 0.01-0.50 is a fee/rounding case that
+        // CANNOT be saved as-is (needs a fee/diff line) → cap confidence + warn
+        // so the operator isn't sent into a confirm-then-error loop.
+        if (delta <= 0.01m)
         {
             ceiling = 1.00m;
             note = "";
         }
-        else if (delta <= 5m)             // small rounding / single-baht slip
+        else if (delta <= 0.50m)          // satang / tiny slip — still NOT saveable as exact
         {
-            ceiling = 0.70m;
-            note = $"⚠ ยอดต่าง {delta:N2} บาท — ตรวจก่อนยืนยัน";
+            ceiling = 0.55m;
+            note = $"⚠ ยอดต่าง {delta:N2} บาท — ต้องเพิ่มรายการส่วนต่าง/ค่าธรรมเนียมก่อนจึงจะบันทึกได้";
         }
-        else if (pct <= 0.01m)            // ≤ 1% but > 5 baht — likely an extra/missing item
+        else if (pct <= 0.01m)            // ≤ 1% — aggregator fee / WHT, needs an adjustment line
         {
             ceiling = 0.45m;
-            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — มีรายการเกิน/ขาด ตรวจก่อนยืนยัน";
+            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — อาจเป็นค่าธรรมเนียม/หัก ณ ที่จ่าย ต้องเพิ่มรายการส่วนต่างก่อนบันทึก";
         }
         else if (pct <= 0.05m)
         {

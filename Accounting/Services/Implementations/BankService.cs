@@ -491,12 +491,17 @@ public partial class BankService : IBankService
                     else
                         continue;
 
-                    // Date proximity: same day = 30 points, within 3 days = 20, within 7 days = 10
-                    var daysDiff = Math.Abs((payment.PaymentDate - txn.TransactionDate).TotalDays);
+                    // Directional date proximity. A receipt is dated AT or
+                    // BEFORE the money lands, so a payment dated MORE than 1 day
+                    // AFTER the bank txn can't have funded it — reject. Backward
+                    // up to 7 days (cheque clearing / entry lag) still scores.
+                    var signedDiff = (payment.PaymentDate.Date - txn.TransactionDate.Date).TotalDays;
+                    if (signedDiff > 1) continue;              // future-dated receipt — impossible
+                    var daysDiff = Math.Abs(signedDiff);
                     if (daysDiff <= 0) score += 30;
                     else if (daysDiff <= 3) score += 20;
                     else if (daysDiff <= 7) score += 10;
-                    else continue; // Too far apart
+                    else continue; // Too far in the past
 
                     // Reference match = 20 points
                     if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(payment.Reference)
@@ -523,11 +528,15 @@ public partial class BankService : IBankService
                     continue;
                 }
 
-                // Try matching against JournalEntries if no Payment match found
+                // Try matching against JournalEntries if no Payment match found.
+                // Exclude reversed (superseded) entries; backward 7 days /
+                // forward 1 (a JE dated after the deposit can't have funded it).
                 var journalEntries = await _db.JournalEntries
                     .Include(j => j.Lines)
-                    .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
-                    .Where(j => Math.Abs((j.EntryDate - txn.TransactionDate).TotalDays) <= 7)
+                    .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted
+                        && j.ReversedByEntryId == null)
+                    .Where(j => j.EntryDate >= txn.TransactionDate.Date.AddDays(-7)
+                        && j.EntryDate <= txn.TransactionDate.Date.AddDays(1))
                     .ToListAsync();
 
                 JournalEntry? bestJeMatch = null;
