@@ -98,7 +98,8 @@ public partial class BankService
 
         var pays = await _db.Payments.AsNoTracking()
             .Where(p => allIds.Contains(p.Id) && p.CompanyId == companyId)
-            .Select(p => new { p.Id, p.Amount, p.PaymentNumber, p.PaymentDate, DocNo = p.Document.DocumentNumber })
+            .Select(p => new { p.Id, p.Amount, p.PaymentNumber, p.PaymentDate,
+                DocNo = p.Document.DocumentNumber, DocType = p.Document.DocumentType })
             .ToListAsync();
         var payMap = pays.ToDictionary(p => p.Id);
         var payIdSet = payMap.Keys.ToHashSet();
@@ -110,15 +111,19 @@ public partial class BankService
             .ToListAsync();
         var jeMap = jeHeaders.ToDictionary(j => j.Id);
 
+        // jeNet = magnitude on the bank account; jeSignedNet preserves direction
+        // so the resolver can tell which side of a net-settlement each JE is on.
         var jeNet = new Dictionary<Guid, decimal>();
+        var jeSignedNet = new Dictionary<Guid, decimal>();
         if (bankCoaId.HasValue && jeCandidateIds.Count > 0)
         {
             var lines = await _db.JournalEntryLines.AsNoTracking()
                 .Where(l => jeCandidateIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
                 .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount })
                 .ToListAsync();
-            jeNet = lines.GroupBy(l => l.JournalEntryId)
-                .ToDictionary(g => g.Key, g => Math.Abs(g.Sum(x => x.Net)));
+            jeSignedNet = lines.GroupBy(l => l.JournalEntryId)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.Net));
+            jeNet = jeSignedNet.ToDictionary(kv => kv.Key, kv => Math.Abs(kv.Value));
         }
 
         // Ids that are neither Payment nor JournalEntry → try Document.
@@ -180,16 +185,41 @@ public partial class BankService
             }
             else
             {
+                // Same-side items add (+); opposite-side items subtract (−).
+                // Direction is read from the document type (Payment) or the
+                // signed net on the bank GL (JE). Unknown direction → additive.
+                bool txnIsIn = t.TransactionType is BankTransactionType.Deposit
+                    or BankTransactionType.Interest;
                 var ids = idsByTxn[t.Id];
                 foreach (var id in ids)
                 {
                     var cp = Describe(id, null);
                     if (cp == null) { missing = true; continue; }
-                    cps.Add(cp);
-                    total += cp.Amount;
+                    int sign = +1;
+                    if (cp.ItemType == "Payment" && payMap.TryGetValue(id, out var pp))
+                    {
+                        bool payIn = pp.DocType is Models.Enums.DocumentType.Receipt
+                            or Models.Enums.DocumentType.ReceiptVoucher
+                            or Models.Enums.DocumentType.Invoice
+                            or Models.Enums.DocumentType.TaxInvoice
+                            or Models.Enums.DocumentType.BillingNote
+                            or Models.Enums.DocumentType.DebitNote;
+                        bool payOut = pp.DocType is Models.Enums.DocumentType.PaymentVoucher
+                            or Models.Enums.DocumentType.Expense
+                            or Models.Enums.DocumentType.PurchaseInvoice
+                            or Models.Enums.DocumentType.CertificateInLieu;
+                        if ((payIn && !txnIsIn) || (payOut && txnIsIn)) sign = -1;
+                    }
+                    else if (cp.ItemType == "JournalEntry" && jeSignedNet.TryGetValue(id, out var sn) && Math.Abs(sn) > 0.01m)
+                    {
+                        bool jeIn = sn > 0;
+                        if (jeIn != txnIsIn) sign = -1;
+                    }
+                    cps.Add(cp with { Amount = sign * cp.Amount });
+                    total += sign * cp.Amount;
                 }
                 // No counterpart link at all (legacy matched row) → can't assess,
-                // don't flag. Otherwise require the resolved sum to equal the bank
+                // don't flag. Otherwise require the signed sum to equal the bank
                 // amount and every id to still resolve.
                 agree = ids.Count == 0
                     || (!missing && cps.Count > 0 && Math.Abs(total - bankAmt) <= 0.01m);

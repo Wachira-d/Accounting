@@ -265,13 +265,13 @@ public partial class BankService : IBankService
     }
 
     /// <summary>
-    /// Amount-integrity guard for reconciliation. A bank line must be matched to
-    /// counterpart(s) whose amount(s) SUM to the bank amount — otherwise part of
-    /// the money is left unaccounted (the 7,140 bank line vs a 2,200 JE bug).
-    /// Resolves each id as a Payment (uses Payment.Amount) or a JournalEntry
-    /// (uses the net movement on the bank's own GL account, so compound entries
-    /// are measured by what actually hit the bank). Throws when the totals differ
-    /// beyond a 0.01 tolerance.
+    /// Amount-integrity guard. Counterparts on the SAME side as the bank txn
+    /// ADD; counterparts on the OPPOSITE side SUBTRACT (legit net-settlement —
+    /// e.g. customer Receipt 2,500 minus PaymentVoucher refund 500 = 2,000 net
+    /// into bank). What's BLOCKED is same-side subtraction (two Receipt
+    /// Vouchers can't offset each other — the original −500 + 2,500 nonsense).
+    /// Document direction comes from its type; JE direction from the SIGNED net
+    /// on the bank's own GL account.
     /// </summary>
     private async Task ValidateMatchAmountAsync(Guid companyId, BankTransaction txn, IEnumerable<Guid> matchedIds)
     {
@@ -283,20 +283,17 @@ public partial class BankService : IBankService
             .Select(a => a.LinkedAccountId)
             .FirstOrDefaultAsync();
 
-        // Bank-txn direction — In = deposit, Out = withdrawal. Every matched
-        // counterpart MUST be on the same side; an "In" bank line cannot be
-        // matched to a PaymentVoucher / Expense and vice versa (this is what
-        // blocked the −500 + 2,500 bug at save time even when AI mis-emits).
         bool txnIsIn = txn.TransactionType is BankTransactionType.Deposit
             or BankTransactionType.Interest;
 
-        // Payments among the ids → take Payment.Amount.
+        // Same-side items add; opposite-side items subtract (net-settlement).
+        // Net = sameDirSum − oppDirSum, compared to bank amount.
+        decimal sameDirSum = 0m, oppDirSum = 0m;
+
         var pays = await _db.Payments.AsNoTracking()
             .Where(p => ids.Contains(p.Id) && p.CompanyId == companyId)
             .Select(p => new { p.Id, p.Amount, DocType = p.Document.DocumentType, DocNo = p.Document.DocumentNumber })
             .ToListAsync();
-
-        // Check each Payment's direction against the bank txn.
         foreach (var p in pays)
         {
             bool payIsIn = p.DocType is DocumentType.Receipt or DocumentType.ReceiptVoucher
@@ -304,13 +301,13 @@ public partial class BankService : IBankService
                 or DocumentType.BillingNote or DocumentType.DebitNote;
             bool payIsOut = p.DocType is DocumentType.PaymentVoucher or DocumentType.Expense
                 or DocumentType.PurchaseInvoice or DocumentType.CertificateInLieu;
-            if ((txnIsIn && payIsOut) || (!txnIsIn && payIsIn))
-                throw new InvalidOperationException(
-                    $"ทิศทางไม่ตรงกัน: รายการธนาคารเป็น{(txnIsIn ? "เงินเข้า" : "เงินออก")} แต่จับคู่กับเอกสาร {p.DocNo} ซึ่งเป็น{(payIsOut ? "เงินออก" : "เงินเข้า")}. " +
-                    "จับคู่ได้เฉพาะเอกสาร/JE ที่อยู่ฝั่งเดียวกัน (รับ↔รับ, จ่าย↔จ่าย).");
+            // Direction unknown (other doc types) → treat as additive (legacy
+            // safe default).
+            if (!payIsIn && !payIsOut) { sameDirSum += p.Amount; continue; }
+            if (payIsIn == txnIsIn) sameDirSum += p.Amount;
+            else oppDirSum += p.Amount;
         }
         var payIds = pays.Select(p => p.Id).ToHashSet();
-        decimal matched = pays.Sum(p => p.Amount);
 
         // The rest are treated as JournalEntries.
         var jeIds = ids.Where(i => !payIds.Contains(i)).ToList();
@@ -324,45 +321,38 @@ public partial class BankService : IBankService
                     .ToListAsync();
                 var withBankLine = lines.Select(l => l.JournalEntryId).ToHashSet();
 
-                // Direction check per JE — the SIGNED net on the bank account
-                // tells us which side this JE actually posts to. Reject any JE
-                // whose direction conflicts with the bank txn (this is what
-                // blocks the −500 + 2,500 RV bug at save time).
+                // Tally each JE: same-side adds, opposite-side subtracts.
                 var jeNetSigned = lines.GroupBy(l => l.JournalEntryId)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.Net));
-                var jeNumbers = await _db.JournalEntries.AsNoTracking()
-                    .Where(j => withBankLine.Contains(j.Id))
-                    .ToDictionaryAsync(j => j.Id, j => j.EntryNumber);
                 foreach (var kv in jeNetSigned)
                 {
-                    if (Math.Abs(kv.Value) < 0.01m) continue;     // doesn't really move the bank account
-                    bool jeIsIn = kv.Value > 0;                   // Dr > Cr on bank = inflow
-                    if (jeIsIn != txnIsIn)
-                        throw new InvalidOperationException(
-                            $"ทิศทางไม่ตรงกัน: รายการธนาคารเป็น{(txnIsIn ? "เงินเข้า" : "เงินออก")} แต่จับคู่กับ JE {jeNumbers.GetValueOrDefault(kv.Key, "?")} ซึ่งเป็น{(jeIsIn ? "เงินเข้า" : "เงินออก")}. " +
-                            "จับคู่ได้เฉพาะ JE ที่ลงบัญชีธนาคารฝั่งเดียวกัน.");
+                    if (Math.Abs(kv.Value) < 0.01m) continue;
+                    bool jeIsIn = kv.Value > 0;
+                    var mag = Math.Abs(kv.Value);
+                    if (jeIsIn == txnIsIn) sameDirSum += mag;
+                    else oppDirSum += mag;
                 }
-
-                matched += jeNetSigned.Values.Sum(v => Math.Abs(v));
-                // JEs that don't post to the bank account at all → fall back to total.
+                // JEs that don't touch the bank account → unknown side; additive.
                 var noBankLine = jeIds.Where(id => !withBankLine.Contains(id)).ToList();
                 if (noBankLine.Count > 0)
-                    matched += await _db.JournalEntries.AsNoTracking()
+                    sameDirSum += await _db.JournalEntries.AsNoTracking()
                         .Where(j => noBankLine.Contains(j.Id)).SumAsync(j => j.TotalDebit);
             }
             else
             {
-                matched += await _db.JournalEntries.AsNoTracking()
+                sameDirSum += await _db.JournalEntries.AsNoTracking()
                     .Where(j => jeIds.Contains(j.Id)).SumAsync(j => j.TotalDebit);
             }
         }
 
         var target = Math.Abs(txn.Amount);
-        var diff = Math.Abs(Math.Abs(matched) - target);
+        var net = sameDirSum - oppDirSum;
+        var diff = Math.Abs(net - target);
         if (diff > 0.01m)
             throw new InvalidOperationException(
-                $"ยอดที่จับคู่ ({Math.Abs(matched):N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {diff:N2} บาท. " +
-                "ยอดต้องเท่ากันเสมอ: เลือกเอกสาร/JE ให้ถูกต้อง หรือถ้ารายการธนาคารนี้ครอบหลายเอกสาร ให้ใช้ \"กลุ่มกระทบยอด (M:N)\" รวมหลายรายการให้ผลรวมเท่ายอดธนาคาร.");
+                $"ยอดที่จับคู่ ({net:N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {diff:N2} บาท. " +
+                "ฝั่งเดียวกันบวกกัน, ข้ามฝั่งหักกัน (เช่น Receipt 2,500 − PaymentVoucher 500 = 2,000 net เข้าบัญชี). " +
+                "ใบรับ 2 ใบไม่สามารถนำมาลบกันได้ — เลือกเอกสาร/JE ให้ถูก หรือใช้กลุ่มกระทบยอด M:N.");
     }
 
     public async Task<BankTransactionResponse> ReconcileAsync(Guid companyId, ReconcileRequest request)
