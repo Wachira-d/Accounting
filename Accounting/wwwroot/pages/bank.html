@@ -1427,18 +1427,20 @@
           const conf = (m.confidence * 100).toFixed(0);
           const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
           const confBg = m.confidence >= 0.8 ? '#dcfce7' : m.confidence >= 0.6 ? '#fef3c7' : '#fee2e2';
-          const cands = (m.candidates || []).map(c => `${c.candidateType}:${c.candidateId.slice(0,8)}… (${fmtAmt(c.amount)})`).join(' + ');
-          // Enrich with the real bank line so the operator reviews date +
-          // amount + payee instead of an opaque GUID prefix.
           const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
           const bankAmt = bt ? Math.abs(bt.amount) : null;
           const candSum = (m.candidates || []).reduce((s, c) => s + (c.amount || 0), 0);
           const mismatch = bankAmt != null && Math.abs(candSum - bankAmt) > 0.01;
+          // Candidates as "RV-202604-0500 (500) + RV-…0501 (500) = 1,000" using
+          // the real doc number (label) the server resolved, not a GUID.
+          const cands = (m.candidates || [])
+            .map(c => `${esc(c.label || (c.candidateType + ':' + c.candidateId.slice(0,8) + '…'))} <b>${fmtAmt(c.amount)}</b>`)
+            .join(' + ') + ` = <b>${fmtAmt(candSum)}</b>`;
           const bankCell = bt
             ? `<div style="font-size:10px;color:${bt.transactionType==='Deposit'?'#16a34a':'#dc2626'}">${bt.transactionType==='Deposit'?'รับ':'จ่าย'} · ${Layout.date(bt.transactionDate)}</div>
                <div style="font-size:10px;color:#94a3b8">${esc((bt.payee||bt.description||'').slice(0,28))}</div>`
             : `<span style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</span>`;
-          // ยอดธนาคาร + ยอดรวมที่จับ side-by-side; red + diff when they disagree.
+          // ยอดธนาคาร + ยอดรวมที่จับ adjacent; red + diff when they disagree.
           const bankAmtCell = bankAmt != null
             ? `<span style="font-weight:700">${fmtAmt(bankAmt)}</span>` : '—';
           const sumCell = `<span style="font-weight:700;color:${mismatch?'#dc2626':'#16a34a'}">${fmtAmt(candSum)}</span>` +
@@ -1446,9 +1448,9 @@
           return `<tr style="border-bottom:1px solid #f1f5f9;${mismatch?'background:#fff7f7':''}">
             <td><input type="checkbox" ${m.confidence>=0.85 && !mismatch?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
             <td>${bankCell}</td>
-            <td style="text-align:right;white-space:nowrap">${bankAmtCell}</td>
             <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
-            <td style="font-size:12px">${esc(cands)}</td>
+            <td style="font-size:12px;min-width:240px">${cands}</td>
+            <td style="text-align:right;white-space:nowrap">${bankAmtCell}</td>
             <td style="text-align:right;white-space:nowrap">${sumCell}</td>
             <td style="text-align:right"><span style="background:${confBg};color:${confColor};font-weight:700;padding:2px 8px;border-radius:6px">${conf}%</span></td>
             <td style="font-size:11px;color:#475569">${esc(m.reasoning || '')}</td>
@@ -1487,7 +1489,7 @@
           <div style="overflow:auto;max-height:380px;border:1px solid #e2e8f0;border-radius:8px">
             <table style="width:100%;font-size:12px">
               <thead style="position:sticky;top:0;background:#f1f5f9">
-                <tr><th></th><th>Bank</th><th style="text-align:right">ยอดธนาคาร</th><th>Type</th><th>Candidates</th><th style="text-align:right">ยอดรวมที่จับ</th><th style="text-align:right">Conf</th><th>Reasoning</th></tr>
+                <tr><th></th><th>Bank</th><th>Type</th><th>Candidates (เอกสาร × ยอด)</th><th style="text-align:right">ยอดธนาคาร</th><th style="text-align:right">ยอดรวมที่จับ</th><th style="text-align:right">Conf</th><th>Reasoning</th></tr>
               </thead>
               <tbody>${matchRows}</tbody>
             </table>
