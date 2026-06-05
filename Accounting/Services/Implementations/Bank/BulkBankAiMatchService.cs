@@ -574,21 +574,34 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // ── solve. AI sees only this slice + only the candidates the server
         // ── didn't consume. Faster prompt, smaller hallucination surface,
         // ── lower cost.
-        var matchedBankIds = parsed.Matches.Select(m => m.BankTxnId).ToHashSet();
-        var consumedCandIds = parsed.Matches.SelectMany(m => m.Candidates)
+        // LOCKED = matches the server is fully confident about (≥0.95). Their
+        // bank line + candidates are OUT of play. UNCERTAIN matches (0.50 ≤
+        // conf < 0.95) stay in the parsed list but their bank txn + candidates
+        // are RE-OFFERED to AI so it can confirm, replace, or reject. The
+        // existing DeduplicateMatches resolves AI-vs-server collisions by
+        // taking the higher confidence. Per user rule: "≥0.95 = ติ๊กได้,
+        // น้อยกว่านั้นโยน AI วิเคราะห์จนกว่าจะมั่นใจ".
+        const decimal LockThreshold = 0.95m;
+        var lockedBankIds = parsed.Matches
+            .Where(m => m.Confidence >= LockThreshold)
+            .Select(m => m.BankTxnId).ToHashSet();
+        var lockedCandIds = parsed.Matches
+            .Where(m => m.Confidence >= LockThreshold)
+            .SelectMany(m => m.Candidates)
             .Select(c => c.CandidateId).ToHashSet();
         var residualTxns = txns
-            .Where(t => Guid.TryParse(t.Id, out var bid) && !matchedBankIds.Contains(bid))
+            .Where(t => Guid.TryParse(t.Id, out var bid) && !lockedBankIds.Contains(bid))
             .ToList();
         var residualPayments = openPayments
-            .Where(p => Guid.TryParse(p.Id, out var pid) && !consumedCandIds.Contains(pid))
+            .Where(p => Guid.TryParse(p.Id, out var pid) && !lockedCandIds.Contains(pid))
             .ToList();
         var residualJes = openJes
-            .Where(j => Guid.TryParse(j.Id, out var jid) && !consumedCandIds.Contains(jid))
+            .Where(j => Guid.TryParse(j.Id, out var jid) && !lockedCandIds.Contains(jid))
             .ToList();
         var residualDocs = openDocs
-            .Where(d => Guid.TryParse(d.Id, out var did) && !consumedCandIds.Contains(did))
+            .Where(d => Guid.TryParse(d.Id, out var did) && !lockedCandIds.Contains(did))
             .ToList();
+        var uncertainCount = parsed.Matches.Count(m => m.Confidence < LockThreshold);
 
         // ── 7c. AI on residual (only if there is anything left + non-empty
         // ── candidate pool). When the server passes cleared everything, we
@@ -597,6 +610,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         if (residualTxns.Count > 0
             && (residualDocs.Count + residualPayments.Count + residualJes.Count) > 0)
         {
+            if (uncertainCount > 0)
+                parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
+                    $"🔎 ส่ง {uncertainCount} รายการที่ server ไม่มั่นใจ ≥0.95 ไปให้ AI วิเคราะห์ซ้ำ พร้อม residual"
+                }).ToList() };
+
             var req = BulkBankMatchPrompt.Build(companyId, bankAccountId, fromDate, toDate,
                 company, bankContext, residualTxns, residualDocs, residualPayments, residualJes);
             resp = await _orchestrator.AskAsync(req, ct);
@@ -638,23 +656,33 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         }
         else
         {
-            // No residual or no candidate pool → AI skipped. Mark every still-
-            // unmatched txn as "no candidate" so the UI shows them as needing
-            // attention rather than disappearing.
-            if (residualTxns.Count > 0)
+            // No residual OR no candidate pool → AI skipped. Mark TRULY
+            // unmatched txns (those without ANY server match — locked or
+            // uncertain) as "no candidate". Server-uncertain matches stay in
+            // parsed.Matches so the user can still review/accept them; they
+            // just won't reach the 0.95 auto-tick gate without AI's help.
+            var anyMatchedBankIds = parsed.Matches.Select(m => m.BankTxnId).ToHashSet();
+            var trulyUnmatched = residualTxns
+                .Where(t => Guid.TryParse(t.Id, out var bid) && !anyMatchedBankIds.Contains(bid))
+                .ToList();
+            if (trulyUnmatched.Count > 0)
             {
                 parsed = parsed with
                 {
-                    Unmatched = residualTxns.Select(t => new UnmatchedTxn(
+                    Unmatched = trulyUnmatched.Select(t => new UnmatchedTxn(
                         Guid.Parse(t.Id),
                         "ไม่พบเอกสาร/รายการที่ตรงพอเข้าเกณฑ์อัตโนมัติ",
                         "ลองตรวจด้วยมือหรือเพิ่ม Reference/Contact ในเอกสาร")).ToList(),
                 };
             }
-            var savedCount = txns.Count - residualTxns.Count;
+            var savedCount = lockedBankIds.Count;
             if (savedCount > 0)
                 parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
-                    $"✓ Server พาส (1:1, กลุ่ม, M:1) แก้ได้ {savedCount}/{txns.Count} รายการ — ข้าม AI เพื่อประหยัด cost + latency"
+                    $"✓ Server พาส (1:1, กลุ่ม, M:1) มั่นใจ ≥0.95 ได้ {savedCount}/{txns.Count} รายการ — ข้าม AI เพื่อประหยัด cost + latency"
+                }).ToList() };
+            if (uncertainCount > 0 && (residualDocs.Count + residualPayments.Count + residualJes.Count) == 0)
+                parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
+                    $"⚠ มี {uncertainCount} รายการที่ server ไม่มั่นใจ ≥0.95 แต่ candidate ที่เหลือถูกใช้หมดแล้ว — AI ช่วยไม่ได้ ตรวจด้วยมือ"
                 }).ToList() };
         }
 

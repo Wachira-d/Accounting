@@ -1490,7 +1490,7 @@
           const sumCell = `<span style="font-weight:700;color:${mismatch?'#dc2626':'#16a34a'}">${fmtAmt(candSum)}</span>` +
             (mismatch ? `<div style="font-size:10px;color:#dc2626">ต่าง ${fmtAmt(candSum - bankAmt)}</div>` : '');
           return `<tr style="border-bottom:1px solid #f1f5f9;${hasDup?'background:#fff7ed':mismatch?'background:#fff7f7':''}">
-            <td><input type="checkbox" ${m.confidence>=0.85 && !mismatch && !hasDup?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
+            <td><input type="checkbox" ${m.confidence>=0.95 && !mismatch && !hasDup?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
             <td>${bankCell}</td>
             <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
             <td style="font-size:12px;min-width:240px">${cands}</td>
@@ -1562,7 +1562,7 @@
           const c = parseFloat(el.dataset.conf || '0');
           el.checked = mode === 'all' ? true
             : mode === 'none' ? false
-            : c >= 0.85;   // 'high'
+            : c >= 0.95;   // 'high' — มั่นใจมากเท่านั้นถึงติ๊กเอง; 0.50-0.94 ส่งให้ AI ตรวจซ้ำ
         });
       },
 
