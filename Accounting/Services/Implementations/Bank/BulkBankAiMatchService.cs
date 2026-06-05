@@ -592,6 +592,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // ── 8b. Multi-JE combination fallback (the lumped-deposit case).
         parsed = TryCombineLumpedJes(parsed, txns, openJes);
 
+        // ── 8c. DEDUPLICATE — the AI (and mixed AI+server passes) can reference
+        // ── the SAME document/payment in two different matches, or the same
+        // ── bank line twice. Keep the best owner of each and demote the rest to
+        // ── unmatched so a candidate/bank line is never double-applied.
+        parsed = DeduplicateMatches(parsed);
+
         // ── 8b. Per-match child feedback rows — so when user accepts /
         // ── edits each row in the modal, BankMatchDistillationModel can
         // ── learn per-signature instead of one big undifferentiated row.
@@ -1146,6 +1152,85 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             $"พบเพิ่ม {added.Count} รายการที่จับคู่ 1:1 ได้ตรงๆ (server-side exact sweep)"
         }).ToList();
         return parsed with { Matches = newMatches, Unmatched = newUnmatched, Warnings = newWarnings };
+    }
+
+    /// <summary>Guarantee NO double-use: each bank line and each candidate
+    /// (Payment / JE / Document) ends up in at most ONE accepted match. The AI
+    /// regularly proposes the same RV both as a standalone 1:1 and as part of a
+    /// nearby QR-aggregator lump; without this the same receipt would be applied
+    /// twice (or the second apply would fail).
+    ///
+    /// Resolution: process non-group matches best-first (higher confidence, then
+    /// FEWER candidates so a clean 1:1 beats a lump that merely included the same
+    /// doc), claiming each match's bank line + candidate ids. A later match that
+    /// reuses any claimed id is demoted to 'unmatched'. M:N groups (one doc
+    /// settled by several deposits) legitimately share the doc across their rows,
+    /// so each group is accepted/dropped as a unit and only clashes against ids
+    /// claimed OUTSIDE the group.</summary>
+    private static ParsedResponse DeduplicateMatches(ParsedResponse parsed)
+    {
+        if (parsed.Matches.Count < 2) return parsed;
+
+        var usedBank = new HashSet<Guid>();
+        var usedCand = new HashSet<Guid>();
+        var kept = new List<ProposedMatch>();
+        var demoted = new List<UnmatchedTxn>();
+
+        var nonGroup = parsed.Matches.Where(m => !m.MatchGroupId.HasValue)
+            .OrderByDescending(m => m.Confidence)
+            .ThenBy(m => m.Candidates.Count)
+            .ToList();
+        var groups = parsed.Matches.Where(m => m.MatchGroupId.HasValue)
+            .GroupBy(m => m.MatchGroupId!.Value)
+            .OrderByDescending(g => g.Max(m => m.Confidence))
+            .ToList();
+
+        // 1) Non-group matches.
+        foreach (var m in nonGroup)
+        {
+            var candIds = m.Candidates.Select(c => c.CandidateId).ToList();
+            if (usedBank.Contains(m.BankTxnId) || candIds.Any(usedCand.Contains))
+            {
+                demoted.Add(new UnmatchedTxn(m.BankTxnId,
+                    "ใช้เอกสาร/รายการซ้ำกับการจับคู่อื่นที่มั่นใจกว่า",
+                    "ตรวจแล้วเลือกคู่ที่ถูกต้องด้วยมือ"));
+                continue;
+            }
+            kept.Add(m);
+            usedBank.Add(m.BankTxnId);
+            foreach (var id in candIds) usedCand.Add(id);
+        }
+
+        // 2) M:N groups — accept the whole group only if every bank line + the
+        //    shared doc are still free.
+        foreach (var g in groups)
+        {
+            var rows = g.ToList();
+            var banks = rows.Select(r => r.BankTxnId).ToList();
+            var docIds = rows.SelectMany(r => r.Candidates.Select(c => c.CandidateId)).Distinct().ToList();
+            if (banks.Any(usedBank.Contains) || docIds.Any(usedCand.Contains))
+            {
+                foreach (var r in rows)
+                    demoted.Add(new UnmatchedTxn(r.BankTxnId,
+                        "กลุ่มนี้ใช้เอกสารซ้ำกับการจับคู่อื่น", "ตรวจด้วยมือ"));
+                continue;
+            }
+            kept.AddRange(rows);
+            foreach (var b in banks) usedBank.Add(b);
+            foreach (var d in docIds) usedCand.Add(d);
+        }
+
+        if (demoted.Count == 0) return parsed;
+        // Don't re-list a bank txn as unmatched if another KEPT match owns it.
+        var keptBanks = kept.Select(m => m.BankTxnId).ToHashSet();
+        var newUnmatched = parsed.Unmatched
+            .Concat(demoted.Where(u => !keptBanks.Contains(u.BankTxnId)))
+            .GroupBy(u => u.BankTxnId).Select(g => g.First()).ToList();
+        var newWarnings = parsed.Warnings.Concat(new[]
+        {
+            $"ตัดการจับคู่ซ้ำออก {demoted.Count} รายการ (เอกสาร/รายการธนาคารถูกใช้ซ้ำ)"
+        }).ToList();
+        return parsed with { Matches = kept, Unmatched = newUnmatched, Warnings = newWarnings };
     }
 
     /// <summary>Greedy 1:1 pairing for groups of EQUAL-amount candidates that
