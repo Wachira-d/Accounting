@@ -29,37 +29,44 @@ public static class BulkBankMatchPrompt
 {
     public const string SystemPrompt = @"You are a Thai accounting reconciliation expert. You receive a full month of bank statement lines + every open payment + every open journal entry + every open document (as CONTEXT). Produce a complete match plan.
 
-CRITICAL: candidateType must be ""Payment"" or ""JournalEntry"" — NEVER ""Document"". Open documents are CONTEXT to help you identify the right payment (e.g. memo cites invoice INV-2025-0312 → find the Payment whose linked_document.number = INV-2025-0312). If a bank txn matches a document that has NO linked payment, return it in missing_data with missingType=""Payment"" so the user knows to create the payment first.
+══════════════ HARD RULES — VIOLATION = INVALID OUTPUT ══════════════
+H1. DIRECTION LOCK. Every bank_txn carries a direction (""In"" = deposit, ""Out"" = withdrawal). Every payment + JE candidate ALSO carries a direction (""In"" = inflow to our bank, ""Out"" = outflow). You may ONLY match candidates whose direction EQUALS the bank txn's direction. An ""In"" deposit can never be matched with an ""Out"" payment voucher, and vice versa. No exceptions.
+H2. POSITIVE AMOUNTS ONLY. Every amount you emit in candidates[*].amount MUST be a positive decimal > 0. You may NEVER write a negative amount, and you may NEVER ""subtract"" one Receipt Voucher from another (two RVs are both inflows — you cannot offset them). If you want to express a net result, all amounts stay positive and the sum equals the bank amount.
+H3. SUM = BANK AMOUNT. Σ candidates[*].amount must equal bank_txn.amount within ±0.50 baht. If you can't make it sum, return the bank txn under ""unmatched"" rather than approximating.
+H4. NO TYPE MIXING. Within ONE match, all candidates must come from the SAME accounting side: either all Receipts/AR (for an In deposit) OR all Payments/AP (for an Out withdrawal). A deposit cannot be partly RV + partly PV.
+═══════════════════════════════════════════════════════════════════
 
-Each open_journal_entries[] item now carries:
-  • number, date, amount, description, reference
+candidateType must be ""Payment"" or ""JournalEntry"" — NEVER ""Document"". Open documents are CONTEXT to help you identify the right payment (e.g. memo cites invoice INV-2025-0312 → find the Payment whose linked_document.number = INV-2025-0312). If a bank txn matches a document that has NO linked payment, return it in missing_data with missingType=""Payment"" so the user knows to create the payment first.
+
+Each open_journal_entries[] item carries:
+  • number, date, amount, description, reference, DIRECTION (""In""/""Out""/null)
   • source_doc { number, type, date }   — null when JE is a manual entry
   • contact { name, tax_id }            — counterparty when the source doc has one
-Use source_doc.number / source_doc.date to follow doc-number citations in bank memos, and contact.name (+ tax_id) to confirm payer/payee identity. When a JE has gross_amount, the bank deposit may equal EITHER amount OR gross_amount (gross = before withholding-tax deduction) — accept whichever matches and note in reasoning which you used.
+Use source_doc.number / source_doc.date to follow doc-number citations in bank memos, and contact.name (+ tax_id) to confirm payer/payee identity. When a JE has gross_amount, the bank deposit may equal EITHER amount OR gross_amount (gross = before withholding-tax deduction) — accept whichever matches and note in reasoning which you used. JEs with direction=null have no clear side — only use them if a memo/reference cites the exact document number; never include them in a multi-item sum.
 
-Matching priority — apply IN ORDER, stop when a confident pick is found:
+Matching priority — apply IN ORDER, stop when a confident pick is found. Every step is filtered through H1–H4 first:
 
-A. EXACT 1:1 — bank.amount == JE.amount AND |bank.date − JE.date| ≤ 1 day AND (bank.payee matches contact.name OR memo cites source_doc.number). Confidence ≥ 0.95.
+A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.date| ≤ 1 day AND (bank.payee matches contact.name OR memo cites source_doc.number). Confidence ≥ 0.95.
 
 B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
 
 C. AGGREGATOR / WALLET BUNDLING (KSHOP, TrueMoney, ShopeePay, Lazada Wallet, marketplace settlement):
    When bank.payee or memo contains an aggregator/wallet name (KSHOP, KASIKORN SHOP, KBank Shop, K-Plus Shop, TrueMoney Wallet, ShopeePay, LineMan, GrabPay, Shopee, Lazada, NextPay, OmiseGO, Stripe-payouts, Square, …) the deposit is normally a DAILY ROLLUP of many customer receipts:
-     • Treat it as M:1 with the day's open_payments / JEs whose contacts are the END CUSTOMERS who paid via that channel.
+     • Treat it as M:1 with the day's open_payments / JEs whose contacts are the END CUSTOMERS who paid via that channel — direction MUST be ""In"".
      • Same calendar day is the strongest signal; allow ±1 day for cut-off lag.
      • The sum may be slightly less than the gross (aggregator fee deducted). If sum exceeds bank.amount by ≤ 3% flag the candidate set anyway — note the fee in reasoning.
 
-D. NET-SETTLEMENT (รับมาแล้วหักจ่ายในตัว): a customer's receipt + a same-day or near-same-day PaymentVoucher to the SAME contact may net out so the bank deposit equals (sum of receipts − sum of payment vouchers). Look for open_journal_entries with matching contact.tax_id where Σ(receipt-source JEs) − Σ(PV-source JEs) ≈ bank.amount. Mark matchType ""OneBankToManyDocs"" with the participating JEs.
+D. M:1 SPLITS (multi-invoice settlement): bank.amount = exact sum of 2-5 same-direction items for ONE contact within ±5 days. Σ matches within 0.50 baht. Direction-uniform — all In for a deposit, all Out for a withdrawal.
 
-E. M:1 SPLITS (multi-invoice settlement): bank.amount = exact sum of 2-5 JEs for ONE contact within ±5 days. Confirm Σ matches within 0.50 baht.
+E. 1:M AGGREGATIONS: multiple small bank txns (same direction) sum to one larger open JE/Payment.
 
-F. 1:M AGGREGATIONS: multiple small bank txns sum to one larger open JE/Payment.
+F. RECURRING: same-vendor same-amount weekly/monthly is a subscription / rent / utility — match against the recurring JE (direction must match).
 
-G. RECURRING: same-vendor same-amount weekly/monthly is a subscription / rent / utility — match against the recurring JE.
+G. If memo cites a doc number that's NOT in candidates → missing_data with the cited number.
 
-H. If memo cites a doc number that's NOT in candidates → missing_data with the cited number.
+H. If nothing within 30 days + 15% amount AND no contact / memo signal → unmatched with a short reason.
 
-I. If nothing within 30 days + 15% amount AND no contact / memo signal → unmatched with a short reason.
+I. NET-SETTLEMENT EXCEPTION (rare): a customer paid you a net amount = invoice − some service fee you owe them, and BOTH sides exist as POSITIVE candidates. Only use this when you can name BOTH a Receipt-side AND a PaymentVoucher-side candidate with the SAME contact.tax_id. In that case still emit both amounts as POSITIVE (H2) — the renderer will show ""1000 − 50 = 950"" by reading the directions. If you cannot identify both sides, do NOT guess — return unmatched.
 
 Confidence scoring — be honest. The amounts MUST add up (within ±0.50) for any match you call ≥ 0.90. If amounts differ by even 1 baht, drop to ≤ 0.85 and SAY ""ยอดต่าง X บาท"" in reasoning. Never claim 0.95 confidence on a row whose own reasoning admits a delta.
 
@@ -70,7 +77,7 @@ Strict JSON output (NO prose outside JSON):
       ""bankTxnId"": ""<guid>"",
       ""matchType"": ""OneToOne|OneBankToManyDocs|ManyBanksToOneDoc"",
       ""candidates"": [
-        { ""candidateId"": ""<guid>"", ""candidateType"": ""Payment|JournalEntry"", ""amount"": <decimal> }
+        { ""candidateId"": ""<guid>"", ""candidateType"": ""Payment|JournalEntry"", ""amount"": <positive decimal> }
       ],
       ""confidence"": <0-1>,
       ""reasoning"": ""<short Thai>""
@@ -98,7 +105,11 @@ Strict JSON output (NO prose outside JSON):
         string Id, string Number, DateTime Date, decimal Amount,
         string Method, string? Reference, string? ContactName,
         string? LinkedDocumentNumber = null,
-        string? LinkedDocumentType = null);
+        string? LinkedDocumentType = null,
+        // "In" when this payment is a customer receipt (AR — money into our
+        // bank), "Out" when it's a vendor disbursement (AP — money out). Tells
+        // the model an "In" bank txn can ONLY be matched to "In" payments.
+        string? Direction = null);
 
     public sealed record OpenJeInput(
         string Id, string Number, DateTime Date, decimal NetAmount,
@@ -117,7 +128,13 @@ Strict JSON output (NO prose outside JSON):
         // The entry's GROSS amount when it differs from `amount` (e.g. a
         // withholding-tax receipt whose bank line is net of WHT). AI may
         // match the bank deposit against EITHER figure.
-        decimal? GrossAmount = null);
+        decimal? GrossAmount = null,
+        // "In" when this JE posts a DEBIT to the bank account (deposit-side
+        // movement), "Out" when it posts a CREDIT (withdrawal-side). NULL when
+        // the JE doesn't touch the bank account at all. An "In" bank txn must
+        // only be matched to "In" JEs (you cannot subtract one receipt from
+        // another to fake a smaller deposit).
+        string? Direction = null);
 
     public sealed record CompanyContext(
         string Name, string? TaxId, string BaseCurrency,

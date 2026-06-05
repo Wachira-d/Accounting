@@ -283,11 +283,32 @@ public partial class BankService : IBankService
             .Select(a => a.LinkedAccountId)
             .FirstOrDefaultAsync();
 
+        // Bank-txn direction — In = deposit, Out = withdrawal. Every matched
+        // counterpart MUST be on the same side; an "In" bank line cannot be
+        // matched to a PaymentVoucher / Expense and vice versa (this is what
+        // blocked the −500 + 2,500 bug at save time even when AI mis-emits).
+        bool txnIsIn = txn.TransactionType is BankTransactionType.Deposit
+            or BankTransactionType.Interest;
+
         // Payments among the ids → take Payment.Amount.
         var pays = await _db.Payments.AsNoTracking()
             .Where(p => ids.Contains(p.Id) && p.CompanyId == companyId)
-            .Select(p => new { p.Id, p.Amount })
+            .Select(p => new { p.Id, p.Amount, DocType = p.Document.DocumentType, DocNo = p.Document.DocumentNumber })
             .ToListAsync();
+
+        // Check each Payment's direction against the bank txn.
+        foreach (var p in pays)
+        {
+            bool payIsIn = p.DocType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+                or DocumentType.Invoice or DocumentType.TaxInvoice
+                or DocumentType.BillingNote or DocumentType.DebitNote;
+            bool payIsOut = p.DocType is DocumentType.PaymentVoucher or DocumentType.Expense
+                or DocumentType.PurchaseInvoice or DocumentType.CertificateInLieu;
+            if ((txnIsIn && payIsOut) || (!txnIsIn && payIsIn))
+                throw new InvalidOperationException(
+                    $"ทิศทางไม่ตรงกัน: รายการธนาคารเป็น{(txnIsIn ? "เงินเข้า" : "เงินออก")} แต่จับคู่กับเอกสาร {p.DocNo} ซึ่งเป็น{(payIsOut ? "เงินออก" : "เงินเข้า")}. " +
+                    "จับคู่ได้เฉพาะเอกสาร/JE ที่อยู่ฝั่งเดียวกัน (รับ↔รับ, จ่าย↔จ่าย).");
+        }
         var payIds = pays.Select(p => p.Id).ToHashSet();
         decimal matched = pays.Sum(p => p.Amount);
 
@@ -302,8 +323,27 @@ public partial class BankService : IBankService
                     .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount })
                     .ToListAsync();
                 var withBankLine = lines.Select(l => l.JournalEntryId).ToHashSet();
-                // Per-JE net movement on the bank account (abs — direction-agnostic).
-                matched += lines.GroupBy(l => l.JournalEntryId).Sum(g => Math.Abs(g.Sum(x => x.Net)));
+
+                // Direction check per JE — the SIGNED net on the bank account
+                // tells us which side this JE actually posts to. Reject any JE
+                // whose direction conflicts with the bank txn (this is what
+                // blocks the −500 + 2,500 RV bug at save time).
+                var jeNetSigned = lines.GroupBy(l => l.JournalEntryId)
+                    .ToDictionary(g => g.Key, g => g.Sum(x => x.Net));
+                var jeNumbers = await _db.JournalEntries.AsNoTracking()
+                    .Where(j => withBankLine.Contains(j.Id))
+                    .ToDictionaryAsync(j => j.Id, j => j.EntryNumber);
+                foreach (var kv in jeNetSigned)
+                {
+                    if (Math.Abs(kv.Value) < 0.01m) continue;     // doesn't really move the bank account
+                    bool jeIsIn = kv.Value > 0;                   // Dr > Cr on bank = inflow
+                    if (jeIsIn != txnIsIn)
+                        throw new InvalidOperationException(
+                            $"ทิศทางไม่ตรงกัน: รายการธนาคารเป็น{(txnIsIn ? "เงินเข้า" : "เงินออก")} แต่จับคู่กับ JE {jeNumbers.GetValueOrDefault(kv.Key, "?")} ซึ่งเป็น{(jeIsIn ? "เงินเข้า" : "เงินออก")}. " +
+                            "จับคู่ได้เฉพาะ JE ที่ลงบัญชีธนาคารฝั่งเดียวกัน.");
+                }
+
+                matched += jeNetSigned.Values.Sum(v => Math.Abs(v));
                 // JEs that don't post to the bank account at all → fall back to total.
                 var noBankLine = jeIds.Where(id => !withBankLine.Contains(id)).ToList();
                 if (noBankLine.Count > 0)
