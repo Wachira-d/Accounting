@@ -27,6 +27,39 @@ namespace Accounting.Services.Ai.Prompts;
 /// </summary>
 public static class BulkBankMatchPrompt
 {
+    /// <summary>Drops a description when it's just a verbose restatement of
+    /// the entry number / reference (the most common case for auto-generated
+    /// RV/PV entries). Saves significant tokens on a 200+ JE prompt without
+    /// losing signal — AI still has number, reference, source_doc, contact.</summary>
+    private static string? ShortDescription(string? description, string? number, string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return null;
+        var d = description.Trim();
+        // Strip the leading "verb <reference>" if it's just citing what we
+        // already pass in `reference`. e.g. "ใบสำคัญจ่าย PAY260401001 - ..."
+        // and reference == "PAY260401001" → drop the prefix, keep the tail.
+        if (!string.IsNullOrWhiteSpace(reference) && d.Contains(reference!, StringComparison.OrdinalIgnoreCase))
+        {
+            var i = d.IndexOf(reference!, StringComparison.OrdinalIgnoreCase);
+            var tail = d[(i + reference!.Length)..].TrimStart(' ', '-', '|', ':').Trim();
+            // Common Take-Time pattern "การจอง #0 (-)" is signal-free — drop.
+            if (string.IsNullOrWhiteSpace(tail) || tail == "(-)" || tail.StartsWith("การจอง #0", StringComparison.Ordinal))
+                return null;
+            d = tail;
+        }
+        // Cap remaining text so a single very long entry can't bloat the prompt.
+        return d.Length > 80 ? d[..80] : d;
+    }
+
+    // Compact serialiser: skip null fields (the prompt has a lot of
+    // optional fields that are null for legacy/external data — keeping
+    // them as "field: null" bloats the payload without adding signal).
+    private static readonly JsonSerializerOptions _compactJson = new()
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+
     public const string SystemPrompt = @"You are a Thai accounting reconciliation expert. You receive a full month of bank statement lines + every open payment + every open journal entry + every open document (as CONTEXT). Produce a complete match plan.
 
 ══════════════ HARD RULES — VIOLATION = INVALID OUTPUT ══════════════
@@ -234,6 +267,14 @@ Strict JSON output (NO prose outside JSON):
                 method = p.Method,
                 reference = p.Reference,
                 contact = p.ContactName,
+                contact_tax_id = p.ContactTaxId,
+                contact_bank_acct = p.BankAccountNumber,
+                outstanding = p.OutstandingAmount,
+                wht = p.WithholdingTax,
+                vat = p.VatAmount,
+                note = p.Note,
+                channel = p.Channel,
+                direction = p.Direction,
                 // The linked-document fields are the bridge: when a bank
                 // memo cites an invoice number, AI can hunt for it here
                 // and return the wrapping Payment.
@@ -251,8 +292,18 @@ Strict JSON output (NO prose outside JSON):
                 // gross_amount present only when ≠ amount — match the bank
                 // deposit against EITHER (handles WHT-netted receipts).
                 gross_amount = j.GrossAmount,
-                description = j.Description,
+                direction = j.Direction,
+                // Strip description when it merely repeats number/reference
+                // and adds no signal — saves ~30% on the JE list size.
+                description = ShortDescription(j.Description, j.Number, j.Reference),
                 reference = j.Reference,
+                wht = j.WithholdingTax,
+                vat = j.VatAmount,
+                fee = j.FeeAmount,
+                line_count = j.LineCount,
+                payment_method = j.PaymentMethod,
+                note = j.Note,
+                tags = j.Tags,
                 // Source document + contact — drives contact-aware matching.
                 source_doc = j.SourceDocNumber == null ? null : new
                 {
@@ -272,7 +323,11 @@ Strict JSON output (NO prose outside JSON):
             FeatureKey = AiFeatureKey.BulkBankStatementMatch,
             CompanyId = companyId,
             SystemPrompt = SystemPrompt,
-            UserPromptJson = JsonSerializer.Serialize(payload),
+            // Drop null fields from the serialised payload — they balloon a
+            // 205-JE prompt by ~40% without adding signal (the model gets
+            // identical inference from "field absent" vs "field is null"), and
+            // the saved tokens reduce provider time noticeably.
+            UserPromptJson = JsonSerializer.Serialize(payload, _compactJson),
             // The bulk call doesn't have a single LocalPrimaryAnswer —
             // it's a plan, not one answer. Caller post-processes the
             // JSON; orchestrator's fallback path returns empty match
@@ -304,10 +359,11 @@ Strict JSON output (NO prose outside JSON):
             // arrived complete.
             MaxTokensOverride = 16000,
             // DeepSeek with a ~150-txn + ~240-candidate prompt commonly takes
-            // 20-40s. The provider-wide default (8s) was guaranteed to time
-            // out for this feature — raise just this one call to 90s for the
-            // bigger token budget.
-            TimeoutSecondsOverride = 90,
+            // 20-40s; ~200+ JE prompts have hit 92s+ and timed out at the old
+            // 90s ceiling (the user's case). 180s gives enough headroom for
+            // dense months without the fallback kicking in. Tokens saved by
+            // the compact-JSON option above shrink the median latency too.
+            TimeoutSecondsOverride = 180,
         };
     }
 }
