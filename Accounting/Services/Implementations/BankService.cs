@@ -9,6 +9,9 @@ using Accounting.Services.Helpers;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+// Explicit alias so 'Bank.BankFlowClassifier' resolves unambiguously to the
+// shared classifier in the child namespace (no broad import → no name clash).
+using Bank = Accounting.Services.Implementations.Bank;
 
 namespace Accounting.Services.Implementations;
 
@@ -491,12 +494,15 @@ public partial class BankService : IBankService
                     else
                         continue;
 
-                    // Date proximity: same day = 30 points, within 3 days = 20, within 7 days = 10
-                    var daysDiff = Math.Abs((payment.PaymentDate - txn.TransactionDate).TotalDays);
+                    // Flow-aware directional window (shared classifier) — a
+                    // KSHOP/Thai-QR deposit only reaches back 1 day, a cheque
+                    // 7, etc.; a receipt dated after the deposit can't fund it.
+                    var autoWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
+                    if (!Bank.BankFlowClassifier.InWindow(payment.PaymentDate, txn.TransactionDate, autoWin)) continue;
+                    var daysDiff = Math.Abs((payment.PaymentDate.Date - txn.TransactionDate.Date).TotalDays);
                     if (daysDiff <= 0) score += 30;
                     else if (daysDiff <= 3) score += 20;
-                    else if (daysDiff <= 7) score += 10;
-                    else continue; // Too far apart
+                    else score += 10;
 
                     // Reference match = 20 points
                     if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(payment.Reference)
@@ -523,11 +529,15 @@ public partial class BankService : IBankService
                     continue;
                 }
 
-                // Try matching against JournalEntries if no Payment match found
+                // Try matching against JournalEntries if no Payment match found.
+                // Exclude reversed (superseded) entries; backward 7 days /
+                // forward 1 (a JE dated after the deposit can't have funded it).
                 var journalEntries = await _db.JournalEntries
                     .Include(j => j.Lines)
-                    .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
-                    .Where(j => Math.Abs((j.EntryDate - txn.TransactionDate).TotalDays) <= 7)
+                    .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted
+                        && j.ReversedByEntryId == null)
+                    .Where(j => j.EntryDate >= txn.TransactionDate.Date.AddDays(-7)
+                        && j.EntryDate <= txn.TransactionDate.Date.AddDays(1))
                     .ToListAsync();
 
                 JournalEntry? bestJeMatch = null;
@@ -550,11 +560,13 @@ public partial class BankService : IBankService
                     else
                         continue;
 
-                    // Date proximity
-                    var jeDaysDiff = Math.Abs((je.EntryDate - txn.TransactionDate).TotalDays);
+                    // Flow-aware directional window (shared classifier).
+                    var jeWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
+                    if (!Bank.BankFlowClassifier.InWindow(je.EntryDate, txn.TransactionDate, jeWin)) continue;
+                    var jeDaysDiff = Math.Abs((je.EntryDate.Date - txn.TransactionDate.Date).TotalDays);
                     if (jeDaysDiff <= 0) jeScore += 30;
                     else if (jeDaysDiff <= 3) jeScore += 20;
-                    else if (jeDaysDiff <= 7) jeScore += 10;
+                    else jeScore += 10;
 
                     // Reference match
                     if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(je.Reference)

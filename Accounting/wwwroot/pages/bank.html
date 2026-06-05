@@ -1516,11 +1516,41 @@
         if (checks.length === 0) { Layout.toast('เลือกอย่างน้อย 1 รายการ', 'error'); return; }
         const matches = checks.map(el => this.bulkPlan.matches[+el.dataset.bulkidx]);
         const api = Layout.api(); if (!api) return;
-        // Translate the AI plan into the existing BatchReconcileRequest
+
+        // Many-banks-to-one rows (several deposits settling ONE document) share
+        // a matchGroupId and CANNOT go through BatchReconcile (each deposit's
+        // amount ≠ the document's full amount). Route those through the M:N
+        // ReconciliationGroup path with partial allocations; everything else
+        // goes through the normal batch path.
+        const groupRows = matches.filter(m => m.matchGroupId);
+        const normalRows = matches.filter(m => !m.matchGroupId);
+        let groupsApplied = 0;
+        try {
+          const byGroup = {};
+          groupRows.forEach(m => { (byGroup[m.matchGroupId] = byGroup[m.matchGroupId] || []).push(m); });
+          for (const gid of Object.keys(byGroup)) {
+            const rows = byGroup[gid];
+            const doc = rows[0].candidates[0];           // shared document across the group
+            const itemType = doc.candidateType;          // Payment | JournalEntry
+            await api.createReconciliationGroup({
+              bankAccountId: this.selectedAccount.id,
+              reconciledDate: new Date().toISOString(),
+              bankTransactions: rows.map(m => ({
+                itemType: 'BankTransaction', itemId: m.bankTxnId,
+                allocatedAmount: m.candidates[0].amount, notes: null })),
+              matchItems: [{ itemType, itemId: doc.candidateId,
+                allocatedAmount: rows.reduce((s, m) => s + m.candidates[0].amount, 0), notes: null }],
+              notes: 'AI: หลายโอนรวมเป็นเอกสารเดียว', tolerance: 0.01,
+            });
+            groupsApplied += rows.length;
+          }
+        } catch (e) { Layout.toast('กลุ่ม M:N: ' + e.message, 'error'); }
+
+        // Translate the remaining AI plan into the existing BatchReconcileRequest
         // contract (MatchType: "Payment" | "JournalEntry" | "Multiple")
         // so we route through the same audited apply path.
         const skipped = [];
-        const items = matches.flatMap(m => {
+        const items = normalRows.flatMap(m => {
           const payIds = m.candidates.filter(c => c.candidateType === 'Payment').map(c => c.candidateId);
           const jeIds  = m.candidates.filter(c => c.candidateType === 'JournalEntry').map(c => c.candidateId);
           const allIds = [...payIds, ...jeIds];
@@ -1539,12 +1569,12 @@
           return [{ bankTransactionId: m.bankTxnId, matchType: 'Multiple',
                     matchedPaymentId: null, matchedJournalEntryId: null, matchedEntryIds: allIds }];
         });
-        if (items.length === 0) {
+        if (items.length === 0 && groupsApplied === 0) {
           Layout.toast('ไม่มีรายการ match ที่ทำได้ (อาจต้องสร้าง Payment ก่อน)', 'error');
           return;
         }
         try {
-          await api.batchReconcile({ items });
+          if (items.length > 0) await api.batchReconcile({ items });
           // Per-match feedback — closes the training loop so
           // BankMatchDistillationModel learns from every confirmed match.
           // Fire-and-forget; never blocks the user.
@@ -1564,7 +1594,8 @@
                 { outcomes });
             }
           } catch (e) { /* training feedback is best-effort */ }
-          let msg = `ยืนยัน match แล้ว ${items.length} รายการ`;
+          let msg = `ยืนยัน match แล้ว ${items.length + groupsApplied} รายการ`;
+          if (groupsApplied > 0) msg += ` (รวมกลุ่ม M:N ${groupsApplied})`;
           if (skipped.length > 0) msg += ` (ข้าม ${skipped.length} รายการที่ไม่มี Payment/JE)`;
           Layout.toast(msg);
           Layout.closeModal('bulkAiPlanModal');

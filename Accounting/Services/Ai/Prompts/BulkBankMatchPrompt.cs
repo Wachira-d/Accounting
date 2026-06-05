@@ -91,15 +91,32 @@ Matching priority — apply IN ORDER, stop when a confident pick is found. Every
 
 PRIORITY ORDER — ALWAYS EXHAUST 1:1 FIRST. Run A → B for every bank txn before considering any M:1 / aggregator / net-settlement strategy below. Most real deposits ARE 1:1; reach for multi-item only when no single candidate fits.
 
-A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.date| ≤ 7 days. Even WITHOUT a contact / memo signal, a unique candidate whose amount matches within 0.50 baht and falls in the date window is a valid 1:1 (confidence 0.85 if no signal, 0.95 with payee/contact/doc-number signal). Try this for EVERY unmatched bank txn before reaching for any combination.
+A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.date| within the flow window (C below). Confidence by identity signal:
+   • A candidate whose reference / source_doc.number is CITED in the bank memo (e.g. memo contains ""REC260401001"" and that's the JE's reference) → 0.95.
+   • Contact name / account suffix from the memo matches the candidate's contact → 0.90.
+   • UNIQUE in-window amount, no name signal → 0.80.
+   • AMBIGUOUS (2+ in-window candidates share the exact amount and NONE has a name/ref signal) → do NOT guess: return unmatched with reason ""มีหลายรายการยอดเท่ากัน ไม่มีตัวระบุ"" so the operator picks. Pairing the wrong customer's receipt is worse than leaving it.
+   Try 1:1 for EVERY unmatched bank txn before any combination.
 
 B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
 
-C. AGGREGATOR / WALLET BUNDLING (KSHOP, TrueMoney, ShopeePay, Lazada Wallet, marketplace settlement):
-   When bank.payee or memo contains an aggregator/wallet name (KSHOP, KASIKORN SHOP, KBank Shop, K-Plus Shop, TrueMoney Wallet, ShopeePay, LineMan, GrabPay, Shopee, Lazada, NextPay, OmiseGO, Stripe-payouts, Square, …) the deposit is normally a DAILY ROLLUP of many customer receipts:
-     • Treat it as M:1 with the day's open_payments / JEs whose contacts are the END CUSTOMERS who paid via that channel — direction MUST be ""In"".
-     • Same calendar day is the strongest signal; allow ±1 day for cut-off lag.
-     • The sum may be slightly less than the gross (aggregator fee deducted). If sum exceeds bank.amount by ≤ 3% flag the candidate set anyway — note the fee in reasoning.
+C. FLOW-AWARE WINDOW + MATCH STYLE. Classify each bank line by memo, then apply the right DIRECTIONAL window. Window is written [T−back .. T+fwd] where T = bank date. KEY PRINCIPLE: the receipt / RV / document is normally created AT or BEFORE the money lands, so the window looks mostly BACKWARD. A deposit on 2 Apr matches docs dated 1 Apr (late) + 2 Apr — NEVER 3 Apr. Items outside the window are NEVER part of the match even if the amount fits.
+
+   C1. AGGREGATOR (Thai QR / KSHOP / K SHOP / KBank Shop / K-Plus Shop / MyQR / EDC / TrueMoney / ShopeePay / GrabPay / LineMan / Shopee / Lazada / NextPay / Stripe / Square / ""รับเงินจากการขายด้วย""): M:1 OK. Window [T−1 .. T] — the cut-off means a deposit bundles late-previous-day + same-day sales. NEVER T+1. Pick the SMALLEST subset summing EXACTLY. If 7 of 8 RVs sum exact, drop the 8th.
+   C2. CARD SETTLEMENT (""Visa settle"" / ""MC settle"" / ""Card net"" / ""Merchant settle"" / ""POSNET""): M:1 OK. Window [T−2 .. T] (card nets settle 1-2 days AFTER the sale).
+   C3. PERSON-TO-PERSON TRANSFER (""รับโอนเงิน"" / ""K PLUS"" / ""Internet/Mobile KTB/SCB/BBL"" / ""PromptPay"" / ""พร้อมเพย์""): 1:1 ONLY. Window [T−1 .. T+1] (~instant; ±1 for receipt-entry lag). Memo carries first name + masked account suffix — use it to match contact.
+   C4. AUTO-CREDIT (""รับโอนเงินอัตโนมัติ"" / ""SMART"" / ""ATS"" / ""โอนเข้าอัตโนมัติ"" / ""Direct credit""): 1:1. Window [T−2 .. T+1].
+   C5. CHEQUE CLEARING (""เช็ค"" / ""Cheque"" / ""เรียกเก็บ"" / ""B/C"" / ""Bill collection"" / ""Clearing""): 1:1. Window [T−7 .. T+1] — the receipt was issued days BEFORE the cheque cleared.
+   C6. COUNTER CASH DEPOSIT (""ฝากเงินสด"" / ""นำฝาก"" / ""Counter"" / ""Cash deposit"" / ""เคาน์เตอร์""): 1:1. Window [T−2 .. T+1].
+   C7. INWARD TT / SWIFT (""Inward TT"" / ""SWIFT"" / ""Remittance"" / ""โอนเข้าจากต่างประเทศ""): 1:1. Window [T−7 .. T+2]. Allow FX rounding ≤ 1%.
+   C8. BILL PAYMENT (""Bill Payment"" / ""ชำระบิล"" / ""Cross-bank bill""): 1:1. Window [T−3 .. T+1]. Reference usually carries an invoice / customer number.
+   C9. INTEREST (""ดอกเบี้ย"" / ""Interest"" / ""Int earned""): 1:1 to the bank's own interest JE. Window [T−2 .. T+31] (our interest JE is often posted when we see the statement, i.e. AFTER). No contact required.
+   C10. REFUND / REVERSAL (""Refund"" / ""คืนเงิน"" / ""Reverse"" / ""กลับรายการ""): 1:1 against a PRIOR outflow of the same amount + contact. Window [T−60 .. T+2].
+   C11. LOAN DISBURSEMENT / OD DRAW (""Loan disburs"" / ""เบิกสินเชื่อ"" / ""L/D"" / ""O/D"" / ""Overdraft""): 1:1 against the Loan JE. Window [T−2 .. T+2].
+   C12. TAX REFUND (""คืนภาษี"" / ""Tax refund"" / ""RD refund""): 1:1. Window [T−2 .. T+90] (refund JE posted when received, often later).
+   C13. UNCLASSIFIED: conservative 1:1, window [T−3 .. T+2].
+
+   ABSOLUTE RULE: M:1 is allowed ONLY for C1 + C2. Every other category is 1:1 — never combine multiple receipts into a non-aggregator bank line.
 
 D. M:1 SPLITS (multi-invoice settlement) — USE ONLY AFTER A/B FAIL FOR THIS BANK TXN: bank.amount = exact sum of 2-5 same-direction items for ONE contact within ±5 days. Σ matches within 0.50 baht. Direction-uniform — all In for a deposit, all Out for a withdrawal. If a single same-amount candidate exists, prefer that 1:1 over any 2-item split.
 
@@ -113,14 +130,17 @@ H. If nothing within 30 days + 15% amount AND no contact / memo signal → unmat
 
 I. NET-SETTLEMENT — LAST RESORT ONLY (rare in practice): when ALL same-side strategies above have failed AND you can identify BOTH a same-side item (e.g. customer Receipt 2,500) AND an opposite-side item (e.g. PaymentVoucher refund 500) for the SAME contact.tax_id within ±5 days, you may emit both as candidates so the net (same − opposite) equals the bank amount. EXHAUST every same-side option first: a same-side M:1 split, a daily aggregator rollup, a contact match within ±15 days, a memo-cited document, even a 1-baht-different amount. Only when none of those exist should you reach for net-settlement. Both items emitted as POSITIVE amounts (per H1); renderer subtracts the opposite-side one automatically. If you cannot identify both sides cleanly, return unmatched — do NOT guess.
 
-Confidence scoring — be honest. The amounts MUST add up (within ±0.50) for any match you call ≥ 0.90. If amounts differ by even 1 baht, drop to ≤ 0.85 and SAY ""ยอดต่าง X บาท"" in reasoning. Never claim 0.95 confidence on a row whose own reasoning admits a delta.
+Confidence scoring — BE HONEST AND NUMERICALLY CONSISTENT:
+  • Compute Σ candidates[*].amount yourself before writing reasoning. If it doesn't equal bank.amount within ±0.50 baht, your reasoning must NOT contain the words ""พอดี"" / ""equal exactly"" / ""=...บาทพอดี"". Either drop the extra item(s) so the sum IS exact, or state the delta honestly: ""ยอด X − Σ Y = Z บาท ไม่ตรง"" and lower confidence.
+  • Confidence ≥ 0.90 requires delta ≤ 0.50 baht. Delta 0.50-5 baht → ≤ 0.70. Delta 5-1% of bank → ≤ 0.45. Delta > 1% → ≤ 0.30. Delta > 5% → ≤ 0.15. Never claim 0.95 on a row whose own reasoning admits a delta.
+  • If you find yourself with N candidates summing close-but-not-exact to bank, FIRST check whether a SUBSET of (N−1) items sums exactly: if yes, drop the extra item rather than reporting a mismatch.
 
 Strict JSON output (NO prose outside JSON):
 {
   ""matches"": [
     {
       ""bankTxnId"": ""<guid>"",
-      ""matchType"": ""OneToOne|OneBankToManyDocs|ManyBanksToOneDoc"",
+      ""matchType"": ""OneToOne|OneBankToManyDocs"",   // do NOT emit ManyBanksToOneDoc here — see note below
       ""candidates"": [
         { ""candidateId"": ""<guid>"", ""candidateType"": ""Payment|JournalEntry"", ""amount"": <positive decimal> }
       ],
@@ -135,7 +155,9 @@ Strict JSON output (NO prose outside JSON):
     { ""bankTxnId"": ""<guid>"", ""missingType"": ""Payment|JournalEntry|Contact"", ""hint"": ""<what cited identifier was looked for>"" }
   ],
   ""warnings"": [""<cross-cutting issue>""]
-}";
+}
+
+MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE open document (e.g. a 26,550 sale settled by a 20,000 transfer + a 6,550 transfer on different days), do NOT put them in ""matches"" (the auto-apply path can't split one document across deposits). Instead list EACH such bank line under ""unmatched"" with reason ""น่าจะรวมกับรายการอื่นเป็นเอกสาร <number>"" + suggestedAction ""ใช้กลุ่มกระทบยอด M:N"". The operator settles it in the M:N workbench.";
 
     public sealed record BankTxnInput(
         string Id, DateTime Date, decimal Amount, string Direction,    // ""In"" | ""Out""

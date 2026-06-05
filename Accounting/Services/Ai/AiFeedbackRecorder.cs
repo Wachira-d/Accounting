@@ -20,6 +20,14 @@ public interface IAiFeedbackRecorder
 {
     Task<Guid> RecordCallAsync(AiFeedbackRecord record, CancellationToken ct);
     Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi, CancellationToken ct);
+
+    /// <summary>Bulk-insert synthetic CHILD feedback rows (e.g. one per match in
+    /// a bulk-bank-match plan) in a SINGLE SaveChanges instead of N round-trips.
+    /// These carry zero tokens/cost (they are not real provider calls), so the
+    /// daily usage rollup + budget cache are intentionally skipped. Returns the
+    /// generated ids in the same order as the input; a row that fails to save
+    /// yields Guid.Empty for the whole batch (best-effort — never throws).</summary>
+    Task<IReadOnlyList<Guid>> RecordChildBatchAsync(IReadOnlyList<AiFeedbackRecord> records, CancellationToken ct);
 }
 
 public sealed record AiFeedbackRecord(
@@ -114,6 +122,59 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             }
             _logger.LogError(ex, "AiFeedback record failed for {Feature}", record.FeatureKey);
             return Guid.Empty;
+        }
+    }
+
+    public async Task<IReadOnlyList<Guid>> RecordChildBatchAsync(
+        IReadOnlyList<AiFeedbackRecord> records, CancellationToken ct)
+    {
+        if (records.Count == 0) return Array.Empty<Guid>();
+        var rows = new List<AiSuggestionFeedback>(records.Count);
+        try
+        {
+            foreach (var record in records)
+            {
+                var row = new AiSuggestionFeedback
+                {
+                    CompanyId = record.CompanyId,
+                    FeatureKey = record.FeatureKey.ToString(),
+                    PromptHash = record.PromptHash,
+                    PromptJson = CoerceJsonNonNull(record.PromptJson),
+                    ResponseJson = CoerceJsonNullable(record.ResponseJson),
+                    AiPrimaryAnswer = record.AiPrimaryAnswer,
+                    AiConfidence = record.AiConfidence,
+                    LocalModelAnswer = record.LocalModelAnswer,
+                    LocalModelConfidence = record.LocalModelConfidence,
+                    LocalModelVersion = record.LocalModelVersion,
+                    SourceEntityType = record.SourceEntityType,
+                    SourceEntityId = record.SourceEntityId,
+                    Status = record.Status,
+                    ProviderUsed = record.ProviderUsed,
+                    ModelVersion = record.ModelVersion,
+                    LatencyMs = record.LatencyMs,
+                    InputTokens = record.InputTokens,
+                    OutputTokens = record.OutputTokens,
+                    CostUsd = record.CostUsd,
+                    CacheHitOfFeedbackId = record.CacheHitOfFeedbackId,
+                    ErrorMessage = record.ErrorMessage,
+                };
+                _db.AiSuggestionFeedbacks.Add(row);
+                rows.Add(row);
+            }
+            // ONE round-trip for the whole batch (vs N). No rollup / budget
+            // bump — these synthetic child rows carry zero tokens + cost.
+            await _db.SaveChangesAsync(ct);
+            return rows.Select(r => r.Id).ToList();
+        }
+        catch (Exception ex)
+        {
+            foreach (var r in rows)
+            {
+                try { _db.Entry(r).State = Microsoft.EntityFrameworkCore.EntityState.Detached; }
+                catch { /* nothing else to do */ }
+            }
+            _logger.LogWarning(ex, "AiFeedback child batch failed ({Count} rows)", records.Count);
+            return records.Select(_ => Guid.Empty).ToList();
         }
     }
 
