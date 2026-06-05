@@ -142,4 +142,44 @@ public static class BankFlowClassifier
 
     public static bool IsAggregatorMemo(string? memo, string? payee = null, string? reference = null)
         => IsAggregatorFlow(Classify(memo, payee, reference));
+
+    /// <summary>True when the candidate's recorded payment method/channel is
+    /// consistent with the bank-flow category. A KShop bank deposit pairing
+    /// with a "Cheque" payment is almost certainly wrong; SWIFT inward TT
+    /// pairing with "Cash" is also wrong. Returns TRUE on unknown / null
+    /// channels so we never penalise candidates that simply don't carry the
+    /// signal — only an active CONTRADICTION drags confidence down.</summary>
+    public static bool IsChannelCompatible(BankFlowCategory cat, string? paymentChannel)
+    {
+        if (string.IsNullOrWhiteSpace(paymentChannel)) return true;
+        var ch = paymentChannel.ToLowerInvariant();
+        return cat switch
+        {
+            BankFlowCategory.Aggregator    => ch.Contains("qr") || ch.Contains("cash") || ch.Contains("kshop")
+                                              || ch.Contains("card") || ch.Contains("transfer") || ch.Contains("ewallet")
+                                              || ch.Contains("promptpay"),
+            BankFlowCategory.CardSettle    => ch.Contains("card") || ch.Contains("visa") || ch.Contains("master")
+                                              || ch.Contains("credit") || ch.Contains("debit") || ch.Contains("edc"),
+            BankFlowCategory.Cheque        => ch.Contains("cheque") || ch.Contains("check") || ch.Contains("เช็ค")
+                                              || ch.Contains("bill"),
+            BankFlowCategory.InwardTT      => ch.Contains("tt") || ch.Contains("swift") || ch.Contains("remit")
+                                              || ch.Contains("wire") || ch.Contains("foreign"),
+            BankFlowCategory.AutoCredit    => ch.Contains("smart") || ch.Contains("ats") || ch.Contains("auto")
+                                              || ch.Contains("transfer") || ch.Contains("scheduled"),
+            BankFlowCategory.Transfer      => ch.Contains("transfer") || ch.Contains("promptpay") || ch.Contains("โอน")
+                                              || ch.Contains("mobile") || ch.Contains("internet"),
+            BankFlowCategory.CounterCash   => ch.Contains("cash") || ch.Contains("counter") || ch.Contains("เคาน์เตอร์")
+                                              || ch.Contains("เงินสด"),
+            BankFlowCategory.BillPayment   => ch.Contains("bill") || ch.Contains("counter") || ch.Contains("payment")
+                                              || ch.Contains("ชำระบิล"),
+            BankFlowCategory.Interest      => ch.Contains("interest") || ch.Contains("ดอกเบี้ย"),
+            BankFlowCategory.Refund        => ch.Contains("refund") || ch.Contains("คืน") || ch.Contains("reverse"),
+            BankFlowCategory.Loan          => ch.Contains("loan") || ch.Contains("od") || ch.Contains("overdraft")
+                                              || ch.Contains("สินเชื่อ"),
+            BankFlowCategory.OtaSettlement => ch.Contains("transfer") || ch.Contains("ota") || ch.Contains("booking")
+                                              || ch.Contains("smart") || ch.Contains("tt"),
+            BankFlowCategory.TaxRefund     => ch.Contains("transfer") || ch.Contains("tax") || ch.Contains("ภาษี"),
+            _                              => true,
+        };
+    }
 }

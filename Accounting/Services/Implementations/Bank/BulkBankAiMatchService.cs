@@ -537,110 +537,129 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             bank.AccountNumber, bank.Currency,
             bank.CurrentBalance, glBalance);
 
-        // ── 6c. Distillation pre-pass — for each unmatched bank txn ask the
-        // ── local BankMatchDistillationModel if it has learned a confident
-        // ── match (Wilson ≥ 0.85) from prior user-confirmed reconciliations.
-        // ── These short-circuit the LLM call entirely for recurring patterns
-        // ── (monthly rent, daily KSHOP from the same TID, the same vendor
-        // ── auto-debit) — the matches are pre-seeded so the existing dedup
-        // ── + calibrate passes pick them up. Pure CPU after the in-memory
-        // ── model is loaded.
-        var distilledMatches = await TryDistillationPrePassAsync(companyId, txns,
+        // ── 6c. Distillation pre-pass — warm the local BankMatchDistillation
+        // ── model so single-txn suggestions hit it later without an extra
+        // ── round-trip. Returns no seeded matches in this version (needs
+        // ── ContactId plumbing).
+        _ = await TryDistillationPrePassAsync(companyId, txns,
             openDocs, openPayments, openJes, ct);
-        if (distilledMatches.Count > 0)
-        {
-            _logger.LogInformation("Distillation pre-pass produced {Count} high-confidence matches for company {Cid}",
-                distilledMatches.Count, companyId);
-        }
 
-        // ── 7. Build prompt + ask orchestrator ─────────────────────────
-        var req = BulkBankMatchPrompt.Build(companyId, bankAccountId, fromDate, toDate,
-            company, bankContext, txns, openDocs, openPayments, openJes);
-        var resp = await _orchestrator.AskAsync(req, ct);
-
-        // ── 8. Parse — defensive because AI output is JSON-but-fallible ─
-        // Prefer RawResponseJson when present (RawPlanResponse path); fall
-        // back to PrimaryAnswer for older code paths.
-        var rawOut = !string.IsNullOrWhiteSpace(resp.RawResponseJson) ? resp.RawResponseJson : resp.PrimaryAnswer;
-        var parsed = ParseResponse(rawOut);
-        // Merge the distilled matches IN — DeduplicateMatches (below) will
-        // resolve any clash with AI proposals; the distillation rows carry
-        // their own Wilson-score confidence so the best owner of each bank
-        // line + candidate id still wins.
-        if (distilledMatches.Count > 0)
-            parsed = parsed with { Matches = distilledMatches.Concat(parsed.Matches).ToList() };
-
-        // Diagnostic: when AI ran successfully but produced ZERO outputs of
-        // every kind (no matches, no unmatched, no missing_data), surface the
-        // actual content so the operator isn't staring at a silent "0/0/0".
-        // Common causes: AI emitted a different top-level key, returned an
-        // empty {} object, or replied with prose instead of strict JSON.
-        var aiSucceeded = resp.Status == AiCallStatus.Success || resp.Status == AiCallStatus.Cached;
-        var allEmpty = parsed.Matches.Count == 0 && parsed.Unmatched.Count == 0 && parsed.MissingData.Count == 0;
-        if (aiSucceeded && allEmpty)
-        {
-            _logger.LogWarning(
-                "Bulk AI match returned empty result. Status={Status} Provider={Provider} BankTxns={Txns} Candidates={Cands} (docs={D}/payments={P}/jes={J}) RawLen={Len}\nRaw response:\n{Raw}",
-                resp.Status, resp.ProviderModel, txns.Count,
-                openDocs.Count + openPayments.Count + openJes.Count,
-                openDocs.Count, openPayments.Count, openJes.Count,
-                rawOut?.Length ?? 0, rawOut ?? "(null)");
-
-            if (string.IsNullOrWhiteSpace(rawOut))
-                parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
-                    "AI ตอบกลับเป็นว่าง (status=" + resp.Status + ") — ลองอีกครั้ง หรือเช็คการตั้งค่า AI provider"
-                }).ToList() };
-            else
-            {
-                var preview = rawOut.Length > 600 ? rawOut[..600] + "..." : rawOut;
-                parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
-                    $"AI ตอบมาแล้ว ({rawOut.Length} chars) แต่ parse ไม่เจอ matches/unmatched/missing_data — ตัวอย่างคำตอบ: " + preview
-                }).ToList() };
-            }
-        }
-
-        // ── 8a. Post-AI subset-sum sweep — DeepSeek consistently leaves
-        // ── 'one bank deposit = many JEs' style lumps in the unmatched
-        // ── 8a-pre. Detect own-account transfers and anomalies BEFORE the
-        // ── matching passes. Own-transfer pairs (In on account A + Out on
-        // ── account B, same amount, ≤1 day apart) are NOT customer/vendor
-        // ── reconciliations — surfacing them keeps the matcher from forcing
-        // ── them onto a wrong document. Anomaly warnings flag duplicate
-        // ── bank lines (potential double-import) for the operator to
-        // ── investigate before confirming any auto-matches.
+        // ── 6d. Pre-AI diagnostics — own-account transfers + duplicate bank
+        // ── lines + same-account reverse pairs. All informational; the
+        // ── matching passes still run, the operator just sees the hints
+        // ── above the proposed matches.
         var auxWarnings = await DetectCrossAccountWarningsAsync(companyId, bankAccountId, txns, fromDate, toDate, ct);
-        if (auxWarnings.Count > 0)
-            parsed = parsed with { Warnings = parsed.Warnings.Concat(auxWarnings).ToList() };
 
-        // ── 8a. Server-side 1:1 sweep — ALWAYS try exact one-to-one first.
-        // ── User: "จับคู่ one to one ก่อนเสมอ ... ระบบไปจับ one to many ก่อน
-        // ── รึเปล่า". For every still-unmatched bank txn, look for a single
-        // ── still-unconsumed Payment OR JE whose amount (or gross) matches
-        // ── the bank line within ±0.50 baht AND the bank-line direction
-        // ── matches AND |date diff| ≤ 7 days. A 1:1 hit ALWAYS beats any
-        // ── M:1 combination, so this runs before TryCombineLumpedJes.
+        // ── 7. DETERMINISTIC PASSES FIRST — major architecture change. Before
+        // ── this, AI ran first and the server passes patched the residual;
+        // ── that wasted a DeepSeek call on every line a deterministic rule
+        // ── already solves (~60% of typical books). Now: server runs first,
+        // ── AI is asked ONLY for the residual it might still resolve.
+        // ──
+        // ── Order within server passes is unchanged because each one targets
+        // ── a distinct shape and the later passes skip bank lines/candidates
+        // ── consumed by the earlier ones via parsed.Matches.
+        var parsed = new ParsedResponse(
+            Matches: Array.Empty<ProposedMatch>(),
+            Unmatched: Array.Empty<UnmatchedTxn>(),
+            MissingData: Array.Empty<MissingDataHint>(),
+            Warnings: auxWarnings);
+
         parsed = TryExactOneToOne(parsed, txns, openPayments, openJes);
-
-        // ── 8a-ii. Greedy pairing of EQUAL-amount, same-day candidates. When
-        // ── K unmatched bank lines of amount X share a date with exactly K
-        // ── open candidates of amount X (and none carries an identity signal),
-        // ── pairing any-to-any reconciles the total correctly — common with
-        // ── the hotel's many identical 800-baht 'การจอง #0' RVs.
         parsed = TryGreedyEqualAmount(parsed, txns, openPayments, openJes);
-
-        // ── 8a-iii. Many-banks-to-one: several deposits SUM to ONE document.
-        // ── Emitted with a shared MatchGroupId so the UI routes them through
-        // ── the ReconciliationGroup (M:N) apply path (partial allocation),
-        // ── never BatchReconcile.
         parsed = TryManyBanksToOne(parsed, txns, openPayments, openJes);
-
-        // ── 8b. Multi-JE combination fallback (the lumped-deposit case).
         parsed = TryCombineLumpedJes(parsed, txns, openJes);
 
-        // ── 8c. DEDUPLICATE — the AI (and mixed AI+server passes) can reference
-        // ── the SAME document/payment in two different matches, or the same
-        // ── bank line twice. Keep the best owner of each and demote the rest to
-        // ── unmatched so a candidate/bank line is never double-applied.
+        // ── 7b. Residual computation — what the server passes COULD NOT
+        // ── solve. AI sees only this slice + only the candidates the server
+        // ── didn't consume. Faster prompt, smaller hallucination surface,
+        // ── lower cost.
+        var matchedBankIds = parsed.Matches.Select(m => m.BankTxnId).ToHashSet();
+        var consumedCandIds = parsed.Matches.SelectMany(m => m.Candidates)
+            .Select(c => c.CandidateId).ToHashSet();
+        var residualTxns = txns
+            .Where(t => Guid.TryParse(t.Id, out var bid) && !matchedBankIds.Contains(bid))
+            .ToList();
+        var residualPayments = openPayments
+            .Where(p => Guid.TryParse(p.Id, out var pid) && !consumedCandIds.Contains(pid))
+            .ToList();
+        var residualJes = openJes
+            .Where(j => Guid.TryParse(j.Id, out var jid) && !consumedCandIds.Contains(jid))
+            .ToList();
+        var residualDocs = openDocs
+            .Where(d => Guid.TryParse(d.Id, out var did) && !consumedCandIds.Contains(did))
+            .ToList();
+
+        // ── 7c. AI on residual (only if there is anything left + non-empty
+        // ── candidate pool). When the server passes cleared everything, we
+        // ── skip the LLM entirely and save the cost + latency.
+        AiResponse? resp = null;
+        if (residualTxns.Count > 0
+            && (residualDocs.Count + residualPayments.Count + residualJes.Count) > 0)
+        {
+            var req = BulkBankMatchPrompt.Build(companyId, bankAccountId, fromDate, toDate,
+                company, bankContext, residualTxns, residualDocs, residualPayments, residualJes);
+            resp = await _orchestrator.AskAsync(req, ct);
+
+            // Parse AI output — defensive because AI output is JSON-but-fallible.
+            var rawOut = !string.IsNullOrWhiteSpace(resp.RawResponseJson) ? resp.RawResponseJson : resp.PrimaryAnswer;
+            var aiParsed = ParseResponse(rawOut);
+
+            // Merge AI's matches + unmatched + missingData INTO the server-built parsed.
+            parsed = parsed with
+            {
+                Matches = parsed.Matches.Concat(aiParsed.Matches).ToList(),
+                Unmatched = aiParsed.Unmatched,
+                MissingData = aiParsed.MissingData,
+                Warnings = parsed.Warnings.Concat(aiParsed.Warnings).ToList(),
+            };
+
+            var aiSucceeded = resp.Status == AiCallStatus.Success || resp.Status == AiCallStatus.Cached;
+            var allEmpty = aiParsed.Matches.Count == 0 && aiParsed.Unmatched.Count == 0 && aiParsed.MissingData.Count == 0;
+            if (aiSucceeded && allEmpty)
+            {
+                _logger.LogWarning(
+                    "Bulk AI match returned empty result. Status={Status} Provider={Provider} ResidualTxns={Txns} ResidualCands={Cands} RawLen={Len}\nRaw response:\n{Raw}",
+                    resp.Status, resp.ProviderModel, residualTxns.Count,
+                    residualDocs.Count + residualPayments.Count + residualJes.Count,
+                    rawOut?.Length ?? 0, rawOut ?? "(null)");
+                if (string.IsNullOrWhiteSpace(rawOut))
+                    parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
+                        "AI ตอบกลับเป็นว่าง (status=" + resp.Status + ") — ลองอีกครั้ง หรือเช็คการตั้งค่า AI provider"
+                    }).ToList() };
+                else
+                {
+                    var preview = rawOut.Length > 600 ? rawOut[..600] + "..." : rawOut;
+                    parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
+                        $"AI ตอบมาแล้ว ({rawOut.Length} chars) แต่ parse ไม่เจอ matches/unmatched/missing_data — ตัวอย่างคำตอบ: " + preview
+                    }).ToList() };
+                }
+            }
+        }
+        else
+        {
+            // No residual or no candidate pool → AI skipped. Mark every still-
+            // unmatched txn as "no candidate" so the UI shows them as needing
+            // attention rather than disappearing.
+            if (residualTxns.Count > 0)
+            {
+                parsed = parsed with
+                {
+                    Unmatched = residualTxns.Select(t => new UnmatchedTxn(
+                        Guid.Parse(t.Id),
+                        "ไม่พบเอกสาร/รายการที่ตรงพอเข้าเกณฑ์อัตโนมัติ",
+                        "ลองตรวจด้วยมือหรือเพิ่ม Reference/Contact ในเอกสาร")).ToList(),
+                };
+            }
+            var savedCount = txns.Count - residualTxns.Count;
+            if (savedCount > 0)
+                parsed = parsed with { Warnings = parsed.Warnings.Concat(new[] {
+                    $"✓ Server พาส (1:1, กลุ่ม, M:1) แก้ได้ {savedCount}/{txns.Count} รายการ — ข้าม AI เพื่อประหยัด cost + latency"
+                }).ToList() };
+        }
+
+        // ── 8. DEDUPLICATE — server matches + AI matches both reference the
+        // ── same id pool. Dedup keeps the best owner of each.
         parsed = DeduplicateMatches(parsed);
 
         // ── 8b. Per-match child feedback rows — so when user accepts /
@@ -702,15 +721,27 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // our DB BEFORE prune/calibrate, so an AI-hallucinated amount can't
             // pass the confidence check. (Server-built matches already carry the
             // real amount; the override is a no-op for them.)
+            // ALSO: collect the candidates AI lied about so we can surface a
+            // visible "AI ระบุยอดผิด" warning on this row instead of silently
+            // swapping the figure (the user otherwise has no way to know that
+            // AI's reasoning text is contradicted by its own numbers).
+            var hallucinated = new List<string>();
             m = m with
             {
                 Candidates = m.Candidates.Select(c =>
                 {
                     var key = c.CandidateId.ToString();
-                    var amt = realAmountById.TryGetValue(key, out var ra) ? ra : c.Amount;
+                    if (realAmountById.TryGetValue(key, out var ra) && Math.Abs(ra - c.Amount) > 0.50m)
+                    {
+                        var lbl = labelById.GetValueOrDefault(key) ?? c.CandidateId.ToString();
+                        hallucinated.Add($"{lbl}: AI ระบุ {c.Amount:N2} จริง {ra:N2}");
+                    }
+                    var amt = realAmountById.TryGetValue(key, out var ra2) ? ra2 : c.Amount;
                     return c with { Amount = amt, Label = labelById.GetValueOrDefault(key) };
                 }).ToList(),
             };
+            string? hallucinationNote = hallucinated.Count == 0 ? null
+                : "⚠ AI ระบุยอดผิด: " + string.Join("; ", hallucinated);
 
             // Trust-but-verify: if the proposed candidates sum off-by but a
             // SUBSET of them sums to the bank amount EXACTLY (the AI added
@@ -748,10 +779,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // AI sometimes writes contradictory reasoning ("พอดี" alongside
             // "ยอดต่าง 80") — strip the AI's misleading sum claim when our
             // computed delta says otherwise, then append the honest note.
-            var aiReasoning = mismatchNote.Length > 0 ? ScrubMisleadingSumClaim(m.Reasoning) : m.Reasoning;
+            var aiReasoning = mismatchNote.Length > 0 || hallucinationNote != null
+                ? ScrubMisleadingSumClaim(m.Reasoning) : m.Reasoning;
             var calReason = string.IsNullOrEmpty(mismatchNote)
                 ? aiReasoning
                 : (string.IsNullOrEmpty(aiReasoning) ? mismatchNote : aiReasoning + " · " + mismatchNote);
+            if (hallucinationNote != null)
+                calReason = string.IsNullOrEmpty(calReason) ? hallucinationNote : calReason + " · " + hallucinationNote;
+            // Hard cap when AI hallucinated — never auto-check a row where AI
+            // misreported amounts. User MUST review.
+            if (hallucinationNote != null && calibratedConf > 0.55m)
+                calibratedConf = 0.55m;
             // Candidates already carry real amounts + labels (set above).
             var calibratedMatch = m with
             {
@@ -770,7 +808,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             recordIndexOfMatch[mi] = feedbackRecords.Count;
             feedbackRecords.Add(BuildPerMatchFeedbackRecord(
                 companyId, calibratedMatch.BankTxnId, bt, answerJson, calibratedMatch.Confidence,
-                resp.FeedbackId ?? Guid.Empty));
+                resp?.FeedbackId ?? Guid.Empty));
             calibrated.Add(calibratedMatch);   // PerMatchFeedbackId filled in after the batch insert
         }
 
@@ -794,17 +832,23 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             warnings.Add($"จำกัด open payments ที่ {MaxCandidatesPerKind} รายการ");
         if (truncatedJes)
             warnings.Add($"JE ในช่วง ±5 วันมีมากกว่า {HardJeCeiling} รายการ — ส่งให้ AI แค่ {HardJeCeiling} ตัวล่าสุด");
-        if (resp.Status == AiCallStatus.Failed || resp.Status == AiCallStatus.NoProvider
-            || resp.Status == AiCallStatus.BudgetExceeded)
+        if (resp != null && (resp.Status == AiCallStatus.Failed || resp.Status == AiCallStatus.NoProvider
+            || resp.Status == AiCallStatus.BudgetExceeded))
             warnings.Add($"AI ไม่ทำงาน ({resp.Status}): {resp.Reasoning ?? "—"}. กรุณา match ด้วยมือ");
 
-        var status = resp.Status == AiCallStatus.Success || resp.Status == AiCallStatus.Cached
-            ? (truncatedBankTxns || truncatedDocs || truncatedPayments || truncatedJes
-                ? "Truncated" : "Success")
+        // resp == null means we skipped the AI entirely (server passes solved
+        // everything OR there were no residual candidates). Treat that as a
+        // success with the "Truncated" suffix only if the candidate pool was
+        // cut due to size — the AI being skipped is intentional.
+        var truncated = truncatedBankTxns || truncatedDocs || truncatedPayments || truncatedJes;
+        string status;
+        if (resp == null) status = truncated ? "Truncated" : "Success";
+        else status = resp.Status == AiCallStatus.Success || resp.Status == AiCallStatus.Cached
+            ? (truncated ? "Truncated" : "Success")
             : "AiUnavailable";
 
         return new BulkAiMatchPlan(
-            FeedbackId: resp.FeedbackId,
+            FeedbackId: resp?.FeedbackId,
             Status: status,
             BankTxnsConsidered: txns.Count,
             CandidatesConsidered: openDocs.Count + openPayments.Count + openJes.Count,
@@ -812,8 +856,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             Unmatched: parsed.Unmatched,
             MissingData: parsed.MissingData,
             Warnings: warnings,
-            Reasoning: resp.Reasoning,
-            ProviderModel: resp.ProviderModel);
+            Reasoning: resp?.Reasoning,
+            ProviderModel: resp?.ProviderModel);
     }
 
     private static BulkAiMatchPlan Empty(string reason) =>
@@ -1130,25 +1174,24 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .Select(c => c.CandidateId).ToHashSet();
 
         // Index payments + JEs by direction so the per-txn scan is O(window).
-        // TaxId, account tail AND phone travel with each candidate so Consider()
-        // can score the full identity signal set (a memo citing the payer's
-        // tax id, account tail "X3349", or PromptPay phone is a near-certain
-        // customer match — far stronger than a fuzzy name guess).
-        var payIn = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
-        var payOut = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
+        // Every identity field the scorer reasons about (TaxId / account tail
+        // / phone / channel) travels with the candidate so the inner loop is
+        // pure CPU — no extra lookups, no DB calls.
+        var payIn = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone, string? Channel)>();
+        var payOut = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone, string? Channel)>();
         foreach (var p in payments)
         {
             if (!Guid.TryParse(p.Id, out var pid) || consumed.Contains(pid)) continue;
-            var tup = (pid, p.Date, p.Amount, p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber, p.ContactPhone);
+            var tup = (pid, p.Date, p.Amount, p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber, p.ContactPhone, p.Channel);
             if (p.Direction == "Out") payOut.Add(tup);
             else if (p.Direction == "In") payIn.Add(tup);
         }
-        var jeIn = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
-        var jeOut = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
+        var jeIn = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone, string? Channel)>();
+        var jeOut = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone, string? Channel)>();
         foreach (var j in jes)
         {
             if (!Guid.TryParse(j.Id, out var jid) || consumed.Contains(jid)) continue;
-            var tup = (jid, j.Date, j.NetAmount, j.GrossAmount, j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, (string?)null, j.ContactPhone);
+            var tup = (jid, j.Date, j.NetAmount, j.GrossAmount, j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, (string?)null, j.ContactPhone, j.PaymentMethod);
             if (j.Direction == "Out") jeOut.Add(tup);
             else if (j.Direction == "In") jeIn.Add(tup);
         }
@@ -1181,98 +1224,107 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var memoTins   = BankMatchMemoNormalizer.ExtractTaxIds(memoBlob);
             var memoTails  = BankMatchMemoNormalizer.ExtractAccountTails(memoBlob);
 
-            // Score by (signal desc, amount delta asc, date gap asc). Also
-            // count how many in-window candidates share the exact amount —
-            // when >1 and NONE carries an identity signal, the pick is
-            // ambiguous and confidence must drop (Gap 1.4: two same-amount
-            // same-day receipts from different customers).
-            (Guid Id, string Kind, decimal Amt, int DateGap, int Signal)? best = null;
+            // Score each candidate as an INDEPENDENT-evidence aggregation: we
+            // collect every signal that fires (ref/doc cited, contact name
+            // matched, TIN matched, account-tail matched, phone matched,
+            // channel consistent with bank flow) and combine via BankMatchScoring
+            // — noisy-OR so two independent corroborations beat one strong one.
+            // The old "signal int = sum of integer weights → ladder" pattern
+            // saturated at 4 and conflated independent evidence with strength.
+            // signalCount = number of signals fired (used by ambiguity guard).
+            var bankCategory = BankFlowClassifier.Classify(bt.Memo, bt.Payee, bt.Reference);
+            (Guid Id, string Kind, decimal Amt, int DateGap, int SignalCount, decimal Confidence)? best = null;
             int exactAmountInWindow = 0;
-            void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo, string? taxId = null, string? acct = null, string? phone = null)
+            void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo, string? taxId = null, string? acct = null, string? phone = null, string? channel = null)
             {
                 if (Math.Abs(amt - target) > Tol) return;
                 if (!InWindow(date, bt.Date, win)) return;
-                var gap = (int)Math.Abs((date - bt.Date).TotalDays);   // magnitude for scoring
-                if (clearedBankIds.Contains(bid)) return;       // already taken in this loop
+                var gap = (int)Math.Abs((date - bt.Date).TotalDays);
+                if (clearedBankIds.Contains(bid)) return;
                 exactAmountInWindow++;
-                int signal = 0;
-                // Strong: the candidate's own reference/doc code is cited in memo
-                // (memoRefs is already a case-insensitive set).
-                if (!string.IsNullOrWhiteSpace(rf) && memoRefs.Contains(rf!.Replace(" ", ""))) signal += 4;
-                if (!string.IsNullOrWhiteSpace(docNo) && memoRefs.Contains(docNo!.Replace(" ", ""))) signal += 4;
-                // Medium: substring of the code appears anywhere in the memo.
-                if (signal == 0 && !string.IsNullOrWhiteSpace(docNo) && memoLc.Contains(docNo!.ToLowerInvariant())) signal += 3;
-                if (signal == 0 && !string.IsNullOrWhiteSpace(rf) && memoLc.Contains(rf!.ToLowerInvariant())) signal += 1;
-                // Contact identity: exact substring or fuzzy token overlap with
-                // the masked name in the memo ("จาก X3349 VEENA SRIKA++").
-                if (!string.IsNullOrWhiteSpace(contact) && ContactMatchesMemo(contact!, memoLc)) signal += 2;
-                // Tax id quoted in the memo (13-digit Thai TIN) — unambiguous.
+
+                // Collect every probabilistic signal that fires. Order does not
+                // matter (combine is associative).
+                var signals = new List<double>(8);
+                int signalCount = 0;
+                if (!string.IsNullOrWhiteSpace(rf) && memoRefs.Contains(rf!.Replace(" ", "")))
+                { signals.Add(BankMatchScoring.P_REF_CODE_CITED); signalCount++; }
+                if (!string.IsNullOrWhiteSpace(docNo) && memoRefs.Contains(docNo!.Replace(" ", "")))
+                { signals.Add(BankMatchScoring.P_DOC_NUMBER_CITED); signalCount++; }
+                if (signals.Count == 0 && !string.IsNullOrWhiteSpace(docNo)
+                    && memoLc.Contains(docNo!.ToLowerInvariant()))
+                { signals.Add(BankMatchScoring.P_DOC_SUBSTRING); signalCount++; }
+                if (signals.Count == 0 && !string.IsNullOrWhiteSpace(rf)
+                    && memoLc.Contains(rf!.ToLowerInvariant()))
+                { signals.Add(BankMatchScoring.P_REF_SUBSTRING); signalCount++; }
+                if (!string.IsNullOrWhiteSpace(contact) && ContactMatchesMemo(contact!, memoLc))
+                { signals.Add(BankMatchScoring.P_CONTACT_NAME); signalCount++; }
                 if (!string.IsNullOrWhiteSpace(taxId))
                 {
                     var tid = new string(taxId!.Where(char.IsDigit).ToArray());
-                    if (tid.Length >= 10 && memoTins.Contains(tid)) signal += 4;
+                    if (tid.Length >= 10 && memoTins.Contains(tid))
+                    { signals.Add(BankMatchScoring.P_TAX_ID); signalCount++; }
                 }
-                // Payer/payee bank-account tail in the memo ("จาก KTB X3349").
-                if (BankMatchMemoNormalizer.AccountTailInMemo(acct, memoTails)) signal += 3;
-                // PromptPay phone in the memo ("พร้อมเพย์ 081xxxxxxx" or bare
-                // 10-digit string) matching the candidate contact's phone —
-                // unambiguous identifier when present.
-                if (BankMatchMemoNormalizer.PhoneInMemo(phone, memoPhones)) signal += 4;
+                if (BankMatchMemoNormalizer.AccountTailInMemo(acct, memoTails))
+                { signals.Add(BankMatchScoring.P_ACCOUNT_TAIL); signalCount++; }
+                if (BankMatchMemoNormalizer.PhoneInMemo(phone, memoPhones))
+                { signals.Add(BankMatchScoring.P_PHONE); signalCount++; }
+                // Payment channel ↔ bank flow category — boost when consistent.
+                // (Unknown channel = no boost, never a penalty.)
+                bool channelOk = BankFlowClassifier.IsChannelCompatible(bankCategory, channel);
+                if (channelOk && !string.IsNullOrWhiteSpace(channel))
+                    signals.Add(BankMatchScoring.P_CHANNEL_COMPATIBLE);
+
+                // Base prior + signal combine.
+                var basePrior = gap == 0 ? BankMatchScoring.BASE_SAMEDAY : BankMatchScoring.BASE_SOLE_CANDIDATE;
+                decimal conf = BankMatchScoring.Combine(basePrior, signals);
+
+                // CONTRADICTION penalty: payment channel does NOT match bank
+                // flow (e.g. KShop deposit ↔ cheque payment). Drag confidence
+                // hard so a strong-amount-match-but-wrong-channel doesn't win.
+                if (!channelOk)
+                    conf = BankMatchScoring.Penalise(conf, 0.45);
+
                 if (best is null
-                    || signal > best.Value.Signal
-                    || (signal == best.Value.Signal && Math.Abs(amt - target) < Math.Abs(best.Value.Amt - target))
-                    || (signal == best.Value.Signal && amt == best.Value.Amt && gap < best.Value.DateGap))
-                    best = (id, kind, amt, gap, signal);
+                    || conf > best.Value.Confidence
+                    || (conf == best.Value.Confidence && Math.Abs(amt - target) < Math.Abs(best.Value.Amt - target))
+                    || (conf == best.Value.Confidence && amt == best.Value.Amt && gap < best.Value.DateGap))
+                    best = (id, kind, amt, gap, signalCount, conf);
             }
 
             foreach (var p in (dir == "Out" ? payOut : payIn))
-                Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo, p.TaxId, p.Acct, p.Phone);
+                Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo, p.TaxId, p.Acct, p.Phone, p.Channel);
             foreach (var j in (dir == "Out" ? jeOut : jeIn))
             {
-                Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone);
-                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone);
+                Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone, j.Channel);
+                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone, j.Channel);
             }
             if (best is null) continue;
 
             // AMBIGUITY GUARD: several candidates share the exact amount but the
-            // chosen one has NO identity signal → we can't be sure it's the
-            // right customer. Skip it (leave for AI / manual) rather than risk
-            // pairing the wrong receipt.
-            bool ambiguous = exactAmountInWindow > 1 && best.Value.Signal == 0;
+            // chosen one fired ZERO identity signals → it could be any of them.
+            // Skip rather than risk pairing the wrong receipt. The greedy pass
+            // below catches the case where bank-count == candidate-count.
+            bool ambiguous = exactAmountInWindow > 1 && best.Value.SignalCount == 0;
             if (ambiguous) continue;
 
-            // Confidence: identity signal dominates; same-day + unique amount
-            // add. A signalled match (ref/doc/contact) can reach 0.95; a bare
-            // amount+date unique match caps lower (0.80) since names weren't
-            // confirmed.
-            // After the ambiguity guard above, a no-signal match is GUARANTEED to
-            // be the sole in-window candidate at this amount (exactAmountInWindow
-            // == 1) — that is itself a strong 1:1 signal, so it earns the auto-
-            // check floor (0.85). Any identity signal lifts it further.
-            decimal conf;
-            if (best.Value.Signal >= 4) conf = 0.95m;        // ref/doc/taxid cited
-            else if (best.Value.Signal >= 2) conf = 0.90m;   // contact/doc substring / acct tail
-            else if (best.Value.Signal >= 1) conf = 0.87m;   // weak ref substring + unique amount
-            else conf = 0.85m;                               // sole candidate at this amount, no name
-            if (best.Value.DateGap == 0) conf += 0.02m;
-            if (conf > 0.98m) conf = 0.98m;
-
-            // FULLY-CONFIRMED 1:1 → 0.99. When the candidate's IDENTITY is
-            // confirmed (name / ref / doc-no / taxid / account-tail, signal ≥ 2)
-            // AND the amount agrees to the satang AND it sits on the same or
-            // adjacent day, the pairing is certain — the bank line may merely be
-            // net of a small fee/WHT. This is the strongest case in the whole
-            // book, so it gets the top score and (via the best-first dedup) is
-            // applied before anything else.
-            bool identityConfirmed = best.Value.Signal >= 2;
+            decimal conf = best.Value.Confidence;
+            // FULLY-CONFIRMED 1:1 → 0.99. When TWO OR MORE independent identity
+            // signals fired AND amount is exact AND date ≤ 1 day, the pairing
+            // is the strongest case in the whole book — auto-checks first.
             bool exactToSatang = Math.Abs(best.Value.Amt - target) <= 0.01m;
-            if (identityConfirmed && exactToSatang && best.Value.DateGap <= 1)
+            if (best.Value.SignalCount >= 2 && exactToSatang && best.Value.DateGap <= 1)
+                conf = 0.99m;
+            // Single strong identifier (TIN or doc-code citation) + same day +
+            // exact amount is also a near-certain match.
+            else if (best.Value.SignalCount >= 1 && exactToSatang && best.Value.DateGap == 0
+                     && conf >= 0.90m)
                 conf = 0.99m;
 
             added.Add(new ProposedMatch(bid, "OneToOne",
                 new List<MatchCandidate> { new(best.Value.Id, best.Value.Kind, best.Value.Amt) },
                 conf,
-                $"1:1 (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, signal={best.Value.Signal}{(conf >= 0.99m ? ", ยืนยันชื่อ+ยอด+วันตรง" : "")}{(exactAmountInWindow > 1 ? $", {exactAmountInWindow} ตัวยอดเท่ากัน" : "")})",
+                $"1:1 (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, สัญญาณ={best.Value.SignalCount}{(conf >= 0.99m ? ", ยืนยันยอด+ชื่อ+วันตรง" : "")}{(exactAmountInWindow > 1 ? $", {exactAmountInWindow} ตัวยอดเท่ากัน" : "")})",
                 Guid.Empty));
             clearedBankIds.Add(bid);
             consumed.Add(best.Value.Id);
@@ -1355,6 +1407,43 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         foreach (var g in dupGroups)
         {
             warnings.Add($"⚠ พบรายการธนาคารซ้ำ {g.Count()} รายการ — วันที่ {g.Key.Item1:d MMM yyyy}, ยอด {g.Key.Item2:N2}, ทิศทาง {g.Key.Item3} (อาจ import ซ้ำ — ตรวจก่อน match)");
+        }
+
+        // (a2) Reverse-pair detection — bank reversal (deposit erroneously
+        // booked then refunded by the bank) appears as an Out+In pair of
+        // identical amount on the SAME account within ≤2 days, no contact
+        // doc involved. These should be marked Excluded (or matched to each
+        // other) — never to a customer/vendor doc, because the net cash
+        // movement is ZERO.
+        var revPairs = 0;
+        var consumedRev = new HashSet<string>();   // bank-txn id pairs already paired
+        for (int i = 0; i < txns.Count; i++)
+        {
+            var a = txns[i];
+            if (consumedRev.Contains(a.Id)) continue;
+            for (int j = i + 1; j < txns.Count; j++)
+            {
+                var b = txns[j];
+                if (consumedRev.Contains(b.Id)) continue;
+                if (a.Direction == b.Direction) continue;
+                if (Math.Abs(a.Amount - b.Amount) > 0.01m) continue;
+                if (Math.Abs((a.Date.Date - b.Date.Date).TotalDays) > 2) continue;
+                // Memo similarity check — same bank usually quotes the same
+                // text on both legs of a reversal ("ยกเลิกรายการ", "reverse").
+                var aMemoLc = (a.Memo ?? "").ToLowerInvariant();
+                var bMemoLc = (b.Memo ?? "").ToLowerInvariant();
+                bool revKeyword = aMemoLc.Contains("กลับรายการ") || aMemoLc.Contains("reverse")
+                                  || aMemoLc.Contains("คืน") || aMemoLc.Contains("refund")
+                                  || bMemoLc.Contains("กลับรายการ") || bMemoLc.Contains("reverse")
+                                  || bMemoLc.Contains("คืน") || bMemoLc.Contains("refund");
+                if (!revKeyword) continue;
+                consumedRev.Add(a.Id); consumedRev.Add(b.Id);
+                warnings.Add($"🔄 อาจเป็นการกลับรายการของแบงค์: {a.Date:d MMM yyyy} {a.Amount:N2} ({a.Direction}) ↔ {b.Date:d MMM yyyy} {b.Amount:N2} ({b.Direction}) — แนะนำให้ Exclude คู่กัน ไม่ต้อง match เอกสาร");
+                revPairs++;
+                if (revPairs >= 10) break;
+                break;
+            }
+            if (revPairs >= 10) break;
         }
 
         // (b) Own-account transfers — for every In on THIS account look for
