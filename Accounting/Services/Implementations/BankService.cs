@@ -311,11 +311,21 @@ public partial class BankService : IBankService
             else oppDirSum += p.Amount;
         }
         var payIds = pays.Select(p => p.Id).ToHashSet();
+        // Parallel GROSS tally: a WHT/fee payment shows the gross on the bank
+        // statement but a net bank-line on the JE (e.g. pay 7,490, JE bank-line
+        // 7,280 after 210 WHT). Accept the match if EITHER the net OR the gross
+        // side reconciles, so the operator isn't blocked on a legitimate WHT case.
+        decimal grossSameDir = sameDirSum, grossOppDir = oppDirSum;
 
         // The rest are treated as JournalEntries.
         var jeIds = ids.Where(i => !payIds.Contains(i)).ToList();
         if (jeIds.Count > 0)
         {
+            // JE gross (TotalDebit) for every matched JE, for the gross tally.
+            var jeGross = await _db.JournalEntries.AsNoTracking()
+                .Where(j => jeIds.Contains(j.Id))
+                .ToDictionaryAsync(j => j.Id, j => j.TotalDebit);
+
             if (bankCoaId.HasValue)
             {
                 var lines = await _db.JournalEntryLines.AsNoTracking()
@@ -332,26 +342,34 @@ public partial class BankService : IBankService
                     if (Math.Abs(kv.Value) < 0.01m) continue;
                     bool jeIsIn = kv.Value > 0;
                     var mag = Math.Abs(kv.Value);
-                    if (jeIsIn == txnIsIn) sameDirSum += mag;
-                    else oppDirSum += mag;
+                    var gross = jeGross.GetValueOrDefault(kv.Key, mag);
+                    if (jeIsIn == txnIsIn) { sameDirSum += mag; grossSameDir += gross; }
+                    else { oppDirSum += mag; grossOppDir += gross; }
                 }
                 // JEs that don't touch the bank account → unknown side; additive.
                 var noBankLine = jeIds.Where(id => !withBankLine.Contains(id)).ToList();
-                if (noBankLine.Count > 0)
-                    sameDirSum += await _db.JournalEntries.AsNoTracking()
-                        .Where(j => noBankLine.Contains(j.Id)).SumAsync(j => j.TotalDebit);
+                foreach (var id in noBankLine)
+                {
+                    var g = jeGross.GetValueOrDefault(id, 0m);
+                    sameDirSum += g; grossSameDir += g;
+                }
             }
             else
             {
-                sameDirSum += await _db.JournalEntries.AsNoTracking()
-                    .Where(j => jeIds.Contains(j.Id)).SumAsync(j => j.TotalDebit);
+                foreach (var id in jeIds)
+                {
+                    var g = jeGross.GetValueOrDefault(id, 0m);
+                    sameDirSum += g; grossSameDir += g;
+                }
             }
         }
 
         var target = Math.Abs(txn.Amount);
         var net = sameDirSum - oppDirSum;
+        var grossNet = grossSameDir - grossOppDir;
         var diff = Math.Abs(net - target);
-        if (diff > 0.01m)
+        var grossDiff = Math.Abs(grossNet - target);
+        if (diff > 0.01m && grossDiff > 0.01m)
         {
             // Identify the offending bank line so the operator can find it.
             var sign = txn.TransactionType == BankTransactionType.Deposit ? "+" : "-";
@@ -359,8 +377,11 @@ public partial class BankService : IBankService
             if (desc.Length > 40) desc = desc[..40] + "…";
             var who = $"รายการธนาคาร {txn.TransactionDate:dd/MM/yyyy} {sign}{target:N2}" +
                       (string.IsNullOrWhiteSpace(desc) ? "" : $" ({desc})");
+            // Report whichever interpretation is closer (net vs gross).
+            var shownAmt = grossDiff < diff ? grossNet : net;
+            var shownDiff = Math.Min(diff, grossDiff);
             throw new InvalidOperationException(
-                $"{who}: ยอดที่จับคู่ ({net:N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {diff:N2} บาท. " +
+                $"{who}: ยอดที่จับคู่ ({shownAmt:N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {shownDiff:N2} บาท. " +
                 "ฝั่งเดียวกันบวกกัน, ข้ามฝั่งหักกัน (เช่น Receipt 2,500 − PaymentVoucher 500 = 2,000 net เข้าบัญชี). " +
                 "ใบรับ 2 ใบไม่สามารถนำมาลบกันได้ — เลือกเอกสาร/JE ให้ถูก หรือใช้กลุ่มกระทบยอด M:N.");
         }

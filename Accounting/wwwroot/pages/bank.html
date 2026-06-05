@@ -1416,6 +1416,24 @@
             </table>
             <div style="font-size:11px;color:#7f1d1d;margin-top:6px">💡 สร้างเอกสารที่ขาดก่อน แล้วยิง AI อีกครั้ง — รายการที่เคยขาดจะ match ได้</div>
           </div>`;
+        // Detect ANY double-use across the plan: a candidate (RV/JE/Payment) or
+        // a bank line appearing in 2+ matches. Within an M:N group the doc is
+        // legitimately shared across rows, so count it once per group.
+        const candUse = {}, bankUse = {};
+        (plan.matches || []).forEach(m => {
+          bankUse[m.bankTxnId] = (bankUse[m.bankTxnId] || 0) + 1;
+          const key = m.matchGroupId || ('m' + (m.bankTxnId));
+          (m.candidates || []).forEach(c => {
+            candUse[c.candidateId] = candUse[c.candidateId] || new Set();
+            candUse[c.candidateId].add(key);   // distinct owners (group or single match)
+          });
+        });
+        const dupCandIds = new Set(Object.keys(candUse).filter(id => candUse[id].size > 1));
+        const dupBankIds = new Set(Object.keys(bankUse).filter(id => bankUse[id] > 1));
+        const dupBanner = (dupCandIds.size === 0 && dupBankIds.size === 0) ? `
+          <div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:6px;padding:8px 14px;margin:8px 0;font-size:12px;color:#166534">✓ ตรวจแล้ว — ไม่มีการจับคู่ซ้ำ (เอกสาร/รายการธนาคารแต่ละตัวใช้ครั้งเดียว)</div>`
+          : `<div style="background:#fee2e2;border-left:4px solid #dc2626;border-radius:6px;padding:8px 14px;margin:8px 0;font-size:12px;color:#991b1b">⚠️ พบการใช้ซ้ำ: ${dupCandIds.size} เอกสาร / ${dupBankIds.size} รายการธนาคาร ถูกใช้มากกว่า 1 ครั้ง — แถวที่เกี่ยวข้องถูกไฮไลต์สีส้ม ระบบจะตัดตัวซ้ำออกตอนยืนยัน</div>`;
+
         // Show calibrated-low-confidence matches FIRST so the operator reviews
         // suspects (amount mismatches the server downgraded) before the easy
         // wins. KEEP the original index so the checkbox maps back to the right
@@ -1437,10 +1455,14 @@
           const bankMemo = m.bankMemo || (bt ? (bt.payee || bt.description) : '');
           const candSum = (m.candidates || []).reduce((s, c) => s + (c.amount || 0), 0);
           const mismatch = bankAmt != null && Math.abs(candSum - bankAmt) > 0.01;
+          // Does this row reuse a candidate / bank line that another row also uses?
+          const hasDup = dupBankIds.has(m.bankTxnId)
+            || (m.candidates || []).some(c => dupCandIds.has(c.candidateId));
           // Candidates as "RV-202604-0500 (500) + RV-…0501 (500) = 1,000" using
-          // the real doc number (label) the server resolved, not a GUID.
+          // the real doc number (label) the server resolved, not a GUID. Repeated
+          // docs are flagged ♻.
           const cands = (m.candidates || [])
-            .map(c => `${esc(c.label || (c.candidateType + ':' + c.candidateId.slice(0,8) + '…'))} <b>${fmtAmt(c.amount)}</b>`)
+            .map(c => `${dupCandIds.has(c.candidateId)?'<span title="ใช้ซ้ำ" style="color:#ea580c">♻</span>':''}${esc(c.label || (c.candidateType + ':' + c.candidateId.slice(0,8) + '…'))} <b>${fmtAmt(c.amount)}</b>`)
             .join(' + ') + ` = <b>${fmtAmt(candSum)}</b>`;
           const bankCell = (bankDate || bankMemo)
             ? `<div style="font-size:10px;color:${bankDir==='In'?'#16a34a':'#dc2626'}">${bankDir==='In'?'รับ':'จ่าย'}${bankDate?' · '+Layout.date(bankDate):''}</div>
@@ -1451,8 +1473,8 @@
             ? `<span style="font-weight:700">${fmtAmt(bankAmt)}</span>` : '—';
           const sumCell = `<span style="font-weight:700;color:${mismatch?'#dc2626':'#16a34a'}">${fmtAmt(candSum)}</span>` +
             (mismatch ? `<div style="font-size:10px;color:#dc2626">ต่าง ${fmtAmt(candSum - bankAmt)}</div>` : '');
-          return `<tr style="border-bottom:1px solid #f1f5f9;${mismatch?'background:#fff7f7':''}">
-            <td><input type="checkbox" ${m.confidence>=0.85 && !mismatch?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
+          return `<tr style="border-bottom:1px solid #f1f5f9;${hasDup?'background:#fff7ed':mismatch?'background:#fff7f7':''}">
+            <td><input type="checkbox" ${m.confidence>=0.85 && !mismatch && !hasDup?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
             <td>${bankCell}</td>
             <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
             <td style="font-size:12px;min-width:240px">${cands}</td>
@@ -1492,6 +1514,7 @@
             </div>
           </div>
           <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">📅 ผู้สมัครครอบคลุม: เอกสารย้อนหลัง 90 วัน + JE ในช่วง ±5 วันของเดือนที่เลือก (กันใบที่ออกก่อนแต่จ่ายในเดือนนี้)</div>
+          ${dupBanner}
           <div style="overflow:auto;max-height:380px;border:1px solid #e2e8f0;border-radius:8px">
             <table style="width:100%;font-size:12px">
               <thead style="position:sticky;top:0;background:#f1f5f9">
