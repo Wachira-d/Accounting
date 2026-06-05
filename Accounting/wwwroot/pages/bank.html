@@ -2108,6 +2108,17 @@
         this.renderPickerCandidates();
         this.updateSelectionBar();
       },
+      // Direction of a candidate inferred from its doc-number prefix:
+      // RV / Receipt / Invoice = inflow (+); PV / Expense = outflow (−).
+      // For an IN bank line same-side adds and opposite-side subtracts —
+      // the net (= signed sum) is what must match the bank amount.
+      _candidateSign(item, bankIsIn) {
+        const n = (item.number || '').toUpperCase();
+        const isIn = n.startsWith('RV') || n.startsWith('REC') || n.startsWith('INV') || n.startsWith('TI') || n.startsWith('BN') || n.startsWith('DN');
+        const isOut = n.startsWith('PV') || n.startsWith('PAY') || n.startsWith('EX') || n.startsWith('PI');
+        if (!isIn && !isOut) return +1;            // unknown — additive
+        return (isIn === bankIsIn) ? +1 : -1;
+      },
       updateSelectionBar() {
         const sel = this._pickerSelected || [];
         const bar = document.getElementById('rSelectionBar');
@@ -2119,8 +2130,11 @@
           if (cntText) cntText.textContent = '(เลือกรายการก่อน)';
           return;
         }
-        const sum = sel.reduce((s, x) => s + (x.amount || 0), 0);
         const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+        const bankIsIn = (this._pickerData?.bankTransactionType || '') !== 'Withdrawal'
+                       && (this._pickerData?.bankTransactionType || '') !== 'Fee';
+        // Net (signed) sum so mixing RV + PV (net-settlement) totals correctly.
+        const sum = sel.reduce((s, x) => s + this._candidateSign(x, bankIsIn) * (x.amount || 0), 0);
         const diff = bankAmt - sum;
         document.getElementById('rSelectionCount').textContent = sel.length;
         document.getElementById('rSelectionSum').textContent = '฿' + Layout.money(sum);
@@ -2255,8 +2269,12 @@
         if (!sel.length) return;
         const transId = document.getElementById('rTransId').value;
         const type = sel[0].type;
-        const sum = sel.reduce((s, x) => s + x.amount, 0);
         const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+        const bankIsIn = (this._pickerData?.bankTransactionType || '') !== 'Withdrawal'
+                       && (this._pickerData?.bankTransactionType || '') !== 'Fee';
+        // Net (signed) sum: RV on same side as bank adds, PV on opposite side
+        // subtracts. So a 5,000 receipt − 200 service fee = 4,800 net deposit.
+        const sum = sel.reduce((s, x) => s + this._candidateSign(x, bankIsIn) * x.amount, 0);
         const diff = Math.abs(bankAmt - sum);
 
         let msg;
