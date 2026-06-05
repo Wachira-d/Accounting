@@ -277,8 +277,14 @@ public class AiOrchestrator : IAiOrchestrator
         AiProviderRawResponse raw;
         using (var providerCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            var timeoutSec = request.TimeoutSecondsOverride ?? providerConfig.RequestTimeoutSeconds;
-            providerCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(2, timeoutSec)));
+            // Hard ceiling — defends the request thread/HttpClient connection
+            // from a misconfigured TimeoutSecondsOverride pinning resources for
+            // far longer than any sane AI call should take. 300s = 5 min, well
+            // above the largest legitimate prompt (bulk bank match at 180s).
+            const int MaxTimeoutSec = 300;
+            var requested = request.TimeoutSecondsOverride ?? providerConfig.RequestTimeoutSeconds;
+            var timeoutSec = Math.Clamp(requested, 2, MaxTimeoutSec);
+            providerCts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
             raw = await providerImpl.CompleteAsync(request with { UserPromptJson = sanitizedUserJson },
                 providerConfig, providerCts.Token);
         }

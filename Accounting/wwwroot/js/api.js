@@ -13,7 +13,7 @@ const API = {
     return (v && v !== key) ? v : fallback;
   },
 
-  async request(method, url, data = null, isFormData = false) {
+  async request(method, url, data = null, isFormData = false, signal = null) {
     // Re-read token from localStorage on each request (handles token refresh by other tabs)
     this.token = localStorage.getItem('token');
     const headers = {};
@@ -22,6 +22,7 @@ const API = {
     headers['Accept-Language'] = (typeof I18n !== 'undefined' && I18n.lang) ? I18n.lang : (localStorage.getItem('nextacc_lang') || 'th');
 
     const options = { method, headers };
+    if (signal) options.signal = signal;   // AbortController support for long calls (bulk AI)
     if (data && !isFormData) options.body = JSON.stringify(data);
     if (data && isFormData) options.body = data;
 
@@ -116,11 +117,11 @@ const API = {
     }
   },
 
-  get(url) { return this.request('GET', url); },
-  post(url, data) { return this.request('POST', url, data); },
-  put(url, data) { return this.request('PUT', url, data); },
-  del(url) { return this.request('DELETE', url); },
-  upload(url, formData) { return this.request('POST', url, formData, true); },
+  get(url, signal) { return this.request('GET', url, null, false, signal); },
+  post(url, data, signal) { return this.request('POST', url, data, false, signal); },
+  put(url, data, signal) { return this.request('PUT', url, data, false, signal); },
+  del(url, signal) { return this.request('DELETE', url, null, false, signal); },
+  upload(url, formData, signal) { return this.request('POST', url, formData, true, signal); },
   _logError(method, url, status, msg) {
     try { fetch('/api/error-log/client', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestPath: url, httpMethod: method, statusCode: status, message: msg, source: 'Frontend' })

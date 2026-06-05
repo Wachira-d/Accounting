@@ -1346,11 +1346,23 @@
         const statusDetail = document.getElementById('aiStatusDetail');
         if (statusBox) statusBox.style.display = '';
         if (statusText) statusText.textContent = `🧠 AI กำลังกระทบยอด ${fromStr} → ${toStr} (อาจใช้เวลาถึง ~1 นาที)...`;
-        if (statusDetail) statusDetail.textContent = '';
+        if (statusDetail) {
+          // Inline cancel link so the user can abort the wait (AbortController
+          // → server's CancellationToken → orchestrator stops the AI call).
+          // Without this they had to leave the page entirely to escape a hang.
+          statusDetail.innerHTML = '<a href="#" id="aiCancelLink" style="color:#dc2626;text-decoration:underline">ยกเลิกการรอ</a>';
+        }
+        const aiAbort = new AbortController();
+        this._bulkAiAbort = aiAbort;
+        const cancelLink = document.getElementById('aiCancelLink');
+        if (cancelLink) cancelLink.onclick = (ev) => {
+          ev.preventDefault();
+          aiAbort.abort();
+        };
         try {
           const accId = this.selectedAccount.id;
           const cid = Layout.getCompanyId();
-          const r = await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match?fromDate=${fromStr}&toDate=${toStr}`, {});
+          const r = await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match?fromDate=${fromStr}&toDate=${toStr}`, {}, aiAbort.signal);
           btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
           // Defensive: rate-limit / not-ready paths return {success:false,data:null}
           // WITHOUT throwing, so guard before touching plan fields.
@@ -1367,10 +1379,14 @@
           this.renderBulkPlan(r.data, r.message);
         } catch (e) {
           btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
-          const m = e?.message || 'เกิดข้อผิดพลาดในการเรียก AI';
-          if (statusText) statusText.textContent = '⚠️ เกิดข้อผิดพลาด';
+          // User-initiated cancel via AbortController — friendly message, no toast spam.
+          const wasAborted = e?.name === 'AbortError' || /aborted|abort/i.test(e?.message || '');
+          const m = wasAborted ? 'ยกเลิกการรอ AI แล้ว' : (e?.message || 'เกิดข้อผิดพลาดในการเรียก AI');
+          if (statusText) statusText.textContent = wasAborted ? 'ยกเลิกแล้ว' : '⚠️ เกิดข้อผิดพลาด';
           if (statusDetail) statusDetail.textContent = m;
-          Layout.toast(m, 'error');
+          if (!wasAborted) Layout.toast(m, 'error');
+        } finally {
+          this._bulkAiAbort = null;
         }
       },
 
