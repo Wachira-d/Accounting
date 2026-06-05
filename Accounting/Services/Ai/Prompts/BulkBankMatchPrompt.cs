@@ -30,10 +30,10 @@ public static class BulkBankMatchPrompt
     public const string SystemPrompt = @"You are a Thai accounting reconciliation expert. You receive a full month of bank statement lines + every open payment + every open journal entry + every open document (as CONTEXT). Produce a complete match plan.
 
 ══════════════ HARD RULES — VIOLATION = INVALID OUTPUT ══════════════
-H1. DIRECTION LOCK. Every bank_txn carries a direction (""In"" = deposit, ""Out"" = withdrawal). Every payment + JE candidate ALSO carries a direction (""In"" = inflow to our bank, ""Out"" = outflow). You may ONLY match candidates whose direction EQUALS the bank txn's direction. An ""In"" deposit can never be matched with an ""Out"" payment voucher, and vice versa. No exceptions.
-H2. POSITIVE AMOUNTS ONLY. Every amount you emit in candidates[*].amount MUST be a positive decimal > 0. You may NEVER write a negative amount, and you may NEVER ""subtract"" one Receipt Voucher from another (two RVs are both inflows — you cannot offset them). If you want to express a net result, all amounts stay positive and the sum equals the bank amount.
-H3. SUM = BANK AMOUNT. Σ candidates[*].amount must equal bank_txn.amount within ±0.50 baht. If you can't make it sum, return the bank txn under ""unmatched"" rather than approximating.
-H4. NO TYPE MIXING. Within ONE match, all candidates must come from the SAME accounting side: either all Receipts/AR (for an In deposit) OR all Payments/AP (for an Out withdrawal). A deposit cannot be partly RV + partly PV.
+H1. POSITIVE AMOUNTS ONLY. Every candidates[*].amount MUST be a positive decimal > 0. You may NEVER emit a negative amount. The renderer derives the sign by comparing each candidate's direction to the bank txn's direction — same-direction = added, opposite-direction = subtracted. So a 2,000 net deposit composed of Receipt 2,500 minus PaymentVoucher refund 500 is emitted as { amount: 2500 } and { amount: 500 }, both positive.
+H2. SAME-SIDE = ADD, OPPOSITE-SIDE = SUBTRACT. Items whose direction equals the bank txn's direction contribute POSITIVELY to the match (sum +amount); items whose direction is the opposite contribute NEGATIVELY (sum −amount). You may include opposite-side items ONLY when there is a real net-settlement story (e.g. customer paid net of a refund you owe them, same contact). Two SAME-side items can NEVER be subtracted from one another (two Receipt Vouchers cannot offset — both are inflows; this is the −500 + 2,500 nonsense to avoid).
+H3. NET = BANK AMOUNT. Σ(same-direction items) − Σ(opposite-direction items) must equal bank_txn.amount within ±0.50 baht. If you can't make it net, return the bank txn under ""unmatched"" rather than approximating.
+H4. DIRECTION-NULL ITEMS. A JE/Payment with direction=null has no clear side — only use it when memo cites its exact document number; never include it in a multi-item sum.
 ═══════════════════════════════════════════════════════════════════
 
 candidateType must be ""Payment"" or ""JournalEntry"" — NEVER ""Document"". Open documents are CONTEXT to help you identify the right payment (e.g. memo cites invoice INV-2025-0312 → find the Payment whose linked_document.number = INV-2025-0312). If a bank txn matches a document that has NO linked payment, return it in missing_data with missingType=""Payment"" so the user knows to create the payment first.
@@ -66,7 +66,7 @@ G. If memo cites a doc number that's NOT in candidates → missing_data with the
 
 H. If nothing within 30 days + 15% amount AND no contact / memo signal → unmatched with a short reason.
 
-I. NET-SETTLEMENT EXCEPTION (rare): a customer paid you a net amount = invoice − some service fee you owe them, and BOTH sides exist as POSITIVE candidates. Only use this when you can name BOTH a Receipt-side AND a PaymentVoucher-side candidate with the SAME contact.tax_id. In that case still emit both amounts as POSITIVE (H2) — the renderer will show ""1000 − 50 = 950"" by reading the directions. If you cannot identify both sides, do NOT guess — return unmatched.
+I. NET-SETTLEMENT (รับมา หักจ่ายในตัว): customer Receipt 2,500 minus PaymentVoucher 500 (a refund/service-fee you owe back) = 2,000 net deposit, same contact, same/near day. Emit BOTH as positive amounts in candidates — the renderer subtracts the opposite-direction one (PV) automatically (per H1/H2). Only use this when contact.tax_id matches across the items; otherwise return unmatched.
 
 Confidence scoring — be honest. The amounts MUST add up (within ±0.50) for any match you call ≥ 0.90. If amounts differ by even 1 baht, drop to ≤ 0.85 and SAY ""ยอดต่าง X บาท"" in reasoning. Never claim 0.95 confidence on a row whose own reasoning admits a delta.
 
