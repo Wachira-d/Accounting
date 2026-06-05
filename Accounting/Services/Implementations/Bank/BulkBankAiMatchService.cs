@@ -699,6 +699,34 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         foreach (var d in openDocs)
             idInfoById[d.Id] = new(d.ContactName, null, d.Number, d.ContactTaxId, null, d.Date);
 
+        // Per-id lookups needed by the verification layer below: candidate
+        // direction (In/Out) + payment channel + contact name. The verifier
+        // uses these to re-check each accepted match's plausibility AFTER
+        // scoring — an independent layer so a confidence-inflating signal
+        // bug can't silently pass a directionally-wrong or channel-mismatched
+        // match.
+        var dirById = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var channelById = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var contactById = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var j in openJes)
+        {
+            dirById[j.Id] = j.Direction;
+            channelById[j.Id] = j.PaymentMethod;
+            contactById[j.Id] = j.ContactName;
+        }
+        foreach (var p in openPayments)
+        {
+            dirById[p.Id] = p.Direction;
+            channelById[p.Id] = p.Channel;
+            contactById[p.Id] = p.ContactName;
+        }
+        foreach (var d in openDocs)
+        {
+            dirById[d.Id] = d.Direction == "AR" ? "In" : (d.Direction == "AP" ? "Out" : null);
+            channelById[d.Id] = null;
+            contactById[d.Id] = d.ContactName;
+        }
+
         // First pass: calibrate every match (CPU only) and build its feedback
         // record. Second pass: ONE batch insert for all records (was N separate
         // SaveChanges — 100 matches = 100 DB round-trips blocking the response).
@@ -790,6 +818,58 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // misreported amounts. User MUST review.
             if (hallucinationNote != null && calibratedConf > 0.55m)
                 calibratedConf = 0.55m;
+
+            // ── INDEPENDENT VERIFICATION LAYER ──────────────────────────
+            // Re-validate the proposed match against objective checks
+            // (direction, window, contact consistency, channel, hallucination,
+            // explained-delta, date dispersion). Confidence reflects what the
+            // SCORER thinks; verification reflects what's OBJECTIVELY safe.
+            // A hard FAIL caps confidence at 0.50 — anything left auto-checked
+            // would mean the gate (≥0.85) is being passed by a score the
+            // verifier disagrees with, which we never want.
+            var bankDir = bt.TransactionType is BankTransactionType.Deposit or BankTransactionType.Interest ? "In" : "Out";
+            var candDates = calibratedMatchCandidates(m, idInfoById, bt.TransactionDate);
+            var candDirs  = calibratedMatchDirs(m, dirById);
+            var candContacts = calibratedMatchContacts(m, contactById);
+            // First candidate's channel is a reasonable proxy for the match's
+            // channel (M:1 usually shares method); null when nothing known.
+            var firstChannel = m.Candidates.Count > 0
+                && channelById.TryGetValue(m.Candidates[0].CandidateId.ToString(), out var ch0) ? ch0 : null;
+            var bankCat = BankFlowClassifier.Classify(bt.Description, bt.Payee, bt.Reference);
+            bool channelOk = BankFlowClassifier.IsChannelCompatible(bankCat, firstChannel);
+            // Re-classify delta for the verifier (so the report is consistent
+            // with what CalibrateConfidence used).
+            var sumCand = m.Candidates.Sum(c => c.Amount);
+            var deltaExpl = BankFeeDictionary.Classify(Math.Abs(bt.Amount), sumCand, bankCat);
+
+            var report = BankMatchVerification.Verify(new BankMatchVerification.VerifyInput(
+                BankAmount: Math.Abs(bt.Amount),
+                BankDate: bt.TransactionDate,
+                BankDirection: bankDir,
+                BankMemo: bt.Description,
+                BankPayee: bt.Payee,
+                BankReference: bt.Reference,
+                CandidateSum: sumCand,
+                CandidateDates: candDates,
+                CandidateDirections: candDirs,
+                CandidateContacts: candContacts,
+                IdentityConfirmed: m.Candidates.Count == 1
+                    && idInfoById.TryGetValue(m.Candidates[0].CandidateId.ToString(), out var idInf2)
+                    && MemoConfirmsIdentity((bt.Description ?? "") + " " + (bt.Reference ?? "") + " " + (bt.Payee ?? ""), idInf2),
+                ChannelCompatible: channelOk,
+                AmountHallucinated: hallucinationNote != null,
+                DeltaKind: deltaExpl.Kind,
+                IsAggregatorFlow: BankFlowClassifier.IsAggregatorFlow(bankCat)));
+
+            // Hard FAIL → confidence capped low + reasoning shows what failed.
+            if (report.HardFail && calibratedConf > 0.50m)
+                calibratedConf = 0.50m;
+
+            var verifySummary = BankMatchVerification.RenderSummary(report);
+            calReason = string.IsNullOrEmpty(calReason)
+                ? verifySummary
+                : calReason + " · " + verifySummary;
+
             // Candidates already carry real amounts + labels (set above).
             var calibratedMatch = m with
             {
@@ -798,7 +878,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 BankAmount = Math.Abs(bt.Amount),
                 BankDate = bt.TransactionDate,
                 BankMemo = bt.Description ?? bt.Payee,
-                BankDirection = bt.TransactionType is BankTransactionType.Deposit or BankTransactionType.Interest ? "In" : "Out",
+                BankDirection = bankDir,
             };
 
             var answerJson = JsonSerializer.Serialize(calibratedMatch.Candidates.Select(c => new
@@ -2048,6 +2128,41 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// <summary>True when the bank memo quotes ANY of the candidate's identity
     /// fields — the same signals the 1:1 sweep scores, reused so an AI-proposed
     /// match can be upgraded to a confirmed 0.99.</summary>
+    // Verifier helpers — pull each candidate's date / direction / contact
+    // from the pre-built lookup so the verification layer doesn't repeat
+    // the per-id lookup logic inline.
+    private static List<DateTime> calibratedMatchCandidates(ProposedMatch m,
+        Dictionary<string, MatchIdentity> idInfo, DateTime bankDate)
+    {
+        var dates = new List<DateTime>(m.Candidates.Count);
+        foreach (var c in m.Candidates)
+        {
+            if (idInfo.TryGetValue(c.CandidateId.ToString(), out var info))
+                dates.Add(info.Date);
+            else
+                dates.Add(bankDate);    // unknown — neutral
+        }
+        return dates;
+    }
+
+    private static List<string?> calibratedMatchDirs(ProposedMatch m,
+        Dictionary<string, string?> dirById)
+    {
+        var dirs = new List<string?>(m.Candidates.Count);
+        foreach (var c in m.Candidates)
+            dirs.Add(dirById.TryGetValue(c.CandidateId.ToString(), out var d) ? d : null);
+        return dirs;
+    }
+
+    private static List<string?> calibratedMatchContacts(ProposedMatch m,
+        Dictionary<string, string?> contactById)
+    {
+        var contacts = new List<string?>(m.Candidates.Count);
+        foreach (var c in m.Candidates)
+            contacts.Add(contactById.TryGetValue(c.CandidateId.ToString(), out var v) ? v : null);
+        return contacts;
+    }
+
     private static bool MemoConfirmsIdentity(string memoBlob, MatchIdentity info)
     {
         if (string.IsNullOrWhiteSpace(memoBlob)) return false;
