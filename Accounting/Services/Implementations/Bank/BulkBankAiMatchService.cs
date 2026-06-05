@@ -574,6 +574,20 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // ── M:1 combination, so this runs before TryCombineLumpedJes.
         parsed = TryExactOneToOne(parsed, txns, openPayments, openJes);
 
+        // ── 8a-ii. Greedy pairing of EQUAL-amount, same-day candidates. When
+        // ── K unmatched bank lines of amount X share a date with exactly K
+        // ── open candidates of amount X (and none carries an identity signal),
+        // ── pairing any-to-any reconciles the total correctly — common with
+        // ── the hotel's many identical 800-baht 'การจอง #0' RVs.
+        parsed = TryGreedyEqualAmount(parsed, txns, openPayments, openJes);
+
+        // NOTE: many-banks-to-one (several deposits summing to ONE document) is
+        // intentionally NOT auto-applied here — it needs partial allocation via
+        // the ReconciliationGroup (M:N) path, not BatchReconcile (which would
+        // validate each bank line's amount against the document's FULL amount
+        // and fail). It's surfaced to the AI prompt + handled manually through
+        // the "กลุ่มกระทบยอด (M:N)" workbench instead.
+
         // ── 8b. Multi-JE combination fallback (the lumped-deposit case).
         parsed = TryCombineLumpedJes(parsed, txns, openJes);
 
@@ -1091,6 +1105,87 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             $"พบเพิ่ม {added.Count} รายการที่จับคู่ 1:1 ได้ตรงๆ (server-side exact sweep)"
         }).ToList();
         return parsed with { Matches = newMatches, Unmatched = newUnmatched, Warnings = newWarnings };
+    }
+
+    /// <summary>Greedy 1:1 pairing for groups of EQUAL-amount candidates that
+    /// the ambiguity guard would otherwise leave entirely unmatched. Only fires
+    /// when, for a given (direction, amount, date-bucket), the number of still-
+    /// unmatched bank lines EQUALS the number of open candidates — then every
+    /// candidate is consumed regardless of pairing order, so the total
+    /// reconciles correctly even though per-row customer attribution is
+    /// uncertain. Confidence is deliberately moderate (0.62) with a clear note,
+    /// since which specific receipt maps to which deposit can't be proven.</summary>
+    private static ParsedResponse TryGreedyEqualAmount(
+        ParsedResponse parsed,
+        IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> bankTxns,
+        IReadOnlyList<BulkBankMatchPrompt.OpenPaymentInput> payments,
+        IReadOnlyList<BulkBankMatchPrompt.OpenJeInput> jes)
+    {
+        var matchedBankIds = parsed.Matches.Select(m => m.BankTxnId).ToHashSet();
+        var consumed = parsed.Matches.SelectMany(m => m.Candidates).Select(c => c.CandidateId).ToHashSet();
+
+        // Unmatched bank lines grouped by (direction, amount rounded to satang).
+        var bankGroups = new Dictionary<(string Dir, decimal Amt), List<(Guid Id, DateTime Date)>>();
+        foreach (var t in bankTxns)
+        {
+            if (!Guid.TryParse(t.Id, out var bid) || matchedBankIds.Contains(bid)) continue;
+            var key = (t.Direction, Math.Round(Math.Abs(t.Amount), 2));
+            (bankGroups.TryGetValue(key, out var l) ? l : bankGroups[key] = new()).Add((bid, t.Date));
+        }
+        if (bankGroups.Count == 0) return parsed;
+
+        // Candidate pool indexed the same way (In = receipts/RV, Out = PV).
+        var candByKey = new Dictionary<(string Dir, decimal Amt), List<(Guid Id, string Kind, DateTime Date)>>();
+        void Add(string dir, decimal amt, Guid id, string kind, DateTime date)
+        {
+            if (consumed.Contains(id)) return;
+            var key = (dir, Math.Round(Math.Abs(amt), 2));
+            (candByKey.TryGetValue(key, out var l) ? l : candByKey[key] = new()).Add((id, kind, date));
+        }
+        foreach (var p in payments)
+            if (Guid.TryParse(p.Id, out var pid) && p.Direction != null) Add(p.Direction, p.Amount, pid, "Payment", p.Date);
+        foreach (var j in jes)
+            if (Guid.TryParse(j.Id, out var jid) && j.Direction != null) Add(j.Direction, j.NetAmount, jid, "JournalEntry", j.Date);
+
+        var added = new List<ProposedMatch>();
+        var cleared = new HashSet<Guid>();
+        foreach (var (key, bankList) in bankGroups)
+        {
+            if (bankList.Count < 2) continue;                       // 1 item is handled by the 1:1 sweep
+            if (!candByKey.TryGetValue(key, out var cands)) continue;
+            // STRICT: only when counts match exactly — no surplus on either
+            // side — so the mapping is total and we never leave money guessing.
+            if (cands.Count != bankList.Count) continue;
+
+            // Pair within a backward window (each bank line to a candidate
+            // dated at/just before it). Order both by date and zip.
+            var bSorted = bankList.OrderBy(b => b.Date).ToList();
+            var cSorted = cands.OrderBy(c => c.Date).ToList();
+            // Verify every pair is within a sane window before committing any.
+            bool ok = true;
+            for (int i = 0; i < bSorted.Count; i++)
+                if (!InWindow(cSorted[i].Date, bSorted[i].Date, (Back: 7, Fwd: 1))) { ok = false; break; }
+            if (!ok) continue;
+
+            for (int i = 0; i < bSorted.Count; i++)
+            {
+                added.Add(new ProposedMatch(bSorted[i].Id, "OneToOne",
+                    new List<MatchCandidate> { new(cSorted[i].Id, cSorted[i].Kind, key.Amt) },
+                    0.62m,
+                    $"จับคู่อัตโนมัติแบบกลุ่ม: มี {bankList.Count} รายการยอด {key.Amt:N2} เท่ากันพอดีทั้งสองฝั่ง (โปรดตรวจว่าตรงลูกค้า)",
+                    Guid.Empty));
+                cleared.Add(bSorted[i].Id);
+                consumed.Add(cSorted[i].Id);
+            }
+        }
+
+        if (added.Count == 0) return parsed;
+        return parsed with
+        {
+            Matches = parsed.Matches.Concat(added).ToList(),
+            Unmatched = parsed.Unmatched.Where(u => !cleared.Contains(u.BankTxnId)).ToList(),
+            Warnings = parsed.Warnings.Concat(new[] { $"จับคู่กลุ่มยอดเท่ากัน {added.Count} รายการ (ความเชื่อมั่นปานกลาง — ตรวจลูกค้าก่อนยืนยัน)" }).ToList(),
+        };
     }
 
     /// <summary>Post-AI sweep that promotes lumped-deposit unmatched lines

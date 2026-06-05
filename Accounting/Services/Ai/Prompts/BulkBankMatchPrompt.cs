@@ -140,7 +140,7 @@ Strict JSON output (NO prose outside JSON):
   ""matches"": [
     {
       ""bankTxnId"": ""<guid>"",
-      ""matchType"": ""OneToOne|OneBankToManyDocs|ManyBanksToOneDoc"",
+      ""matchType"": ""OneToOne|OneBankToManyDocs"",   // do NOT emit ManyBanksToOneDoc here — see note below
       ""candidates"": [
         { ""candidateId"": ""<guid>"", ""candidateType"": ""Payment|JournalEntry"", ""amount"": <positive decimal> }
       ],
@@ -155,7 +155,9 @@ Strict JSON output (NO prose outside JSON):
     { ""bankTxnId"": ""<guid>"", ""missingType"": ""Payment|JournalEntry|Contact"", ""hint"": ""<what cited identifier was looked for>"" }
   ],
   ""warnings"": [""<cross-cutting issue>""]
-}";
+}
+
+MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE open document (e.g. a 26,550 sale settled by a 20,000 transfer + a 6,550 transfer on different days), do NOT put them in ""matches"" (the auto-apply path can't split one document across deposits). Instead list EACH such bank line under ""unmatched"" with reason ""น่าจะรวมกับรายการอื่นเป็นเอกสาร <number>"" + suggestedAction ""ใช้กลุ่มกระทบยอด M:N"". The operator settles it in the M:N workbench.";
 
     public sealed record BankTxnInput(
         string Id, DateTime Date, decimal Amount, string Direction,    // ""In"" | ""Out""
