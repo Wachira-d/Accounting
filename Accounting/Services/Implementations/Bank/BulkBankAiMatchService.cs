@@ -607,12 +607,22 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .Where(t => t.BankAccountId == bankAccountId && !t.IsDeleted
                         && parsed.Matches.Select(m => m.BankTxnId).Contains(t.Id))
             .ToDictionaryAsync(t => t.Id, t => t, ct);
-        // Doc-number lookup so the UI can show "RV-202604-0500 (500)" instead
-        // of a GUID. Built from the candidate inputs we already loaded.
+        // Doc-number + REAL amount lookup. The UI shows "RV-202604-0500 (500)"
+        // AND — critically — we OVERRIDE the candidate amount with the true
+        // figure from our DB. The AI sometimes HALLUCINATES the amount (returns
+        // RV-0570 with amount 2,000 to fake a match against a 2,000 deposit when
+        // RV-0570 is really 950), which then sailed past CalibrateConfidence
+        // because that summed the AI's claimed amounts. Using the real amount
+        // exposes the lie (sum no longer matches → low confidence + flagged).
         var labelById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var j in openJes) labelById[j.Id] = j.Number;
-        foreach (var p in openPayments) labelById[p.Id] = p.Number;
-        foreach (var d in openDocs) labelById[d.Id] = d.Number;
+        var realAmountById = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var j in openJes)
+        {
+            labelById[j.Id] = j.Number;
+            realAmountById[j.Id] = j.GrossAmount ?? j.NetAmount;   // document face value
+        }
+        foreach (var p in openPayments) { labelById[p.Id] = p.Number; realAmountById[p.Id] = p.Amount; }
+        foreach (var d in openDocs) { labelById[d.Id] = d.Number; realAmountById[d.Id] = d.Outstanding; }
 
         // First pass: calibrate every match (CPU only) and build its feedback
         // record. Second pass: ONE batch insert for all records (was N separate
@@ -631,6 +641,20 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 recordIndexOfMatch[mi] = -1;
                 continue;
             }
+
+            // OVERRIDE each candidate's amount + label with the TRUE values from
+            // our DB BEFORE prune/calibrate, so an AI-hallucinated amount can't
+            // pass the confidence check. (Server-built matches already carry the
+            // real amount; the override is a no-op for them.)
+            m = m with
+            {
+                Candidates = m.Candidates.Select(c =>
+                {
+                    var key = c.CandidateId.ToString();
+                    var amt = realAmountById.TryGetValue(key, out var ra) ? ra : c.Amount;
+                    return c with { Amount = amt, Label = labelById.GetValueOrDefault(key) };
+                }).ToList(),
+            };
 
             // Trust-but-verify: if the proposed candidates sum off-by but a
             // SUBSET of them sums to the bank amount EXACTLY (the AI added
@@ -653,15 +677,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var calReason = string.IsNullOrEmpty(mismatchNote)
                 ? aiReasoning
                 : (string.IsNullOrEmpty(aiReasoning) ? mismatchNote : aiReasoning + " · " + mismatchNote);
-            // Attach the readable doc number to each candidate for the UI.
-            var labelledCands = m.Candidates
-                .Select(c => c with { Label = labelById.GetValueOrDefault(c.CandidateId.ToString()) })
-                .ToList();
+            // Candidates already carry real amounts + labels (set above).
             var calibratedMatch = m with
             {
                 Confidence = calibratedConf,
                 Reasoning = calReason,
-                Candidates = labelledCands,
                 BankAmount = Math.Abs(bt.Amount),
                 BankDate = bt.TransactionDate,
                 BankMemo = bt.Description ?? bt.Payee,
