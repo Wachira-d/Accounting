@@ -1534,6 +1534,26 @@
         let matches = checks.map(el => this.bulkPlan.matches[+el.dataset.bulkidx]);
         const api = Layout.api(); if (!api) return;
 
+        // Client-side de-dup guard (the server already de-dups the plan, but
+        // the operator could hand-pick two rows that reuse the same RV/JE or
+        // bank line). Keep the higher-confidence one; drop later collisions.
+        {
+          const usedCand = new Set(), usedBank = new Set();
+          const ordered = [...matches].sort((a, b) => (b.confidence||0) - (a.confidence||0));
+          const ok = new Set();
+          for (const m of ordered) {
+            const cids = (m.candidates || []).map(c => c.candidateId);
+            const isGroup = !!m.matchGroupId;
+            if (usedBank.has(m.bankTxnId) || (!isGroup && cids.some(id => usedCand.has(id)))) continue;
+            ok.add(m);
+            usedBank.add(m.bankTxnId);
+            // Claim candidates so non-group rows can't reuse them; group rows
+            // skip the *check* (above) so they may share their own doc.
+            cids.forEach(id => usedCand.add(id));
+          }
+          matches = matches.filter(m => ok.has(m));
+        }
+
         // Bank details preferring the plan (covers off-page txns), then the list.
         const bankOf = (m) => {
           const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
