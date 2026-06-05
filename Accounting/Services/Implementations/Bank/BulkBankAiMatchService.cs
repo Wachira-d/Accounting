@@ -67,7 +67,8 @@ public sealed record ProposedMatch(
 public sealed record MatchCandidate(
     Guid CandidateId,
     string CandidateType,                     // "Document" | "Payment" | "JournalEntry"
-    decimal Amount);
+    decimal Amount,
+    string? Label = null);                    // human doc number (RV-…/PV-…) resolved for the UI
 
 public sealed record UnmatchedTxn(Guid BankTxnId, string Reason, string? SuggestedAction);
 public sealed record MissingDataHint(Guid BankTxnId, string MissingType, string Hint);
@@ -594,6 +595,13 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .Where(t => t.BankAccountId == bankAccountId && !t.IsDeleted
                         && parsed.Matches.Select(m => m.BankTxnId).Contains(t.Id))
             .ToDictionaryAsync(t => t.Id, t => t, ct);
+        // Doc-number lookup so the UI can show "RV-202604-0500 (500)" instead
+        // of a GUID. Built from the candidate inputs we already loaded.
+        var labelById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var j in openJes) labelById[j.Id] = j.Number;
+        foreach (var p in openPayments) labelById[p.Id] = p.Number;
+        foreach (var d in openDocs) labelById[d.Id] = d.Number;
+
         // First pass: calibrate every match (CPU only) and build its feedback
         // record. Second pass: ONE batch insert for all records (was N separate
         // SaveChanges — 100 matches = 100 DB round-trips blocking the response).
@@ -633,7 +641,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var calReason = string.IsNullOrEmpty(mismatchNote)
                 ? aiReasoning
                 : (string.IsNullOrEmpty(aiReasoning) ? mismatchNote : aiReasoning + " · " + mismatchNote);
-            var calibratedMatch = m with { Confidence = calibratedConf, Reasoning = calReason };
+            // Attach the readable doc number to each candidate for the UI.
+            var labelledCands = m.Candidates
+                .Select(c => c with { Label = labelById.GetValueOrDefault(c.CandidateId.ToString()) })
+                .ToList();
+            var calibratedMatch = m with { Confidence = calibratedConf, Reasoning = calReason, Candidates = labelledCands };
 
             var answerJson = JsonSerializer.Serialize(calibratedMatch.Candidates.Select(c => new
             {
