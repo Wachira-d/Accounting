@@ -9,6 +9,9 @@ using Accounting.Services.Helpers;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+// Explicit alias so 'Bank.BankFlowClassifier' resolves unambiguously to the
+// shared classifier in the child namespace (no broad import → no name clash).
+using Bank = Accounting.Services.Implementations.Bank;
 
 namespace Accounting.Services.Implementations;
 
