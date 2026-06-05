@@ -60,7 +60,9 @@ public sealed record ProposedMatch(
     IReadOnlyList<MatchCandidate> Candidates,
     decimal Confidence,
     string? Reasoning,
-    Guid PerMatchFeedbackId);                 // child feedback row id — UI passes back when user accepts/rejects
+    Guid PerMatchFeedbackId,                  // child feedback row id — UI passes back when user accepts/rejects
+    Guid? MatchGroupId = null);               // set on ManyBanksToOneDoc rows: all bank lines sharing it
+                                              // settle ONE document via the M:N group path, not BatchReconcile
 
 public sealed record MatchCandidate(
     Guid CandidateId,
@@ -581,12 +583,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // ── the hotel's many identical 800-baht 'การจอง #0' RVs.
         parsed = TryGreedyEqualAmount(parsed, txns, openPayments, openJes);
 
-        // NOTE: many-banks-to-one (several deposits summing to ONE document) is
-        // intentionally NOT auto-applied here — it needs partial allocation via
-        // the ReconciliationGroup (M:N) path, not BatchReconcile (which would
-        // validate each bank line's amount against the document's FULL amount
-        // and fail). It's surfaced to the AI prompt + handled manually through
-        // the "กลุ่มกระทบยอด (M:N)" workbench instead.
+        // ── 8a-iii. Many-banks-to-one: several deposits SUM to ONE document.
+        // ── Emitted with a shared MatchGroupId so the UI routes them through
+        // ── the ReconciliationGroup (M:N) apply path (partial allocation),
+        // ── never BatchReconcile.
+        parsed = TryManyBanksToOne(parsed, txns, openPayments, openJes);
 
         // ── 8b. Multi-JE combination fallback (the lumped-deposit case).
         parsed = TryCombineLumpedJes(parsed, txns, openJes);
@@ -1185,6 +1186,92 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             Matches = parsed.Matches.Concat(added).ToList(),
             Unmatched = parsed.Unmatched.Where(u => !cleared.Contains(u.BankTxnId)).ToList(),
             Warnings = parsed.Warnings.Concat(new[] { $"จับคู่กลุ่มยอดเท่ากัน {added.Count} รายการ (ความเชื่อมั่นปานกลาง — ตรวจลูกค้าก่อนยืนยัน)" }).ToList(),
+        };
+    }
+
+    /// <summary>Many-banks-to-one: several still-unmatched bank lines that SUM
+    /// to a single open Payment / JE (one sale settled by 2-3 separate
+    /// transfers on different days). Each participating bank line is emitted as
+    /// a ManyBanksToOneDoc match pointing at the same candidate and sharing a
+    /// MatchGroupId, so the UI applies the whole group through the M:N
+    /// ReconciliationGroup path (which allocates each deposit partially against
+    /// the one document) instead of BatchReconcile.</summary>
+    private static ParsedResponse TryManyBanksToOne(
+        ParsedResponse parsed,
+        IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> bankTxns,
+        IReadOnlyList<BulkBankMatchPrompt.OpenPaymentInput> payments,
+        IReadOnlyList<BulkBankMatchPrompt.OpenJeInput> jes)
+    {
+        const decimal Tol = 0.01m;
+        var matchedBankIds = parsed.Matches.Select(m => m.BankTxnId).ToHashSet();
+        var consumed = parsed.Matches.SelectMany(m => m.Candidates).Select(c => c.CandidateId).ToHashSet();
+
+        var unmatched = new List<(Guid Id, DateTime Date, decimal Amt, string Dir)>();
+        foreach (var t in bankTxns)
+        {
+            if (!Guid.TryParse(t.Id, out var bid) || matchedBankIds.Contains(bid)) continue;
+            unmatched.Add((bid, t.Date, Math.Round(Math.Abs(t.Amount), 2), t.Direction));
+        }
+        if (unmatched.Count < 2) return parsed;
+
+        var cands = new List<(Guid Id, string Kind, DateTime Date, decimal Amt, string Dir)>();
+        foreach (var p in payments)
+            if (Guid.TryParse(p.Id, out var pid) && !consumed.Contains(pid) && p.Direction != null)
+                cands.Add((pid, "Payment", p.Date, Math.Round(p.Amount, 2), p.Direction!));
+        foreach (var j in jes)
+            if (Guid.TryParse(j.Id, out var jid) && !consumed.Contains(jid) && j.Direction != null)
+                cands.Add((jid, "JournalEntry", j.Date, Math.Round(Math.Abs(j.NetAmount), 2), j.Direction!));
+
+        var added = new List<ProposedMatch>();
+        var cleared = new HashSet<Guid>();
+        var usedBank = new HashSet<Guid>();
+
+        // Largest documents first (most likely to be the split-settled ones).
+        foreach (var c in cands.OrderByDescending(x => x.Amt))
+        {
+            // Same-direction unmatched lines each SMALLER than the document,
+            // within ±45 days (split settlements straddle the doc date).
+            var pool = unmatched
+                .Where(b => b.Dir == c.Dir && !usedBank.Contains(b.Id)
+                    && b.Amt < c.Amt - Tol
+                    && Math.Abs((b.Date.Date - c.Date.Date).TotalDays) <= 45)
+                .OrderByDescending(b => b.Amt).ToList();
+            if (pool.Count < 2) continue;
+
+            // Exact 2- or 3-subset summing to the document amount.
+            List<(Guid Id, DateTime Date, decimal Amt, string Dir)>? hit = null;
+            for (int i = 0; i < pool.Count && hit == null; i++)
+            for (int j = i + 1; j < pool.Count && hit == null; j++)
+            {
+                if (Math.Abs(pool[i].Amt + pool[j].Amt - c.Amt) <= Tol)
+                    hit = new() { pool[i], pool[j] };
+                else
+                    for (int k = j + 1; k < pool.Count; k++)
+                        if (Math.Abs(pool[i].Amt + pool[j].Amt + pool[k].Amt - c.Amt) <= Tol)
+                        { hit = new() { pool[i], pool[j], pool[k] }; break; }
+            }
+            if (hit == null) continue;
+
+            var groupId = Guid.NewGuid();
+            foreach (var b in hit)
+            {
+                added.Add(new ProposedMatch(b.Id, "ManyBanksToOneDoc",
+                    new List<MatchCandidate> { new(c.Id, c.Kind, b.Amt) },
+                    0.72m,
+                    $"หลายโอนรวมเป็นเอกสารเดียว: {hit.Count} รายการ รวม {hit.Sum(x => x.Amt):N2} = {c.Amt:N2} (กระทบยอดแบบกลุ่ม M:N)",
+                    Guid.Empty, groupId));
+                cleared.Add(b.Id);
+                usedBank.Add(b.Id);
+            }
+            consumed.Add(c.Id);
+        }
+
+        if (added.Count == 0) return parsed;
+        return parsed with
+        {
+            Matches = parsed.Matches.Concat(added).ToList(),
+            Unmatched = parsed.Unmatched.Where(u => !cleared.Contains(u.BankTxnId)).ToList(),
+            Warnings = parsed.Warnings.Concat(new[] { $"พบ {added.Count} รายการธนาคารที่รวมกันเป็นเอกสารเดียว (กระทบยอดแบบกลุ่ม)" }).ToList(),
         };
     }
 
