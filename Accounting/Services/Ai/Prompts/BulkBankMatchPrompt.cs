@@ -113,7 +113,10 @@ H. If nothing within 30 days + 15% amount AND no contact / memo signal → unmat
 
 I. NET-SETTLEMENT — LAST RESORT ONLY (rare in practice): when ALL same-side strategies above have failed AND you can identify BOTH a same-side item (e.g. customer Receipt 2,500) AND an opposite-side item (e.g. PaymentVoucher refund 500) for the SAME contact.tax_id within ±5 days, you may emit both as candidates so the net (same − opposite) equals the bank amount. EXHAUST every same-side option first: a same-side M:1 split, a daily aggregator rollup, a contact match within ±15 days, a memo-cited document, even a 1-baht-different amount. Only when none of those exist should you reach for net-settlement. Both items emitted as POSITIVE amounts (per H1); renderer subtracts the opposite-side one automatically. If you cannot identify both sides cleanly, return unmatched — do NOT guess.
 
-Confidence scoring — be honest. The amounts MUST add up (within ±0.50) for any match you call ≥ 0.90. If amounts differ by even 1 baht, drop to ≤ 0.85 and SAY ""ยอดต่าง X บาท"" in reasoning. Never claim 0.95 confidence on a row whose own reasoning admits a delta.
+Confidence scoring — BE HONEST AND NUMERICALLY CONSISTENT:
+  • Compute Σ candidates[*].amount yourself before writing reasoning. If it doesn't equal bank.amount within ±0.50 baht, your reasoning must NOT contain the words ""พอดี"" / ""equal exactly"" / ""=...บาทพอดี"". Either drop the extra item(s) so the sum IS exact, or state the delta honestly: ""ยอด X − Σ Y = Z บาท ไม่ตรง"" and lower confidence.
+  • Confidence ≥ 0.90 requires delta ≤ 0.50 baht. Delta 0.50-5 baht → ≤ 0.70. Delta 5-1% of bank → ≤ 0.45. Delta > 1% → ≤ 0.30. Delta > 5% → ≤ 0.15. Never claim 0.95 on a row whose own reasoning admits a delta.
+  • If you find yourself with N candidates summing close-but-not-exact to bank, FIRST check whether a SUBSET of (N−1) items sums exactly: if yes, drop the extra item rather than reporting a mismatch.
 
 Strict JSON output (NO prose outside JSON):
 {

@@ -591,6 +591,13 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 continue;
             }
 
+            // Trust-but-verify: if the proposed candidates sum off-by but a
+            // SUBSET of them sums to the bank amount EXACTLY (the AI added
+            // one extra item — common pattern: 7 RVs sum to 26,550 exactly,
+            // AI added an 8th 80-baht RV making sum 26,630), drop the extras.
+            // This is what fixes the user's "8 items = พอดี + ยอดต่าง 80" case.
+            m = TryPruneToExactSubset(bt, m);
+
             // Trust-but-verify the confidence AI returned: it routinely
             // reports 0.95 in the same row whose own 'reasoning' admits the
             // amounts don't match. Cap confidence using OBJECTIVE signals
@@ -598,9 +605,13 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // and date proximity to the candidate's source row when known. AI
             // confidence then becomes a ceiling; we never push it higher.
             var (calibratedConf, mismatchNote) = CalibrateConfidence(bt, m);
+            // AI sometimes writes contradictory reasoning ("พอดี" alongside
+            // "ยอดต่าง 80") — strip the AI's misleading sum claim when our
+            // computed delta says otherwise, then append the honest note.
+            var aiReasoning = mismatchNote.Length > 0 ? ScrubMisleadingSumClaim(m.Reasoning) : m.Reasoning;
             var calReason = string.IsNullOrEmpty(mismatchNote)
-                ? m.Reasoning
-                : (string.IsNullOrEmpty(m.Reasoning) ? mismatchNote : m.Reasoning + " · " + mismatchNote);
+                ? aiReasoning
+                : (string.IsNullOrEmpty(aiReasoning) ? mismatchNote : aiReasoning + " · " + mismatchNote);
             var calibratedMatch = m with { Confidence = calibratedConf, Reasoning = calReason };
 
             var answerJson = JsonSerializer.Serialize(calibratedMatch.Candidates.Select(c => new
@@ -1246,9 +1257,6 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         Models.Entities.BankTransaction bankTxn, ProposedMatch match)
     {
         var bankAmt = Math.Abs(bankTxn.Amount);
-        // Signed sum so combination matches that include negative offsets
-        // (รับ - หัก) come out correct. For AI-emitted 1:1 / M:1 the amounts
-        // are always positive so signed sum equals unsigned sum.
         var sumCand = match.Candidates.Sum(c => c.Amount);
         var delta = Math.Abs(bankAmt - sumCand);
         var pct = bankAmt > 0 ? delta / bankAmt : 0m;
@@ -1260,24 +1268,99 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             ceiling = 1.00m;
             note = "";
         }
-        else if (pct <= 0.01m)   // 1%
+        else if (delta <= 5m)             // small rounding / single-baht slip
         {
-            ceiling = 0.85m;
-            note = $"ยอดต่าง {delta:N2} บาท (≤1% — อาจเป็นค่าธรรมเนียม/ปัดเศษ)";
+            ceiling = 0.70m;
+            note = $"⚠ ยอดต่าง {delta:N2} บาท — ตรวจก่อนยืนยัน";
         }
-        else if (pct <= 0.05m)   // 5%
+        else if (pct <= 0.01m)            // ≤ 1% but > 5 baht — likely an extra/missing item
         {
-            ceiling = 0.55m;
-            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — ตรวจก่อนยืนยัน";
+            ceiling = 0.45m;
+            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — มีรายการเกิน/ขาด ตรวจก่อนยืนยัน";
+        }
+        else if (pct <= 0.05m)
+        {
+            ceiling = 0.30m;
+            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — ไม่ควรยืนยันโดยไม่ตรวจ";
         }
         else
         {
-            ceiling = 0.30m;
-            note = $"⚠ ยอดต่างมาก {delta:N2} บาท ({pct:P1}) — bank {bankAmt:N2} vs candidate {sumCand:N2} — อาจไม่ใช่คู่เดียวกัน";
+            ceiling = 0.15m;
+            note = $"⚠ ยอดต่างมาก {delta:N2} บาท ({pct:P1}) — bank {bankAmt:N2} vs candidate {sumCand:N2} — น่าจะคนละคู่";
         }
         var calibrated = Math.Min(match.Confidence, ceiling);
         return (calibrated, note);
     }
+
+    /// <summary>If a match's candidates sum off-by but a SUBSET of them sums
+    /// to the bank amount exactly (±0.50 baht), drop the extras. Tries
+    /// removing 1 then 2 items (covers the most common case: AI tossed in an
+    /// extra small item). The original match is returned unchanged when no
+    /// subset improves.</summary>
+    private static ProposedMatch TryPruneToExactSubset(
+        Models.Entities.BankTransaction bankTxn, ProposedMatch match)
+    {
+        if (match.Candidates.Count < 3) return match;     // nothing meaningful to prune
+        var bankAmt = Math.Abs(bankTxn.Amount);
+        var cs = match.Candidates;
+        var total = cs.Sum(c => c.Amount);
+        if (Math.Abs(total - bankAmt) <= 0.50m) return match;   // already exact
+
+        // Try dropping 1.
+        int? dropI = null;
+        decimal bestDelta = Math.Abs(total - bankAmt);
+        for (int i = 0; i < cs.Count; i++)
+        {
+            var d = Math.Abs(total - cs[i].Amount - bankAmt);
+            if (d <= 0.50m && d < bestDelta) { bestDelta = d; dropI = i; }
+        }
+        if (dropI.HasValue)
+        {
+            var pruned = cs.Where((_, k) => k != dropI.Value).ToList();
+            var dropped = cs[dropI.Value];
+            return match with
+            {
+                Candidates = pruned,
+                Reasoning = $"ตัด {dropped.CandidateType}:{dropped.CandidateId.ToString("N")[..8]} ({dropped.Amount:N2}) ออก — รวมที่เหลือตรงยอดธนาคารพอดี",
+            };
+        }
+
+        // Try dropping 2 (small pool only to keep it cheap).
+        if (cs.Count >= 4 && cs.Count <= 8)
+        {
+            for (int i = 0; i < cs.Count; i++)
+            for (int j = i + 1; j < cs.Count; j++)
+            {
+                var d = Math.Abs(total - cs[i].Amount - cs[j].Amount - bankAmt);
+                if (d <= 0.50m)
+                {
+                    var pruned = cs.Where((_, k) => k != i && k != j).ToList();
+                    return match with
+                    {
+                        Candidates = pruned,
+                        Reasoning = $"ตัด 2 รายการออก — รวมที่เหลือตรงยอดธนาคารพอดี",
+                    };
+                }
+            }
+        }
+        return match;
+    }
+
+    /// <summary>Strip phrases like "รวม ... = X บาทพอดี" or "เท่ากันพอดี" from AI
+    /// reasoning when the computed delta says otherwise. Keeps the AI's
+    /// intent but removes the contradiction users called out.</summary>
+    private static string? ScrubMisleadingSumClaim(string? reasoning)
+    {
+        if (string.IsNullOrWhiteSpace(reasoning)) return reasoning;
+        var s = reasoning;
+        // Remove "= <number> บาทพอดี" / "= <number> พอดี" segments.
+        s = System.Text.RegularExpressions.Regex.Replace(s,
+            @"=\s*[\d,\.]+\s*(บาท)?\s*พอดี", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        s = System.Text.RegularExpressions.Regex.Replace(s,
+            @"(ตรงพอดี|พอดี|equal\s+exactly)", "(ยอดไม่ตรง)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return s.Trim();
+    }
+
 
     private static Guid? TryGuid(JsonElement el, string prop)
     {
