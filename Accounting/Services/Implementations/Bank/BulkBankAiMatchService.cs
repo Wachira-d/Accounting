@@ -96,9 +96,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// we write a child feedback row in the SINGLE-MATCH shape that
     /// BankMatchDistillationModel knows how to parse. Cost stays
     /// attributed to the parent bulk call.</summary>
-    private async Task<Guid> SynthesisePerMatchFeedbackAsync(Guid companyId, Guid bankTxnId,
-        BankTransaction txn, string answerJson, decimal confidence,
-        Guid parentFeedbackId, CancellationToken ct)
+    private static AiFeedbackRecord BuildPerMatchFeedbackRecord(Guid companyId, Guid bankTxnId,
+        BankTransaction txn, string answerJson, decimal confidence, Guid parentFeedbackId)
     {
         // Single-match shape that BankMatchDistillationModel.ExtractKey
         // recognises (description signature + amount bucket).
@@ -113,7 +112,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 direction = txn.Amount >= 0 ? "In" : "Out",
             },
         });
-        var record = new AiFeedbackRecord(
+        return new AiFeedbackRecord(
             CompanyId: companyId, FeatureKey: AiFeatureKey.BankStatementMatch,
             PromptHash: "", PromptJson: perMatchJson,
             ResponseJson: null,
@@ -125,12 +124,6 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
             CacheHitOfFeedbackId: parentFeedbackId == Guid.Empty ? null : parentFeedbackId,
             ErrorMessage: null);
-        try { return await _recorder.RecordCallAsync(record, ct); }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Per-match feedback record failed for txn {Id}", bankTxnId);
-            return Guid.Empty;
-        }
     }
 
     public async Task RecordMatchOutcomesAsync(Guid companyId,
@@ -601,12 +594,21 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .Where(t => t.BankAccountId == bankAccountId && !t.IsDeleted
                         && parsed.Matches.Select(m => m.BankTxnId).Contains(t.Id))
             .ToDictionaryAsync(t => t.Id, t => t, ct);
-        var matchesWithFids = new List<ProposedMatch>(parsed.Matches.Count);
-        foreach (var m in parsed.Matches)
+        // First pass: calibrate every match (CPU only) and build its feedback
+        // record. Second pass: ONE batch insert for all records (was N separate
+        // SaveChanges — 100 matches = 100 DB round-trips blocking the response).
+        var calibrated = new List<ProposedMatch>(parsed.Matches.Count);
+        var feedbackRecords = new List<AiFeedbackRecord>();
+        var recordIndexOfMatch = new int[parsed.Matches.Count];   // -1 = no feedback row
+        int mi = -1;
+        foreach (var m0 in parsed.Matches)
         {
+            mi++;
+            var m = m0;
             if (!bankTxnLookup.TryGetValue(m.BankTxnId, out var bt))
             {
-                matchesWithFids.Add(m with { PerMatchFeedbackId = Guid.Empty });
+                calibrated.Add(m with { PerMatchFeedbackId = Guid.Empty });
+                recordIndexOfMatch[mi] = -1;
                 continue;
             }
 
@@ -637,10 +639,21 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             {
                 type = c.CandidateType, id = c.CandidateId.ToString(), amount = c.Amount,
             }));
-            var perFid = await SynthesisePerMatchFeedbackAsync(
+            recordIndexOfMatch[mi] = feedbackRecords.Count;
+            feedbackRecords.Add(BuildPerMatchFeedbackRecord(
                 companyId, calibratedMatch.BankTxnId, bt, answerJson, calibratedMatch.Confidence,
-                resp.FeedbackId ?? Guid.Empty, ct);
-            matchesWithFids.Add(calibratedMatch with { PerMatchFeedbackId = perFid });
+                resp.FeedbackId ?? Guid.Empty));
+            calibrated.Add(calibratedMatch);   // PerMatchFeedbackId filled in after the batch insert
+        }
+
+        // ── Single batch insert for all per-match feedback rows ──────────
+        var fids = await _recorder.RecordChildBatchAsync(feedbackRecords, ct);
+        var matchesWithFids = new List<ProposedMatch>(calibrated.Count);
+        for (int i = 0; i < calibrated.Count; i++)
+        {
+            var ri = recordIndexOfMatch[i];
+            var fid = ri >= 0 && ri < fids.Count ? fids[ri] : Guid.Empty;
+            matchesWithFids.Add(calibrated[i] with { PerMatchFeedbackId = fid });
         }
 
         // Collect truncation + AI-side warnings into one cohesive list.
