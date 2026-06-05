@@ -187,7 +187,8 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
         decimal? WithholdingTax = null,           // WHT deducted on this payment
         decimal? VatAmount = null,                // VAT component if any
         string? Note = null,                      // free-text memo on the payment
-        string? Channel = null);                  // bank transfer / cash / QR / cheque
+        string? Channel = null,                   // bank transfer / cash / QR / cheque
+        string? ContactPhone = null);             // payer/payee phone — match PromptPay memos
 
     public sealed record OpenJeInput(
         string Id, string Number, DateTime Date, decimal NetAmount,
@@ -220,7 +221,8 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
         int? LineCount = null,                    // # of lines in the JE
         string? PaymentMethod = null,             // method recorded on the source doc
         string? Note = null,                      // free-text JE note
-        string? Tags = null);                     // tags / dimensions on the JE
+        string? Tags = null,                      // tags / dimensions on the JE
+        string? ContactPhone = null);             // payer/payee phone — match PromptPay memos
 
     public sealed record CompanyContext(
         string Name, string? TaxId, string BaseCurrency,

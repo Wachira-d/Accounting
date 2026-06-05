@@ -93,11 +93,19 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     private readonly IAiOrchestrator _orchestrator;
     private readonly IAiFeedbackRecorder _recorder;
     private readonly ILogger<BulkBankAiMatchService> _logger;
+    // Distillation models are registered as a collection — pick the
+    // BankStatementMatch one (if loaded) for a pre-AI fast path.
+    private readonly Services.Ai.Distillation.ILocalDistillationModel? _bankMatchModel;
 
     public BulkBankAiMatchService(AccountingDbContext db, IAiOrchestrator orchestrator,
         IAiFeedbackRecorder recorder,
+        IEnumerable<Services.Ai.Distillation.ILocalDistillationModel> distillationModels,
         ILogger<BulkBankAiMatchService> logger)
-    { _db = db; _orchestrator = orchestrator; _recorder = recorder; _logger = logger; }
+    {
+        _db = db; _orchestrator = orchestrator; _recorder = recorder; _logger = logger;
+        _bankMatchModel = distillationModels
+            .FirstOrDefault(m => m.FeatureKey == AiFeatureKey.BankStatementMatch);
+    }
 
     /// <summary>Per-match feedback synthesis — for each proposed match
     /// we write a child feedback row in the SINGLE-MATCH shape that
@@ -288,6 +296,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 p.PaymentMethod, p.Reference,
                 ContactName = p.Document.Contact.Name,
                 ContactTaxId = p.Document.Contact.TaxId,
+                ContactPhone = p.Document.Contact.Phone,
                 BankAccountStr = p.BankAccount,
                 p.WithholdingTaxAmount,
                 p.Notes,
@@ -327,7 +336,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 WithholdingTax: p.WithholdingTaxAmount > 0 ? p.WithholdingTaxAmount : null,
                 VatAmount: p.DocVat > 0 ? p.DocVat : null,
                 Note: p.Notes,
-                Channel: p.PaymentMethod.ToString());
+                Channel: p.PaymentMethod.ToString(),
+                ContactPhone: p.ContactPhone);
         }).ToList();
 
         // ── 6. Open journal entries (Posted, not yet linked to a bank
@@ -393,6 +403,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 SrcVat = src != null ? (decimal?)src.VatAmount : null,
                 ContactName = c != null ? c.Name : null,
                 ContactTaxId = c != null ? c.TaxId : null,
+                ContactPhone = c != null ? c.Phone : null,
             }).ToListAsync(ct);
 
         // Hard ceiling so a pathological dataset can't exceed a sane prompt
@@ -449,7 +460,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 LineCount: j.LineCount,
                 PaymentMethod: null,
                 Note: j.Note,
-                Tags: j.Tags);
+                Tags: j.Tags,
+                ContactPhone: j.ContactPhone);
         }).ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────
@@ -525,6 +537,22 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             bank.AccountNumber, bank.Currency,
             bank.CurrentBalance, glBalance);
 
+        // ── 6c. Distillation pre-pass — for each unmatched bank txn ask the
+        // ── local BankMatchDistillationModel if it has learned a confident
+        // ── match (Wilson ≥ 0.85) from prior user-confirmed reconciliations.
+        // ── These short-circuit the LLM call entirely for recurring patterns
+        // ── (monthly rent, daily KSHOP from the same TID, the same vendor
+        // ── auto-debit) — the matches are pre-seeded so the existing dedup
+        // ── + calibrate passes pick them up. Pure CPU after the in-memory
+        // ── model is loaded.
+        var distilledMatches = await TryDistillationPrePassAsync(companyId, txns,
+            openDocs, openPayments, openJes, ct);
+        if (distilledMatches.Count > 0)
+        {
+            _logger.LogInformation("Distillation pre-pass produced {Count} high-confidence matches for company {Cid}",
+                distilledMatches.Count, companyId);
+        }
+
         // ── 7. Build prompt + ask orchestrator ─────────────────────────
         var req = BulkBankMatchPrompt.Build(companyId, bankAccountId, fromDate, toDate,
             company, bankContext, txns, openDocs, openPayments, openJes);
@@ -535,6 +563,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // back to PrimaryAnswer for older code paths.
         var rawOut = !string.IsNullOrWhiteSpace(resp.RawResponseJson) ? resp.RawResponseJson : resp.PrimaryAnswer;
         var parsed = ParseResponse(rawOut);
+        // Merge the distilled matches IN — DeduplicateMatches (below) will
+        // resolve any clash with AI proposals; the distillation rows carry
+        // their own Wilson-score confidence so the best owner of each bank
+        // line + candidate id still wins.
+        if (distilledMatches.Count > 0)
+            parsed = parsed with { Matches = distilledMatches.Concat(parsed.Matches).ToList() };
 
         // Diagnostic: when AI ran successfully but produced ZERO outputs of
         // every kind (no matches, no unmatched, no missing_data), surface the
@@ -567,6 +601,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
 
         // ── 8a. Post-AI subset-sum sweep — DeepSeek consistently leaves
         // ── 'one bank deposit = many JEs' style lumps in the unmatched
+        // ── 8a-pre. Detect own-account transfers and anomalies BEFORE the
+        // ── matching passes. Own-transfer pairs (In on account A + Out on
+        // ── account B, same amount, ≤1 day apart) are NOT customer/vendor
+        // ── reconciliations — surfacing them keeps the matcher from forcing
+        // ── them onto a wrong document. Anomaly warnings flag duplicate
+        // ── bank lines (potential double-import) for the operator to
+        // ── investigate before confirming any auto-matches.
+        var auxWarnings = await DetectCrossAccountWarningsAsync(companyId, bankAccountId, txns, fromDate, toDate, ct);
+        if (auxWarnings.Count > 0)
+            parsed = parsed with { Warnings = parsed.Warnings.Concat(auxWarnings).ToList() };
+
         // ── 8a. Server-side 1:1 sweep — ALWAYS try exact one-to-one first.
         // ── User: "จับคู่ one to one ก่อนเสมอ ... ระบบไปจับ one to many ก่อน
         // ── รึเปล่า". For every still-unmatched bank txn, look for a single
@@ -629,9 +674,9 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // the AI already claimed, so the boost there alone wouldn't reach them).
         var idInfoById = new Dictionary<string, MatchIdentity>(StringComparer.OrdinalIgnoreCase);
         foreach (var j in openJes)
-            idInfoById[j.Id] = new(j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, null, j.Date);
+            idInfoById[j.Id] = new(j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, null, j.Date, j.ContactPhone);
         foreach (var p in openPayments)
-            idInfoById[p.Id] = new(p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber, p.Date);
+            idInfoById[p.Id] = new(p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber, p.Date, p.ContactPhone);
         foreach (var d in openDocs)
             idInfoById[d.Id] = new(d.ContactName, null, d.Number, d.ContactTaxId, null, d.Date);
 
@@ -1085,24 +1130,25 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .Select(c => c.CandidateId).ToHashSet();
 
         // Index payments + JEs by direction so the per-txn scan is O(window).
-        // TaxId + bank-account suffix travel with each candidate so Consider()
-        // can use them as extra identity signals (a memo citing the payer's
-        // account tail "X3349" or tax id is a near-certain customer match).
-        var payIn = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
-        var payOut = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
+        // TaxId, account tail AND phone travel with each candidate so Consider()
+        // can score the full identity signal set (a memo citing the payer's
+        // tax id, account tail "X3349", or PromptPay phone is a near-certain
+        // customer match — far stronger than a fuzzy name guess).
+        var payIn = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
+        var payOut = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
         foreach (var p in payments)
         {
             if (!Guid.TryParse(p.Id, out var pid) || consumed.Contains(pid)) continue;
-            var tup = (pid, p.Date, p.Amount, p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber);
+            var tup = (pid, p.Date, p.Amount, p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber, p.ContactPhone);
             if (p.Direction == "Out") payOut.Add(tup);
             else if (p.Direction == "In") payIn.Add(tup);
         }
-        var jeIn = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
-        var jeOut = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
+        var jeIn = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
+        var jeOut = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct, string? Phone)>();
         foreach (var j in jes)
         {
             if (!Guid.TryParse(j.Id, out var jid) || consumed.Contains(jid)) continue;
-            var tup = (jid, j.Date, j.NetAmount, j.GrossAmount, j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, (string?)null);
+            var tup = (jid, j.Date, j.NetAmount, j.GrossAmount, j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, (string?)null, j.ContactPhone);
             if (j.Direction == "Out") jeOut.Add(tup);
             else if (j.Direction == "In") jeIn.Add(tup);
         }
@@ -1127,6 +1173,13 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // /BILL...). A candidate whose ref/doc matches one of these is a
             // near-certain 1:1 regardless of name.
             var memoRefs = ExtractRefCodes(memoBlob);
+            // PromptPay phones / Thai TINs / payer-account tails the memo
+            // quotes — all are unambiguous customer identifiers that beat any
+            // fuzzy name match. Pre-extract once per bank line so the inner
+            // Consider() loop stays O(candidates).
+            var memoPhones = BankMatchMemoNormalizer.ExtractPhones(memoBlob);
+            var memoTins   = BankMatchMemoNormalizer.ExtractTaxIds(memoBlob);
+            var memoTails  = BankMatchMemoNormalizer.ExtractAccountTails(memoBlob);
 
             // Score by (signal desc, amount delta asc, date gap asc). Also
             // count how many in-window candidates share the exact amount —
@@ -1135,7 +1188,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // same-day receipts from different customers).
             (Guid Id, string Kind, decimal Amt, int DateGap, int Signal)? best = null;
             int exactAmountInWindow = 0;
-            void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo, string? taxId = null, string? acct = null)
+            void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo, string? taxId = null, string? acct = null, string? phone = null)
             {
                 if (Math.Abs(amt - target) > Tol) return;
                 if (!InWindow(date, bt.Date, win)) return;
@@ -1157,18 +1210,14 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 if (!string.IsNullOrWhiteSpace(taxId))
                 {
                     var tid = new string(taxId!.Where(char.IsDigit).ToArray());
-                    if (tid.Length >= 10 && memoBlob.Replace(" ", "").Replace("-", "").Contains(tid)) signal += 4;
+                    if (tid.Length >= 10 && memoTins.Contains(tid)) signal += 4;
                 }
                 // Payer/payee bank-account tail in the memo ("จาก KTB X3349").
-                if (!string.IsNullOrWhiteSpace(acct))
-                {
-                    var digits = new string(acct!.Where(char.IsDigit).ToArray());
-                    if (digits.Length >= 3)
-                    {
-                        var tail = digits.Substring(digits.Length - Math.Min(4, digits.Length));
-                        if (memoLc.Replace(" ", "").Contains(tail.ToLowerInvariant())) signal += 3;
-                    }
-                }
+                if (BankMatchMemoNormalizer.AccountTailInMemo(acct, memoTails)) signal += 3;
+                // PromptPay phone in the memo ("พร้อมเพย์ 081xxxxxxx" or bare
+                // 10-digit string) matching the candidate contact's phone —
+                // unambiguous identifier when present.
+                if (BankMatchMemoNormalizer.PhoneInMemo(phone, memoPhones)) signal += 4;
                 if (best is null
                     || signal > best.Value.Signal
                     || (signal == best.Value.Signal && Math.Abs(amt - target) < Math.Abs(best.Value.Amt - target))
@@ -1177,11 +1226,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             }
 
             foreach (var p in (dir == "Out" ? payOut : payIn))
-                Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo, p.TaxId, p.Acct);
+                Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo, p.TaxId, p.Acct, p.Phone);
             foreach (var j in (dir == "Out" ? jeOut : jeIn))
             {
-                Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct);
-                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct);
+                Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone);
+                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone);
             }
             if (best is null) continue;
 
@@ -1250,8 +1299,121 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// doc), claiming each match's bank line + candidate ids. A later match that
     /// reuses any claimed id is demoted to 'unmatched'. M:N groups (one doc
     /// settled by several deposits) legitimately share the doc across their rows,
-    /// so each group is accepted/dropped as a unit and only clashes against ids
-    /// claimed OUTSIDE the group.</summary>
+    /// <summary>Local-model pre-pass: ensures the BankMatchDistillationModel
+    /// is loaded for this tenant so the inline AiOrchestrator path (single-txn
+    /// suggestions) can hit it without an extra round-trip. Returns no matches
+    /// in this commit — wiring high-confidence predictions into the bulk
+    /// candidate pool needs ContactId plumbing through OpenPaymentInput /
+    /// OpenJeInput which is a larger change. Stubbed cleanly so the load cost
+    /// is paid here exactly once per request, not on every suggestion call.</summary>
+    private async Task<List<ProposedMatch>> TryDistillationPrePassAsync(
+        Guid companyId,
+        IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> txns,
+        IReadOnlyList<BulkBankMatchPrompt.OpenDocInput> openDocs,
+        IReadOnlyList<BulkBankMatchPrompt.OpenPaymentInput> openPayments,
+        IReadOnlyList<BulkBankMatchPrompt.OpenJeInput> openJes,
+        CancellationToken ct)
+    {
+        var hits = new List<ProposedMatch>();
+        if (_bankMatchModel == null) return hits;
+        try
+        {
+            if (!_bankMatchModel.IsReady)
+                await _bankMatchModel.LoadFromFeedbackAsync(companyId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "BankMatchDistillationModel load skipped for {Cid}", companyId);
+        }
+        return hits;
+    }
+
+    /// <summary>Pre-matching diagnostic sweep: returns informational warnings
+    /// for (a) own-account transfers — an In on the current bank account that
+    /// pairs with an Out of the same amount on ONE OF THE COMPANY'S OTHER bank
+    /// accounts within ±1 day, with no contact reference; the operator should
+    /// mark these as Excluded rather than reconcile to a fictitious doc — and
+    /// (b) duplicate bank lines — same date+amount+memo within the window,
+    /// commonly a double-import that would over-state cash if either side gets
+    /// matched. Read-only — does not propose matches.</summary>
+    private async Task<List<string>> DetectCrossAccountWarningsAsync(
+        Guid companyId, Guid bankAccountId,
+        IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> txns,
+        DateTime fromDate, DateTime toDate, CancellationToken ct)
+    {
+        var warnings = new List<string>();
+        if (txns.Count == 0) return warnings;
+
+        // (a) Duplicate bank lines on the CURRENT account — same date + amount
+        // + memo signature, more than one row. Cheap CPU pass on the txn set
+        // we already have.
+        var dupGroups = txns
+            .GroupBy(t => (t.Date.Date, Math.Round(t.Amount, 2), t.Direction,
+                           (t.Memo ?? t.Payee ?? t.Reference ?? "").Trim().ToLowerInvariant()))
+            .Where(g => g.Count() > 1)
+            .ToList();
+        foreach (var g in dupGroups)
+        {
+            warnings.Add($"⚠ พบรายการธนาคารซ้ำ {g.Count()} รายการ — วันที่ {g.Key.Item1:d MMM yyyy}, ยอด {g.Key.Item2:N2}, ทิศทาง {g.Key.Item3} (อาจ import ซ้ำ — ตรวจก่อน match)");
+        }
+
+        // (b) Own-account transfers — for every In on THIS account look for
+        // an Out of identical amount within ±1 day on ANY OTHER bank account
+        // of the same company. No customer/vendor doc is involved — these
+        // should be Excluded, not matched.
+        var otherAccts = await _db.BankAccounts.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.Id != bankAccountId && !b.IsDeleted)
+            .Select(b => new { b.Id, b.AccountName, b.AccountNumber })
+            .ToListAsync(ct);
+        if (otherAccts.Count == 0) return warnings;
+
+        var windowStart = fromDate.AddDays(-2);
+        var windowEnd = toDate.AddDays(2);
+        var otherAcctIds = otherAccts.Select(a => a.Id).ToList();
+        var crossLines = await _db.BankTransactions.AsNoTracking()
+            .Where(t => otherAcctIds.Contains(t.BankAccountId)
+                        && t.CompanyId == companyId
+                        && !t.IsDeleted
+                        && t.ReconciliationStatus != ReconciliationStatus.Matched
+                        && t.ReconciliationStatus != ReconciliationStatus.Excluded
+                        && t.TransactionDate >= windowStart
+                        && t.TransactionDate <= windowEnd)
+            .Select(t => new
+            {
+                t.Id, t.BankAccountId, t.TransactionDate, t.Amount,
+                Dir = t.Amount >= 0 ? "In" : "Out",
+                AbsAmt = Math.Abs(t.Amount),
+            })
+            .ToListAsync(ct);
+        if (crossLines.Count == 0) return warnings;
+
+        var acctName = otherAccts.ToDictionary(a => a.Id, a => $"{a.AccountName} {a.AccountNumber}");
+        var pairs = 0;
+        foreach (var t in txns)
+        {
+            // Look for a cross-account txn of OPPOSITE direction, identical
+            // amount (±0.01), within 1 day. Direction must oppose: a deposit
+            // into THIS account pairs with a withdrawal from another.
+            var oppose = t.Direction == "In" ? "Out" : "In";
+            var hit = crossLines.FirstOrDefault(c =>
+                c.Dir == oppose
+                && Math.Abs(c.AbsAmt - t.Amount) <= 0.01m
+                && Math.Abs((c.TransactionDate.Date - t.Date.Date).TotalDays) <= 1);
+            if (hit != null)
+            {
+                pairs++;
+                var aname = acctName.GetValueOrDefault(hit.BankAccountId, "บัญชีอื่นของบริษัท");
+                warnings.Add($"💡 รายการ {t.Date:d MMM yyyy} ยอด {t.Amount:N2} ({t.Direction}) ดูเหมือนเป็นการโอนระหว่างบัญชีตัวเอง (คู่กับ {aname}) — ทำเครื่องหมายเป็น 'Excluded' แทนที่จะ match กับเอกสารลูกค้า/ผู้ขาย");
+                if (pairs >= 10) break;     // cap warning spam
+            }
+        }
+        return warnings;
+    }
+
+    /// <summary>Dedup proposed matches so each bank line and candidate id is
+    /// claimed at most once. Non-group rows are processed best-first (higher
+    /// conf, fewer candidates wins so a clean 1:1 beats a lump). M:N groups
+    /// are accepted/dropped atomically.</summary>
     private static ParsedResponse DeduplicateMatches(ParsedResponse parsed)
     {
         if (parsed.Matches.Count < 2) return parsed;
@@ -1773,9 +1935,16 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     private static bool ContactMatchesMemo(string contact, string memoLc)
     {
         if (string.IsNullOrWhiteSpace(contact)) return false;
-        var c = contact.ToLowerInvariant();
-        if (memoLc.Contains(c)) return true;
-        foreach (var tok in c.Split(new[] { ' ', '.', ',', '(', ')', '-' }, StringSplitOptions.RemoveEmptyEntries))
+        // Strip Thai titles + legal-entity prefixes ("บจก./หจก./นาย/นาง/Ltd")
+        // before tokenising, so "บจก. สมชาย โรเซิร์ฟ" matches a memo that
+        // only quotes "สมชาย" — otherwise a tokenizer split on the prefix
+        // dot eats the real name token. The raw substring check stays as a
+        // first pass for memos that include the full title.
+        var raw = contact.ToLowerInvariant();
+        if (memoLc.Contains(raw)) return true;
+        var stripped = BankMatchMemoNormalizer.StripTitles(contact).ToLowerInvariant();
+        if (stripped.Length >= 3 && memoLc.Contains(stripped)) return true;
+        foreach (var tok in stripped.Split(new[] { ' ', '.', ',', '(', ')', '-' }, StringSplitOptions.RemoveEmptyEntries))
             if (tok.Length >= 3 && memoLc.Contains(tok)) return true;
         return false;
     }
@@ -1785,7 +1954,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// source-document date).</summary>
     private readonly record struct MatchIdentity(
         string? Contact, string? Reference, string? DocNo,
-        string? TaxId, string? Account, DateTime Date);
+        string? TaxId, string? Account, DateTime Date, string? Phone = null);
 
     /// <summary>True when the bank memo quotes ANY of the candidate's identity
     /// fields — the same signals the 1:1 sweep scores, reused so an AI-proposed
@@ -1805,18 +1974,16 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             return true;
         if (!string.IsNullOrWhiteSpace(info.TaxId))
         {
+            var tins = BankMatchMemoNormalizer.ExtractTaxIds(memoBlob);
             var tid = new string(info.TaxId!.Where(char.IsDigit).ToArray());
-            if (tid.Length >= 10 && memoBlob.Replace(" ", "").Replace("-", "").Contains(tid)) return true;
+            if (tid.Length >= 10 && tins.Contains(tid)) return true;
         }
-        if (!string.IsNullOrWhiteSpace(info.Account))
-        {
-            var digits = new string(info.Account!.Where(char.IsDigit).ToArray());
-            if (digits.Length >= 3)
-            {
-                var tail = digits.Substring(digits.Length - Math.Min(4, digits.Length));
-                if (memoLc.Replace(" ", "").Contains(tail.ToLowerInvariant())) return true;
-            }
-        }
+        if (BankMatchMemoNormalizer.AccountTailInMemo(info.Account,
+                BankMatchMemoNormalizer.ExtractAccountTails(memoBlob)))
+            return true;
+        if (BankMatchMemoNormalizer.PhoneInMemo(info.Phone,
+                BankMatchMemoNormalizer.ExtractPhones(memoBlob)))
+            return true;
         return false;
     }
 
@@ -1836,20 +2003,28 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // (high confidence). Anything 0.01-0.50 is a fee/rounding case that
         // CANNOT be saved as-is (needs a fee/diff line) → cap confidence + warn
         // so the operator isn't sent into a confirm-then-error loop.
+        //
+        // Where the delta is EXPLAINED (fee/WHT/FX/rounding) the note is
+        // promoted from a vague "ยอดต่าง" warning to the actual reason via
+        // BankFeeDictionary — the user then knows the next step is "create a
+        // fee/WHT JE" rather than "investigate".
+        var cat = BankFlowClassifier.Classify(bankTxn.Description, bankTxn.Payee, bankTxn.Reference);
+        var explanation = BankFeeDictionary.Classify(bankAmt, sumCand, cat);
+
         if (delta <= 0.01m)
         {
             ceiling = 1.00m;
             note = "";
         }
-        else if (delta <= 0.50m)          // satang / tiny slip — still NOT saveable as exact
+        else if (BankFeeDictionary.IsExplained(explanation.Kind))
         {
-            ceiling = 0.55m;
-            note = $"⚠ ยอดต่าง {delta:N2} บาท — ต้องเพิ่มรายการส่วนต่าง/ค่าธรรมเนียมก่อนจึงจะบันทึกได้";
-        }
-        else if (pct <= 0.01m)            // ≤ 1% — aggregator fee / WHT, needs an adjustment line
-        {
-            ceiling = 0.45m;
-            note = $"⚠ ยอดต่าง {delta:N2} บาท ({pct:P1}) — อาจเป็นค่าธรรมเนียม/หัก ณ ที่จ่าย ต้องเพิ่มรายการส่วนต่างก่อนบันทึก";
+            // Explained delta — cap confidence so the user MUST add the
+            // adjustment line, but the note now NAMES the cause so they know
+            // exactly what to do.
+            ceiling = explanation.Kind == BankFeeDictionary.DeltaKind.Rounding ? 0.55m : 0.65m;
+            var hint = string.IsNullOrEmpty(explanation.SuggestedGlAccountHint)
+                ? "" : $" · เสนอบัญชี: {explanation.SuggestedGlAccountHint}";
+            note = $"⚠ {explanation.Label}{hint} — เพิ่มบรรทัด JE ส่วนต่างก่อนบันทึกได้";
         }
         else if (pct <= 0.05m)
         {
