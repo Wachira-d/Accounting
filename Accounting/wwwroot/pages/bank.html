@@ -1428,7 +1428,13 @@
           const confColor = m.confidence >= 0.8 ? '#16a34a' : m.confidence >= 0.6 ? '#d97706' : '#dc2626';
           const confBg = m.confidence >= 0.8 ? '#dcfce7' : m.confidence >= 0.6 ? '#fef3c7' : '#fee2e2';
           const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
-          const bankAmt = bt ? Math.abs(bt.amount) : null;
+          // Prefer the bank details carried in the plan (works for txns not on
+          // the current page); fall back to the loaded list.
+          const bankAmt = (m.bankAmount != null && m.bankAmount > 0) ? m.bankAmount
+            : (bt ? Math.abs(bt.amount) : null);
+          const bankDir = m.bankDirection || (bt ? (bt.transactionType === 'Deposit' || bt.transactionType === 'Interest' ? 'In' : 'Out') : null);
+          const bankDate = m.bankDate || (bt ? bt.transactionDate : null);
+          const bankMemo = m.bankMemo || (bt ? (bt.payee || bt.description) : '');
           const candSum = (m.candidates || []).reduce((s, c) => s + (c.amount || 0), 0);
           const mismatch = bankAmt != null && Math.abs(candSum - bankAmt) > 0.01;
           // Candidates as "RV-202604-0500 (500) + RV-…0501 (500) = 1,000" using
@@ -1436,9 +1442,9 @@
           const cands = (m.candidates || [])
             .map(c => `${esc(c.label || (c.candidateType + ':' + c.candidateId.slice(0,8) + '…'))} <b>${fmtAmt(c.amount)}</b>`)
             .join(' + ') + ` = <b>${fmtAmt(candSum)}</b>`;
-          const bankCell = bt
-            ? `<div style="font-size:10px;color:${bt.transactionType==='Deposit'?'#16a34a':'#dc2626'}">${bt.transactionType==='Deposit'?'รับ':'จ่าย'} · ${Layout.date(bt.transactionDate)}</div>
-               <div style="font-size:10px;color:#94a3b8">${esc((bt.payee||bt.description||'').slice(0,28))}</div>`
+          const bankCell = (bankDate || bankMemo)
+            ? `<div style="font-size:10px;color:${bankDir==='In'?'#16a34a':'#dc2626'}">${bankDir==='In'?'รับ':'จ่าย'}${bankDate?' · '+Layout.date(bankDate):''}</div>
+               <div style="font-size:10px;color:#94a3b8">${esc((bankMemo||'').slice(0,28))}</div>`
             : `<span style="font-family:monospace;font-size:11px">${esc(m.bankTxnId.slice(0,8))}…</span>`;
           // ยอดธนาคาร + ยอดรวมที่จับ adjacent; red + diff when they disagree.
           const bankAmtCell = bankAmt != null
@@ -1528,47 +1534,49 @@
         let matches = checks.map(el => this.bulkPlan.matches[+el.dataset.bulkidx]);
         const api = Layout.api(); if (!api) return;
 
+        // Bank details preferring the plan (covers off-page txns), then the list.
+        const bankOf = (m) => {
+          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
+          return {
+            amount: (m.bankAmount != null && m.bankAmount > 0) ? m.bankAmount : (bt ? Math.abs(bt.amount) : null),
+            date: m.bankDate || (bt ? bt.transactionDate : null),
+            memo: m.bankMemo || (bt ? (bt.description || bt.payee) : ''),
+            matched: bt ? bt.reconciliationStatus === 'Matched' : false,
+          };
+        };
         // Human-readable label for a plan row (date + amount + memo snippet) so
         // every skip/failure can name the actual transaction, not a GUID.
         const rowLabel = (m) => {
-          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
-          if (!bt) return m.bankTxnId.slice(0, 8) + '…';
-          const d = bt.transactionDate ? Layout.date(bt.transactionDate) : '';
-          const sign = (bt.transactionType === 'Deposit' || bt.transactionType === 'Interest') ? '+' : '-';
-          const desc = (bt.description || bt.payee || '').slice(0, 36);
-          return `${d} ${sign}${Layout.money(Math.abs(bt.amount))}${desc ? ' ('+desc+')' : ''}`;
+          const b = bankOf(m);
+          if (b.amount == null) return m.bankTxnId.slice(0, 8) + '…';
+          const d = b.date ? Layout.date(b.date) : '';
+          const desc = (b.memo || '').slice(0, 36);
+          return `${d} ${Layout.money(b.amount)}${desc ? ' ('+desc+')' : ''}`;
         };
         const skips = [];   // {label, reason}
 
-        // A row is unusable if its bank line is already reconciled (would blow
-        // up the atomic batch with a cryptic error). If ANY member of an M:N
-        // group is already matched, the WHOLE group is invalid (can't settle
-        // one doc against a partial set), so drop the entire group.
-        const isMatched = (m) => {
-          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
-          return bt && bt.reconciliationStatus === 'Matched';
-        };
+        // If ANY member of an M:N group is already matched, the WHOLE group is
+        // invalid (can't settle one doc against a partial set) — drop it all.
         const brokenGroups = new Set(
-          matches.filter(m => m.matchGroupId && isMatched(m)).map(m => m.matchGroupId));
+          matches.filter(m => m.matchGroupId && bankOf(m).matched).map(m => m.matchGroupId));
 
         matches = matches.filter(m => {
+          const b = bankOf(m);
           if (m.matchGroupId && brokenGroups.has(m.matchGroupId)) {
             skips.push({ label: rowLabel(m), reason: 'กลุ่มนี้มีรายการที่จับคู่ไปแล้ว — ยกเลิกของเดิมก่อน' });
             return false;
           }
-          if (isMatched(m)) {
+          if (b.matched) {
             skips.push({ label: rowLabel(m), reason: 'จับคู่ไปแล้วก่อนหน้า' });
             return false;
           }
-          // Amount sanity (non-group rows). Sum of candidate amounts must equal
-          // the bank amount within 1 satang — protects the atomic batch from a
-          // low-confidence AI guess. (Group rows are validated server-side.)
-          const bt = (this.allTransactions || []).find(t => t.id === m.bankTxnId);
-          if (bt && !m.matchGroupId) {
+          // Amount sanity (non-group rows): candidate sum must equal the bank
+          // amount within 1 satang — protects the atomic batch from a bad guess.
+          if (!m.matchGroupId && b.amount != null) {
             const sum = (m.candidates || []).reduce((s, c) => s + (c.amount || 0), 0);
-            if (Math.abs(sum - Math.abs(bt.amount)) > 0.01) {
+            if (Math.abs(sum - b.amount) > 0.01) {
               skips.push({ label: rowLabel(m),
-                reason: `ยอดรวมที่จับ (${Layout.money(sum)}) ≠ ยอดธนาคาร (${Layout.money(Math.abs(bt.amount))})` });
+                reason: `ยอดรวมที่จับ (${Layout.money(sum)}) ≠ ยอดธนาคาร (${Layout.money(b.amount)})` });
               return false;
             }
           }

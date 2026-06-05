@@ -61,8 +61,14 @@ public sealed record ProposedMatch(
     decimal Confidence,
     string? Reasoning,
     Guid PerMatchFeedbackId,                  // child feedback row id — UI passes back when user accepts/rejects
-    Guid? MatchGroupId = null);               // set on ManyBanksToOneDoc rows: all bank lines sharing it
+    Guid? MatchGroupId = null,                // set on ManyBanksToOneDoc rows: all bank lines sharing it
                                               // settle ONE document via the M:N group path, not BatchReconcile
+    // Bank-line details carried IN the plan so the UI never depends on the
+    // (paged/filtered) transaction list being loaded to show the amount.
+    decimal BankAmount = 0m,
+    DateTime? BankDate = null,
+    string? BankMemo = null,
+    string? BankDirection = null);            // "In" | "Out"
 
 public sealed record MatchCandidate(
     Guid CandidateId,
@@ -645,7 +651,16 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var labelledCands = m.Candidates
                 .Select(c => c with { Label = labelById.GetValueOrDefault(c.CandidateId.ToString()) })
                 .ToList();
-            var calibratedMatch = m with { Confidence = calibratedConf, Reasoning = calReason, Candidates = labelledCands };
+            var calibratedMatch = m with
+            {
+                Confidence = calibratedConf,
+                Reasoning = calReason,
+                Candidates = labelledCands,
+                BankAmount = Math.Abs(bt.Amount),
+                BankDate = bt.TransactionDate,
+                BankMemo = bt.Description ?? bt.Payee,
+                BankDirection = bt.TransactionType is BankTransactionType.Deposit or BankTransactionType.Interest ? "In" : "Out",
+            };
 
             var answerJson = JsonSerializer.Serialize(calibratedMatch.Candidates.Select(c => new
             {
