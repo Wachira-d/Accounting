@@ -100,21 +100,21 @@ A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.da
 
 B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
 
-C. FLOW-AWARE WINDOW + MATCH STYLE. Classify each bank line by memo, then apply the right window. Items outside the per-flow window are NEVER part of the match — do not include them even if the amount fits:
+C. FLOW-AWARE WINDOW + MATCH STYLE. Classify each bank line by memo, then apply the right DIRECTIONAL window. Window is written [T−back .. T+fwd] where T = bank date. KEY PRINCIPLE: the receipt / RV / document is normally created AT or BEFORE the money lands, so the window looks mostly BACKWARD. A deposit on 2 Apr matches docs dated 1 Apr (late) + 2 Apr — NEVER 3 Apr. Items outside the window are NEVER part of the match even if the amount fits.
 
-   C1. AGGREGATOR (Thai QR / KSHOP / K SHOP / KBank Shop / K-Plus Shop / MyQR / EDC / TrueMoney / ShopeePay / GrabPay / LineMan / Shopee / Lazada / NextPay / Stripe / Square / ""รับเงินจากการขายด้วย""): M:1 OK. Window T..T+1 STRICT. Pick the SMALLEST same-day subset summing EXACTLY. If 7 of 8 RVs sum exact, drop the 8th.
-   C2. CARD SETTLEMENT (""Visa settle"" / ""MC settle"" / ""Card net"" / ""Merchant settle"" / ""POSNET""): M:1 OK. Window T..T+1.
-   C3. PERSON-TO-PERSON TRANSFER (""รับโอนเงิน"" / ""K PLUS"" / ""Internet/Mobile KTB/SCB/BBL"" / ""PromptPay"" / ""พร้อมเพย์""): 1:1 ONLY. Window T..T+1. One transfer = one receipt; never lump into M:1. Memo carries first name + masked account suffix — use it to match contact.
-   C4. AUTO-CREDIT (""รับโอนเงินอัตโนมัติ"" / ""SMART"" / ""ATS"" / ""โอนเข้าอัตโนมัติ"" / ""Direct credit""): 1:1, often a recurring contract. Window T..T+2.
-   C5. CHEQUE CLEARING (""เช็ค"" / ""Cheque"" / ""เรียกเก็บ"" / ""B/C"" / ""Bill collection"" / ""Clearing""): 1:1. Window T..T+5 (the receipt was issued days before the cleared deposit).
-   C6. COUNTER CASH DEPOSIT (""ฝากเงินสด"" / ""นำฝาก"" / ""Counter"" / ""Cash deposit"" / ""เคาน์เตอร์""): 1:1. Window T..T+3 (cash collected today may be deposited tomorrow).
-   C7. INWARD TT / SWIFT (""Inward TT"" / ""SWIFT"" / ""Remittance"" / ""โอนเข้าจากต่างประเทศ""): 1:1. Window T..T+7. Allow FX rounding ≤ 1%.
-   C8. BILL PAYMENT (""Bill Payment"" / ""ชำระบิล"" / ""Cross-bank bill""): 1:1. Window T..T+2. Reference usually carries an invoice / customer number.
-   C9. INTEREST (""ดอกเบี้ย"" / ""Interest"" / ""Int earned""): 1:1 to the bank's own interest JE. Wide window (T..T+30). No contact required.
-   C10. REFUND / REVERSAL (""Refund"" / ""คืนเงิน"" / ""Reverse"" / ""กลับรายการ""): 1:1 against a PRIOR outflow of the same amount + contact. Wide backward window.
-   C11. LOAN DISBURSEMENT / OD DRAW (""Loan disburs"" / ""เบิกสินเชื่อ"" / ""L/D"" / ""O/D"" / ""Overdraft""): 1:1 against the Loan JE. Window T..T+1.
-   C12. TAX REFUND (""คืนภาษี"" / ""Tax refund"" / ""RD refund""): 1:1, wide window (T..T+60).
-   C13. UNCLASSIFIED: conservative 1:1, window T..T+3.
+   C1. AGGREGATOR (Thai QR / KSHOP / K SHOP / KBank Shop / K-Plus Shop / MyQR / EDC / TrueMoney / ShopeePay / GrabPay / LineMan / Shopee / Lazada / NextPay / Stripe / Square / ""รับเงินจากการขายด้วย""): M:1 OK. Window [T−1 .. T] — the cut-off means a deposit bundles late-previous-day + same-day sales. NEVER T+1. Pick the SMALLEST subset summing EXACTLY. If 7 of 8 RVs sum exact, drop the 8th.
+   C2. CARD SETTLEMENT (""Visa settle"" / ""MC settle"" / ""Card net"" / ""Merchant settle"" / ""POSNET""): M:1 OK. Window [T−2 .. T] (card nets settle 1-2 days AFTER the sale).
+   C3. PERSON-TO-PERSON TRANSFER (""รับโอนเงิน"" / ""K PLUS"" / ""Internet/Mobile KTB/SCB/BBL"" / ""PromptPay"" / ""พร้อมเพย์""): 1:1 ONLY. Window [T−1 .. T+1] (~instant; ±1 for receipt-entry lag). Memo carries first name + masked account suffix — use it to match contact.
+   C4. AUTO-CREDIT (""รับโอนเงินอัตโนมัติ"" / ""SMART"" / ""ATS"" / ""โอนเข้าอัตโนมัติ"" / ""Direct credit""): 1:1. Window [T−2 .. T+1].
+   C5. CHEQUE CLEARING (""เช็ค"" / ""Cheque"" / ""เรียกเก็บ"" / ""B/C"" / ""Bill collection"" / ""Clearing""): 1:1. Window [T−7 .. T+1] — the receipt was issued days BEFORE the cheque cleared.
+   C6. COUNTER CASH DEPOSIT (""ฝากเงินสด"" / ""นำฝาก"" / ""Counter"" / ""Cash deposit"" / ""เคาน์เตอร์""): 1:1. Window [T−2 .. T+1].
+   C7. INWARD TT / SWIFT (""Inward TT"" / ""SWIFT"" / ""Remittance"" / ""โอนเข้าจากต่างประเทศ""): 1:1. Window [T−7 .. T+2]. Allow FX rounding ≤ 1%.
+   C8. BILL PAYMENT (""Bill Payment"" / ""ชำระบิล"" / ""Cross-bank bill""): 1:1. Window [T−3 .. T+1]. Reference usually carries an invoice / customer number.
+   C9. INTEREST (""ดอกเบี้ย"" / ""Interest"" / ""Int earned""): 1:1 to the bank's own interest JE. Window [T−2 .. T+31] (our interest JE is often posted when we see the statement, i.e. AFTER). No contact required.
+   C10. REFUND / REVERSAL (""Refund"" / ""คืนเงิน"" / ""Reverse"" / ""กลับรายการ""): 1:1 against a PRIOR outflow of the same amount + contact. Window [T−60 .. T+2].
+   C11. LOAN DISBURSEMENT / OD DRAW (""Loan disburs"" / ""เบิกสินเชื่อ"" / ""L/D"" / ""O/D"" / ""Overdraft""): 1:1 against the Loan JE. Window [T−2 .. T+2].
+   C12. TAX REFUND (""คืนภาษี"" / ""Tax refund"" / ""RD refund""): 1:1. Window [T−2 .. T+90] (refund JE posted when received, often later).
+   C13. UNCLASSIFIED: conservative 1:1, window [T−3 .. T+2].
 
    ABSOLUTE RULE: M:1 is allowed ONLY for C1 + C2. Every other category is 1:1 — never combine multiple receipts into a non-aggregator bank line.
 

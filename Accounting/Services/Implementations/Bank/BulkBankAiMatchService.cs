@@ -999,10 +999,10 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var target = Math.Abs(bt.Amount);
             var dir = bt.Direction;
 
-            // Date window depends on memo: aggregator deposits (Thai QR /
-            // KSHOP) only contain SAME-DAY sales (max +1 for cut-off), so
-            // candidates from other days are never part of the bundle.
-            var windowDays = CandidateWindowDays(bt.Memo, bt.Payee, bt.Reference);
+            // Directional date window — receipts/RVs are dated AT or BEFORE the
+            // bank settlement, so the window looks mostly backward (a KSHOP
+            // deposit on 2 Apr matches RVs from 1 Apr-late + 2 Apr, never 3 Apr).
+            var win = CandidateWindow(bt.Memo, bt.Payee, bt.Reference);
             var memoBlob = ((bt.Memo ?? "") + " " + (bt.Reference ?? "") + " " + (bt.Payee ?? ""));
             var memoLc = memoBlob.ToLowerInvariant();
             // Document/reference codes the bank memo cites (REC.../PAY.../INV...
@@ -1020,8 +1020,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo)
             {
                 if (Math.Abs(amt - target) > Tol) return;
-                var gap = (int)Math.Abs((date - bt.Date).TotalDays);
-                if (gap > windowDays) return;
+                if (!InWindow(date, bt.Date, win)) return;
+                var gap = (int)Math.Abs((date - bt.Date).TotalDays);   // magnitude for scoring
                 if (clearedBankIds.Contains(bid)) return;       // already taken in this loop
                 exactAmountInWindow++;
                 int signal = 0;
@@ -1150,8 +1150,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // them and let the 1:1 sweep handle them.
             var cat = ClassifyBankMemo(bt.Memo);
             if (!IsAggregatorFlow(cat)) continue;   // 1:1-only flow — let TryExactOneToOne handle it
-            int wDays = CandidateWindowDays(bt.Memo);
-            bool W(DateTime d) => Math.Abs((d - bt.Date).TotalDays) <= wDays;
+            var win = CandidateWindow(bt.Memo);
+            bool W(DateTime d) => InWindow(d, bt.Date, win);
             // Amount pre-filter: no single same-side item can exceed the target
             // (all-positive sum), so drop them before the O(n^4) subset search.
             // Opposite-side (subtract) items can be any size. Cuts the same-side
@@ -1401,24 +1401,45 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         return BankFlowCategory.Other;
     }
 
-    /// <summary>Realistic candidate date window (days) per flow category.</summary>
-    private static int CandidateWindowDays(string? memo, string? payee = null, string? reference = null)
+    /// <summary>Realistic candidate date window per flow category, DIRECTIONAL.
+    /// Returns (backDays, fwdDays) relative to the bank transaction date:
+    /// a candidate is eligible when  bank.date − backDays ≤ candidate.date ≤
+    /// bank.date + fwdDays.
+    ///
+    /// The KEY insight: for most inflows the accounting document (RV / receipt /
+    /// cheque) is created AT or BEFORE the money lands in the bank, so the
+    /// window must look mostly BACKWARD. e.g. a KSHOP deposit dated 2 Apr
+    /// settles sales from 1 Apr (after the ~23:00 cut-off) + 2 Apr — so the
+    /// candidates are dated T−1 and T, NEVER T+1. The old symmetric ±window
+    /// wrongly admitted T+1 receipts. A small forward allowance is kept only
+    /// for flows where our JE is posted AFTER we see the statement (interest,
+    /// refunds, tax refunds) or for data-entry lag.</summary>
+    private static (int Back, int Fwd) CandidateWindow(string? memo, string? payee = null, string? reference = null)
         => ClassifyBankMemo(memo, payee, reference) switch
         {
-            BankFlowCategory.Aggregator  => 1,   // T..T+1 strict
-            BankFlowCategory.CardSettle  => 1,
-            BankFlowCategory.Transfer    => 1,   // direct transfers settle same day
-            BankFlowCategory.AutoCredit  => 2,
-            BankFlowCategory.BillPayment => 2,
-            BankFlowCategory.Loan        => 1,
-            BankFlowCategory.CounterCash => 3,
-            BankFlowCategory.Cheque      => 5,   // clearing delay
-            BankFlowCategory.InwardTT    => 7,
-            BankFlowCategory.Interest    => 30,
-            BankFlowCategory.Refund      => 30,
-            BankFlowCategory.TaxRefund   => 60,
-            _                            => 3,   // conservative default
+            //                                back, fwd
+            BankFlowCategory.Aggregator  => (1, 0),   // T−1 late + T sales; never T+1
+            BankFlowCategory.CardSettle  => (2, 0),   // card nets settle 1-2 days AFTER the sale
+            BankFlowCategory.Transfer    => (1, 1),   // ~instant; ±1 for receipt-entry lag
+            BankFlowCategory.AutoCredit  => (2, 1),
+            BankFlowCategory.BillPayment => (3, 1),
+            BankFlowCategory.Loan        => (2, 2),
+            BankFlowCategory.CounterCash => (2, 1),   // cash collected, deposited same/next day
+            BankFlowCategory.Cheque      => (7, 1),   // receipt issued days BEFORE it clears
+            BankFlowCategory.InwardTT    => (7, 2),
+            BankFlowCategory.Interest    => (2, 31),  // our interest JE often posted at/after statement
+            BankFlowCategory.Refund      => (60, 2),  // references a far-earlier outflow
+            BankFlowCategory.TaxRefund   => (2, 90),  // refund JE posted when received (often later)
+            _                            => (3, 2),   // conservative default
         };
+
+    /// <summary>True when candidate.date falls inside the directional window
+    /// for the given bank-line memo.</summary>
+    private static bool InWindow(DateTime candidateDate, DateTime bankDate, (int Back, int Fwd) w)
+    {
+        var gap = (candidateDate.Date - bankDate.Date).TotalDays;   // <0 = candidate before bank
+        return gap >= -w.Back && gap <= w.Fwd;
+    }
 
     /// <summary>True when this category aggregates many same-day items into
     /// one bank line (M:1 is expected). Other categories should prefer 1:1.</summary>
