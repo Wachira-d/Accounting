@@ -191,6 +191,8 @@ public partial class BankService
                 bool txnIsIn = t.TransactionType is BankTransactionType.Deposit
                     or BankTransactionType.Interest;
                 var ids = idsByTxn[t.Id];
+                decimal grossTotal = 0m;          // WHT/fee alternative interpretation
+                var grossCps = new List<ResolvedCounterpartDto>();
                 foreach (var id in ids)
                 {
                     var cp = Describe(id, null);
@@ -217,12 +219,21 @@ public partial class BankService
                     }
                     cps.Add(cp with { Amount = sign * cp.Amount });
                     total += sign * cp.Amount;
+                    // Gross variant: a JE uses its TotalDebit (gross) instead of
+                    // the bank-line net, so a WHT/fee payment (bank shows gross,
+                    // JE bank-line is net) still reconciles.
+                    var grossAmt = cp.ItemType == "JournalEntry" && jeMap.TryGetValue(id, out var jh)
+                        ? jh.TotalDebit : Math.Abs(cp.Amount);
+                    grossCps.Add(cp with { Amount = sign * grossAmt });
+                    grossTotal += sign * grossAmt;
                 }
-                // No counterpart link at all (legacy matched row) → can't assess,
-                // don't flag. Otherwise require the signed sum to equal the bank
-                // amount and every id to still resolve.
-                agree = ids.Count == 0
-                    || (!missing && cps.Count > 0 && Math.Abs(total - bankAmt) <= 0.01m);
+                // No counterpart link at all (legacy matched row) → can't assess.
+                // Accept when EITHER the net or the gross interpretation matches;
+                // when only gross matches (WHT case), display the gross amounts.
+                bool netAgree = !missing && cps.Count > 0 && Math.Abs(total - bankAmt) <= 0.01m;
+                bool grossAgree = !missing && grossCps.Count > 0 && Math.Abs(grossTotal - bankAmt) <= 0.01m;
+                if (!netAgree && grossAgree) { cps = grossCps; total = grossTotal; }
+                agree = ids.Count == 0 || netAgree || grossAgree;
             }
 
             result.Add(new ResolvedMatchDto(t.Id, t.TransactionDate, type, t.Description ?? t.Payee,
