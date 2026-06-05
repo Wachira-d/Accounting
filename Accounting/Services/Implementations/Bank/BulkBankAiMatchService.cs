@@ -1055,21 +1055,24 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .Select(c => c.CandidateId).ToHashSet();
 
         // Index payments + JEs by direction so the per-txn scan is O(window).
-        var payIn = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo)>();
-        var payOut = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo)>();
+        // TaxId + bank-account suffix travel with each candidate so Consider()
+        // can use them as extra identity signals (a memo citing the payer's
+        // account tail "X3349" or tax id is a near-certain customer match).
+        var payIn = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
+        var payOut = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
         foreach (var p in payments)
         {
             if (!Guid.TryParse(p.Id, out var pid) || consumed.Contains(pid)) continue;
-            var tup = (pid, p.Date, p.Amount, p.ContactName, p.Reference, p.LinkedDocumentNumber);
+            var tup = (pid, p.Date, p.Amount, p.ContactName, p.Reference, p.LinkedDocumentNumber, p.ContactTaxId, p.BankAccountNumber);
             if (p.Direction == "Out") payOut.Add(tup);
             else if (p.Direction == "In") payIn.Add(tup);
         }
-        var jeIn = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo)>();
-        var jeOut = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo)>();
+        var jeIn = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
+        var jeOut = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo, string? TaxId, string? Acct)>();
         foreach (var j in jes)
         {
             if (!Guid.TryParse(j.Id, out var jid) || consumed.Contains(jid)) continue;
-            var tup = (jid, j.Date, j.NetAmount, j.GrossAmount, j.ContactName, j.Reference, j.SourceDocNumber);
+            var tup = (jid, j.Date, j.NetAmount, j.GrossAmount, j.ContactName, j.Reference, j.SourceDocNumber, j.ContactTaxId, (string?)null);
             if (j.Direction == "Out") jeOut.Add(tup);
             else if (j.Direction == "In") jeIn.Add(tup);
         }
@@ -1102,7 +1105,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // same-day receipts from different customers).
             (Guid Id, string Kind, decimal Amt, int DateGap, int Signal)? best = null;
             int exactAmountInWindow = 0;
-            void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo)
+            void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo, string? taxId = null, string? acct = null)
             {
                 if (Math.Abs(amt - target) > Tol) return;
                 if (!InWindow(date, bt.Date, win)) return;
@@ -1120,6 +1123,22 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 // Contact identity: exact substring or fuzzy token overlap with
                 // the masked name in the memo ("จาก X3349 VEENA SRIKA++").
                 if (!string.IsNullOrWhiteSpace(contact) && ContactMatchesMemo(contact!, memoLc)) signal += 2;
+                // Tax id quoted in the memo (13-digit Thai TIN) — unambiguous.
+                if (!string.IsNullOrWhiteSpace(taxId))
+                {
+                    var tid = new string(taxId!.Where(char.IsDigit).ToArray());
+                    if (tid.Length >= 10 && memoBlob.Replace(" ", "").Replace("-", "").Contains(tid)) signal += 4;
+                }
+                // Payer/payee bank-account tail in the memo ("จาก KTB X3349").
+                if (!string.IsNullOrWhiteSpace(acct))
+                {
+                    var digits = new string(acct!.Where(char.IsDigit).ToArray());
+                    if (digits.Length >= 3)
+                    {
+                        var tail = digits.Substring(digits.Length - Math.Min(4, digits.Length));
+                        if (memoLc.Replace(" ", "").Contains(tail.ToLowerInvariant())) signal += 3;
+                    }
+                }
                 if (best is null
                     || signal > best.Value.Signal
                     || (signal == best.Value.Signal && Math.Abs(amt - target) < Math.Abs(best.Value.Amt - target))
@@ -1128,11 +1147,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             }
 
             foreach (var p in (dir == "Out" ? payOut : payIn))
-                Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo);
+                Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo, p.TaxId, p.Acct);
             foreach (var j in (dir == "Out" ? jeOut : jeIn))
             {
-                Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo);
-                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo);
+                Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct);
+                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct);
             }
             if (best is null) continue;
 
@@ -1147,11 +1166,15 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // add. A signalled match (ref/doc/contact) can reach 0.95; a bare
             // amount+date unique match caps lower (0.80) since names weren't
             // confirmed.
+            // After the ambiguity guard above, a no-signal match is GUARANTEED to
+            // be the sole in-window candidate at this amount (exactAmountInWindow
+            // == 1) — that is itself a strong 1:1 signal, so it earns the auto-
+            // check floor (0.85). Any identity signal lifts it further.
             decimal conf;
-            if (best.Value.Signal >= 4) conf = 0.95m;        // ref/doc code cited
-            else if (best.Value.Signal >= 2) conf = 0.88m;   // contact/doc substring
-            else if (best.Value.Signal >= 1) conf = 0.82m;
-            else conf = 0.80m;                                // unique amount, no name
+            if (best.Value.Signal >= 4) conf = 0.95m;        // ref/doc/taxid cited
+            else if (best.Value.Signal >= 2) conf = 0.90m;   // contact/doc substring / acct tail
+            else if (best.Value.Signal >= 1) conf = 0.87m;   // weak ref substring + unique amount
+            else conf = 0.85m;                               // sole candidate at this amount, no name
             if (best.Value.DateGap == 0) conf += 0.02m;
             if (conf > 0.98m) conf = 0.98m;
 
@@ -1299,29 +1322,48 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         {
             if (bankList.Count < 2) continue;                       // 1 item is handled by the 1:1 sweep
             if (!candByKey.TryGetValue(key, out var cands)) continue;
-            // STRICT: only when counts match exactly — no surplus on either
-            // side — so the mapping is total and we never leave money guessing.
-            if (cands.Count != bankList.Count) continue;
+            // RELAXED: fire whenever there are AT LEAST as many candidates as
+            // bank lines (surplus allowed). With identical amounts the only open
+            // question is which customers — confidence stays at review level
+            // (0.62, below the auto-check gate) so a human still confirms.
+            if (cands.Count < bankList.Count) continue;
 
-            // Pair within a backward window (each bank line to a candidate
-            // dated at/just before it). Order both by date and zip.
+            // Greedy nearest-in-window pairing: for each bank line (earliest
+            // first) claim the closest still-free candidate dated within
+            // [T−7..T+1]. Every bank line MUST find one, else skip the group.
             var bSorted = bankList.OrderBy(b => b.Date).ToList();
-            var cSorted = cands.OrderBy(c => c.Date).ToList();
-            // Verify every pair is within a sane window before committing any.
+            var pool = cands.OrderBy(c => c.Date).ToList();
+            var usedIdx = new HashSet<int>();
+            var picks = new List<(Guid Bank, Guid Cand, string Kind)>();
             bool ok = true;
-            for (int i = 0; i < bSorted.Count; i++)
-                if (!InWindow(cSorted[i].Date, bSorted[i].Date, (Back: 7, Fwd: 1))) { ok = false; break; }
+            foreach (var b in bSorted)
+            {
+                int bestIdx = -1; double bestGap = double.MaxValue;
+                for (int ci = 0; ci < pool.Count; ci++)
+                {
+                    if (usedIdx.Contains(ci)) continue;
+                    if (!InWindow(pool[ci].Date, b.Date, (Back: 7, Fwd: 1))) continue;
+                    var g = Math.Abs((pool[ci].Date - b.Date).TotalDays);
+                    if (g < bestGap) { bestGap = g; bestIdx = ci; }
+                }
+                if (bestIdx < 0) { ok = false; break; }
+                usedIdx.Add(bestIdx);
+                picks.Add((b.Id, pool[bestIdx].Id, pool[bestIdx].Kind));
+            }
             if (!ok) continue;
 
-            for (int i = 0; i < bSorted.Count; i++)
+            var surplusNote = cands.Count > bankList.Count
+                ? $" (มีตัวเลือก {cands.Count} ใบ มากกว่าจำนวนรายการ — ตรวจว่าตรงลูกค้า)"
+                : " (โปรดตรวจว่าตรงลูกค้า)";
+            foreach (var pick in picks)
             {
-                added.Add(new ProposedMatch(bSorted[i].Id, "OneToOne",
-                    new List<MatchCandidate> { new(cSorted[i].Id, cSorted[i].Kind, key.Amt) },
+                added.Add(new ProposedMatch(pick.Bank, "OneToOne",
+                    new List<MatchCandidate> { new(pick.Cand, pick.Kind, key.Amt) },
                     0.62m,
-                    $"จับคู่อัตโนมัติแบบกลุ่ม: มี {bankList.Count} รายการยอด {key.Amt:N2} เท่ากันพอดีทั้งสองฝั่ง (โปรดตรวจว่าตรงลูกค้า)",
+                    $"จับคู่อัตโนมัติแบบกลุ่ม: มี {bankList.Count} รายการยอด {key.Amt:N2} เท่ากัน{surplusNote}",
                     Guid.Empty));
-                cleared.Add(bSorted[i].Id);
-                consumed.Add(cSorted[i].Id);
+                cleared.Add(pick.Bank);
+                consumed.Add(pick.Cand);
             }
         }
 
@@ -1585,6 +1627,24 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var d = Math.Abs(s - target);
             if (d <= Tol && Improves(best, d, 4))
                 best = new JeCombo(new (JeCand, int)[] { (sm[a], +1), (sm[b], +1), (sm[c], +1), (sm[e], +1) }, d);
+        }
+        if (best is { Delta: <= 0.01m }) return best;
+
+        // Size 5 — only for modest pools (O(n^5)); a daily KSHOP rollup can
+        // bundle five receipts. Guard keeps the worst case bounded (~5M iters).
+        if (sm.Count <= 30)
+        {
+            for (int a = 0; a < sm.Count; a++)
+            for (int b = a + 1; b < sm.Count; b++)
+            for (int c = b + 1; c < sm.Count; c++)
+            for (int e = c + 1; e < sm.Count; e++)
+            for (int f = e + 1; f < sm.Count; f++)
+            {
+                var s = sm[a].Amount + sm[b].Amount + sm[c].Amount + sm[e].Amount + sm[f].Amount;
+                var d = Math.Abs(s - target);
+                if (d <= Tol && Improves(best, d, 5))
+                    best = new JeCombo(new (JeCand, int)[] { (sm[a], +1), (sm[b], +1), (sm[c], +1), (sm[e], +1), (sm[f], +1) }, d);
+            }
         }
         if (best != null) return best;   // any same-side match wins over net-settlement
 
