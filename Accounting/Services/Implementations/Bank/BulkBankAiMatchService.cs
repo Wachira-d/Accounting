@@ -1025,12 +1025,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     private sealed record JeCand(Guid Id, DateTime Date, decimal Amount, string Number);
 
     /// <summary>Subset-sum search for the best (smallest delta, smallest size)
-    /// JE combination matching the bank target ±0.50. Items from the SAME side
-    /// as the bank txn add (+), items from the OPPOSITE side subtract (−), so
-    /// net-settlement (Receipt 2,500 − PaymentVoucher 500 = 2,000 net deposit)
-    /// is supported. Same-side subtraction (RV − RV) is structurally impossible
-    /// here because every +1 sign is bound to a same-side pool member and every
-    /// −1 to an opposite-side one. The caller passes the two pools split.</summary>
+    /// JE combination matching the bank target ±0.50. Strategy: try ALL same-
+    /// direction combinations first (sizes 2 → 3 → 4); only if NOTHING is found
+    /// fall back to cross-direction net-settlement (Receipt − PaymentVoucher),
+    /// since net-settlement is a rare real-world pattern that should never be
+    /// preferred over a clean same-side match. Same-side subtraction (RV − RV)
+    /// is structurally impossible because the pools are pre-split by direction.</summary>
     private static JeCombo? FindBestCombination(decimal target,
         List<(Guid Id, DateTime Date, decimal Amount, string Number)> sameDirPool,
         List<(Guid Id, DateTime Date, decimal Amount, string Number)> oppDirPool)
@@ -1043,7 +1043,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         bool Improves(JeCombo? cur, decimal delta, int size)
             => cur == null || delta < cur.Delta || (delta == cur.Delta && size < cur.Items.Count);
 
-        // Size 2 — two same-side (typical M:1) OR one same + one opposite (net-settlement).
+        // ── Pass 1: SAME-SIDE ONLY (the normal case) ────────────────────
+        // Size 2.
         for (int i = 0; i < sm.Count; i++)
         for (int j = i + 1; j < sm.Count; j++)
         {
@@ -1052,6 +1053,36 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             if (d <= Tol && Improves(best, d, 2))
                 best = new JeCombo(new (JeCand, int)[] { (sm[i], +1), (sm[j], +1) }, d);
         }
+        if (best is { Delta: <= 0.01m }) return best;
+
+        // Size 3.
+        for (int i = 0; i < sm.Count; i++)
+        for (int j = i + 1; j < sm.Count; j++)
+        for (int k = j + 1; k < sm.Count; k++)
+        {
+            var s = sm[i].Amount + sm[j].Amount + sm[k].Amount;
+            var d = Math.Abs(s - target);
+            if (d <= Tol && Improves(best, d, 3))
+                best = new JeCombo(new (JeCand, int)[] { (sm[i], +1), (sm[j], +1), (sm[k], +1) }, d);
+        }
+        if (best is { Delta: <= 0.01m }) return best;
+
+        // Size 4.
+        for (int a = 0; a < sm.Count; a++)
+        for (int b = a + 1; b < sm.Count; b++)
+        for (int c = b + 1; c < sm.Count; c++)
+        for (int e = c + 1; e < sm.Count; e++)
+        {
+            var s = sm[a].Amount + sm[b].Amount + sm[c].Amount + sm[e].Amount;
+            var d = Math.Abs(s - target);
+            if (d <= Tol && Improves(best, d, 4))
+                best = new JeCombo(new (JeCand, int)[] { (sm[a], +1), (sm[b], +1), (sm[c], +1), (sm[e], +1) }, d);
+        }
+        if (best != null) return best;   // any same-side match wins over net-settlement
+
+        // ── Pass 2: NET-SETTLEMENT FALLBACK (rare) ──────────────────────
+        // Only reached when no all-same-side combination of size 2-4 fits.
+        // Size 2: one same + one opposite (Receipt 2,500 − PV 500 = 2,000).
         for (int i = 0; i < sm.Count; i++)
         for (int j = 0; j < op.Count; j++)
         {
@@ -1063,16 +1094,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         }
         if (best is { Delta: <= 0.01m }) return best;
 
-        // Size 3 — all same-side, or 2 same + 1 opposite (รับ 2 ใบ − refund 1 ใบ).
-        for (int i = 0; i < sm.Count; i++)
-        for (int j = i + 1; j < sm.Count; j++)
-        for (int k = j + 1; k < sm.Count; k++)
-        {
-            var s = sm[i].Amount + sm[j].Amount + sm[k].Amount;
-            var d = Math.Abs(s - target);
-            if (d <= Tol && Improves(best, d, 3))
-                best = new JeCombo(new (JeCand, int)[] { (sm[i], +1), (sm[j], +1), (sm[k], +1) }, d);
-        }
+        // Size 3: two same + one opposite (รับ 2 ใบ − refund 1 ใบ).
         for (int i = 0; i < sm.Count; i++)
         for (int j = i + 1; j < sm.Count; j++)
         for (int k = 0; k < op.Count; k++)
@@ -1082,19 +1104,6 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var d = Math.Abs(s - target);
             if (d <= Tol && Improves(best, d, 3))
                 best = new JeCombo(new (JeCand, int)[] { (sm[i], +1), (sm[j], +1), (op[k], -1) }, d);
-        }
-        if (best != null) return best;
-
-        // Size 4 — keep it conservative: all same-side only (kept tractable).
-        for (int a = 0; a < sm.Count; a++)
-        for (int b = a + 1; b < sm.Count; b++)
-        for (int c = b + 1; c < sm.Count; c++)
-        for (int e = c + 1; e < sm.Count; e++)
-        {
-            var s = sm[a].Amount + sm[b].Amount + sm[c].Amount + sm[e].Amount;
-            var d = Math.Abs(s - target);
-            if (d <= Tol && Improves(best, d, 4))
-                best = new JeCombo(new (JeCand, int)[] { (sm[a], +1), (sm[b], +1), (sm[c], +1), (sm[e], +1) }, d);
         }
         return best;
     }
