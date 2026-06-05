@@ -95,11 +95,12 @@ A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.da
 
 B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
 
-C. AGGREGATOR / WALLET BUNDLING (KSHOP, TrueMoney, ShopeePay, Lazada Wallet, marketplace settlement):
-   When bank.payee or memo contains an aggregator/wallet name (KSHOP, KASIKORN SHOP, KBank Shop, K-Plus Shop, TrueMoney Wallet, ShopeePay, LineMan, GrabPay, Shopee, Lazada, NextPay, OmiseGO, Stripe-payouts, Square, …) the deposit is normally a DAILY ROLLUP of many customer receipts:
-     • Treat it as M:1 with the day's open_payments / JEs whose contacts are the END CUSTOMERS who paid via that channel — direction MUST be ""In"".
-     • Same calendar day is the strongest signal; allow ±1 day for cut-off lag.
-     • The sum may be slightly less than the gross (aggregator fee deducted). If sum exceeds bank.amount by ≤ 3% flag the candidate set anyway — note the fee in reasoning.
+C. AGGREGATOR / WALLET BUNDLING (KSHOP / Thai QR / TrueMoney / ShopeePay / wallets):
+   When bank.memo / payee / reference contains ""Thai QR"", ""KSHOP"", ""K SHOP"", ""K-Plus Shop"", ""MyQR"", ""EDC"", ""TrueMoney"", ""ShopeePay"", ""GrabPay"", ""LineMan"", ""Shopee"", ""Lazada"", ""NextPay"", ""Stripe"", ""Square"" — or the Thai phrase ""รับเงินจากการขายด้วย"" — the deposit is a DAILY ROLLUP of that day's QR/wallet receipts:
+     • Treat it as M:1 with the bank-date's open RVs / JEs whose direction is ""In"".
+     • DATE WINDOW IS STRICT: candidates must be on bank.date OR bank.date−1 (cut-off lag). NEVER pull in items from 2+ days away — they are NEVER part of the same QR/wallet bundle.
+     • Pick the SMALLEST subset of same-day RVs that sums EXACTLY to bank.amount. If 7 of 8 same-day RVs sum exact and the 8th makes it overshoot, the 8th does NOT belong to this deposit — drop it.
+     • The sum may be slightly less than the gross when an aggregator fee was deducted. If sum exceeds bank.amount by > 0.50 baht and pruning extras can't close the gap, the bundle is incomplete — return unmatched or note ""ขาด/เกิน X บาท"" honestly.
 
 D. M:1 SPLITS (multi-invoice settlement) — USE ONLY AFTER A/B FAIL FOR THIS BANK TXN: bank.amount = exact sum of 2-5 same-direction items for ONE contact within ±5 days. Σ matches within 0.50 baht. Direction-uniform — all In for a deposit, all Out for a withdrawal. If a single same-amount candidate exists, prefer that 1:1 over any 2-item split.
 

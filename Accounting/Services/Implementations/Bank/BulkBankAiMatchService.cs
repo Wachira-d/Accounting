@@ -999,13 +999,18 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var target = Math.Abs(bt.Amount);
             var dir = bt.Direction;
 
+            // Date window depends on memo: aggregator deposits (Thai QR /
+            // KSHOP) only contain SAME-DAY sales (max +1 for cut-off), so
+            // candidates from other days are never part of the bundle.
+            var windowDays = CandidateWindowDays(bt.Memo, bt.Payee, bt.Reference);
+
             // Score by (smallest amount delta, smallest date gap, contact/ref signal).
             (Guid Id, string Kind, decimal Amt, int DateGap, int Signal)? best = null;
             void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo)
             {
                 if (Math.Abs(amt - target) > Tol) return;
                 var gap = (int)Math.Abs((date - bt.Date).TotalDays);
-                if (gap > 7) return;
+                if (gap > windowDays) return;
                 if (clearedBankIds.Contains(bid)) return;       // already taken in this loop
                 int signal = 0;
                 var memo = (bt.Memo ?? "") + " " + (bt.Reference ?? "") + " " + (bt.Payee ?? "");
@@ -1108,9 +1113,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // Date-window pre-filter — typical lumped deposits land within a
             // week of the underlying receipts. Reduces n from ~200 to ~30 for
             // the size-3 / size-4 inner loops.
-            // Same-side pool adds, opposite-side pool subtracts. Both filtered
-            // to the ±7-day window and excluding ids consumed by earlier loops.
-            bool W(DateTime d) => Math.Abs((d - bt.Date).TotalDays) <= 7;
+            // Aggregator (Thai QR / KSHOP / wallets) collapse to a 1-day
+            // window — same-day sales only, never spanning ±7 days. Other
+            // bank lines keep the broader window.
+            int wDays = CandidateWindowDays(bt.Memo);
+            bool W(DateTime d) => Math.Abs((d - bt.Date).TotalDays) <= wDays;
             var same = (bt.Direction == "Out" ? poolOut : poolIn)
                 .Where(p => W(p.Date) && !consumedJeIds.Contains(p.Id)).ToList();
             var opp  = (bt.Direction == "Out" ? poolIn  : poolOut)
@@ -1253,6 +1260,31 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// The returned confidence is min(AI confidence, computed ceiling) so AI
     /// can only lower it, never inflate it; mismatchNote describes the delta
     /// in plain Thai and is appended to the reasoning shown in the UI.</summary>
+    /// <summary>True when the bank memo looks like a wallet / QR aggregator
+    /// deposit (Thai QR Payment / KSHOP / KBank Shop / MyQR / EDC / TrueMoney
+    /// / ShopeePay / GrabPay / Shopee / Lazada / NextPay / Stripe / Square).
+    /// These deposits aggregate the day's receipts and land in the bank within
+    /// 0-1 days — candidates from other days are NEVER part of the bundle, so
+    /// the matcher must restrict the window to T..T+1.</summary>
+    private static bool IsAggregatorMemo(string? memo, string? payee = null, string? reference = null)
+    {
+        var s = ((memo ?? "") + " " + (payee ?? "") + " " + (reference ?? "")).ToLowerInvariant();
+        return s.Contains("thai qr") || s.Contains("kshop") || s.Contains("k shop")
+            || s.Contains("kbank shop") || s.Contains("k-plus shop") || s.Contains("myqr")
+            || s.Contains("my qr") || s.Contains("edc") || s.Contains("truemoney")
+            || s.Contains("true money") || s.Contains("shopeepay") || s.Contains("shopee pay")
+            || s.Contains("grabpay") || s.Contains("grab pay") || s.Contains("lineman")
+            || s.Contains("shopee") || s.Contains("lazada") || s.Contains("nextpay")
+            || s.Contains("omisego") || s.Contains("stripe") || s.Contains("square")
+            || s.Contains("รับเงินจากการขายด้วย");
+    }
+
+    /// <summary>Date window (in days) for candidate selection. Aggregator
+    /// deposits get T..T+1 only (the bundle covers exactly the day's sales,
+    /// rarely spilling 1 day for cut-off lag); normal bank txns get ±7 days.</summary>
+    private static int CandidateWindowDays(string? memo, string? payee = null, string? reference = null)
+        => IsAggregatorMemo(memo, payee, reference) ? 1 : 7;
+
     private static (decimal Confidence, string MismatchNote) CalibrateConfidence(
         Models.Entities.BankTransaction bankTxn, ProposedMatch match)
     {
