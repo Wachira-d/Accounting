@@ -38,15 +38,27 @@ H4. DIRECTION-NULL ITEMS. A JE/Payment with direction=null has no clear side —
 
 candidateType must be ""Payment"" or ""JournalEntry"" — NEVER ""Document"". Open documents are CONTEXT to help you identify the right payment (e.g. memo cites invoice INV-2025-0312 → find the Payment whose linked_document.number = INV-2025-0312). If a bank txn matches a document that has NO linked payment, return it in missing_data with missingType=""Payment"" so the user knows to create the payment first.
 
-Each open_journal_entries[] item carries:
-  • number, date, amount, description, reference, DIRECTION (""In""/""Out""/null)
+Each open_journal_entries[] item carries (use every field present; many are optional and may be null for legacy/external data):
+  • number, date, amount (= bank-line net), DIRECTION (""In""/""Out""/null)
+  • description, reference, note, tags
   • source_doc { number, type, date }   — null when JE is a manual entry
   • contact { name, tax_id }            — counterparty when the source doc has one
-Use source_doc.number / source_doc.date to follow doc-number citations in bank memos, and contact.name (+ tax_id) to confirm payer/payee identity. When a JE has gross_amount, the bank deposit may equal EITHER amount OR gross_amount (gross = before withholding-tax deduction) — accept whichever matches and note in reasoning which you used. JEs with direction=null have no clear side — only use them if a memo/reference cites the exact document number; never include them in a multi-item sum.
+  • gross_amount                        — the doc total BEFORE WHT/fees if it differs from amount
+  • withholding_tax, vat_amount, fee_amount   — bank line = gross − WHT − fees
+  • payment_method (BankTransfer/Cash/QR/Cheque) and line_count
+Use source_doc.number / source_doc.date to follow doc-number citations in bank memos, and contact.name (+ tax_id) to confirm payer/payee identity. When a JE has gross_amount, the bank deposit may equal EITHER amount OR gross_amount (accept whichever matches and note in reasoning which you used). withholding_tax / fee_amount help explain a deposit that lands slightly below gross — fold them into the reasoning. JEs with direction=null have no clear side — only use them if a memo/reference cites the exact document number; never include them in a multi-item sum.
+
+Each open_payments[] item carries (use every field present):
+  • number, date, amount, method, reference, contact { name, tax_id, bank_account_number }
+  • linked_document { number, type }, outstanding_amount (residual unpaid on the linked doc)
+  • withholding_tax, vat_amount, note, channel, DIRECTION (""In""/""Out""/null)
+Use bank_account_number when bank.payee shows the counterparty's bank/account suffix; use outstanding_amount to prefer a payment whose linked doc still has balance == bank.amount (a clean 1:1 settlement).
 
 Matching priority — apply IN ORDER, stop when a confident pick is found. Every step is filtered through H1–H4 first:
 
-A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.date| ≤ 1 day AND (bank.payee matches contact.name OR memo cites source_doc.number). Confidence ≥ 0.95.
+PRIORITY ORDER — ALWAYS EXHAUST 1:1 FIRST. Run A → B for every bank txn before considering any M:1 / aggregator / net-settlement strategy below. Most real deposits ARE 1:1; reach for multi-item only when no single candidate fits.
+
+A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.date| ≤ 7 days. Even WITHOUT a contact / memo signal, a unique candidate whose amount matches within 0.50 baht and falls in the date window is a valid 1:1 (confidence 0.85 if no signal, 0.95 with payee/contact/doc-number signal). Try this for EVERY unmatched bank txn before reaching for any combination.
 
 B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
 
@@ -56,7 +68,7 @@ C. AGGREGATOR / WALLET BUNDLING (KSHOP, TrueMoney, ShopeePay, Lazada Wallet, mar
      • Same calendar day is the strongest signal; allow ±1 day for cut-off lag.
      • The sum may be slightly less than the gross (aggregator fee deducted). If sum exceeds bank.amount by ≤ 3% flag the candidate set anyway — note the fee in reasoning.
 
-D. M:1 SPLITS (multi-invoice settlement): bank.amount = exact sum of 2-5 same-direction items for ONE contact within ±5 days. Σ matches within 0.50 baht. Direction-uniform — all In for a deposit, all Out for a withdrawal.
+D. M:1 SPLITS (multi-invoice settlement) — USE ONLY AFTER A/B FAIL FOR THIS BANK TXN: bank.amount = exact sum of 2-5 same-direction items for ONE contact within ±5 days. Σ matches within 0.50 baht. Direction-uniform — all In for a deposit, all Out for a withdrawal. If a single same-amount candidate exists, prefer that 1:1 over any 2-item split.
 
 E. 1:M AGGREGATIONS: multiple small bank txns (same direction) sum to one larger open JE/Payment.
 
@@ -109,7 +121,17 @@ Strict JSON output (NO prose outside JSON):
         // "In" when this payment is a customer receipt (AR — money into our
         // bank), "Out" when it's a vendor disbursement (AP — money out). Tells
         // the model an "In" bank txn can ONLY be matched to "In" payments.
-        string? Direction = null);
+        string? Direction = null,
+        // Future-rich context: when the payment is system-issued (we own the
+        // pipeline), these add signal the AI can use for tighter matching.
+        // All optional — null when the data isn't available (e.g. external JE).
+        string? ContactTaxId = null,
+        string? BankAccountNumber = null,         // payer/payee bank account if known
+        decimal? OutstandingAmount = null,        // unpaid balance of the linked doc
+        decimal? WithholdingTax = null,           // WHT deducted on this payment
+        decimal? VatAmount = null,                // VAT component if any
+        string? Note = null,                      // free-text memo on the payment
+        string? Channel = null);                  // bank transfer / cash / QR / cheque
 
     public sealed record OpenJeInput(
         string Id, string Number, DateTime Date, decimal NetAmount,
@@ -134,7 +156,15 @@ Strict JSON output (NO prose outside JSON):
         // the JE doesn't touch the bank account at all. An "In" bank txn must
         // only be matched to "In" JEs (you cannot subtract one receipt from
         // another to fake a smaller deposit).
-        string? Direction = null);
+        string? Direction = null,
+        // Future-rich context — system-issued JEs can pass MORE signal:
+        decimal? WithholdingTax = null,           // WHT deducted (bank line = gross − WHT)
+        decimal? VatAmount = null,                // output/input VAT component
+        decimal? FeeAmount = null,                // bank fee deducted at source
+        int? LineCount = null,                    // # of lines in the JE
+        string? PaymentMethod = null,             // method recorded on the source doc
+        string? Note = null,                      // free-text JE note
+        string? Tags = null);                     // tags / dimensions on the JE
 
     public sealed record CompanyContext(
         string Name, string? TaxId, string BaseCurrency,

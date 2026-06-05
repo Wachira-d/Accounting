@@ -285,8 +285,14 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 p.Id, p.PaymentNumber, p.PaymentDate, p.Amount,
                 p.PaymentMethod, p.Reference,
                 ContactName = p.Document.Contact.Name,
+                ContactTaxId = p.Document.Contact.TaxId,
+                BankAccountStr = p.BankAccount,
+                p.WithholdingTaxAmount,
+                p.Notes,
                 DocNumber = p.Document.DocumentNumber,
                 DocType = p.Document.DocumentType,
+                Outstanding = p.Document.BalanceDue,
+                DocVat = p.Document.VatAmount,
             })
             .ToListAsync(ct);
         var truncatedPayments = payments.Count > MaxCandidatesPerKind;
@@ -312,7 +318,14 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 p.PaymentMethod.ToString(), p.Reference, p.ContactName,
                 LinkedDocumentNumber: p.DocNumber,
                 LinkedDocumentType: p.DocType.ToString(),
-                Direction: dir);
+                Direction: dir,
+                ContactTaxId: p.ContactTaxId,
+                BankAccountNumber: p.BankAccountStr,
+                OutstandingAmount: p.Outstanding > 0 ? p.Outstanding : null,
+                WithholdingTax: p.WithholdingTaxAmount > 0 ? p.WithholdingTaxAmount : null,
+                VatAmount: p.DocVat > 0 ? p.DocVat : null,
+                Note: p.Notes,
+                Channel: p.PaymentMethod.ToString());
         }).ToList();
 
         // ── 6. Open journal entries (Posted, not yet linked to a bank
@@ -361,20 +374,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             select new
             {
                 j.Id, j.EntryNumber, j.EntryDate, j.Description, j.Reference,
-                // Amount on the bank-linked line (signed: +debit = money in,
-                // −credit = money out). Zero when the JE doesn't touch the
-                // bank account or no account is linked.
                 BankLineNet = j.Lines.Where(l => l.AccountId == linkedAcct)
                              .Sum(l => l.DebitAmount - l.CreditAmount),
-                // Gross transaction size — total debits (= total credits).
                 GrossAmount = j.Lines.Sum(l => l.DebitAmount),
-                // Source document context — null when this JE was a manual
-                // entry not tied to a sale/purchase document. AI uses these
-                // to do contact-aware matching + aggregator (KSHOP-style)
-                // pattern detection.
+                LineCount = j.Lines.Count,
+                Note = j.Note,
+                Tags = j.Tags,
                 SourceDocNumber = src != null ? src.DocumentNumber : null,
                 SourceDocType = src != null ? (DocumentType?)src.DocumentType : null,
                 SourceDocDate = src != null ? (DateTime?)src.DocumentDate : null,
+                SrcWht = src != null ? (decimal?)src.WithholdingTaxAmount : null,
+                SrcVat = src != null ? (decimal?)src.VatAmount : null,
                 ContactName = c != null ? c.Name : null,
                 ContactTaxId = c != null ? c.TaxId : null,
             }).ToListAsync(ct);
@@ -425,9 +435,15 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 j.SourceDocDate,
                 j.ContactName,
                 j.ContactTaxId,
-                // Only worth sending when it differs from `amount`.
                 gross != amount ? gross : (decimal?)null,
-                dir);
+                dir,
+                WithholdingTax: j.SrcWht is > 0 ? j.SrcWht : null,
+                VatAmount: j.SrcVat is > 0 ? j.SrcVat : null,
+                FeeAmount: null,
+                LineCount: j.LineCount,
+                PaymentMethod: null,
+                Note: j.Note,
+                Tags: j.Tags);
         }).ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────
@@ -545,13 +561,16 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
 
         // ── 8a. Post-AI subset-sum sweep — DeepSeek consistently leaves
         // ── 'one bank deposit = many JEs' style lumps in the unmatched
-        // ── list because trying combinations is combinatorial and the
-        // ── chat model doesn't enumerate them. We do that locally here:
-        // ── for each unmatched bank txn, search the unmatched-JE pool
-        // ── (within a date window) for a subset whose signed sum equals
-        // ── the bank amount within ±0.50 baht. Sizes 2-4 covered, both
-        // ── 'all in' (+ + +) and 'offset' patterns (+ −, etc.) so cases
-        // ── like 'รับ 21,700 − ค่าธรรมเนียม 200 = 21,500 ในบัญชี' fly.
+        // ── 8a. Server-side 1:1 sweep — ALWAYS try exact one-to-one first.
+        // ── User: "จับคู่ one to one ก่อนเสมอ ... ระบบไปจับ one to many ก่อน
+        // ── รึเปล่า". For every still-unmatched bank txn, look for a single
+        // ── still-unconsumed Payment OR JE whose amount (or gross) matches
+        // ── the bank line within ±0.50 baht AND the bank-line direction
+        // ── matches AND |date diff| ≤ 7 days. A 1:1 hit ALWAYS beats any
+        // ── M:1 combination, so this runs before TryCombineLumpedJes.
+        parsed = TryExactOneToOne(parsed, txns, openPayments, openJes);
+
+        // ── 8b. Multi-JE combination fallback (the lumped-deposit case).
         parsed = TryCombineLumpedJes(parsed, txns, openJes);
 
         // ── 8b. Per-match child feedback rows — so when user accepts /
@@ -920,16 +939,118 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         return recovered;
     }
 
+    /// <summary>Server-side EXACT 1:1 sweep that runs BEFORE the multi-item
+    /// combination search. For every unmatched bank txn it looks for ONE still-
+    /// unconsumed Payment or JE with same direction + same amount (±0.50) +
+    /// |date diff| ≤ 7 days. A contact / reference signal boosts confidence but
+    /// is not required when the amount + direction + date triangle is tight.
+    /// This guarantees that legitimate 1:1 matches that the AI happened to skip
+    /// are picked up FIRST — they always beat any M:1 combination using the
+    /// same JE as one of multiple items.</summary>
+    private static ParsedResponse TryExactOneToOne(
+        ParsedResponse parsed,
+        IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> bankTxns,
+        IReadOnlyList<BulkBankMatchPrompt.OpenPaymentInput> payments,
+        IReadOnlyList<BulkBankMatchPrompt.OpenJeInput> jes)
+    {
+        const decimal Tol = 0.50m;
+        var matchedBankIds = parsed.Matches.Select(m => m.BankTxnId).ToHashSet();
+        var consumed = parsed.Matches.SelectMany(m => m.Candidates)
+            .Select(c => c.CandidateId).ToHashSet();
+
+        // Index payments + JEs by direction so the per-txn scan is O(window).
+        var payIn = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo)>();
+        var payOut = new List<(Guid Id, DateTime Date, decimal Amt, string? Contact, string? Ref, string? DocNo)>();
+        foreach (var p in payments)
+        {
+            if (!Guid.TryParse(p.Id, out var pid) || consumed.Contains(pid)) continue;
+            var tup = (pid, p.Date, p.Amount, p.ContactName, p.Reference, p.LinkedDocumentNumber);
+            if (p.Direction == "Out") payOut.Add(tup);
+            else if (p.Direction == "In") payIn.Add(tup);
+        }
+        var jeIn = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo)>();
+        var jeOut = new List<(Guid Id, DateTime Date, decimal Amt, decimal? Gross, string? Contact, string? Ref, string? DocNo)>();
+        foreach (var j in jes)
+        {
+            if (!Guid.TryParse(j.Id, out var jid) || consumed.Contains(jid)) continue;
+            var tup = (jid, j.Date, j.NetAmount, j.GrossAmount, j.ContactName, j.Reference, j.SourceDocNumber);
+            if (j.Direction == "Out") jeOut.Add(tup);
+            else if (j.Direction == "In") jeIn.Add(tup);
+        }
+
+        var added = new List<ProposedMatch>();
+        var clearedBankIds = new HashSet<Guid>();
+
+        foreach (var bt in bankTxns)
+        {
+            if (!Guid.TryParse(bt.Id, out var bid)) continue;
+            if (matchedBankIds.Contains(bid)) continue;
+            var target = Math.Abs(bt.Amount);
+            var dir = bt.Direction;
+
+            // Score by (smallest amount delta, smallest date gap, contact/ref signal).
+            (Guid Id, string Kind, decimal Amt, int DateGap, int Signal)? best = null;
+            void Consider(Guid id, string kind, decimal amt, DateTime date, string? contact, string? rf, string? docNo)
+            {
+                if (Math.Abs(amt - target) > Tol) return;
+                var gap = (int)Math.Abs((date - bt.Date).TotalDays);
+                if (gap > 7) return;
+                if (clearedBankIds.Contains(bid)) return;       // already taken in this loop
+                int signal = 0;
+                var memo = (bt.Memo ?? "") + " " + (bt.Reference ?? "") + " " + (bt.Payee ?? "");
+                if (!string.IsNullOrWhiteSpace(contact) && memo.Contains(contact, StringComparison.OrdinalIgnoreCase)) signal += 2;
+                if (!string.IsNullOrWhiteSpace(docNo)   && memo.Contains(docNo,   StringComparison.OrdinalIgnoreCase)) signal += 3;
+                if (!string.IsNullOrWhiteSpace(rf)      && memo.Contains(rf,      StringComparison.OrdinalIgnoreCase)) signal += 1;
+                if (best is null
+                    || Math.Abs(amt - target) < Math.Abs(best.Value.Amt - target)
+                    || (amt == best.Value.Amt && (gap < best.Value.DateGap
+                        || (gap == best.Value.DateGap && signal > best.Value.Signal))))
+                    best = (id, kind, amt, gap, signal);
+            }
+
+            foreach (var p in (dir == "Out" ? payOut : payIn))
+                Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo);
+            foreach (var j in (dir == "Out" ? jeOut : jeIn))
+            {
+                Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo);
+                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo);
+            }
+            if (best is null) continue;
+
+            // Confidence: tight match (same day + signal) → 0.95, else taper.
+            decimal conf = 0.75m;
+            if (best.Value.DateGap == 0) conf += 0.10m;
+            if (best.Value.Signal >= 3) conf += 0.10m;
+            else if (best.Value.Signal >= 1) conf += 0.05m;
+            if (conf > 0.98m) conf = 0.98m;
+
+            added.Add(new ProposedMatch(bid, "OneToOne",
+                new List<MatchCandidate> { new(best.Value.Id, best.Value.Kind, best.Value.Amt) },
+                conf,
+                $"1:1 exact (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, signal={best.Value.Signal})",
+                Guid.Empty));
+            clearedBankIds.Add(bid);
+            consumed.Add(best.Value.Id);
+        }
+
+        if (added.Count == 0) return parsed;
+        var newMatches = parsed.Matches.Concat(added).ToList();
+        var newUnmatched = parsed.Unmatched.Where(u => !clearedBankIds.Contains(u.BankTxnId)).ToList();
+        var newWarnings = parsed.Warnings.Concat(new[]
+        {
+            $"พบเพิ่ม {added.Count} รายการที่จับคู่ 1:1 ได้ตรงๆ (server-side exact sweep)"
+        }).ToList();
+        return parsed with { Matches = newMatches, Unmatched = newUnmatched, Warnings = newWarnings };
+    }
+
     /// <summary>Post-AI sweep that promotes lumped-deposit unmatched lines
-    /// into M:1 matches. For each still-unmatched bank txn it searches the
-    /// pool of still-unmatched JEs within ±7 days for a 2-4 JE subset whose
-    /// signed sum equals the bank amount within ±0.50 baht. Sign mixing
-    /// (e.g. รับ 1000 − ส่วนลด 50 = 950 ในบัญชี) is enumerated for sizes 2
-    /// and 3 so income-offsets-expense cases match. Sizes ≥4 stay all-
-    /// positive to keep the search tractable. Pure server-side — no extra
-    /// AI call, so it costs nothing per use. Returns an updated
-    /// ParsedResponse with the new matches added + the matched bank txns
-    /// removed from Unmatched + a warning summarising the recovery.</summary>
+    /// into M:1 matches. ONLY runs after the 1:1 sweep, so a clean 1:1
+    /// always beats any combination using one of its JEs as a lumped part.
+    /// For each still-unmatched bank txn it searches the pool of still-
+    /// unmatched JEs within ±7 days for a 2-4 JE subset whose net (same-side
+    /// add, opposite-side subtract) equals the bank amount within ±0.50 baht.
+    /// Same-side combinations are tried before any cross-side fallback per
+    /// FindBestCombination. Pure server-side — no extra AI call.</summary>
     private static ParsedResponse TryCombineLumpedJes(
         ParsedResponse parsed,
         IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> bankTxns,
