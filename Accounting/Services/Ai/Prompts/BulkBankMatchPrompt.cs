@@ -95,12 +95,23 @@ A. EXACT 1:1 — bank.amount == candidate.amount AND |bank.date − candidate.da
 
 B. CLOSE 1:1 — amount within 1% (covers small bank fees), date ≤ 3 days, contact_name match. Confidence ~0.80.
 
-C. AGGREGATOR / WALLET BUNDLING (KSHOP / Thai QR / TrueMoney / ShopeePay / wallets):
-   When bank.memo / payee / reference contains ""Thai QR"", ""KSHOP"", ""K SHOP"", ""K-Plus Shop"", ""MyQR"", ""EDC"", ""TrueMoney"", ""ShopeePay"", ""GrabPay"", ""LineMan"", ""Shopee"", ""Lazada"", ""NextPay"", ""Stripe"", ""Square"" — or the Thai phrase ""รับเงินจากการขายด้วย"" — the deposit is a DAILY ROLLUP of that day's QR/wallet receipts:
-     • Treat it as M:1 with the bank-date's open RVs / JEs whose direction is ""In"".
-     • DATE WINDOW IS STRICT: candidates must be on bank.date OR bank.date−1 (cut-off lag). NEVER pull in items from 2+ days away — they are NEVER part of the same QR/wallet bundle.
-     • Pick the SMALLEST subset of same-day RVs that sums EXACTLY to bank.amount. If 7 of 8 same-day RVs sum exact and the 8th makes it overshoot, the 8th does NOT belong to this deposit — drop it.
-     • The sum may be slightly less than the gross when an aggregator fee was deducted. If sum exceeds bank.amount by > 0.50 baht and pruning extras can't close the gap, the bundle is incomplete — return unmatched or note ""ขาด/เกิน X บาท"" honestly.
+C. FLOW-AWARE WINDOW + MATCH STYLE. Classify each bank line by memo, then apply the right window. Items outside the per-flow window are NEVER part of the match — do not include them even if the amount fits:
+
+   C1. AGGREGATOR (Thai QR / KSHOP / K SHOP / KBank Shop / K-Plus Shop / MyQR / EDC / TrueMoney / ShopeePay / GrabPay / LineMan / Shopee / Lazada / NextPay / Stripe / Square / ""รับเงินจากการขายด้วย""): M:1 OK. Window T..T+1 STRICT. Pick the SMALLEST same-day subset summing EXACTLY. If 7 of 8 RVs sum exact, drop the 8th.
+   C2. CARD SETTLEMENT (""Visa settle"" / ""MC settle"" / ""Card net"" / ""Merchant settle"" / ""POSNET""): M:1 OK. Window T..T+1.
+   C3. PERSON-TO-PERSON TRANSFER (""รับโอนเงิน"" / ""K PLUS"" / ""Internet/Mobile KTB/SCB/BBL"" / ""PromptPay"" / ""พร้อมเพย์""): 1:1 ONLY. Window T..T+1. One transfer = one receipt; never lump into M:1. Memo carries first name + masked account suffix — use it to match contact.
+   C4. AUTO-CREDIT (""รับโอนเงินอัตโนมัติ"" / ""SMART"" / ""ATS"" / ""โอนเข้าอัตโนมัติ"" / ""Direct credit""): 1:1, often a recurring contract. Window T..T+2.
+   C5. CHEQUE CLEARING (""เช็ค"" / ""Cheque"" / ""เรียกเก็บ"" / ""B/C"" / ""Bill collection"" / ""Clearing""): 1:1. Window T..T+5 (the receipt was issued days before the cleared deposit).
+   C6. COUNTER CASH DEPOSIT (""ฝากเงินสด"" / ""นำฝาก"" / ""Counter"" / ""Cash deposit"" / ""เคาน์เตอร์""): 1:1. Window T..T+3 (cash collected today may be deposited tomorrow).
+   C7. INWARD TT / SWIFT (""Inward TT"" / ""SWIFT"" / ""Remittance"" / ""โอนเข้าจากต่างประเทศ""): 1:1. Window T..T+7. Allow FX rounding ≤ 1%.
+   C8. BILL PAYMENT (""Bill Payment"" / ""ชำระบิล"" / ""Cross-bank bill""): 1:1. Window T..T+2. Reference usually carries an invoice / customer number.
+   C9. INTEREST (""ดอกเบี้ย"" / ""Interest"" / ""Int earned""): 1:1 to the bank's own interest JE. Wide window (T..T+30). No contact required.
+   C10. REFUND / REVERSAL (""Refund"" / ""คืนเงิน"" / ""Reverse"" / ""กลับรายการ""): 1:1 against a PRIOR outflow of the same amount + contact. Wide backward window.
+   C11. LOAN DISBURSEMENT / OD DRAW (""Loan disburs"" / ""เบิกสินเชื่อ"" / ""L/D"" / ""O/D"" / ""Overdraft""): 1:1 against the Loan JE. Window T..T+1.
+   C12. TAX REFUND (""คืนภาษี"" / ""Tax refund"" / ""RD refund""): 1:1, wide window (T..T+60).
+   C13. UNCLASSIFIED: conservative 1:1, window T..T+3.
+
+   ABSOLUTE RULE: M:1 is allowed ONLY for C1 + C2. Every other category is 1:1 — never combine multiple receipts into a non-aggregator bank line.
 
 D. M:1 SPLITS (multi-invoice settlement) — USE ONLY AFTER A/B FAIL FOR THIS BANK TXN: bank.amount = exact sum of 2-5 same-direction items for ONE contact within ±5 days. Σ matches within 0.50 baht. Direction-uniform — all In for a deposit, all Out for a withdrawal. If a single same-amount candidate exists, prefer that 1:1 over any 2-item split.
 

@@ -1113,9 +1113,13 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // Date-window pre-filter — typical lumped deposits land within a
             // week of the underlying receipts. Reduces n from ~200 to ~30 for
             // the size-3 / size-4 inner loops.
-            // Aggregator (Thai QR / KSHOP / wallets) collapse to a 1-day
-            // window — same-day sales only, never spanning ±7 days. Other
-            // bank lines keep the broader window.
+            // Per-category date window + M:1 eligibility. Aggregator/CardSettle
+            // are the ONLY flows where lumping many items into one bank line
+            // makes business sense; person-to-person Transfer / AutoCredit /
+            // Cheque etc. are 1:1 by nature, so the M:1 combo search must skip
+            // them and let the 1:1 sweep handle them.
+            var cat = ClassifyBankMemo(bt.Memo);
+            if (!IsAggregatorFlow(cat)) continue;   // 1:1-only flow — let TryExactOneToOne handle it
             int wDays = CandidateWindowDays(bt.Memo);
             bool W(DateTime d) => Math.Abs((d - bt.Date).TotalDays) <= wDays;
             var same = (bt.Direction == "Out" ? poolOut : poolIn)
@@ -1260,30 +1264,136 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// The returned confidence is min(AI confidence, computed ceiling) so AI
     /// can only lower it, never inflate it; mismatchNote describes the delta
     /// in plain Thai and is appended to the reasoning shown in the UI.</summary>
-    /// <summary>True when the bank memo looks like a wallet / QR aggregator
-    /// deposit (Thai QR Payment / KSHOP / KBank Shop / MyQR / EDC / TrueMoney
-    /// / ShopeePay / GrabPay / Shopee / Lazada / NextPay / Stripe / Square).
-    /// These deposits aggregate the day's receipts and land in the bank within
-    /// 0-1 days — candidates from other days are NEVER part of the bundle, so
-    /// the matcher must restrict the window to T..T+1.</summary>
-    private static bool IsAggregatorMemo(string? memo, string? payee = null, string? reference = null)
+    /// <summary>Thai-bank deposit memo categories. Each carries the realistic
+    /// candidate window in days + whether the deposit is a daily rollup (M:1)
+    /// or a single 1:1 movement. These are derived from observed memo formats
+    /// across KBank / SCB / KTB / BBL / BAY for both KShop / Internet / Mobile
+    /// / SMART / ATS / Cheque / Bill Payment / Inward TT / Interest /
+    /// Reversal / Loan flows. </summary>
+    private enum BankFlowCategory
     {
-        var s = ((memo ?? "") + " " + (payee ?? "") + " " + (reference ?? "")).ToLowerInvariant();
-        return s.Contains("thai qr") || s.Contains("kshop") || s.Contains("k shop")
+        Aggregator,    // KSHOP / Thai QR / wallets / marketplaces — daily M:1, T..T+1
+        Transfer,      // person-to-person via PromptPay / Internet / Mobile — 1:1, T..T+1
+        AutoCredit,    // SMART / ATS / "อัตโนมัติ" — 1:1 or scheduled, T..T+2
+        Cheque,        // เช็ค / B/C / bill collection — 1:1 with clearing delay, T..T+5
+        CounterCash,   // ฝากเงินสด / Counter — 1:1 may be late, T..T+3
+        InwardTT,      // SWIFT / Inward TT / Remittance — 1:1 with FX variance, T..T+7
+        BillPayment,   // ลูกค้าจ่ายผ่านเคาน์เตอร์/ชำระบิล — 1:1 with ref, T..T+2
+        Interest,      // ดอกเบี้ย / Interest earned — 1:1 to interest JE, wide
+        Refund,        // Refund / กลับรายการ — 1:1 reversal, wide
+        Loan,          // Loan disbursement / เบิกสินเชื่อ / OD — 1:1, T..T+1
+        CardSettle,    // Card / Visa/MC settlement — daily M:1, T..T+1
+        TaxRefund,     // คืนภาษี / RD refund — 1:1 wide
+        Other,         // unclassified — conservative 1:1, T..T+3
+    }
+
+    /// <summary>Classify a bank line by memo so the matcher can apply the
+    /// right date window and matching style. All checks are case-insensitive.
+    /// Order matters — more specific patterns first.</summary>
+    private static BankFlowCategory ClassifyBankMemo(string? memo, string? payee = null, string? reference = null)
+    {
+        var s = ((memo ?? "") + " | " + (payee ?? "") + " | " + (reference ?? "")).ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(s)) return BankFlowCategory.Other;
+
+        // 1) Aggregator / wallet / QR / marketplace — daily rollup.
+        if (s.Contains("thai qr") || s.Contains("kshop") || s.Contains("k shop")
             || s.Contains("kbank shop") || s.Contains("k-plus shop") || s.Contains("myqr")
             || s.Contains("my qr") || s.Contains("edc") || s.Contains("truemoney")
             || s.Contains("true money") || s.Contains("shopeepay") || s.Contains("shopee pay")
             || s.Contains("grabpay") || s.Contains("grab pay") || s.Contains("lineman")
             || s.Contains("shopee") || s.Contains("lazada") || s.Contains("nextpay")
             || s.Contains("omisego") || s.Contains("stripe") || s.Contains("square")
-            || s.Contains("รับเงินจากการขายด้วย");
+            || s.Contains("รับเงินจากการขายด้วย"))
+            return BankFlowCategory.Aggregator;
+
+        // 2) POS / Card settlement (daily rollup too).
+        if (s.Contains("visa") || s.Contains("master") || s.Contains("mc settle")
+            || s.Contains("card settle") || s.Contains("card net") || s.Contains("merchant settle")
+            || s.Contains("posnet"))
+            return BankFlowCategory.CardSettle;
+
+        // 3) Auto-credit (SMART / ATS / scheduled).
+        if (s.Contains("smart") || s.Contains(" ats ") || s.Contains("รับโอนเงินอัตโนมัติ")
+            || s.Contains("โอนเข้าอัตโนมัติ") || s.Contains("หักบัญชีอัตโนมัติ")
+            || s.Contains("scheduled transfer") || s.Contains("direct credit"))
+            return BankFlowCategory.AutoCredit;
+
+        // 4) Cheque clearing.
+        if (s.Contains("เช็ค") || s.Contains("cheque") || s.Contains("เรียกเก็บ")
+            || s.Contains("bill collection") || s.Contains(" b/c ") || s.Contains("clearing"))
+            return BankFlowCategory.Cheque;
+
+        // 5) Counter cash deposit.
+        if (s.Contains("ฝากเงินสด") || s.Contains("นำฝาก") || s.Contains("counter")
+            || s.Contains("cash deposit") || s.Contains("เคาน์เตอร์"))
+            return BankFlowCategory.CounterCash;
+
+        // 6) Inward international.
+        if (s.Contains("inward tt") || s.Contains("inward t/t") || s.Contains("swift")
+            || s.Contains("remittance") || s.Contains("inward remit")
+            || s.Contains("โอนเข้าจากต่างประเทศ"))
+            return BankFlowCategory.InwardTT;
+
+        // 7) Bill Payment (counter / cross-bank bill).
+        if (s.Contains("bill payment") || s.Contains("bill pay") || s.Contains("ชำระบิล")
+            || s.Contains("รับชำระบิล") || s.Contains("cross-bank bill") || s.Contains("counter pay"))
+            return BankFlowCategory.BillPayment;
+
+        // 8) Interest credit.
+        if (s.Contains("ดอกเบี้ย") || s.Contains("interest") || s.Contains("int earned"))
+            return BankFlowCategory.Interest;
+
+        // 9) Tax refund.
+        if (s.Contains("คืนภาษี") || s.Contains("tax refund") || s.Contains("rd refund")
+            || s.Contains("กรมสรรพากร"))
+            return BankFlowCategory.TaxRefund;
+
+        // 10) Refund / reversal.
+        if (s.Contains("refund") || s.Contains("คืนเงิน") || s.Contains("reverse")
+            || s.Contains("กลับรายการ") || s.Contains("rejection"))
+            return BankFlowCategory.Refund;
+
+        // 11) Loan disbursement / OD draw.
+        if (s.Contains("loan disburs") || s.Contains("เบิกสินเชื่อ") || s.Contains(" l/d ")
+            || s.Contains(" o/d ") || s.Contains("overdraft"))
+            return BankFlowCategory.Loan;
+
+        // 12) Person-to-person transfer (Internet / Mobile / K PLUS / PromptPay).
+        if (s.Contains("รับโอนเงิน") || s.Contains("internet") || s.Contains("mobile")
+            || s.Contains("k plus") || s.Contains("k-plus") || s.Contains("promptpay")
+            || s.Contains("พร้อมเพย์") || s.Contains("โอนเงิน"))
+            return BankFlowCategory.Transfer;
+
+        return BankFlowCategory.Other;
     }
 
-    /// <summary>Date window (in days) for candidate selection. Aggregator
-    /// deposits get T..T+1 only (the bundle covers exactly the day's sales,
-    /// rarely spilling 1 day for cut-off lag); normal bank txns get ±7 days.</summary>
+    /// <summary>Realistic candidate date window (days) per flow category.</summary>
     private static int CandidateWindowDays(string? memo, string? payee = null, string? reference = null)
-        => IsAggregatorMemo(memo, payee, reference) ? 1 : 7;
+        => ClassifyBankMemo(memo, payee, reference) switch
+        {
+            BankFlowCategory.Aggregator  => 1,   // T..T+1 strict
+            BankFlowCategory.CardSettle  => 1,
+            BankFlowCategory.Transfer    => 1,   // direct transfers settle same day
+            BankFlowCategory.AutoCredit  => 2,
+            BankFlowCategory.BillPayment => 2,
+            BankFlowCategory.Loan        => 1,
+            BankFlowCategory.CounterCash => 3,
+            BankFlowCategory.Cheque      => 5,   // clearing delay
+            BankFlowCategory.InwardTT    => 7,
+            BankFlowCategory.Interest    => 30,
+            BankFlowCategory.Refund      => 30,
+            BankFlowCategory.TaxRefund   => 60,
+            _                            => 3,   // conservative default
+        };
+
+    /// <summary>True when this category aggregates many same-day items into
+    /// one bank line (M:1 is expected). Other categories should prefer 1:1.</summary>
+    private static bool IsAggregatorFlow(BankFlowCategory c)
+        => c == BankFlowCategory.Aggregator || c == BankFlowCategory.CardSettle;
+
+    // Back-compat shim used by callers that only need the aggregator flag.
+    private static bool IsAggregatorMemo(string? memo, string? payee = null, string? reference = null)
+        => IsAggregatorFlow(ClassifyBankMemo(memo, payee, reference));
 
     private static (decimal Confidence, string MismatchNote) CalibrateConfidence(
         Models.Entities.BankTransaction bankTxn, ProposedMatch match)
