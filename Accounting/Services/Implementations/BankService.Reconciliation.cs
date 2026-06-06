@@ -35,13 +35,25 @@ public partial class BankService
             .FirstOrDefaultAsync(a => a.Id == request.BankAccountId && a.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
-        // Resolve and validate bank-side items
+        // Lock the bank lines we're about to claim BEFORE re-reading them, so
+        // a concurrent CreateReconciliationGroup can't race past the
+        // already-reconciled check below. Per-line advisory lock auto-releases
+        // at transaction end (caller wraps this method in BeginTransaction).
         var bankTxnIds = request.BankTransactions.Select(b => b.ItemId).Distinct().ToList();
+        foreach (var bid in bankTxnIds)
+        {
+            var lockKey = HashCode.Combine(companyId, bid, "bank-rec");
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+        }
         var bankTxns = await _db.Set<BankTransaction>()
             .Where(t => t.CompanyId == companyId
                 && t.BankAccountId == request.BankAccountId
                 && bankTxnIds.Contains(t.Id))
             .ToListAsync();
+
+        // Fiscal-period guard: every involved bank line must be in an open period.
+        foreach (var t in bankTxns)
+            await EnsureFiscalPeriodOpenAsync(companyId, t.TransactionDate, "create-reconciliation-group");
         if (bankTxns.Count != bankTxnIds.Count)
             throw new InvalidOperationException("มี bank transaction บางรายการไม่พบในบัญชีนี้");
 

@@ -86,7 +86,11 @@ public sealed record MissingDataHint(Guid BankTxnId, string MissingType, string 
 
 public class BulkBankAiMatchService : IBulkBankAiMatchService
 {
-    private const int MaxBankTxns = 150;
+    // 400 supports high-volume retail / hotel POS without truncating; the
+    // server passes (1:1, M:1) used to miss ~33% of txns past the old 150
+    // cap. Server passes are pure CPU so this cost is negligible; AI only
+    // sees the residual which is usually a small subset.
+    private const int MaxBankTxns = 400;
     // Bumped from 80 → 200 per kind (docs / payments / JEs). The cap exists so
     // the prompt fits the provider's context window; 200 × 3 kinds + 150 txns
     // is still well within DeepSeek-V3's 128k limit, and 80 was truncating
@@ -247,11 +251,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // showing May docs). +5 days covers settlement lag without the bleed.
         var windowStart = fromDate.AddDays(-90);
         var windowEnd = toDate.AddDays(5);
+        // Currency filter: a USD bank account must NEVER match THB docs.
+        // The matcher compares numeric amounts; without this filter a 30,780
+        // USD deposit could collide with a 30,780 THB invoice and produce
+        // a false "ยอดต่าง 0" auto-tick. Match same-currency only.
+        var bankCurrency = bank.Currency;
         var docs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                         && d.Status != DocumentStatus.Voided
                         && d.Status != DocumentStatus.Draft
                         && d.BalanceDue > 0
+                        && d.Currency == bankCurrency
                         && d.DocumentDate >= windowStart
                         && d.DocumentDate <= windowEnd
                         && (d.DocumentType == DocumentType.Invoice
@@ -290,6 +300,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         var matchedPaymentIds = matchedPaymentIdsRaw.ToHashSet();
         var payments = await _db.Payments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                        && p.Document.Currency == bankCurrency
                         && p.PaymentDate >= windowStart
                         && p.PaymentDate <= windowEnd)
             .Where(p => !matchedPaymentIds.Contains(p.Id))
@@ -377,18 +388,22 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // payee-based 1:1 matching ('bank Payee=Take Time Nature Resort →
         // JE whose source Receipt was for that contact'). Joining via
         // SourceDocumentId fixes that without an extra round-trip.
+        // For source-doc-linked JEs filter by document currency; manual JEs
+        // (no source doc) are assumed in the company's base currency and only
+        // included when the bank account matches base currency.
+        var baseCurrency = company.BaseCurrency;
+        var includeManualJes = string.Equals(bankCurrency, baseCurrency, StringComparison.OrdinalIgnoreCase);
         var jeRows = await (
             from j in _db.JournalEntries.AsNoTracking()
             where j.CompanyId == companyId && !j.IsDeleted
                 && j.Status == JournalEntryStatus.Posted
-                // Exclude entries that were later reversed (superseded) — a
-                // reversed RV/PV must never be offered as a live candidate, or
-                // the matcher could pick the cancelled original over the truth.
                 && j.ReversedByEntryId == null
                 && j.EntryDate >= jeWindowStart && j.EntryDate <= jeWindowEnd
                 && !matchedJeIds.Contains(j.Id)
             from src in _db.Documents.AsNoTracking()
-                .Where(d => j.SourceDocumentId != null && d.Id == j.SourceDocumentId).DefaultIfEmpty()
+                .Where(d => j.SourceDocumentId != null && d.Id == j.SourceDocumentId
+                    && d.Currency == bankCurrency).DefaultIfEmpty()
+            where src != null || includeManualJes
             from c in _db.Contacts.AsNoTracking()
                 .Where(co => src != null && co.Id == src.ContactId).DefaultIfEmpty()
             orderby j.EntryDate descending
@@ -467,7 +482,15 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 Note: j.Note,
                 Tags: j.Tags,
                 ContactPhone: j.ContactPhone);
-        }).ToList();
+        })
+        // Drop JEs whose direction is unknown AND that don't even touch the
+        // bank GL account (BankLineNet == 0). The verifier would FAIL them
+        // for direction mismatch on every bank line anyway — surfacing them
+        // wastes prompt tokens and the verifier's time. JEs with a known
+        // SourceDocType keep their direction even when bank-line is 0
+        // (a WHT-only receipt nets the bank to gross−wht, never 0).
+        .Where(j => !string.IsNullOrEmpty(j.Direction))
+        .ToList();
 
         // ── 6b. Zero-candidate guard ───────────────────────────────────
         // If nothing made it through the AR/AP-doc + payment + JE filters,
@@ -828,6 +851,19 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         var calibrated = new List<ProposedMatch>(parsed.Matches.Count);
         var feedbackRecords = new List<AiFeedbackRecord>();
         var recordIndexOfMatch = new int[parsed.Matches.Count];   // -1 = no feedback row
+        // MEMOISE per-bank-txn classification + flow category so the verifier
+        // loop doesn't re-call BankFlowClassifier.Classify (regex-heavy) once
+        // per match. Two matches sharing the same bank line share the same
+        // memo → same category. 1000 matches over 200 bank lines = 5× saving
+        // on classifier alone.
+        var bankCatCache = new Dictionary<Guid, BankFlowCategory>();
+        BankFlowCategory CategoryFor(Models.Entities.BankTransaction bt)
+        {
+            if (bankCatCache.TryGetValue(bt.Id, out var cat)) return cat;
+            cat = BankFlowClassifier.Classify(bt.Description, bt.Payee, bt.Reference);
+            bankCatCache[bt.Id] = cat;
+            return cat;
+        }
         int mi = -1;
         foreach (var m0 in parsed.Matches)
         {
@@ -930,7 +966,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // channel (M:1 usually shares method); null when nothing known.
             var firstChannel = m.Candidates.Count > 0
                 && channelById.TryGetValue(m.Candidates[0].CandidateId.ToString(), out var ch0) ? ch0 : null;
-            var bankCat = BankFlowClassifier.Classify(bt.Description, bt.Payee, bt.Reference);
+            var bankCat = CategoryFor(bt);
             bool channelOk = BankFlowClassifier.IsChannelCompatible(bankCat, firstChannel);
             // Re-classify delta for the verifier (so the report is consistent
             // with what CalibrateConfidence used).

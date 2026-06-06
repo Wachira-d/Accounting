@@ -751,11 +751,32 @@ public partial class BankService
             var results = new List<BankTransactionResponse>();
             var groupId = Guid.NewGuid().ToString("N");
 
+            // Lock each bank line up-front so a concurrent batch-reconcile
+            // can't claim the same one. pg_advisory_xact_lock auto-releases
+            // when this transaction commits/rolls back.
+            foreach (var item in request.Items)
+            {
+                var lockKey = HashCode.Combine(companyId, item.BankTransactionId, "bank-rec");
+                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+            }
+
             foreach (var item in request.Items)
             {
                 var txn = await _db.Set<BankTransaction>()
                     .FirstOrDefaultAsync(t => t.Id == item.BankTransactionId && t.CompanyId == companyId)
                     ?? throw new KeyNotFoundException($"ไม่พบรายการธนาคาร {item.BankTransactionId}");
+
+                // Fiscal-period guard per item — a batch can span months and
+                // we don't want a single closed-period txn to silently corrupt.
+                await EnsureFiscalPeriodOpenAsync(companyId, txn.TransactionDate, "batch-reconcile");
+
+                // RE-VERIFY ownership after the lock: another transaction
+                // might have committed a match for this bank line BEFORE we
+                // acquired the lock. If so, fail explicitly rather than
+                // double-claim.
+                if (txn.ReconciliationStatus == ReconciliationStatus.Matched)
+                    throw new InvalidOperationException(
+                        $"รายการธนาคาร {txn.TransactionDate:d MMM yyyy} ยอด {txn.Amount:N2} ถูกจับคู่ไปก่อนหน้านี้แล้ว");
 
                 // Amounts must agree for every item (single or many-to-one).
                 var ids = new List<Guid>();

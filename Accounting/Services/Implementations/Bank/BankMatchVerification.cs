@@ -108,23 +108,54 @@ public static class BankMatchVerification
                   "ต้องตรวจก่อนยืนยัน")
             : new("ยอดที่อ้างตรงกับ DB", CheckStatus.Pass));
 
-        // ── 7. Contact consistency across candidates in the SAME match
-        // (M:1 with mixed customers is suspicious unless it's an aggregator).
+        // ── 7. Contact consistency. Three cases:
+        //   - Pure same-side M:1 (all In or all Out) with mixed customers →
+        //     suspicious unless aggregator (Σ QR/Card from many payers).
+        //   - Net-settlement (In + Out present) — each side MUST be the same
+        //     contact (RV − PV of one customer paying NET). A net-settlement
+        //     pairing two DIFFERENT customers is almost certainly wrong and
+        //     should HARD-FAIL — was only a warning before.
+        //   - 0 or 1 known contact → trivially pass.
         if (x.CandidateContacts.Count >= 2)
         {
-            var distinct = x.CandidateContacts
-                .Where(c => !string.IsNullOrWhiteSpace(c))
-                .Select(c => c!.Trim().ToLowerInvariant())
-                .Distinct()
-                .ToList();
-            if (distinct.Count <= 1)
-                checks.Add(new("ลูกค้าคนเดียวกัน", CheckStatus.Pass));
-            else if (x.IsAggregatorFlow)
-                checks.Add(new("ลูกค้าหลายราย (Aggregator)", CheckStatus.Pass,
-                    $"{distinct.Count} ราย — ปกติสำหรับยอดรวม QR/Card"));
+            // Pair candidates with their direction; align by index.
+            var pairs = new List<(string? Contact, string? Direction)>(x.CandidateContacts.Count);
+            for (int i = 0; i < x.CandidateContacts.Count; i++)
+                pairs.Add((x.CandidateContacts[i],
+                    i < x.CandidateDirections.Count ? x.CandidateDirections[i] : null));
+            var inContacts = pairs.Where(p => string.Equals(p.Direction, "In", StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Contact?.Trim().ToLowerInvariant())
+                .Where(c => !string.IsNullOrEmpty(c))
+                .Distinct().ToList();
+            var outContacts = pairs.Where(p => string.Equals(p.Direction, "Out", StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Contact?.Trim().ToLowerInvariant())
+                .Where(c => !string.IsNullOrEmpty(c))
+                .Distinct().ToList();
+            bool netSettle = inContacts.Count > 0 && outContacts.Count > 0;
+            if (netSettle && (inContacts.Count > 1 || outContacts.Count > 1))
+            {
+                // Net-settlement spanning multiple customers on a side =
+                // basically guaranteed wrong (you can't net Customer A's
+                // RV against Customer B's PV). HARD FAIL.
+                checks.Add(new("Net-settlement ลูกค้าหลายราย", CheckStatus.Fail,
+                    $"ฝั่งเข้า {inContacts.Count} ราย, ฝั่งออก {outContacts.Count} ราย — RV-PV ต้องเป็นลูกค้าเดียวกัน"));
+            }
             else
-                checks.Add(new("ลูกค้าหลายราย", CheckStatus.Warn,
-                    $"{distinct.Count} ราย ใน 1 bank line ที่ไม่ใช่ aggregator"));
+            {
+                var distinct = x.CandidateContacts
+                    .Where(c => !string.IsNullOrWhiteSpace(c))
+                    .Select(c => c!.Trim().ToLowerInvariant())
+                    .Distinct()
+                    .ToList();
+                if (distinct.Count <= 1)
+                    checks.Add(new("ลูกค้าคนเดียวกัน", CheckStatus.Pass));
+                else if (x.IsAggregatorFlow)
+                    checks.Add(new("ลูกค้าหลายราย (Aggregator)", CheckStatus.Pass,
+                        $"{distinct.Count} ราย — ปกติสำหรับยอดรวม QR/Card"));
+                else
+                    checks.Add(new("ลูกค้าหลายราย", CheckStatus.Warn,
+                        $"{distinct.Count} ราย ใน 1 bank line ที่ไม่ใช่ aggregator"));
+            }
         }
         else
         {

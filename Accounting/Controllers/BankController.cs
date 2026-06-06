@@ -190,6 +190,38 @@ public class BankController : ControllerBase
         return Ok(new ApiResponse<BankTransactionResponse>(true, result, "ยกเลิกการจับคู่สำเร็จ"));
     }
 
+    public sealed record BatchUnmatchRequest(List<Guid> BankTransactionIds);
+
+    /// <summary>Bulk-unmatch — reverses N bank reconciliations in one call.
+    /// Loops UnmatchTransactionAsync per id; individual failures don't abort
+    /// the rest, but their reasons come back in the response so the user
+    /// knows what still needs attention.</summary>
+    [HttpPost("accounts/{accountId:guid}/batch-unmatch")]
+    public async Task<ActionResult<ApiResponse<object>>> BatchUnmatch(
+        Guid companyId, Guid accountId, [FromBody] BatchUnmatchRequest req)
+    {
+        if (req.BankTransactionIds == null || req.BankTransactionIds.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องเลือก bank transaction อย่างน้อย 1 รายการ"));
+        var ok = 0;
+        var failed = new List<object>();
+        foreach (var id in req.BankTransactionIds.Distinct())
+        {
+            try
+            {
+                await _bankService.UnmatchTransactionAsync(companyId, new UnmatchRequest(id));
+                ok++;
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new { bankTxnId = id, reason = ex.Message });
+            }
+        }
+        return Ok(new ApiResponse<object>(true,
+            new { unmatched = ok, failed },
+            $"ยกเลิกการจับคู่ {ok}/{req.BankTransactionIds.Count} รายการ" +
+            (failed.Count > 0 ? $" — ล้มเหลว {failed.Count}" : "")));
+    }
+
     /// <summary>
     /// List ranked match candidates (Payments + JournalEntries) for a bank transaction.
     /// Used by the manual reconciliation picker so the user can choose from a list
