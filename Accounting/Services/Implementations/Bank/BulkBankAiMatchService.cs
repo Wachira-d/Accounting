@@ -884,8 +884,57 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 }).ToList() };
         }
 
+        // Build the cheap lookups needed by the pre-dedup verifier (bank txn
+        // entities + per-id direction). We need these BEFORE dedup so the
+        // verifier-lite can run.
+        var bankTxnLookupForPreDedup = await _db.BankTransactions.AsNoTracking()
+            .Where(t => t.BankAccountId == bankAccountId && !t.IsDeleted
+                        && parsed.Matches.Select(m => m.BankTxnId).Contains(t.Id))
+            .ToDictionaryAsync(t => t.Id, t => t, ct);
+        var dirByIdForPreDedup = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in openPayments) dirByIdForPreDedup[p.Id] = p.Direction;
+        foreach (var j in openJes) dirByIdForPreDedup[j.Id] = j.Direction;
+        foreach (var d in openDocs)
+            dirByIdForPreDedup[d.Id] = d.Direction == "AR" ? "In" : (d.Direction == "AP" ? "Out" : null);
+
+        // ── 7d. PRE-DEDUP VERIFIER — runs the cheap parts of the verifier
+        // (direction + amount sanity) on every proposed match and CAPS the
+        // confidence of any HardFail BEFORE dedup decides winners. Without
+        // this, an AI-proposed match at 0.85 with a direction mismatch could
+        // beat a server-proposed match at 0.72 that's actually correct,
+        // because dedup is conf-desc + count-asc. After this cap, the wrong
+        // match drops to 0.50 (below the 0.72 correct one) and dedup picks
+        // the right one. The FULL verifier still runs in the calibrate loop
+        // for the surviving matches; this is just an early filter.
+        if (parsed.Matches.Count > 0)
+        {
+            var preCapped = new List<ProposedMatch>(parsed.Matches.Count);
+            foreach (var m in parsed.Matches)
+            {
+                if (!bankTxnLookupForPreDedup.TryGetValue(m.BankTxnId, out var bt))
+                {
+                    preCapped.Add(m); continue;
+                }
+                var bankDir = bt.Amount >= 0 ? "In" : "Out";
+                var candDirs = m.Candidates
+                    .Select(c => dirByIdForPreDedup.TryGetValue(c.CandidateId.ToString(), out var d) ? d : null)
+                    .ToList();
+                bool dirOk = candDirs.Any(d => string.Equals(d, bankDir, StringComparison.OrdinalIgnoreCase));
+                var sumCand = m.Candidates.Sum(c => c.Amount);
+                var delta = Math.Abs(Math.Abs(bt.Amount) - sumCand);
+                var deltaPct = bt.Amount != 0 ? delta / Math.Abs(bt.Amount) : 0m;
+                bool grossDelta = delta > 0.50m && deltaPct > 0.05m;
+                bool failed = !dirOk || grossDelta;
+                preCapped.Add(failed && m.Confidence > 0.50m
+                    ? m with { Confidence = 0.50m, Reasoning = (m.Reasoning ?? "") + " · pre-dedup hardfail" }
+                    : m);
+            }
+            parsed = parsed with { Matches = preCapped };
+        }
+
         // ── 8. DEDUPLICATE — server matches + AI matches both reference the
-        // ── same id pool. Dedup keeps the best owner of each.
+        // ── same id pool. Dedup keeps the best owner of each (now using
+        // post-pre-cap confidence so hard-failed matches lose to passing ones).
         parsed = DeduplicateMatches(parsed);
 
         // ── 8b. Per-match child feedback rows — so when user accepts /
@@ -893,10 +942,20 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // ── learn per-signature instead of one big undifferentiated row.
         // ── Need the BankTransaction entities again (with description /
         // ── reference / payee) to populate the single-match shape.
-        var bankTxnLookup = await _db.BankTransactions.AsNoTracking()
-            .Where(t => t.BankAccountId == bankAccountId && !t.IsDeleted
-                        && parsed.Matches.Select(m => m.BankTxnId).Contains(t.Id))
-            .ToDictionaryAsync(t => t.Id, t => t, ct);
+        // Reuse the pre-dedup lookup when its rows cover the (post-dedup)
+        // matches; otherwise fetch the missing ones. Saves a DB round-trip
+        // when no new bank-line ids appeared between the two passes.
+        var stillNeeded = parsed.Matches.Select(m => m.BankTxnId).Distinct()
+            .Where(id => !bankTxnLookupForPreDedup.ContainsKey(id)).ToList();
+        var bankTxnLookup = bankTxnLookupForPreDedup;
+        if (stillNeeded.Count > 0)
+        {
+            var more = await _db.BankTransactions.AsNoTracking()
+                .Where(t => t.BankAccountId == bankAccountId && !t.IsDeleted
+                            && stillNeeded.Contains(t.Id))
+                .ToDictionaryAsync(t => t.Id, t => t, ct);
+            foreach (var (k, v) in more) bankTxnLookup[k] = v;
+        }
         // Doc-number + REAL amount lookup. The UI shows "RV-202604-0500 (500)"
         // AND — critically — we OVERRIDE the candidate amount with the true
         // figure from our DB. The AI sometimes HALLUCINATES the amount (returns
@@ -1098,7 +1157,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 ChannelCompatible: channelOk,
                 AmountHallucinated: hallucinationNote != null,
                 DeltaKind: deltaExpl.Kind,
-                IsAggregatorFlow: BankFlowClassifier.IsAggregatorFlow(bankCat)));
+                IsAggregatorFlow: BankFlowClassifier.IsAggregatorFlow(bankCat),
+                IsOtaSettlement: bankCat == BankFlowCategory.OtaSettlement));
 
             // Hard FAIL → confidence capped low + reasoning shows what failed.
             if (report.HardFail && calibratedConf > 0.50m)
@@ -1615,8 +1675,15 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 Consider(p.Id, "Payment", p.Amt, p.Date, p.Contact, p.Ref, p.DocNo, p.TaxId, p.Acct, p.Phone, p.Channel);
             foreach (var j in (dir == "Out" ? jeOut : jeIn))
             {
+                // For JEs with WHT, both Net and Gross can match different
+                // bank amounts. Try Net first; only try Gross if Net DIDN'T
+                // already match this target (otherwise we'd double-increment
+                // exactAmountInWindow on a single JE — falsely triggering
+                // the ambiguity guard when the JE is actually unique).
+                bool netMatched = Math.Abs(j.Amt - target) <= Tol && InWindow(j.Date, bt.Date, win);
                 Consider(j.Id, "JournalEntry", j.Amt, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone, j.Channel);
-                if (j.Gross.HasValue) Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone, j.Channel);
+                if (j.Gross.HasValue && !netMatched)
+                    Consider(j.Id, "JournalEntry", j.Gross.Value, j.Date, j.Contact, j.Ref, j.DocNo, j.TaxId, j.Acct, j.Phone, j.Channel);
             }
             if (best is null) continue;
 
@@ -2129,12 +2196,20 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // week of the underlying receipts. Reduces n from ~200 to ~30 for
             // the size-3 / size-4 inner loops.
             // Per-category date window + M:1 eligibility. Aggregator/CardSettle
-            // are the ONLY flows where lumping many items into one bank line
-            // makes business sense; person-to-person Transfer / AutoCredit /
-            // Cheque etc. are 1:1 by nature, so the M:1 combo search must skip
-            // them and let the 1:1 sweep handle them.
+            // are the primary lumping flows; Transfer + AutoCredit also see
+            // M:1 in real SME books — a single bank transfer paying multiple
+            // invoices simultaneously, or one SMART/ATS run settling several
+            // recurring bills. We extend the M:1 search to those categories
+            // BUT only on bank lines big enough to plausibly contain ≥2 docs
+            // (cuts out the 500-baht person-to-person cases that should
+            // remain 1:1). OtaSettlement is allowed because RVs sum minus
+            // commission is a M:1 net pattern.
             var cat = ClassifyBankMemo(bt.Memo);
-            if (!IsAggregatorFlow(cat)) continue;   // 1:1-only flow — let TryExactOneToOne handle it
+            bool isLumpableFlow = IsAggregatorFlow(cat)
+                || cat == BankFlowCategory.OtaSettlement
+                || ((cat == BankFlowCategory.Transfer || cat == BankFlowCategory.AutoCredit)
+                    && bt.Amount >= 2_000m);   // small transfers stay 1:1
+            if (!isLumpableFlow) continue;
             var win = CandidateWindow(bt.Memo);
             bool W(DateTime d) => InWindow(d, bt.Date, win);
             // Amount pre-filter: no single same-side item can exceed the target

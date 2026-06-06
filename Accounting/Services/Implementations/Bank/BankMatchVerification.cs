@@ -50,7 +50,8 @@ public static class BankMatchVerification
         bool ChannelCompatible,             // BankFlowClassifier.IsChannelCompatible
         bool AmountHallucinated,            // realAmountById flagged
         BankFeeDictionary.DeltaKind DeltaKind,
-        bool IsAggregatorFlow);
+        bool IsAggregatorFlow,
+        bool IsOtaSettlement = false);      // Booking.com / Agoda — N guests + 1 commission
 
     /// <summary>Run all checks. Order matters for the report; weights are
     /// inside the score formula (a Fail anywhere pulls down).</summary>
@@ -132,13 +133,22 @@ public static class BankMatchVerification
                 .Where(c => !string.IsNullOrEmpty(c))
                 .Distinct().ToList();
             bool netSettle = inContacts.Count > 0 && outContacts.Count > 0;
-            if (netSettle && (inContacts.Count > 1 || outContacts.Count > 1))
+            // OtaSettlement (Booking.com / Agoda): N RVs from MANY guests on
+            // In side + 1 commission PV on Out side. Multiple In contacts is
+            // NORMAL — caller flags via IsOtaSettlement.
+            bool otaSettle = x.IsOtaSettlement && netSettle && outContacts.Count <= 1;
+            if (netSettle && (inContacts.Count > 1 || outContacts.Count > 1) && !otaSettle)
             {
                 // Net-settlement spanning multiple customers on a side =
                 // basically guaranteed wrong (you can't net Customer A's
                 // RV against Customer B's PV). HARD FAIL.
                 checks.Add(new("Net-settlement ลูกค้าหลายราย", CheckStatus.Fail,
                     $"ฝั่งเข้า {inContacts.Count} ราย, ฝั่งออก {outContacts.Count} ราย — RV-PV ต้องเป็นลูกค้าเดียวกัน"));
+            }
+            else if (otaSettle && (inContacts.Count > 1 || outContacts.Count > 1))
+            {
+                checks.Add(new("OTA settlement ลูกค้าหลายราย", CheckStatus.Pass,
+                    $"ฝั่งเข้า {inContacts.Count} guests + ฝั่งออก commission 1 ราย — รูปแบบปกติของ OTA"));
             }
             else
             {
