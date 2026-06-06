@@ -542,10 +542,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             bank.AccountNumber, bank.Currency,
             bank.CurrentBalance, glBalance);
 
-        // ── 6e. Chart of accounts — fee/WHT/FX hints resolve against the
-        // ── company's actual COA so the suggested account code matches what
-        // ── the user really has. Also passed to AI so it can refer to real
-        // ── accounts when describing matches.
+        // ── 6e. Chart of accounts — kept SERVER-SIDE only. Resolver maps the
+        // ── symbolic delta hints (BankCharges/WhtReceivable/FxLoss/…) to the
+        // ── company's REAL account codes inside CalibrateConfidence's note.
+        // ── NOT sent to AI: the matcher pairs bank lines with already-posted
+        // ── docs whose GL accounts were set at creation — AI doesn't need to
+        // ── reason about COA to identify the right document.
         var coa = await CompanyChartOfAccountsResolver.LoadAsync(_db, companyId, ct);
 
         // ── 6f. Historical account-mapping suggester — for unmatched bank
@@ -635,11 +637,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                     $"🔎 ส่ง {uncertainCount} รายการที่ server ไม่มั่นใจ ≥0.95 ไปให้ AI วิเคราะห์ซ้ำ พร้อม residual"
                 }).ToList() };
 
-            var coaInput = coa.Active
-                .Select(a => new BulkBankMatchPrompt.ChartOfAccountInput(a.Code, a.Name, a.Type.ToString()))
-                .ToList();
+            // COA stays SERVER-SIDE (CalibrateConfidence + HistoricalSuggester
+            // use it to resolve fee/WHT hints + suggest accounts for unmatched).
+            // Not sent to AI — the matcher works on identity (name/ref/amount/
+            // date), not GL accounts, since candidates are already POSTED.
             var req = BulkBankMatchPrompt.Build(companyId, bankAccountId, fromDate, toDate,
-                company, bankContext, residualTxns, residualDocs, residualPayments, residualJes, coaInput);
+                company, bankContext, residualTxns, residualDocs, residualPayments, residualJes);
             resp = await _orchestrator.AskAsync(req, ct);
 
             // Parse AI output — defensive because AI output is JSON-but-fallible.

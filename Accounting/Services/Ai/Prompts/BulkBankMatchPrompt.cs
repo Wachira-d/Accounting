@@ -67,7 +67,6 @@ H1. POSITIVE AMOUNTS ONLY. Every candidates[*].amount MUST be a positive decimal
 H2. PREFER SAME-SIDE; net-settlement is LAST RESORT. Same-side items (matching the bank direction) ADD to the match (+amount). Opposite-side items SUBTRACT (−amount) but you may include them ONLY after every same-side strategy has been exhausted, AND only with a clear net-settlement story (customer paid net of a refund/fee you owe them, SAME contact). For a typical deposit, the answer is almost always 1-3 Receipt Vouchers summing to the bank amount — NOT an RV minus a PV. Two SAME-side items can NEVER be subtracted from one another (two Receipt Vouchers cannot offset — both are inflows; this is the −500 + 2,500 nonsense to avoid).
 H3. NET = BANK AMOUNT. Σ(same-direction items) − Σ(opposite-direction items) must equal bank_txn.amount within ±0.50 baht. If you can't make it net, return the bank txn under ""unmatched"" rather than approximating.
 H4. DIRECTION-NULL ITEMS. A JE/Payment with direction=null has no clear side — only use it when memo cites its exact document number; never include it in a multi-item sum.
-H5. CHART OF ACCOUNTS is provided as `chart_of_accounts` (active codes for this company). When you describe a delta cause in `reasoning` (bank fee / WHT / FX / rounding), refer to a CODE FROM THIS LIST — e.g. ""WHT receivable 1304"" — instead of generic text. Never invent codes not in the list.
 ═══════════════════════════════════════════════════════════════════
 
 candidateType must be ""Payment"" or ""JournalEntry"" — NEVER ""Document"". Open documents are CONTEXT to help you identify the right payment (e.g. memo cites invoice INV-2025-0312 → find the Payment whose linked_document.number = INV-2025-0312). If a bank txn matches a document that has NO linked payment, return it in missing_data with missingType=""Payment"" so the user knows to create the payment first.
@@ -255,14 +254,15 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
         IReadOnlyList<OpenJeInput> openJes,
         IReadOnlyList<ChartOfAccountInput>? accounts = null)
     {
-        // Cap COA at MaxAccountsInPrompt to keep prompt size bounded — Thai
-        // SME charts run 100-300 active accounts; the AI needs the codes to
-        // describe fee/WHT/FX adjustments, not to memorise the full hierarchy.
-        const int MaxAccountsInPrompt = 200;
-        var trimmedAccounts = accounts == null ? Array.Empty<ChartOfAccountInput>()
-            : accounts.Count <= MaxAccountsInPrompt
-                ? accounts.ToArray()
-                : accounts.Take(MaxAccountsInPrompt).ToArray();
+        // NOTE: `accounts` is intentionally NOT included in the prompt — the
+        // matcher's job is to pair bank lines with ALREADY-POSTED documents.
+        // Their GL accounts were set at creation; AI doesn't need to choose
+        // accounts to match identity. The full chart only wastes prompt
+        // tokens. Resolution of fee/WHT/FX hints to real codes happens
+        // SERVER-SIDE via CompanyChartOfAccountsResolver after the AI call.
+        // The parameter stays in the signature for callers that want to opt
+        // in later (e.g. a "create JE from unmatched" flow) without an API break.
+        _ = accounts;
 
         var payload = new
         {
@@ -274,20 +274,12 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
             },
             company,
             bank_account = bankAccount,
-            // Chart of accounts (active only, capped) so AI can reference real
-            // codes when suggesting fee/WHT/adjustment lines. Empty when COA
-            // wasn't loaded — AI falls back to generic descriptions.
-            chart_of_accounts = trimmedAccounts.Select(a => new
-            {
-                code = a.Code, name = a.Name, type = a.Type,
-            }),
             counts = new
             {
                 bank_txns = bankTxns.Count,
                 open_docs = openDocs.Count,
                 open_payments = openPayments.Count,
                 open_jes = openJes.Count,
-                chart_accounts = trimmedAccounts.Length,
             },
             // Sorted oldest-first inside each collection so AI's
             // chronological matching ("settlement on 15th covered
