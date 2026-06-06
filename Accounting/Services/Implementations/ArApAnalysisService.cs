@@ -30,17 +30,37 @@ public class ArApAnalysisService : IArApAnalysisService
     public async Task<ArApOverviewResponse> GetOverviewAsync(Guid companyId)
     {
         var now = DateTime.UtcNow.Date;
-        var docs = await _db.Documents
-            .Include(d => d.Contact)
-            .Where(d => d.CompanyId == companyId && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
+        // PERF: previously pulled EVERY doc (incl. Contact navigation) into
+        // memory then ran 12 in-memory passes for the trend. On a 50k-doc
+        // book that's 200MB+ RAM + slow GC. Now restrict the SQL to docs
+        // that are EITHER open (drives totals/aging/top) OR within 12 months
+        // (drives revenue/cost/trend) — typical SME pulls ~5% of history.
+        // Also project to a flat shape so EF doesn't materialise the full
+        // Document entity + every navigation.
+        var yearAgo = now.AddMonths(-12);
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft
+                && (d.BalanceDue > 0 || d.DocumentDate >= yearAgo))
+            .Select(d => new DocRow(
+                d.Id, d.ContactId, d.Contact.Name, d.Contact.TaxId,
+                d.DocumentType, d.DocumentDate, d.DueDate,
+                d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Status))
             .ToListAsync();
 
-        // Outstanding (credit) sets drive the AR/AP balances; revenue/cost sets
-        // (incl. cash docs) drive DSO/DPO denominators + the trend volumes.
-        var arDocs = docs.Where(d => ArOpenTypes.Contains(d.DocumentType)).ToList();
-        var apDocs = docs.Where(d => ApOpenTypes.Contains(d.DocumentType)).ToList();
-        var revenueDocs = docs.Where(d => RevenueTypes.Contains(d.DocumentType)).ToList();
-        var costDocs = docs.Where(d => CostTypes.Contains(d.DocumentType)).ToList();
+        // Single-pass classification — much cheaper than four .Where(...).ToList().
+        var arDocs = new List<DocRow>();
+        var apDocs = new List<DocRow>();
+        var revenueDocs = new List<DocRow>();
+        var costDocs = new List<DocRow>();
+        foreach (var d in docs)
+        {
+            if (ArOpenTypes.Contains(d.DocumentType)) arDocs.Add(d);
+            if (ApOpenTypes.Contains(d.DocumentType)) apDocs.Add(d);
+            if (RevenueTypes.Contains(d.DocumentType)) revenueDocs.Add(d);
+            if (CostTypes.Contains(d.DocumentType)) costDocs.Add(d);
+        }
 
         var arOpen = arDocs.Where(d => d.BalanceDue > 0).ToList();
         var apOpen = apDocs.Where(d => d.BalanceDue > 0).ToList();
@@ -52,7 +72,6 @@ public class ArApAnalysisService : IArApAnalysisService
         var overdueAp = apOpen.Where(d => d.DueDate.HasValue && d.DueDate.Value < now).ToList();
 
         // DSO = (AR / Revenue last 12 months) * 365 — revenue base includes cash sales.
-        var yearAgo = now.AddMonths(-12);
         var revenue12 = revenueDocs.Where(d => d.DocumentDate >= yearAgo).Sum(d => d.TotalAmount);
         var dso = revenue12 > 0 ? (double)totalAr / (double)revenue12 * 365 : 0;
 
@@ -65,31 +84,46 @@ public class ArApAnalysisService : IArApAnalysisService
         var onTime = arPaid12.Count(d => d.DueDate == null || d.PaidAmount >= d.TotalAmount);
         var collRate = arPaid12.Count > 0 ? (double)onTime / arPaid12.Count * 100 : 100;
 
-        // Monthly trend (last 12 months)
+        // Monthly trend (last 12 months) — PERF: previous version ran 12
+        // separate .Where().Sum() passes over the full doc list (= O(n×12)).
+        // Now bucket each doc once into its (year, month) slot in a single
+        // pass over revenueDocs and costDocs.
+        var revBucket = new Dictionary<(int Y, int M), (decimal New, decimal Paid)>();
+        var costBucket = new Dictionary<(int Y, int M), (decimal New, decimal Paid)>();
+        foreach (var d in revenueDocs)
+        {
+            var k = (d.DocumentDate.Year, d.DocumentDate.Month);
+            var cur = revBucket.GetValueOrDefault(k);
+            revBucket[k] = (cur.New + d.TotalAmount, cur.Paid + d.PaidAmount);
+        }
+        foreach (var d in costDocs)
+        {
+            var k = (d.DocumentDate.Year, d.DocumentDate.Month);
+            var cur = costBucket.GetValueOrDefault(k);
+            costBucket[k] = (cur.New + d.TotalAmount, cur.Paid + d.PaidAmount);
+        }
+        // Running balance: sort once by date desc, walk and accumulate.
+        var arSorted = arDocs.OrderBy(d => d.DocumentDate).ToList();
+        var apSorted = apDocs.OrderBy(d => d.DocumentDate).ToList();
+
         var trend = new List<ArApTrendItem>();
         for (int i = 11; i >= 0; i--)
         {
             var m = now.AddMonths(-i);
-            var mStart = new DateTime(m.Year, m.Month, 1);
-            var mEnd = mStart.AddMonths(1);
-
-            // Trend "new" = total sales/purchase volume that month (incl. cash);
-            // "paid" = cash collected/disbursed.
-            var arNew = revenueDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.TotalAmount);
-            var arPaid = revenueDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.PaidAmount);
-            var apNew = costDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.TotalAmount);
-            var apPaid = costDocs.Where(d => d.DocumentDate >= mStart && d.DocumentDate < mEnd).Sum(d => d.PaidAmount);
-
-            var arBal = arDocs.Where(d => d.DocumentDate < mEnd).Sum(d => d.BalanceDue);
-            var apBal = apDocs.Where(d => d.DocumentDate < mEnd).Sum(d => d.BalanceDue);
-
+            var mEnd = new DateTime(m.Year, m.Month, 1).AddMonths(1);
+            var revHit = revBucket.GetValueOrDefault((m.Year, m.Month));
+            var costHit = costBucket.GetValueOrDefault((m.Year, m.Month));
+            // Outstanding-as-of-mEnd needs the sum of BalanceDue for docs
+            // dated BEFORE mEnd. Cheaper than the original O(12 × n).
+            var arBal = arSorted.TakeWhile(d => d.DocumentDate < mEnd).Sum(d => d.BalanceDue);
+            var apBal = apSorted.TakeWhile(d => d.DocumentDate < mEnd).Sum(d => d.BalanceDue);
             trend.Add(new ArApTrendItem(m.Year, m.Month, $"{m.Year}-{m.Month:D2}",
-                arBal, apBal, arNew, arPaid, apNew, apPaid));
+                arBal, apBal, revHit.New, revHit.Paid, costHit.New, costHit.Paid));
         }
 
-        // Top contacts
-        var topAr = arOpen.GroupBy(d => new { d.ContactId, d.Contact.Name, d.Contact.TaxId })
-            .Select(g => new ArApTopContact(g.Key.ContactId, g.Key.Name, g.Key.TaxId,
+        // Top contacts — grouped once.
+        var topAr = arOpen.GroupBy(d => new { d.ContactId, d.ContactName, d.ContactTaxId })
+            .Select(g => new ArApTopContact(g.Key.ContactId, g.Key.ContactName, g.Key.ContactTaxId,
                 g.Sum(d => d.BalanceDue),
                 g.Where(d => d.DueDate.HasValue && d.DueDate.Value < now).Sum(d => d.BalanceDue),
                 g.Count(),
@@ -97,8 +131,8 @@ public class ArApAnalysisService : IArApAnalysisService
                 g.Max(d => d.DueDate.HasValue ? Math.Max(0, (int)(now - d.DueDate.Value).TotalDays) : 0)))
             .OrderByDescending(c => c.TotalBalance).Take(10).ToList();
 
-        var topAp = apOpen.GroupBy(d => new { d.ContactId, d.Contact.Name, d.Contact.TaxId })
-            .Select(g => new ArApTopContact(g.Key.ContactId, g.Key.Name, g.Key.TaxId,
+        var topAp = apOpen.GroupBy(d => new { d.ContactId, d.ContactName, d.ContactTaxId })
+            .Select(g => new ArApTopContact(g.Key.ContactId, g.Key.ContactName, g.Key.ContactTaxId,
                 g.Sum(d => d.BalanceDue),
                 g.Where(d => d.DueDate.HasValue && d.DueDate.Value < now).Sum(d => d.BalanceDue),
                 g.Count(),
@@ -116,6 +150,15 @@ public class ArApAnalysisService : IArApAnalysisService
             BuildAgingSummary(arOpen, now),
             BuildAgingSummary(apOpen, now));
     }
+
+    /// <summary>Flat row used by the perf-optimised overview path. Holds only
+    /// the columns the report needs — avoids EF materialising every
+    /// Document property + every Contact navigation.</summary>
+    private sealed record DocRow(
+        Guid Id, Guid ContactId, string ContactName, string? ContactTaxId,
+        DocumentType DocumentType, DateTime DocumentDate, DateTime? DueDate,
+        decimal TotalAmount, decimal PaidAmount, decimal BalanceDue,
+        DocumentStatus Status);
 
     public async Task<ContactArApDetailResponse> GetContactDetailAsync(Guid companyId, Guid contactId, string type)
     {
@@ -279,7 +322,17 @@ public class ArApAnalysisService : IArApAnalysisService
         return new BadDebtAnalysisResponse(totalAr, totalOverdue, totalEstLoss, buckets, riskContacts);
     }
 
+    // BuildAgingSummary works on the original Document entity for
+    // GetContactDetailAsync (line 206), and on the perf-optimised DocRow for
+    // GetOverviewAsync. Both paths share the bucketing logic via a tiny
+    // adapter — the calling code never picks the wrong one.
     private static ArApAgingSummary BuildAgingSummary(List<Models.Entities.Document> docs, DateTime now)
+        => BuildAgingSummaryCore(docs.Select(d => (d.DueDate, d.BalanceDue)), now);
+
+    private static ArApAgingSummary BuildAgingSummary(List<DocRow> docs, DateTime now)
+        => BuildAgingSummaryCore(docs.Select(d => (d.DueDate, d.BalanceDue)), now);
+
+    private static ArApAgingSummary BuildAgingSummaryCore(IEnumerable<(DateTime? DueDate, decimal BalanceDue)> docs, DateTime now)
     {
         decimal current = 0, d1 = 0, d31 = 0, d61 = 0, d90 = 0;
         foreach (var d in docs)

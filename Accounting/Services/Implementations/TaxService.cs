@@ -154,6 +154,25 @@ public partial class TaxService : ITaxService
             .ToListAsync())
             .ToHashSet();
 
+        // CN/DN cross-period side resolution. Previously the CreditNote /
+        // DebitNote loop looked up its RelatedDocumentId ONLY in the current
+        // period's docs — a CN issued THIS month for a purchase invoice
+        // booked LAST month would silently default to "sales side", causing
+        // input VAT to be UN-reduced (over-claimed) on ภ.พ.30. Fix: pre-
+        // resolve the type of every related doc across periods in one query,
+        // keyed by id, so the loop below can route correctly.
+        var relatedDocIds = docs
+            .Where(d => (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
+                        && d.RelatedDocumentId.HasValue)
+            .Select(d => d.RelatedDocumentId!.Value)
+            .Distinct()
+            .ToList();
+        var relatedDocTypes = relatedDocIds.Count == 0
+            ? new Dictionary<Guid, DocumentType>()
+            : await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && relatedDocIds.Contains(d.Id))
+                .ToDictionaryAsync(d => d.Id, d => d.DocumentType);
+
         decimal outputVat = 0, inputVat = 0;
         decimal vatExemptAmount = 0;
         var lineOrder = 1;
@@ -189,9 +208,14 @@ public partial class TaxService : ITaxService
             else if (doc.DocumentType == DocumentType.CreditNote)
             {
                 var label = doc.Lines.Any(l => l.AccountId.HasValue) ? "[ใบลดหนี้-ภาษีซื้อ]" : "[ใบลดหนี้-ภาษีขาย]";
-                var isPurchaseSide = doc.RelatedDocumentId.HasValue &&
-                    docs.Any(d => d.Id == doc.RelatedDocumentId.Value &&
-                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu));
+                // Cross-period lookup via relatedDocTypes — was searching THIS
+                // PERIOD's docs only which mis-classified CN-on-prior-month-PI
+                // as sales side (under-reducing input VAT on ภ.พ.30).
+                var isPurchaseSide = doc.RelatedDocumentId.HasValue
+                    && relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rtype)
+                    && (rtype == DocumentType.PurchaseInvoice
+                        || rtype == DocumentType.Expense
+                        || rtype == DocumentType.CertificateInLieu);
                 if (isPurchaseSide)
                 {
                     inputVat -= doc.VatAmount;
@@ -219,9 +243,12 @@ public partial class TaxService : ITaxService
             // DebitNote — increases output/input VAT
             else if (doc.DocumentType == DocumentType.DebitNote)
             {
-                var isPurchaseSide = doc.RelatedDocumentId.HasValue &&
-                    docs.Any(d => d.Id == doc.RelatedDocumentId.Value &&
-                        (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense || d.DocumentType == DocumentType.CertificateInLieu));
+                // Same cross-period fix as CreditNote.
+                var isPurchaseSide = doc.RelatedDocumentId.HasValue
+                    && relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rtype)
+                    && (rtype == DocumentType.PurchaseInvoice
+                        || rtype == DocumentType.Expense
+                        || rtype == DocumentType.CertificateInLieu);
                 if (isPurchaseSide)
                 {
                     inputVat += doc.VatAmount;
