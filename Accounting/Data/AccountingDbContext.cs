@@ -96,6 +96,8 @@ public class AccountingDbContext : DbContext
     public DbSet<ReconciliationGroup> ReconciliationGroups => Set<ReconciliationGroup>();
     public DbSet<ReconciliationGroupItem> ReconciliationGroupItems => Set<ReconciliationGroupItem>();
     public DbSet<BankReconciliationPattern> BankReconciliationPatterns => Set<BankReconciliationPattern>();
+    public DbSet<BankMatchExclusion> BankMatchExclusions => Set<BankMatchExclusion>();
+    public DbSet<BankMatchAuditLog> BankMatchAuditLogs => Set<BankMatchAuditLog>();
     public DbSet<ChequeBook> ChequeBooks => Set<ChequeBook>();
     public DbSet<Cheque> Cheques => Set<Cheque>();
     public DbSet<StampDutyRecord> StampDutyRecords => Set<StampDutyRecord>();
@@ -894,6 +896,22 @@ public class AccountingDbContext : DbContext
             e.HasIndex(p => new { p.CompanyId, p.BankAccountId, p.DescriptionSignature, p.AmountBucket })
                 .HasDatabaseName("IX_BankReconciliationPatterns_Lookup");
             e.HasQueryFilter(p => !p.IsDeleted);
+        });
+
+        modelBuilder.Entity<BankMatchExclusion>(e =>
+        {
+            e.Property(x => x.CandidateType).HasMaxLength(32);
+            e.HasIndex(x => new { x.CompanyId, x.BankTransactionId, x.CandidateId })
+                .HasDatabaseName("IX_BankMatchExclusions_Lookup");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<BankMatchAuditLog>(e =>
+        {
+            e.Property(x => x.ConfidenceAtApply).HasPrecision(5, 4);
+            e.HasIndex(x => new { x.CompanyId, x.BankTransactionId })
+                .HasDatabaseName("IX_BankMatchAuditLog_Lookup");
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== RecurringTransaction =====

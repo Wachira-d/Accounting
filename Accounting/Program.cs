@@ -188,6 +188,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Consignment.ICons
     Accounting.Services.Implementations.Consignment.ConsignmentService>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ISensitivityService, Accounting.Services.Implementations.SensitivityService>();
 builder.Services.AddSingleton<Accounting.Services.Interfaces.IImageProcessingService, Accounting.Services.Implementations.ImageProcessingService>();
+builder.Services.AddHttpContextAccessor();   // for current-user resolution in services (BankMatchAuditLog, etc.)
 builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();

@@ -19,11 +19,32 @@ public partial class BankService : IBankService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<BankService>? _logger;
+    private readonly IHttpContextAccessor? _httpContext;
 
-    public BankService(AccountingDbContext db, ILogger<BankService>? logger = null)
+    public BankService(AccountingDbContext db,
+        ILogger<BankService>? logger = null,
+        IHttpContextAccessor? httpContext = null)
     {
         _db = db;
         _logger = logger;
+        _httpContext = httpContext;
+    }
+
+    /// <summary>Resolve the current request's authenticated user id from the
+    /// JWT claims. Returns Guid.Empty when no HTTP context (background job)
+    /// or no valid claim — callers should skip audit-log writes in that case.</summary>
+    private Task<Guid> ResolveCurrentUserIdAsync(Guid companyId)
+    {
+        var ctx = _httpContext?.HttpContext;
+        if (ctx?.User is null) return Task.FromResult(Guid.Empty);
+        try
+        {
+            return Task.FromResult(Accounting.Helpers.JwtHelper.GetUserIdFromClaims(ctx.User));
+        }
+        catch
+        {
+            return Task.FromResult(Guid.Empty);
+        }
     }
 
     public async Task<BankAccountResponse> CreateBankAccountAsync(Guid companyId, CreateBankAccountRequest request)

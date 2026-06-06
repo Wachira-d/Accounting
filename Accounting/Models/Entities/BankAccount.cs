@@ -176,6 +176,43 @@ public class BankReconciliationPattern : TenantEntity
 }
 
 /// <summary>
+/// Pairs of (BankTransaction, candidate) the user explicitly REJECTED — so
+/// the bulk matcher doesn't keep proposing the same wrong pairing on every
+/// rerun. The matcher subtracts these pairs from the candidate pool when
+/// building the next proposal; the user can clear an exclusion if they
+/// change their mind (currently via re-matching, which auto-removes the
+/// row). Storing the rejection reason lets the calibration job downweight
+/// the signals that led to the rejected pairing.
+/// </summary>
+public class BankMatchExclusion : TenantEntity
+{
+    public Guid BankTransactionId { get; set; }
+    public Guid CandidateId { get; set; }
+    public string CandidateType { get; set; } = null!;   // "Payment" | "JournalEntry" | "Document"
+    public DateTime RejectedAt { get; set; } = DateTime.UtcNow;
+    public string? RejectionReason { get; set; }
+    public string? RejectedByUserId { get; set; }
+}
+
+/// <summary>
+/// Per-match audit row inserted at apply time so a disputed reconciliation
+/// can be traced back to who clicked Confirm, when, what other candidates
+/// the system had shown them, and what confidence score the system gave at
+/// the moment of acceptance. Separate from AiFeedbackRecord because that
+/// captures the AI/local interaction; THIS captures the human decision.
+/// </summary>
+public class BankMatchAuditLog : TenantEntity
+{
+    public Guid BankTransactionId { get; set; }
+    public Guid AppliedByUserId { get; set; }
+    public DateTime AppliedAt { get; set; } = DateTime.UtcNow;
+    public decimal ConfidenceAtApply { get; set; }
+    public string? OutcomeJson { get; set; }         // chosen candidates (id, type, amount)
+    public string? AlternativesJson { get; set; }    // top-3 alternatives that were displayed
+    public bool WasAiValidated { get; set; }
+}
+
+/// <summary>
 /// Cheque book — a roll of pre-numbered cheques tied to a bank
 /// account. Thai SMEs typically order cheque books in batches of
 /// 25 / 50 / 100 numbered sequentially. Tracking the book lets

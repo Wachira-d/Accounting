@@ -750,6 +750,9 @@ public partial class BankService
         {
             var results = new List<BankTransactionResponse>();
             var groupId = Guid.NewGuid().ToString("N");
+            var auditLogs = new List<BankMatchAuditLog>();
+            // Resolve the apply-user once — every audit row stamps it.
+            var appliedByUserId = await ResolveCurrentUserIdAsync(companyId);
 
             // Lock each bank line up-front so a concurrent batch-reconcile
             // can't claim the same one. pg_advisory_xact_lock auto-releases
@@ -810,7 +813,31 @@ public partial class BankService
                 }
 
                 results.Add(MapTransactionToResponse(txn));
+
+                // Audit row — captures who confirmed, when, what alternatives
+                // they saw, and at what confidence. Used by dispute lookup.
+                if (appliedByUserId != Guid.Empty)
+                {
+                    var outcomeJson = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        matchType = item.MatchType,
+                        paymentId = item.MatchedPaymentId,
+                        journalEntryId = item.MatchedJournalEntryId,
+                        entryIds = item.MatchedEntryIds,
+                    });
+                    auditLogs.Add(new BankMatchAuditLog
+                    {
+                        CompanyId = companyId,
+                        BankTransactionId = txn.Id,
+                        AppliedByUserId = appliedByUserId,
+                        ConfidenceAtApply = item.ConfidenceAtApply ?? 0m,
+                        WasAiValidated = item.WasAiValidated,
+                        OutcomeJson = outcomeJson,
+                        AlternativesJson = item.AlternativesJson,
+                    });
+                }
             }
+            if (auditLogs.Count > 0) _db.BankMatchAuditLogs.AddRange(auditLogs);
 
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();

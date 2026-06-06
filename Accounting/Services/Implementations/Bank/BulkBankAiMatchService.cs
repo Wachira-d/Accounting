@@ -40,7 +40,14 @@ public interface IBulkBankAiMatchService
 public sealed record BulkMatchOutcome(
     Guid PerMatchFeedbackId,
     string ChosenCandidateJson,    // JSON of the chosen Payment/JE id (same shape as predicted)
-    bool AcceptedAi);              // true = accepted AI's suggestion as-is; false = picked alternative or rejected
+    bool AcceptedAi,               // true = accepted AI's suggestion as-is; false = picked alternative or rejected
+    // When AcceptedAi=false AND ChosenCandidateJson is null/empty, the user
+    // explicitly REJECTED this pairing. Recording (BankTxnId, CandidateIds)
+    // suppresses the same proposal from future runs.
+    Guid? BankTransactionId = null,
+    IReadOnlyList<RejectedCandidate>? RejectedCandidates = null);
+
+public sealed record RejectedCandidate(Guid CandidateId, string CandidateType);
 
 public sealed record BulkAiMatchPlan(
     Guid? FeedbackId,
@@ -153,17 +160,52 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     public async Task RecordMatchOutcomesAsync(Guid companyId,
         IReadOnlyList<BulkMatchOutcome> outcomes, CancellationToken ct)
     {
+        var exclusions = new List<BankMatchExclusion>();
         foreach (var o in outcomes)
         {
-            if (o.PerMatchFeedbackId == Guid.Empty) continue;
+            if (o.PerMatchFeedbackId != Guid.Empty)
+            {
+                try
+                {
+                    await _recorder.RecordUserChoiceAsync(o.PerMatchFeedbackId,
+                        o.ChosenCandidateJson, o.AcceptedAi, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Bulk match outcome record failed for fid {Id}", o.PerMatchFeedbackId);
+                }
+            }
+            // Persist explicit REJECTIONS so the next run doesn't re-propose
+            // the same pairing — user spent effort saying "no, this is wrong";
+            // we owe them not asking again.
+            if (!o.AcceptedAi
+                && string.IsNullOrWhiteSpace(o.ChosenCandidateJson)
+                && o.BankTransactionId is { } btxnId
+                && o.RejectedCandidates is { Count: > 0 } rejected)
+            {
+                foreach (var r in rejected)
+                {
+                    exclusions.Add(new BankMatchExclusion
+                    {
+                        CompanyId = companyId,
+                        BankTransactionId = btxnId,
+                        CandidateId = r.CandidateId,
+                        CandidateType = r.CandidateType,
+                        RejectionReason = "user-rejected-in-bulk",
+                    });
+                }
+            }
+        }
+        if (exclusions.Count > 0)
+        {
             try
             {
-                await _recorder.RecordUserChoiceAsync(o.PerMatchFeedbackId,
-                    o.ChosenCandidateJson, o.AcceptedAi, ct);
+                _db.BankMatchExclusions.AddRange(exclusions);
+                await _db.SaveChangesAsync(ct);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Bulk match outcome record failed for fid {Id}", o.PerMatchFeedbackId);
+                _logger.LogWarning(ex, "Persist bank-match exclusions failed");
             }
         }
     }
@@ -240,6 +282,19 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 "— ตรวจสอบว่าได้นำเข้า statement ของเดือนนี้แล้ว หรือรายการอาจกระทบยอดครบแล้ว/อยู่เดือนอื่น");
         var truncatedBankTxns = txns.Count > MaxBankTxns;
         if (truncatedBankTxns) txns = txns.Take(MaxBankTxns).ToList();
+
+        // ── 3b. Load REJECTED pairs — user previously said "no, this is wrong"
+        // for a (BankTxn, Candidate) pair. We never propose that pair again.
+        // Keyed by BankTxnId for cheap lookup in every server pass.
+        var bankIds = txns.Select(t => Guid.Parse(t.Id)).ToList();
+        var exclusionRows = await _db.BankMatchExclusions.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted
+                && bankIds.Contains(x.BankTransactionId))
+            .Select(x => new { x.BankTransactionId, x.CandidateId })
+            .ToListAsync(ct);
+        var excludedPairs = exclusionRows
+            .GroupBy(r => r.BankTransactionId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.CandidateId).ToHashSet());
 
         // ── 4. Open documents — AR (Invoice/TaxInvoice/BillingNote) +
         // ── AP (PurchaseInvoice/Expense) with BalanceDue > 0 ────────────
@@ -595,6 +650,30 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // ── above the proposed matches.
         var auxWarnings = await DetectCrossAccountWarningsAsync(companyId, bankAccountId, txns, fromDate, toDate, ct);
 
+        // Sign-convention sanity: an imported statement using INVERTED signs
+        // (deposits Out, withdrawals In) would silently produce "ยอดต่าง"
+        // on every line. Detect by counting categorised deposit-flow memos
+        // (KShop / Inward TT / Transfer In keywords) against their actual
+        // direction — if 80%+ are Out, the statement is upside-down.
+        int upsideDeposits = 0, totalDepositMemos = 0;
+        foreach (var t in txns)
+        {
+            var cat = BankFlowClassifier.Classify(t.Memo, t.Payee, t.Reference);
+            bool depositLikely = cat == BankFlowCategory.Aggregator
+                || cat == BankFlowCategory.CardSettle
+                || cat == BankFlowCategory.OtaSettlement
+                || cat == BankFlowCategory.InwardTT
+                || cat == BankFlowCategory.Interest
+                || cat == BankFlowCategory.TaxRefund;
+            if (!depositLikely) continue;
+            totalDepositMemos++;
+            if (t.Direction == "Out") upsideDeposits++;
+        }
+        if (totalDepositMemos >= 5 && upsideDeposits >= totalDepositMemos * 0.8)
+            auxWarnings = auxWarnings.Concat(new[] {
+                $"⚠ พบ deposit-style memo {upsideDeposits}/{totalDepositMemos} รายการที่ทิศทาง = Out — เป็นไปได้ว่า bank statement ส่วน sign ถูกตีความสลับ (deposits ลงเป็น withdrawals). ตรวจ 1-2 บรรทัดก่อนยืนยัน"
+            }).ToList();
+
         // ── 7. DETERMINISTIC PASSES FIRST — major architecture change. Before
         // ── this, AI ran first and the server passes patched the residual;
         // ── that wasted a DeepSeek call on every line a deterministic rule
@@ -614,6 +693,35 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         parsed = TryGreedyEqualAmount(parsed, txns, openPayments, openJes);
         parsed = TryManyBanksToOne(parsed, txns, openPayments, openJes);
         parsed = TryCombineLumpedJes(parsed, txns, openJes);
+
+        // ── 7a-iv. Strip matches that use a user-rejected (bank, cand) pair.
+        // Even one rejected candidate in a multi-candidate match poisons the
+        // whole proposal — user has already said "no". Drop those rows and
+        // surface as unmatched with a clear reason.
+        if (excludedPairs.Count > 0)
+        {
+            var kept = new List<ProposedMatch>(parsed.Matches.Count);
+            var pruned = new List<UnmatchedTxn>();
+            foreach (var m in parsed.Matches)
+            {
+                bool poisoned = excludedPairs.TryGetValue(m.BankTxnId, out var ex)
+                    && m.Candidates.Any(c => ex.Contains(c.CandidateId));
+                if (poisoned)
+                    pruned.Add(new UnmatchedTxn(m.BankTxnId,
+                        "ผู้ใช้เคยปฏิเสธคู่นี้แล้ว", "เลือกคู่ใหม่ด้วยมือหรือเคลียร์การปฏิเสธก่อน"));
+                else
+                    kept.Add(m);
+            }
+            if (pruned.Count > 0)
+                parsed = parsed with
+                {
+                    Matches = kept,
+                    Unmatched = parsed.Unmatched.Concat(pruned).ToList(),
+                    Warnings = parsed.Warnings.Concat(new[] {
+                        $"⏭ ข้าม {pruned.Count} คู่ที่ผู้ใช้เคยปฏิเสธแล้ว"
+                    }).ToList(),
+                };
+        }
 
         // ── 7b. Residual computation — what the server passes COULD NOT
         // ── solve. AI sees only this slice + only the candidates the server
