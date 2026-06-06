@@ -17,7 +17,11 @@ public static class BankFeeDictionary
         string Label,
         decimal AbsoluteAmount,
         decimal? Percentage,
-        string? SuggestedGlAccountHint);
+        // Symbolic key resolved against the company's actual COA via
+        // CompanyChartOfAccountsResolver. NULL when no GL account is needed
+        // (e.g. DeltaKind.None). Caller asks the resolver for the real
+        // {code, name} of "BankCharges" / "WhtReceivable" / "FxGain" / etc.
+        string? SuggestedGlAccountKey);
 
     public enum DeltaKind
     {
@@ -67,7 +71,7 @@ public static class BankFeeDictionary
 
         // 1) Sub-baht / VAT rounding noise.
         if (absD <= 0.50m)
-            return new(DeltaKind.Rounding, $"ปัดเศษ {absD:N2} บาท", absD, null, "5901 - Misc Adjustment");
+            return new(DeltaKind.Rounding, $"ปัดเศษ {absD:N2} บาท", absD, null, "MiscAdjustment");
 
         // 2) WHT — only meaningful when bank received LESS than gross (delta>0).
         if (delta > 0 && candidateGross > 0)
@@ -78,7 +82,7 @@ public static class BankFeeDictionary
                 if (Math.Abs(pct - r) <= 0.0015m)   // ±0.15% tolerance
                     return new(DeltaKind.WithholdingTax,
                         $"หัก ณ ที่จ่าย {r * 100:N1}% = {absD:N2} บาท",
-                        absD, r, "1304 - WHT Receivable");
+                        absD, r, "WhtReceivable");
             }
         }
 
@@ -88,7 +92,10 @@ public static class BankFeeDictionary
             foreach (var (amt, label, channels) in _fixedFees)
             {
                 if (Math.Abs(absD - amt) <= 0.50m && channels.Contains(category))
-                    return new(DeltaKind.FixedFee, label, absD, null, "5503 - Bank Charges");
+                {
+                    var key = category == BankFlowCategory.BillPayment ? "BillCharges" : "BankCharges";
+                    return new(DeltaKind.FixedFee, label, absD, null, key);
+                }
             }
         }
 
@@ -100,7 +107,7 @@ public static class BankFeeDictionary
                 return new(DeltaKind.FxVariance,
                     $"FX variance {pct * 100:N2}% ({(delta > 0 ? "ขาดทุน" : "กำไร")}อัตราแลกเปลี่ยน {absD:N2} บาท)",
                     absD, pct,
-                    delta > 0 ? "5505 - FX Loss" : "4901 - FX Gain");
+                    delta > 0 ? "FxLoss" : "FxGain");
         }
 
         return new(DeltaKind.Unexplained,

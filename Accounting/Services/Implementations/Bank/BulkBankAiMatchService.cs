@@ -542,6 +542,21 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             bank.AccountNumber, bank.Currency,
             bank.CurrentBalance, glBalance);
 
+        // ── 6e. Chart of accounts — fee/WHT/FX hints resolve against the
+        // ── company's actual COA so the suggested account code matches what
+        // ── the user really has. Also passed to AI so it can refer to real
+        // ── accounts when describing matches.
+        var coa = await CompanyChartOfAccountsResolver.LoadAsync(_db, companyId, ct);
+
+        // ── 6f. Historical account-mapping suggester — for unmatched bank
+        // ── txns, look at past reconciled JEs sharing the same memo signature
+        // ── + amount bucket and surface the most common offsetting account
+        // ── ("ปกติ post 5511 ค่าไฟ"). Lightweight: 1 query, in-memory grouping,
+        // ── used only to enrich the SuggestedAction field on unmatched txns.
+        var historySince = fromDate.AddYears(-1);
+        var historyHints = await HistoricalAccountSuggester.BuildAsync(
+            _db, companyId, bank.LinkedAccountId ?? Guid.Empty, historySince, ct);
+
         // ── 6c. Distillation pre-pass — warm the local BankMatchDistillation
         // ── model so single-txn suggestions hit it later without an extra
         // ── round-trip. Returns no seeded matches in this version (needs
@@ -620,8 +635,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                     $"🔎 ส่ง {uncertainCount} รายการที่ server ไม่มั่นใจ ≥0.95 ไปให้ AI วิเคราะห์ซ้ำ พร้อม residual"
                 }).ToList() };
 
+            var coaInput = coa.Active
+                .Select(a => new BulkBankMatchPrompt.ChartOfAccountInput(a.Code, a.Name, a.Type.ToString()))
+                .ToList();
             var req = BulkBankMatchPrompt.Build(companyId, bankAccountId, fromDate, toDate,
-                company, bankContext, residualTxns, residualDocs, residualPayments, residualJes);
+                company, bankContext, residualTxns, residualDocs, residualPayments, residualJes, coaInput);
             resp = await _orchestrator.AskAsync(req, ct);
 
             // Parse AI output — defensive because AI output is JSON-but-fallible.
@@ -647,11 +665,26 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // 2) AI's own matches all carry AiValidated = true.
             var aiMatches = aiParsed.Matches.Select(am => am with { AiValidated = true }).ToList();
 
+            // Enrich AI's unmatched with historical account-mapping hints so
+            // the operator sees "ปกติ post 5511 ค่าไฟ (12 ครั้ง)" — gives
+            // them somewhere to start when AI also gave up.
+            var txnByGuid = txns.ToDictionary(t => Guid.Parse(t.Id));
+            var enrichedUnmatched = aiParsed.Unmatched.Select(u =>
+            {
+                if (!txnByGuid.TryGetValue(u.BankTxnId, out var bt)) return u;
+                var histHint = historyHints.FormatHint(bt.Memo, bt.Reference, bt.Payee, bt.Amount);
+                if (histHint == null) return u;
+                var action = string.IsNullOrEmpty(u.SuggestedAction)
+                    ? histHint
+                    : u.SuggestedAction + " · " + histHint;
+                return u with { SuggestedAction = action };
+            }).ToList();
+
             // Merge AI's matches + unmatched + missingData INTO the server-built parsed.
             parsed = parsed with
             {
                 Matches = serverMatches.Concat(aiMatches).ToList(),
-                Unmatched = aiParsed.Unmatched,
+                Unmatched = enrichedUnmatched,
                 MissingData = aiParsed.MissingData,
                 Warnings = parsed.Warnings.Concat(aiParsed.Warnings).ToList(),
             };
@@ -693,10 +726,17 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             {
                 parsed = parsed with
                 {
-                    Unmatched = trulyUnmatched.Select(t => new UnmatchedTxn(
-                        Guid.Parse(t.Id),
-                        "ไม่พบเอกสาร/รายการที่ตรงพอเข้าเกณฑ์อัตโนมัติ",
-                        "ลองตรวจด้วยมือหรือเพิ่ม Reference/Contact ในเอกสาร")).ToList(),
+                    Unmatched = trulyUnmatched.Select(t =>
+                    {
+                        var histHint = historyHints.FormatHint(t.Memo, t.Reference, t.Payee, t.Amount);
+                        var action = histHint != null
+                            ? "ลองตรวจด้วยมือ · " + histHint
+                            : "ลองตรวจด้วยมือหรือเพิ่ม Reference/Contact ในเอกสาร";
+                        return new UnmatchedTxn(
+                            Guid.Parse(t.Id),
+                            "ไม่พบเอกสาร/รายการที่ตรงพอเข้าเกณฑ์อัตโนมัติ",
+                            action);
+                    }).ToList(),
                 };
             }
             var savedCount = lockedBankIds.Count;
@@ -836,7 +876,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // computed from the actual numbers — amount delta vs the bank txn
             // and date proximity to the candidate's source row when known. AI
             // confidence then becomes a ceiling; we never push it higher.
-            var (calibratedConf, mismatchNote) = CalibrateConfidence(bt, m);
+            var (calibratedConf, mismatchNote) = CalibrateConfidence(bt, m, coa);
 
             // CONFIRMED 1:1 → 0.99. A single-candidate match whose amount agrees
             // to the satang, sits within a day of its source document, and whose
@@ -2244,7 +2284,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     }
 
     private static (decimal Confidence, string MismatchNote) CalibrateConfidence(
-        Models.Entities.BankTransaction bankTxn, ProposedMatch match)
+        Models.Entities.BankTransaction bankTxn, ProposedMatch match,
+        CompanyChartOfAccountsResolver? coa = null)
     {
         var bankAmt = Math.Abs(bankTxn.Amount);
         var sumCand = match.Candidates.Sum(c => c.Amount);
@@ -2278,8 +2319,20 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // adjustment line, but the note now NAMES the cause so they know
             // exactly what to do.
             ceiling = explanation.Kind == BankFeeDictionary.DeltaKind.Rounding ? 0.55m : 0.65m;
-            var hint = string.IsNullOrEmpty(explanation.SuggestedGlAccountHint)
-                ? "" : $" · เสนอบัญชี: {explanation.SuggestedGlAccountHint}";
+            // Resolve symbolic key ("BankCharges"/"WhtReceivable"/...) against
+            // the company's actual COA when available — otherwise show the key
+            // as-is so the user still gets a hint.
+            string hint;
+            if (string.IsNullOrEmpty(explanation.SuggestedGlAccountKey))
+                hint = "";
+            else
+            {
+                var resolved = coa?.Resolve(explanation.SuggestedGlAccountKey);
+                var hintText = resolved != null
+                    ? $"{resolved.Code} - {resolved.Name}"
+                    : explanation.SuggestedGlAccountKey;
+                hint = $" · เสนอบัญชี: {hintText}";
+            }
             note = $"⚠ {explanation.Label}{hint} — เพิ่มบรรทัด JE ส่วนต่างก่อนบันทึกได้";
         }
         else if (pct <= 0.05m)
