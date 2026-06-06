@@ -68,7 +68,12 @@ public sealed record ProposedMatch(
     decimal BankAmount = 0m,
     DateTime? BankDate = null,
     string? BankMemo = null,
-    string? BankDirection = null);            // "In" | "Out"
+    string? BankDirection = null,             // "In" | "Out"
+    // TRUE when AI re-analysed this pairing and AGREED — either AI was the
+    // primary proposer OR AI proposed the same (bank,candidate) pair as the
+    // server. The UI uses a lower auto-tick threshold (0.85) for AI-validated
+    // matches; server-only matches need 0.95.
+    bool AiValidated = false);
 
 public sealed record MatchCandidate(
     Guid CandidateId,
@@ -623,10 +628,29 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var rawOut = !string.IsNullOrWhiteSpace(resp.RawResponseJson) ? resp.RawResponseJson : resp.PrimaryAnswer;
             var aiParsed = ParseResponse(rawOut);
 
+            // Per-(bankTxn, candidate) set of pairings AI proposed — used to
+            // mark a SERVER match as AiValidated when AI proposed the IDENTICAL
+            // pairing (= AI confirmed the server's guess). The UI then drops
+            // the auto-tick threshold for those rows from 0.95 to 0.85.
+            var aiBankCandPairs = new HashSet<(Guid, Guid)>();
+            foreach (var am in aiParsed.Matches)
+                foreach (var c in am.Candidates)
+                    aiBankCandPairs.Add((am.BankTxnId, c.CandidateId));
+
+            // 1) Flag server matches AI agreed with.
+            var serverMatches = parsed.Matches.Select(sm =>
+            {
+                if (sm.AiValidated) return sm;
+                var confirmed = sm.Candidates.Any(c => aiBankCandPairs.Contains((sm.BankTxnId, c.CandidateId)));
+                return confirmed ? sm with { AiValidated = true } : sm;
+            }).ToList();
+            // 2) AI's own matches all carry AiValidated = true.
+            var aiMatches = aiParsed.Matches.Select(am => am with { AiValidated = true }).ToList();
+
             // Merge AI's matches + unmatched + missingData INTO the server-built parsed.
             parsed = parsed with
             {
-                Matches = parsed.Matches.Concat(aiParsed.Matches).ToList(),
+                Matches = serverMatches.Concat(aiMatches).ToList(),
                 Unmatched = aiParsed.Unmatched,
                 MissingData = aiParsed.MissingData,
                 Warnings = parsed.Warnings.Concat(aiParsed.Warnings).ToList(),
