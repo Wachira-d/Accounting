@@ -160,6 +160,34 @@ public class OcrAiAugmenter : IOcrAiAugmenter
 
             var resp = await _orchestrator.AskAsync(req, ct);
 
+            // ── HALLUCINATION GUARD ─────────────────────────────────────
+            // AI sometimes returns a ContactId that LOOKS like a GUID but is
+            // NOT in the candidate set (model "improves" the answer with a
+            // memorised id from training). When this happens, blindly using
+            // it would link the OCR scan to a contact that may not exist in
+            // THIS tenant, or worse, to a contact belonging to a DIFFERENT
+            // company. Validate AI's primary answer against the candidate
+            // pool — fall back to local pick when it doesn't match.
+            var validCandidateIds = candidates.Select(c => c.Id.ToString())
+                .Append("__NEW__").ToHashSet(StringComparer.OrdinalIgnoreCase);
+            bool answerValid = !string.IsNullOrEmpty(resp.PrimaryAnswer)
+                && validCandidateIds.Contains(resp.PrimaryAnswer);
+            if (resp.UsedAi && !answerValid)
+            {
+                _logger.LogWarning(
+                    "OcrAiAugmenter: AI returned ContactId '{Ans}' not in candidate list ({CandCount} candidates). Falling back to local pick to prevent hallucination link.",
+                    resp.PrimaryAnswer, candidates.Count);
+                return new OcrAiAugmentationResult(
+                    Answer: localBestContactId ?? "__NEW__",
+                    Confidence: Math.Min(localConfidence, 0.40m),
+                    Alternatives: Array.Empty<string>(),
+                    Risks: new[] { "AI ตอบค่าที่ไม่อยู่ใน candidate (อาจ hallucinate) — ใช้ผลของ local matcher แทน" },
+                    ComplianceFlags: resp.ComplianceFlags,
+                    Reasoning: $"Hallucination guard tripped (AI returned unknown id '{resp.PrimaryAnswer}')",
+                    UsedAi: false,
+                    FeedbackId: resp.FeedbackId);
+            }
+
             // Even on AI failure, resp.PrimaryAnswer falls back to
             // LocalPrimaryAnswer (orchestrator contract). Treat both
             // paths uniformly.
@@ -176,7 +204,9 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         catch (Exception ex)
         {
             // Last-resort safety net — don't kill OCR over augmenter bug.
-            _logger.LogError(ex, "OcrAiAugmenter.CanonicaliseVendor failed; falling back to local pick");
+            // Demote to Warning (not Error) so DevOps alerts don't fire on
+            // an upstream provider hiccup — the OCR still succeeded.
+            _logger.LogWarning(ex, "OcrAiAugmenter.CanonicaliseVendor failed; falling back to local pick");
             return new OcrAiAugmentationResult(
                 Answer: localBestContactId,
                 Confidence: localConfidence > 0 ? localConfidence : (decimal?)null,

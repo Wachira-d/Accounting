@@ -47,17 +47,28 @@ public static class DocumentNumberGenerator
 
         var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
         var docPrefix = $"{prefix}-{yearMonth}-";
-        var maxNumber = await db.Documents
+        // BUG FIX: previously used `MaxAsync()` over the string column. That
+        // returns the LEXICOGRAPHIC max — "9999" > "10000" because '9' > '1'.
+        // The moment a company hit 10000 documents/month the next call
+        // returned "9999" → next = 10000 → DUPLICATE. Pulling the suffix
+        // numbers + integer-max in-memory is correct regardless of digit
+        // width; we cap the pull at 1000 latest just to bound memory.
+        var suffixes = await db.Documents
             .IgnoreQueryFilters()
             .Where(d => d.CompanyId == companyId && d.DocumentNumber.StartsWith(docPrefix))
-            .Select(d => d.DocumentNumber)
-            .MaxAsync() as string;
+            .OrderByDescending(d => d.CreatedAt)
+            .Take(2000)
+            .Select(d => d.DocumentNumber.Substring(docPrefix.Length))
+            .ToListAsync();
         var nextSeq = 1;
-        if (maxNumber != null)
-        {
-            var lastPart = maxNumber.Substring(docPrefix.Length);
-            if (int.TryParse(lastPart, out var parsed)) nextSeq = parsed + 1;
-        }
-        return $"{docPrefix}{nextSeq:D4}";
+        foreach (var s in suffixes)
+            if (int.TryParse(s, out var parsed) && parsed >= nextSeq) nextSeq = parsed + 1;
+        // D5 (5 digits) supports 99,999 per month — well past any realistic
+        // SME volume but still narrow enough to sort visually. Existing 4-
+        // digit numbers (0001-9999) remain readable; new ones beyond 9999
+        // just gain a digit.
+        return nextSeq <= 9999
+            ? $"{docPrefix}{nextSeq:D4}"
+            : $"{docPrefix}{nextSeq:D5}";
     }
 }
