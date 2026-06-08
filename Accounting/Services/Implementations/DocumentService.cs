@@ -2878,6 +2878,7 @@ public class DocumentService : IDocumentService
                 // to doc.BankAccountId when not provided.
                 BankAccountId = request.OverrideBankAccountId ?? doc.BankAccountId,
                 OverrideBankAccountId = request.OverrideBankAccountId,
+                OverridePaymentAccountId = request.OverridePaymentAccountId,
                 WithholdingTaxAmount = paymentWht,
                 // Per-payment ProjectId override — when null, the JE
                 // posting still falls back to doc.ProjectId so the
@@ -4164,7 +4165,29 @@ public class DocumentService : IDocumentService
         var isRevenue = revenueTypes.Contains(doc.DocumentType);
         var journalType = isRevenue ? JournalType.CashReceipts : JournalType.CashPayments;
 
-        var cashAccount = await FindAccountAsync(companyId, "111");
+        // Resolve the CASH/BANK side of the entry. Priority:
+        //   1. payment.OverridePaymentAccountId — explicit GL the operator chose
+        //      (เงินทดรองกรรมการ / เงินสดย่อย / clearing) — funds from non-bank.
+        //   2. the chosen bank account's LinkedAccount GL — so a Bank Transfer
+        //      actually hits the bank's GL, not generic cash. (BUG FIX: this
+        //      line previously ALWAYS posted to 111 regardless of how the
+        //      payment was made, so every bank transfer landed in Cash on Hand.)
+        //   3. fall back to the default cash account "111".
+        ChartOfAccount? cashAccount = null;
+        if (payment.OverridePaymentAccountId.HasValue)
+            cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.Id == payment.OverridePaymentAccountId.Value && a.CompanyId == companyId && !a.IsDeleted);
+        if (cashAccount == null && payment.BankAccountId.HasValue)
+        {
+            var linkedAcctId = await _db.Set<BankAccount>().AsNoTracking()
+                .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
+                .Select(b => b.LinkedAccountId)
+                .FirstOrDefaultAsync();
+            if (linkedAcctId.HasValue)
+                cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.Id == linkedAcctId.Value && a.CompanyId == companyId && !a.IsDeleted);
+        }
+        cashAccount ??= await FindAccountAsync(companyId, "111");
         if (cashAccount == null) return;
 
         // WHT basis decides whether THIS installment's WHT gets a GL line

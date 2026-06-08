@@ -485,6 +485,11 @@ public record CreatePaymentRequest(
     /// different bank than the invoice originally targeted; the GL hit and
     /// bank-balance update follow this override, not doc.BankAccountId.</summary>
     Guid? OverrideBankAccountId = null,
+    /// <summary>Optional — fund this payment from a specific GL account that
+    /// isn't a bank (เงินทดรองกรรมการ / เงินสดย่อย / clearing). When set, the
+    /// auto-posted JE's cash side hits this account. Overrides both the bank's
+    /// linked GL and the default cash account.</summary>
+    Guid? OverridePaymentAccountId = null,
     /// <summary>Optional — WHT withheld on THIS installment. Null = the
     /// service computes a proportional default: Amount / Document.TotalAmount
     /// × Document.WithholdingTaxAmount. Use the override when the customer's

@@ -27,6 +27,14 @@ public class Payment : TenantEntity
     /// channel as-is. Audit-visible so we can trace overrides explicitly.</summary>
     public Guid? OverrideBankAccountId { get; set; }
 
+    /// <summary>Per-payment override of the CASH/BANK GL account — lets the
+    /// operator fund a payment from a chart-of-accounts line that isn't a bank
+    /// account, e.g. เงินทดรองกรรมการ (director advance/loan), เงินสดย่อย
+    /// (petty cash), or a clearing account. When set, the auto-posted JE's
+    /// cash side hits THIS account instead of the default cash (111) / bank's
+    /// linked GL. Null = use the normal resolution (bank's linked GL → 111).</summary>
+    public Guid? OverridePaymentAccountId { get; set; }
+
     /// <summary>WHT withheld by the customer (revenue side) / by us (purchase
     /// side) on THIS installment. Per Thai practice + ประมวลรัษฎากร §50, when
     /// the source invoice is paid in installments the customer withholds

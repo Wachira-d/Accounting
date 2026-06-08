@@ -2651,6 +2651,11 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtCertSkipped" boolean NOT NULL DEFAULT false;
             """,
+            // Per-payment GL funding override — pay from เงินทดรองกรรมการ /
+            // เงินสดย่อย / clearing instead of the default cash/bank GL.
+            """
+            ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "OverridePaymentAccountId" uuid NULL;
+            """,
             // ===== Bank reconciliation: rejected-match memory + audit log =====
             // New tables; CREATE IF NOT EXISTS so existing DBs gain them on
             // first startup after deploy (the GenerateCreateScript path also
