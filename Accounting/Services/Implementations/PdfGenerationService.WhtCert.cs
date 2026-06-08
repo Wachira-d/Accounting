@@ -30,11 +30,15 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public partial class PdfGenerationService
 {
-    private byte[] BuildWhtCertPdf(WithholdingTaxCert cert, Company company)
+    private byte[] BuildWhtCertPdf(WithholdingTaxCert cert, Company company,
+        byte[]? signatureBytes = null, string? signerName = null)
     {
         EnsureThaiFontsRegistered();
         var fontChain = GetFontFamilyChain(null);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
+        // Only use the signature if it actually decodes to an image QuestPDF
+        // can embed — a corrupt base64 must never blank the whole page.
+        var sigImg = LooksLikeImage(signatureBytes) ? signatureBytes : null;
 
         var fullAddress = string.Join(" ", new[] {
             company.Address, company.SubDistrict, company.District,
@@ -70,7 +74,7 @@ public partial class PdfGenerationService
                             BuildTotalInWords(form, cert.TotalTaxAmount);
                             BuildFundLine(form);
                             BuildConditionsRow(form, cert);
-                            BuildBottomSplit(form, cert.IssuedDate);
+                            BuildBottomSplit(form, cert.IssuedDate, sigImg, signerName);
                         });
                         BuildFootnote(col);
                     });
@@ -325,7 +329,8 @@ public partial class PdfGenerationService
         });
     }
 
-    private static void BuildBottomSplit(QuestPDF.Fluent.ColumnDescriptor col, DateTime? issuedDate)
+    private static void BuildBottomSplit(QuestPDF.Fluent.ColumnDescriptor col, DateTime? issuedDate,
+        byte[]? signatureImage = null, string? signerName = null)
     {
         var dd = issuedDate?.Day.ToString() ?? "____";
         var mm = issuedDate?.Month.ToString() ?? "____";
@@ -343,12 +348,35 @@ public partial class PdfGenerationService
             {
                 c.Item().Text("ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ")
                     .FontSize(9);
-                c.Item().PaddingTop(20).AlignRight().Text(t =>
+                // Signature image — drawn ABOVE the "ลงชื่อ" line when the
+                // signatory has uploaded one. Right-aligned, height-bounded so
+                // it never overflows the cell; failure to embed silently falls
+                // back to the blank dotted line.
+                if (signatureImage != null)
                 {
-                    t.Span("ลงชื่อ ");
-                    t.Span("__________________________");
-                    t.Span(" ผู้จ่ายเงิน");
-                });
+                    c.Item().PaddingTop(6).AlignRight().Element(e =>
+                    {
+                        try { e.Height(16, Unit.Millimetre).Image(signatureImage); }
+                        catch { /* decorative — never block the PDF */ }
+                    });
+                    c.Item().AlignRight().Text(t =>
+                    {
+                        t.Span("ลงชื่อ ");
+                        t.Span(string.IsNullOrWhiteSpace(signerName) ? "__________________________" : signerName!).Bold();
+                        t.Span(" ผู้จ่ายเงิน");
+                    });
+                }
+                else
+                {
+                    c.Item().PaddingTop(20).AlignRight().Text(t =>
+                    {
+                        t.Span("ลงชื่อ ");
+                        t.Span("__________________________");
+                        t.Span(" ผู้จ่ายเงิน");
+                    });
+                    if (!string.IsNullOrWhiteSpace(signerName))
+                        c.Item().AlignRight().Text(t => { t.Span("( "); t.Span(signerName!).Bold(); t.Span(" )"); }).FontSize(8);
+                }
                 c.Item().PaddingTop(4).AlignCenter().Text(t =>
                 {
                     t.Span(dd).Bold(); t.Span(" / ");

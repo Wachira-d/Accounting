@@ -125,13 +125,45 @@ public partial class PdfGenerationService : IPdfGenerationService
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
+
+        // Resolve the signatory's saved signature image + name. Priority:
+        //   1. the user who CREATED the cert (BaseEntity.CreatedBy = userId)
+        //   2. the company OWNER (CompanyUsers.Role == Owner)
+        // so the "ลงชื่อ ... ผู้จ่ายเงิน" line shows the real signature
+        // instead of a blank dotted line. Falls back to text-only when no
+        // user has uploaded a signature image.
+        byte[]? sigBytes = null;
+        string? sigName = null;
+        {
+            Guid? signerId = Guid.TryParse(cert.CreatedBy, out var cb) ? cb : null;
+            if (signerId == null)
+            {
+                signerId = await _db.Set<Models.Entities.CompanyUser>().AsNoTracking()
+                    .Where(cu => cu.CompanyId == companyId && cu.Role == Models.Enums.UserRole.Owner)
+                    .Select(cu => (Guid?)cu.UserId).FirstOrDefaultAsync();
+            }
+            if (signerId.HasValue)
+            {
+                var u = await _db.Users.AsNoTracking()
+                    .Where(x => x.Id == signerId.Value)
+                    .Select(x => new { x.FullName, x.SignatureImageBase64, x.SignatureName })
+                    .FirstOrDefaultAsync();
+                if (u != null)
+                {
+                    if (!string.IsNullOrWhiteSpace(u.SignatureImageBase64))
+                        sigBytes = TryDecodeBase64Image(u.SignatureImageBase64.Trim());
+                    sigName = !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName;
+                }
+            }
+        }
+
         // PDF route uses the dedicated QuestPDF renderer (BuildWhtCertPdf) so
         // the official RD form layout — TIN boxes, payer/payee blocks, income
         // table, signature area — is preserved. The HTML version
         // (BuildWithholdingTaxCertHtml) is kept for browser-print and on-screen
         // preview; the HTML→block flatten path destroyed the form when used
         // for PDF, producing a wall of text.
-        var pdfBytes = BuildWhtCertPdf(cert, company);
+        var pdfBytes = BuildWhtCertPdf(cert, company, sigBytes, sigName);
 
         return new GeneratePdfResponse(cert.Id, cert.CertificateNumber,
             $"WHT-{cert.CertificateNumber}.pdf", "application/pdf", pdfBytes.Length, pdfBytes, DateTime.UtcNow);
