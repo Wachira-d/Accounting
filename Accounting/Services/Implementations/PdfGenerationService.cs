@@ -343,6 +343,33 @@ public partial class PdfGenerationService : IPdfGenerationService
                 custSig.ApproverName, custSig.ApproverTitle));
         }
 
+        // AUTHORIZED-SIGNATORY FALLBACK. The "ผู้อนุมัติ / ผู้มีอำนาจลงนาม"
+        // box (slot 1) is where customers expect a real signature on an
+        // approved/paid document (expense, PV, invoice, …). When the resolved
+        // approver has no uploaded signature — common when the creator/editor
+        // never set one up but the company Owner did — stamp the Owner's
+        // signature there so the document isn't left with an empty authorized
+        // line. Only fills the IMAGE-less case; never overrides a real signer.
+        if (signers.Count >= 2 && (signers[1].SignatureImageBytes is null || signers[1].SignatureImageBytes!.Length == 0))
+        {
+            var ownerSig = await (
+                from cu in _db.Set<CompanyUser>().AsNoTracking()
+                join u in _db.Users.AsNoTracking() on cu.UserId equals u.Id
+                where cu.CompanyId == doc.CompanyId && cu.Role == Models.Enums.UserRole.Owner
+                      && u.SignatureImageBase64 != null && u.SignatureImageBase64 != ""
+                select new { u.SignatureImageBase64, u.SignatureName, u.FullName, u.SignatureTitle })
+                .FirstOrDefaultAsync();
+            if (ownerSig != null && !string.IsNullOrWhiteSpace(ownerSig.SignatureImageBase64))
+            {
+                var raw = ownerSig.SignatureImageBase64!.Trim();
+                var dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? raw : "data:image/png;base64," + raw;
+                signers[1] = new DocumentSigner(dataUri, TryDecodeBase64Image(raw),
+                    !string.IsNullOrWhiteSpace(ownerSig.SignatureName) ? ownerSig.SignatureName : ownerSig.FullName,
+                    ownerSig.SignatureTitle);
+            }
+        }
+
         return signers;
     }
 
