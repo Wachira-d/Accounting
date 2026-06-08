@@ -435,7 +435,7 @@ public partial class PdfGenerationService
                             t.Span(" ผู้จ่ายเงิน");
                         });
                         if (!string.IsNullOrWhiteSpace(signerName))
-                            c.Item().AlignCenter().Text(t => { t.Span("( "); t.Span(signerName!).Bold(); t.Span(" )"); }).FontSize(8);
+                            c.Item().AlignCenter().Text(t => { t.Span("( ").FontSize(8); t.Span(signerName!).Bold().FontSize(8); t.Span(" )").FontSize(8); });
                     }
                     c.Item().PaddingTop(4).AlignCenter().Text(t =>
                     {

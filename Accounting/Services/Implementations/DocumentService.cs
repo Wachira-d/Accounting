@@ -415,7 +415,7 @@ public class DocumentService : IDocumentService
             var order = 1;
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
-            foreach (var line in request.Lines)
+            foreach (var line in request.Lines ?? [])
             {
                 var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
 
