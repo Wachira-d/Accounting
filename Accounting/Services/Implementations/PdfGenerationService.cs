@@ -125,8 +125,13 @@ public partial class PdfGenerationService : IPdfGenerationService
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
-        var html = BuildWithholdingTaxCertHtml(cert, company);
-        var pdfBytes = ConvertHtmlToPdf(html, null);
+        // PDF route uses the dedicated QuestPDF renderer (BuildWhtCertPdf) so
+        // the official RD form layout — TIN boxes, payer/payee blocks, income
+        // table, signature area — is preserved. The HTML version
+        // (BuildWithholdingTaxCertHtml) is kept for browser-print and on-screen
+        // preview; the HTML→block flatten path destroyed the form when used
+        // for PDF, producing a wall of text.
+        var pdfBytes = BuildWhtCertPdf(cert, company);
 
         return new GeneratePdfResponse(cert.Id, cert.CertificateNumber,
             $"WHT-{cert.CertificateNumber}.pdf", "application/pdf", pdfBytes.Length, pdfBytes, DateTime.UtcNow);
