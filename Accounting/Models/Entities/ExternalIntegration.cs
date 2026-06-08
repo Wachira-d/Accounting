@@ -38,6 +38,30 @@ public class ExternalIntegration : TenantEntity
 
     public ICollection<IntegrationSyncLog> SyncLogs { get; set; } = new List<IntegrationSyncLog>();
     public ICollection<IntegrationAccountMapping> AccountMappings { get; set; } = new List<IntegrationAccountMapping>();
+    public ICollection<IntegrationUserMapping> UserMappings { get; set; } = new List<IntegrationUserMapping>();
+}
+
+/// <summary>
+/// Maps an EXTERNAL system's operator identity → a real NextAcc user, so an
+/// action arriving over an integration (int_) key can be attributed to the
+/// person who actually performed it on the partner side — and the document's
+/// creator signature reflects that real operator instead of falling back to
+/// the company Owner. The partner sends the operator in the X-Acting-User
+/// header (an email, or any agreed external user id). NextAcc resolves it:
+///   1. an explicit row here (ExternalUserKey → UserId), else
+///   2. a direct email match against a company member,
+///   3. else falls back to the Owner.
+/// </summary>
+public class IntegrationUserMapping : TenantEntity
+{
+    public Guid IntegrationId { get; set; }
+    public ExternalIntegration Integration { get; set; } = null!;
+    /// <summary>The id/email the partner sends in X-Acting-User.</summary>
+    public string ExternalUserKey { get; set; } = null!;
+    /// <summary>The NextAcc user this maps to (must be a member of the company).</summary>
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public string? ExternalUserName { get; set; }
 }
 
 /// <summary>

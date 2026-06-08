@@ -132,7 +132,12 @@ public class OcrService : IOcrService
             Confidence = 0m,
             FileHash = fileHash,
             IsDuplicate = duplicateOf != null,
-            DuplicateOfScanId = duplicateOf?.Id
+            DuplicateOfScanId = duplicateOf?.Id,
+            // Record the uploader (resolved to a real user — the integration
+            // operator via X-Acting-User, or the web user, or the owner) so the
+            // auto-created document's creator signature reflects who actually
+            // ran this scan instead of a generic literal.
+            CreatedBy = file.UploadedByUserId != Guid.Empty ? file.UploadedByUserId.ToString() : null
         };
 
         _db.Set<OcrScanResult>().Add(scanResult);

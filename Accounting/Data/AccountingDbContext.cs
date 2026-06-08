@@ -330,6 +330,7 @@ public class AccountingDbContext : DbContext
     public DbSet<ExternalIntegration> ExternalIntegrations => Set<ExternalIntegration>();
     public DbSet<IntegrationSyncLog> IntegrationSyncLogs => Set<IntegrationSyncLog>();
     public DbSet<IntegrationAccountMapping> IntegrationAccountMappings => Set<IntegrationAccountMapping>();
+    public DbSet<IntegrationUserMapping> IntegrationUserMappings => Set<IntegrationUserMapping>();
 
     // Signature & Approval
     public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
@@ -2365,6 +2366,15 @@ public class AccountingDbContext : DbContext
             e.HasOne(m => m.Integration).WithMany(i => i.AccountMappings).HasForeignKey(m => m.IntegrationId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(m => m.DebitAccount).WithMany().HasForeignKey(m => m.DebitAccountId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(m => m.CreditAccount).WithMany().HasForeignKey(m => m.CreditAccountId).OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(m => !m.IsDeleted);
+        });
+        modelBuilder.Entity<IntegrationUserMapping>(e =>
+        {
+            e.Property(m => m.ExternalUserKey).HasMaxLength(256);
+            e.HasIndex(m => new { m.IntegrationId, m.ExternalUserKey })
+                .HasDatabaseName("IX_IntegrationUserMappings_Integration_Key");
+            e.HasOne(m => m.Integration).WithMany(i => i.UserMappings).HasForeignKey(m => m.IntegrationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(m => m.User).WithMany().HasForeignKey(m => m.UserId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(m => !m.IsDeleted);
         });
 

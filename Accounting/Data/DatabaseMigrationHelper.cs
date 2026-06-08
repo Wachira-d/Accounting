@@ -2656,6 +2656,27 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "OverridePaymentAccountId" uuid NULL;
             """,
+            // Integration → NextAcc user mapping: attribute integration actions
+            // (and creator signatures) to the real operator the partner sends.
+            """
+            CREATE TABLE IF NOT EXISTS "IntegrationUserMappings" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "IntegrationId" uuid NOT NULL,
+                "ExternalUserKey" varchar(256) NOT NULL,
+                "UserId" uuid NOT NULL,
+                "ExternalUserName" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_IntegrationUserMappings_Integration_Key"
+                ON "IntegrationUserMappings" ("IntegrationId", "ExternalUserKey");
+            """,
             // ===== Bank reconciliation: rejected-match memory + audit log =====
             // New tables; CREATE IF NOT EXISTS so existing DBs gain them on
             // first startup after deploy (the GenerateCreateScript path also
