@@ -815,11 +815,11 @@ public partial class BankService : IBankService
         var fp = await _db.FiscalPeriods.AsNoTracking()
             .Where(f => f.CompanyId == companyId && !f.IsDeleted
                 && f.StartDate <= txnDate && f.EndDate >= txnDate)
-            .Select(f => new { f.PeriodName, f.Status })
+            .Select(f => new { f.Name, f.Status })
             .FirstOrDefaultAsync();
         if (fp == null) return;          // no period defined → allow
         if (fp.Status == FiscalPeriodStatus.Open) return;
         throw new InvalidOperationException(
-            $"งวดบัญชี '{fp.PeriodName}' ถูก{(fp.Status == FiscalPeriodStatus.Locked ? "ล็อก" : "ปิด")}แล้ว — ห้ามทำ {action} ในงวดนี้");
+            $"งวดบัญชี '{fp.Name}' ถูก{(fp.Status == FiscalPeriodStatus.Locked ? "ล็อก" : "ปิด")}แล้ว — ห้ามทำ {action} ในงวดนี้");
     }
 }
