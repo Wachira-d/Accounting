@@ -25,9 +25,22 @@ public static class DeepLinkRewriter
         ("journal-entries", "journals.html",        "entryId"),
         ("documents",       "documents.html",       "editDoc"),
         ("invoices",        "documents.html",       "editDoc"),
+        ("tax-invoices",    "documents.html",       "editDoc"),
         ("receipts",        "documents.html",       "editDoc"),
         ("quotations",      "documents.html",       "editDoc"),
         ("payment-vouchers","documents.html",       "editDoc"),
+        // Expense / purchase docs are also just Documents (?side=expense in
+        // the UI but documents.html opens any doc id via editDoc). External
+        // systems were linking /{company}/expenses/{id} and hitting a 404
+        // because the segment wasn't mapped.
+        ("expenses",        "documents.html",       "editDoc"),
+        ("expense",         "documents.html",       "editDoc"),
+        ("purchase-invoices","documents.html",      "editDoc"),
+        ("purchases",       "documents.html",       "editDoc"),
+        ("bills",           "documents.html",       "editDoc"),
+        ("billing-notes",   "documents.html",       "editDoc"),
+        ("credit-notes",    "documents.html",       "editDoc"),
+        ("debit-notes",     "documents.html",       "editDoc"),
         ("contacts",        "contacts.html",        "id"),
         ("products",        "products.html",        "id"),
         ("supplies",        "supplies.html",        "id"),

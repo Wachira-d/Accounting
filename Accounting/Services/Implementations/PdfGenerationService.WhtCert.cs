@@ -127,16 +127,19 @@ public partial class PdfGenerationService
     {
         col.Item().BorderBottom(1).BorderColor(Colors.Black).Padding(5).Column(c =>
         {
-            // Row 1: heading on left, 13-digit TIN boxes on right
+            // Row 1: heading on left, 13-digit TIN boxes on right.
+            // Widths kept TIGHT so heading + label + 13 fixed boxes never
+            // exceed the row (a too-wide fixed element throws QuestPDF's
+            // "conflicting size constraints").
             c.Item().Row(r =>
             {
-                r.ConstantItem(170).Text(t => t.Span(heading + " :-").Bold().FontSize(10));
+                r.ConstantItem(140).Text(t => t.Span(heading + " :-").Bold().FontSize(9.5f));
                 r.RelativeItem().AlignRight().Row(rr =>
                 {
-                    rr.AutoItem().AlignBottom().PaddingRight(4).Text(t =>
+                    rr.AutoItem().AlignBottom().PaddingRight(3).Text(t =>
                     {
-                        t.Span("เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)").FontSize(9);
-                        t.Span("*").FontColor(Colors.Red.Darken2).FontSize(9);
+                        t.Span("เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)").FontSize(8);
+                        t.Span("*").FontColor(Colors.Red.Darken2).FontSize(8);
                     });
                     rr.AutoItem().Element(e => DrawTinBoxes(e, taxId));
                 });
@@ -147,7 +150,7 @@ public partial class PdfGenerationService
             {
                 r.RelativeItem().AlignRight().Row(rr =>
                 {
-                    rr.AutoItem().AlignBottom().PaddingRight(4).Text("เลขประจำตัวผู้เสียภาษีอากร").FontSize(8.5f);
+                    rr.AutoItem().AlignBottom().PaddingRight(3).Text("เลขประจำตัวผู้เสียภาษีอากร").FontSize(7.5f);
                     rr.AutoItem().Element(e => DrawOldTinBoxes(e, taxId));
                 });
             });
@@ -181,12 +184,12 @@ public partial class PdfGenerationService
             int[][] groups = { new[]{0,1}, new[]{1,5}, new[]{5,10}, new[]{10,12}, new[]{12,13} };
             for (int g = 0; g < groups.Length; g++)
             {
-                if (g > 0) r.AutoItem().AlignMiddle().Text("-").FontSize(10).Bold();
+                if (g > 0) r.AutoItem().Width(4).AlignMiddle().AlignCenter().Text("-").FontSize(9).Bold();
                 for (int i = groups[g][0]; i < groups[g][1]; i++)
                 {
                     var ch = i < digits.Length ? digits[i].ToString().Trim() : "";
-                    r.AutoItem().Border(1).BorderColor(Colors.Black).Width(15).Height(17)
-                        .AlignCenter().AlignMiddle().Text(ch).FontSize(10).Bold();
+                    r.AutoItem().Border(1).BorderColor(Colors.Black).Width(12).Height(15)
+                        .AlignCenter().AlignMiddle().Text(ch).FontSize(9).Bold();
                 }
             }
         });
@@ -203,12 +206,12 @@ public partial class PdfGenerationService
             int[][] groups = { new[]{0,3}, new[]{3,7}, new[]{7,10} };
             for (int g = 0; g < groups.Length; g++)
             {
-                if (g > 0) r.AutoItem().Width(5);
+                if (g > 0) r.AutoItem().Width(4);
                 for (int i = groups[g][0]; i < groups[g][1]; i++)
                 {
                     var ch = i < dg.Length ? dg[i].ToString().Trim() : "";
-                    r.AutoItem().Border(0.8f).BorderColor(Colors.Black).Width(12).Height(14)
-                        .AlignCenter().AlignMiddle().Text(ch).FontSize(8.5f);
+                    r.AutoItem().Border(0.8f).BorderColor(Colors.Black).Width(10).Height(13)
+                        .AlignCenter().AlignMiddle().Text(ch).FontSize(8);
                 }
             }
         });
@@ -445,8 +448,10 @@ public partial class PdfGenerationService
                     });
                     c.Item().AlignCenter().Text("(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)").FontSize(7).FontColor(Colors.Grey.Darken1);
                 });
-                // Circular company-seal placeholder, vertically centred.
-                rr.ConstantItem(82).AlignMiddle().PaddingLeft(6).Element(DrawStampCircle);
+                // Company-seal placeholder, vertically centred. ConstantItem
+                // must be WIDER than the seal box + its left padding, or the
+                // fixed-width seal overflows → "conflicting size constraints".
+                rr.ConstantItem(80).AlignMiddle().PaddingLeft(4).Element(DrawStampCircle);
             });
         });
     }
@@ -460,7 +465,7 @@ public partial class PdfGenerationService
     // standard 3-line italic text.
     private static void DrawStampCircle(QuestPDF.Infrastructure.IContainer e)
     {
-        e.Width(78).Height(78)
+        e.Width(72).Height(72)
          .Border(1f).BorderColor(Colors.Grey.Darken1)
          .AlignCenter().AlignMiddle()
          .Text("ประทับตรา\nนิติบุคคล\n(ถ้ามี)")

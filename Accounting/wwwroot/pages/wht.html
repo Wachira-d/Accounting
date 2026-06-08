@@ -207,8 +207,7 @@
           <td>${w.documentNumber ? `<a href="/pages/documents.html" onclick="event.preventDefault();window.location='/pages/documents.html?search=${w.documentNumber}'">${w.documentNumber}</a>` : '-'}</td>
           <td class="flex gap-1">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')" data-i18n="common.view">ดู</button>
-            ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" data-i18n="common.print">พิมพ์</button>
-            <button class="btn btn-sm btn-success" onclick="Page.downloadPdf('${w.id}','${(w.certificateNumber||'').replace(/'/g,"\\'")}')" title="ดาวน์โหลดเป็นไฟล์ PDF">📥 PDF</button>` : ''}
+            ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" title="พิมพ์ หรือบันทึกเป็น PDF (ฟอร์มเดียวกับที่ใช้ยื่นสรรพากร)">🖨 พิมพ์ / PDF</button>` : ''}
             ${w.status === 'Draft' || w.status === 'Issued' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidCert('${w.id}')" title="ยกเลิกหนังสือรับรอง">ยกเลิก</button>` : ''}
             <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteCert('${w.id}','${(w.certificateNumber||'').replace(/'/g,"\\'")}')" title="ลบหนังสือรับรองถาวร (Owner เท่านั้น)" style="background:var(--red-700)">ลบ</button>
           </td>
@@ -255,8 +254,7 @@
             footer = `<button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>
               <button class="btn btn-success" onclick="Page.issueCert('${d.id}')">ออกหนังสือรับรอง</button>` + footer;
           } else if (d.status === 'Issued') {
-            footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" data-i18n="common.print">พิมพ์</button>
-              <button class="btn btn-success" onclick="Page.downloadPdf('${d.id}','${Layout.esc(d.certificateNumber||'')}')">📥 ดาวน์โหลด PDF</button>
+            footer = `<button class="btn btn-success" onclick="Page.printCert('${d.id}')" title="พิมพ์ หรือบันทึกเป็น PDF — ฟอร์มเดียวกับที่ใช้ยื่นสรรพากร">🖨 พิมพ์ / บันทึก PDF</button>
               <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>` + footer;
           }
           const myRole = await Layout.ensureMyRole();
@@ -809,7 +807,10 @@
 </style>
 </head>
 <body>
-  <div class="noprint"><button onclick="window.print()">พิมพ์หนังสือรับรอง / Print</button></div>
+  <div class="noprint" style="text-align:center;padding:8px;background:#eff6ff;border-bottom:1px solid #bfdbfe;font-family:sans-serif">
+    <button onclick="window.print()" style="padding:8px 18px;font-size:15px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer">🖨 พิมพ์ / บันทึกเป็น PDF</button>
+    <span style="margin-left:10px;font-size:12px;color:#475569">เลือกปลายทางเป็น "Save as PDF / บันทึกเป็น PDF" ในหน้าต่างพิมพ์เพื่อดาวน์โหลดไฟล์</span>
+  </div>
   ${buildCopy(1)}
   ${buildCopy(2)}
 </body>
