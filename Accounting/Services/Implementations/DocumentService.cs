@@ -4396,11 +4396,13 @@ public class DocumentService : IDocumentService
         if (d.Status == DocumentStatus.Rejected)
             return ("Cancelled", "× ถูกปฏิเสธ");
 
-        // Draft / WaitingApproval — still being prepared. Reason mirrors status.
-        if (d.Status == DocumentStatus.Draft)
-            return ("Open", "⏳ ฉบับร่าง");
-        if (d.Status == DocumentStatus.WaitingApproval)
-            return ("Open", "⏳ รออนุมัติ");
+        // Draft / WaitingApproval — the status badge ALREADY says "ร่าง" /
+        // "รออนุมัติ". A second lifecycle pill repeating the same thing is
+        // visual noise (the UI showed "ร่าง" + "⏳ ฉบับร่าง" stacked on
+        // mobile). Return empty so the frontend hides the lifecycle pill;
+        // it appears only when lifecycle adds NEW info beyond status.
+        if (d.Status == DocumentStatus.Draft || d.Status == DocumentStatus.WaitingApproval)
+            return ("Open", "");
 
         // Per-type rules.
         switch (d.DocumentType)

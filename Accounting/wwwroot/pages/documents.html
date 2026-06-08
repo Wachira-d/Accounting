@@ -2030,7 +2030,20 @@
           document.getElementById('detailContent').innerHTML = banners + `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
               <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
-              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}${d.lifecycleStatus ? ` <span style="margin-left:6px;padding:2px 8px;background:${({Done:'#dcfce7',PartiallyDone:'#fef3c7',Cancelled:'#f1f5f9',Open:'#dbeafe'}[d.lifecycleStatus]||'#f1f5f9')};color:${({Done:'#15803d',PartiallyDone:'#92400e',Cancelled:'#64748b',Open:'#1e40af'}[d.lifecycleStatus]||'#475569')};border-radius:8px;font-size:11px;font-weight:700">${this.escapeHtml(d.lifecycleReason || d.lifecycleStatus)}</span>` : ''}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}${(() => {
+                // Render the SECOND (lifecycle) pill only when it adds NEW
+                // info beyond the status badge — never when the backend
+                // returned an empty reason (Draft/WaitingApproval) or a
+                // duplicate of the status label (server-side rule already
+                // suppresses these, but guard here too).
+                const lr = (d.lifecycleReason || '').trim();
+                if (!d.lifecycleStatus || !lr) return '';
+                const statusLabel = (Layout.statusLabel ? Layout.statusLabel(d.status) : '').trim();
+                if (statusLabel && lr.replace(/[⏳×✓◐\s]/g,'').includes(statusLabel.replace(/[⏳×✓◐\s]/g,'')) && lr.length <= statusLabel.length + 4) return '';
+                const bg = ({Done:'#dcfce7',PartiallyDone:'#fef3c7',Cancelled:'#f1f5f9',Open:'#dbeafe'}[d.lifecycleStatus]||'#f1f5f9');
+                const fg = ({Done:'#15803d',PartiallyDone:'#92400e',Cancelled:'#64748b',Open:'#1e40af'}[d.lifecycleStatus]||'#475569');
+                return ` <span style="margin-left:6px;padding:2px 8px;background:${bg};color:${fg};border-radius:8px;font-size:11px;font-weight:700">${this.escapeHtml(lr)}</span>`;
+              })()}</div></div>
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
