@@ -2646,6 +2646,59 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OcrIntelTrainedAt" timestamp NULL;
             """,
+            // WHT cert dismissal — operator skips a doc from the "waiting to
+            // issue WHT cert" list without deleting the source document.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtCertSkipped" boolean NOT NULL DEFAULT false;
+            """,
+            // ===== Bank reconciliation: rejected-match memory + audit log =====
+            // New tables; CREATE IF NOT EXISTS so existing DBs gain them on
+            // first startup after deploy (the GenerateCreateScript path also
+            // creates them on a brand-new DB, but this guarantees it for an
+            // existing one without an EF migration).
+            """
+            CREATE TABLE IF NOT EXISTS "BankMatchExclusions" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "BankTransactionId" uuid NOT NULL,
+                "CandidateId" uuid NOT NULL,
+                "CandidateType" varchar(32) NOT NULL DEFAULT '',
+                "RejectedAt" timestamp NOT NULL DEFAULT now(),
+                "RejectionReason" text NULL,
+                "RejectedByUserId" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_BankMatchExclusions_Lookup"
+                ON "BankMatchExclusions" ("CompanyId", "BankTransactionId", "CandidateId");
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "BankMatchAuditLogs" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "BankTransactionId" uuid NOT NULL,
+                "AppliedByUserId" uuid NOT NULL,
+                "AppliedAt" timestamp NOT NULL DEFAULT now(),
+                "ConfidenceAtApply" numeric(5,4) NOT NULL DEFAULT 0,
+                "OutcomeJson" text NULL,
+                "AlternativesJson" text NULL,
+                "WasAiValidated" boolean NOT NULL DEFAULT false,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_BankMatchAuditLog_Lookup"
+                ON "BankMatchAuditLogs" ("CompanyId", "BankTransactionId");
+            """,
         ];
     }
 
