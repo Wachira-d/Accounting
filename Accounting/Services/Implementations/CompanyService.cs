@@ -4,6 +4,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
@@ -15,17 +16,20 @@ public class CompanyService : ICompanyService
     private readonly ISubscriptionService? _subscriptionService;
     private readonly IEmailService? _emailService;
     private readonly ILogger<CompanyService>? _logger;
+    private readonly IConfiguration? _config;
 
     public CompanyService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService? subscriptionService = null,
         IEmailService? emailService = null,
-        ILogger<CompanyService>? logger = null)
+        ILogger<CompanyService>? logger = null,
+        IConfiguration? config = null)
     {
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
         _emailService = emailService;
         _logger = logger;
+        _config = config;
     }
 
     /// <summary>Lowercase + trim — the canonical form we store, search, and
@@ -310,7 +314,9 @@ public class CompanyService : ICompanyService
                 Role = request.Role
             });
             await _db.SaveChangesAsync();
-            return new AddUserResult(WasInvited: false, Email: email, InvitationId: null);
+            // Existing platform user added directly — no email needed (they
+            // already have an account + will see the company on next login).
+            return new AddUserResult(WasInvited: false, Email: email, InvitationId: null, EmailSent: false);
         }
 
         // Invitee isn't a member of the platform yet — create an invitation
@@ -340,34 +346,55 @@ public class CompanyService : ICompanyService
         if (existing == null) _db.CompanyInvitations.Add(inv);
         await _db.SaveChangesAsync();
 
-        // Best-effort email send. If the SMTP config is wrong we still keep
-        // the invitation record so the Owner can resend later from the team
-        // page — they're not stuck with a half-created state.
+        // Build the shareable accept-invite link up front so we can always
+        // return it (the owner can copy/paste it even when email isn't set up).
+        var baseUrl = (_config?["App:BaseUrl"] ?? "").TrimEnd('/');
+        var inviteLink = $"{baseUrl}/accept-invitation.html?token={inv.Token}";
+
+        // Email is best-effort. Distinguish THREE outcomes so the owner always
+        // knows the real state instead of falsely believing a mail went out:
+        //   • email configured + sent OK   → EmailSent = true
+        //   • email NOT configured         → EmailSent = false + return link
+        //     (was the silent-fail bug: SendAsync returned without sending and
+        //      the owner was told nothing)
+        //   • email configured but send threw → surface the SMTP error
+        var emailSent = false;
         if (_emailService != null)
         {
-            try
+            var configured = await _emailService.IsSystemEmailConfiguredAsync();
+            if (configured)
             {
-                var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-                var inviter = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == ownerId);
-                await _emailService.SendInvitationAsync(
-                    to: email,
-                    inviteeName: email.Split('@')[0],
-                    inviterName: inviter?.FullName ?? "Owner",
-                    companyName: company?.Name ?? "บริษัท",
-                    invitationToken: inv.Token,
-                    role: RoleLabel(request.Role));
+                try
+                {
+                    var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+                    var inviter = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == ownerId);
+                    await _emailService.SendInvitationAsync(
+                        to: email,
+                        inviteeName: email.Split('@')[0],
+                        inviterName: inviter?.FullName ?? "Owner",
+                        companyName: company?.Name ?? "บริษัท",
+                        invitationToken: inv.Token,
+                        role: RoleLabel(request.Role));
+                    emailSent = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Invitation email send failed for {Email}", email);
+                    throw new InvalidOperationException(
+                        "สร้างคำเชิญแล้วแต่ส่งอีเมลไม่สำเร็จ — โปรดตรวจการตั้งค่า SMTP แล้วลองส่งซ้ำ " +
+                        $"หรือคัดลอกลิงก์นี้ส่งให้ผู้รับเอง: {inviteLink}");
+                }
             }
-            catch (Exception ex)
+            else
             {
-                _logger?.LogWarning(ex, "Invitation email send failed for {Email}", email);
-                // Throw a friendly error so the Owner knows the email didn't
-                // go out and can fix SMTP / try resending. The invitation
-                // row itself stayed so they can retry without re-typing.
-                throw new InvalidOperationException(
-                    "สร้างคำเชิญแล้วแต่ส่งอีเมลไม่สำเร็จ — โปรดตรวจการตั้งค่า SMTP แล้วลองส่งซ้ำ");
+                // No system SMTP — don't pretend we emailed. Return the link so
+                // the owner can share it manually.
+                _logger?.LogInformation(
+                    "Invitation created for {Email} but system email is not configured — returning manual link", email);
             }
         }
-        return new AddUserResult(WasInvited: true, Email: email, InvitationId: inv.Id);
+        return new AddUserResult(WasInvited: true, Email: email, InvitationId: inv.Id,
+            EmailSent: emailSent, InviteLink: inviteLink);
     }
 
     private static string GenerateInviteToken()

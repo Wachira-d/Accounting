@@ -4,6 +4,7 @@ using Accounting.Services.Implementations.Ocr;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -88,6 +89,73 @@ public class IntegrationController : ControllerBase
     public async Task<IActionResult> DeleteMapping(Guid companyId, Guid integrationId, Guid mappingId)
     {
         await _service.DeleteMappingAsync(companyId, integrationId, mappingId);
+        return NoContent();
+    }
+
+    // ===== Operator (user) mapping =====
+    // Map the partner's operator key (sent in X-Acting-User) → a NextAcc user
+    // so integration-created documents carry the real operator's creator
+    // signature. Email keys auto-match against company members without a row
+    // here; this is for non-email external ids.
+
+    public sealed record UserMappingRequest(string ExternalUserKey, Guid UserId, string? ExternalUserName);
+
+    [HttpGet("{integrationId:guid}/user-mappings")]
+    public async Task<ActionResult<ApiResponse<object>>> GetUserMappings(
+        Guid companyId, Guid integrationId, [FromServices] Data.AccountingDbContext db)
+    {
+        var rows = await db.IntegrationUserMappings.AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.IntegrationId == integrationId && !m.IsDeleted)
+            .Select(m => new { m.Id, m.ExternalUserKey, m.UserId, m.ExternalUserName,
+                UserName = db.Users.Where(u => u.Id == m.UserId).Select(u => u.FullName).FirstOrDefault(),
+                UserEmail = db.Users.Where(u => u.Id == m.UserId).Select(u => u.Email).FirstOrDefault() })
+            .ToListAsync();
+        return Ok(new ApiResponse<object>(true, rows));
+    }
+
+    [HttpPost("{integrationId:guid}/user-mappings")]
+    public async Task<ActionResult<ApiResponse<object>>> UpsertUserMapping(
+        Guid companyId, Guid integrationId, [FromBody] UserMappingRequest req,
+        [FromServices] Data.AccountingDbContext db)
+    {
+        if (string.IsNullOrWhiteSpace(req.ExternalUserKey))
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุ ExternalUserKey"));
+        // The target user must be a member of this company.
+        var isMember = await db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == req.UserId);
+        if (!isMember)
+            return BadRequest(new ApiResponse<object>(false, null, "ผู้ใช้ที่เลือกไม่ได้เป็นสมาชิกของบริษัทนี้"));
+
+        var key = req.ExternalUserKey.Trim();
+        var existing = await db.IntegrationUserMappings
+            .FirstOrDefaultAsync(m => m.CompanyId == companyId && m.IntegrationId == integrationId
+                && m.ExternalUserKey.ToLower() == key.ToLower() && !m.IsDeleted);
+        if (existing != null)
+        {
+            existing.UserId = req.UserId;
+            existing.ExternalUserName = req.ExternalUserName;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            db.IntegrationUserMappings.Add(new Models.Entities.IntegrationUserMapping
+            {
+                CompanyId = companyId, IntegrationId = integrationId,
+                ExternalUserKey = key, UserId = req.UserId, ExternalUserName = req.ExternalUserName,
+            });
+        }
+        await db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, "บันทึก mapping ผู้ใช้สำเร็จ"));
+    }
+
+    [HttpDelete("{integrationId:guid}/user-mappings/{mappingId:guid}")]
+    public async Task<IActionResult> DeleteUserMapping(
+        Guid companyId, Guid integrationId, Guid mappingId, [FromServices] Data.AccountingDbContext db)
+    {
+        var row = await db.IntegrationUserMappings
+            .FirstOrDefaultAsync(m => m.Id == mappingId && m.CompanyId == companyId && m.IntegrationId == integrationId);
+        if (row == null) return NotFound();
+        row.IsDeleted = true;
+        await db.SaveChangesAsync();
         return NoContent();
     }
 

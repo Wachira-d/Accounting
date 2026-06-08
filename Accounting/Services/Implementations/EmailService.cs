@@ -77,6 +77,12 @@ public class EmailService : IEmailService
         };
     }
 
+    public async Task<bool> IsSystemEmailConfiguredAsync()
+    {
+        var cfg = await ResolveConfigAsync();
+        return !string.IsNullOrWhiteSpace(cfg.SmtpHost);
+    }
+
     public async Task SendAsync(string to, string subject, string htmlBody)
     {
         var cfg = await ResolveConfigAsync();

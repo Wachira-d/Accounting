@@ -65,11 +65,18 @@ public class CompanyController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var result = await _companyService.AddUserAsync(companyId, userId, request);
-        var message = result.WasInvited
-            ? $"ส่งคำเชิญไปยัง {result.Email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล"
-            : "เพิ่มผู้ใช้สำเร็จ";
+        // Honest message per outcome. When email isn't configured we DON'T
+        // claim it was sent — we tell the owner to share the link manually
+        // (returned in the payload so the UI can show a copy button).
+        string message;
+        if (!result.WasInvited)
+            message = "เพิ่มผู้ใช้สำเร็จ";
+        else if (result.EmailSent)
+            message = $"ส่งคำเชิญไปยัง {result.Email} แล้ว — ผู้รับจะได้รับลิงก์สมัครและเข้าร่วมทีมในอีเมล";
+        else
+            message = $"สร้างคำเชิญสำหรับ {result.Email} แล้ว แต่ระบบยังไม่ได้ตั้งค่าอีเมล — กรุณาคัดลอกลิงก์ด้านล่างส่งให้ผู้รับเอง";
         return StatusCode(201, new ApiResponse<object>(true,
-            new { result.WasInvited, result.Email, result.InvitationId }, message));
+            new { result.WasInvited, result.Email, result.InvitationId, result.EmailSent, result.InviteLink }, message));
     }
 
     [HttpPut("{companyId:guid}/users/{targetUserId:guid}/role")]

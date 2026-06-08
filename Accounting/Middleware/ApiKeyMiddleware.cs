@@ -156,14 +156,26 @@ public class ApiKeyMiddleware
         if (!EnforceRateLimit(context, match.Id, match.RateLimitPerMinute))
             return false;  // 429 already written
 
+        // ── Operator attribution ────────────────────────────────────────
+        // The partner can name the real operator in the X-Acting-User header
+        // (their user's email, or any external id we've mapped). We resolve it
+        // to a genuine NextAcc user so the document's CreatedBy / creator
+        // signature reflects who actually did the work — instead of the
+        // company Owner fallback. When unresolved, NameIdentifier stays the
+        // IntegrationId and downstream falls back to Owner as before.
+        var actingUserId = await ResolveActingUserAsync(db, match.CompanyId, match.Id,
+            FirstHeader(context, "X-Acting-User", "X-Operator-Email", "X-Operator"));
+
+        var nameId = actingUserId?.ToString() ?? match.Id.ToString();
         var claims = new List<Claim>
         {
-            new(ClaimTypes.NameIdentifier, match.Id.ToString()),
+            new(ClaimTypes.NameIdentifier, nameId),
             new("CompanyId", match.CompanyId.ToString()),
             new("IntegrationId", match.Id.ToString()),
             new("AuthMethod", "IntegrationKey")
         };
         context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "ApiKey"));
+        if (actingUserId.HasValue) context.Items["ActingUserId"] = actingUserId.Value;
 
         context.Items["CompanyId"] = match.CompanyId;
         context.Items["IntegrationId"] = match.Id;
@@ -173,6 +185,56 @@ public class ApiKeyMiddleware
         context.Items["IsApiKeyAuth"] = true;
 
         return true;
+    }
+
+    /// <summary>First non-empty value among the given header names.</summary>
+    private static string? FirstHeader(HttpContext context, params string[] names)
+    {
+        foreach (var n in names)
+        {
+            var v = context.Request.Headers[n].ToString();
+            if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
+        }
+        return null;
+    }
+
+    /// <summary>Resolve the partner-supplied operator key (X-Acting-User) to a
+    /// real NextAcc user that belongs to the company. Order:
+    ///   1. an explicit IntegrationUserMapping row (ExternalUserKey → UserId),
+    ///   2. a direct email match against a company member,
+    ///   3. null (caller keeps the IntegrationId → Owner fallback downstream).
+    /// Always verifies the resolved user is an active member of the company so
+    /// a partner can't attribute actions to an unrelated account.</summary>
+    private static async Task<Guid?> ResolveActingUserAsync(
+        AccountingDbContext db, Guid companyId, Guid integrationId, string? actingKey)
+    {
+        if (string.IsNullOrWhiteSpace(actingKey)) return null;
+        var key = actingKey.Trim();
+
+        // 1) Explicit mapping configured in NextAcc for this integration.
+        var mapped = await db.Set<Models.Entities.IntegrationUserMapping>()
+            .Where(m => m.IntegrationId == integrationId && !m.IsDeleted
+                        && m.ExternalUserKey.ToLower() == key.ToLower())
+            .Select(m => (Guid?)m.UserId)
+            .FirstOrDefaultAsync();
+        if (mapped.HasValue)
+        {
+            var isMember = await db.Set<Models.Entities.CompanyUser>()
+                .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == mapped.Value);
+            if (isMember) return mapped.Value;
+        }
+
+        // 2) Direct email match against a company member.
+        if (key.Contains('@'))
+        {
+            var userId = await (
+                from u in db.Set<Models.Entities.User>()
+                join cu in db.Set<Models.Entities.CompanyUser>() on u.Id equals cu.UserId
+                where cu.CompanyId == companyId && u.Email.ToLower() == key.ToLower()
+                select (Guid?)u.Id).FirstOrDefaultAsync();
+            if (userId.HasValue) return userId;
+        }
+        return null;
     }
 
     /// <summary>
