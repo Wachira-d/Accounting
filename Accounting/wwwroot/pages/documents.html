@@ -1349,8 +1349,13 @@
               Cancelled:      ['#f1f5f9', '#64748b'],
               Open:           ['#dbeafe', '#1e40af'],
             }[d.lifecycleStatus] || ['#f1f5f9', '#475569'];
-            const lifecycleBadge = d.lifecycleStatus
-              ? `<span title="${this.escapeHtml(d.lifecycleReason || '')}" style="margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700">${this.escapeHtml(d.lifecycleReason || d.lifecycleStatus)}</span>`
+            // Lifecycle pill — render ONLY when a non-empty reason is present.
+            // The backend now suppresses the reason whenever the lifecycle
+            // would just repeat the status badge (Voided/Rejected/Paid PV/
+            // Approved CIL etc.), so the pill appears only when it adds NEW
+            // info beyond status (e.g., "◐ จ่าย 50%" / "✓ แปลงครบ").
+            const lifecycleBadge = (d.lifecycleStatus && (d.lifecycleReason || '').trim())
+              ? `<span title="${this.escapeHtml(d.lifecycleReason || '')}" style="margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700">${this.escapeHtml(d.lifecycleReason)}</span>`
               : '';
             // Aging badge — surfaced inline next to the document number.
             // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
