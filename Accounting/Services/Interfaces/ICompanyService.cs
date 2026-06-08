@@ -4,7 +4,13 @@ using Accounting.Models.Enums;
 
 namespace Accounting.Services.Interfaces;
 
-public record AddUserResult(bool WasInvited, string Email, Guid? InvitationId);
+public record AddUserResult(bool WasInvited, string Email, Guid? InvitationId,
+    // True when the invitation email was actually dispatched. False when the
+    // invitation row was created but system email isn't configured — the UI
+    // should then show InviteLink for the owner to share manually instead of
+    // claiming the mail was sent.
+    bool EmailSent = false,
+    string? InviteLink = null);
 
 public interface ICompanyService
 {

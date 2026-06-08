@@ -10,4 +10,10 @@ public interface IEmailService
     Task SendPayslipAsync(string to, string employeeName, string payrollPeriod, byte[] pdfAttachment);
     Task SendInvitationAsync(string to, string inviteeName, string inviterName,
         string companyName, string invitationToken, string role);
+
+    /// <summary>True when a system SMTP host is configured (DB SiteSettings or
+    /// appsettings). Lets callers tell "email actually sent" from "silently
+    /// skipped because email isn't set up" so the UI can fall back to showing
+    /// a copy-able invite link instead of falsely claiming the mail was sent.</summary>
+    Task<bool> IsSystemEmailConfiguredAsync();
 }
