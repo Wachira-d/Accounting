@@ -104,6 +104,13 @@ public class Document : TenantEntity
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
 
+    /// <summary>True when the operator has explicitly DISMISSED this document
+    /// from the "waiting to issue WHT cert" list. The source doc still
+    /// exists and is unchanged; we just don't pester the user about it any
+    /// more. Used when WHT was deducted but no certificate is needed (e.g.,
+    /// internal accruals, intra-company reclassifications).</summary>
+    public bool WhtCertSkipped { get; set; }
+
     /// <summary>Access-control classification — None for the regular sales
     /// stream, Payroll/ExecutivePay/HrPersonal for restricted records.
     /// Owner picks which roles can see each kind in CompanySensitivitySettings.</summary>

@@ -343,6 +343,7 @@ const API = {
       getWhtByContact: (contactId, q = '') => API.get(`${base}/withholding-tax-certs/contacts/${contactId}${q}`),
       autoGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/auto-generate`, d),
       getPendingWht: (q = '') => API.get(`${base}/withholding-tax-certs/pending${q}`),
+      dismissPendingWht: (docId) => API.post(`${base}/withholding-tax-certs/pending/${docId}/dismiss`, {}),
       bulkGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/bulk-generate`, d),
       // ===== CMS / Website Builder =====
       cmsListSites: (q = '') => API.get(`${base}/cms/sites${q}`),

@@ -19,4 +19,8 @@ public interface IWithholdingTaxCertService
     Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy);
     Task<List<PendingWhtDocumentResponse>> GetPendingDocumentsAsync(Guid companyId, int? year = null, int? month = null);
     Task<BulkGenerateWhtResponse> BulkGenerateAsync(Guid companyId, BulkGenerateWhtRequest request, string createdBy);
+    /// <summary>Dismiss a document from the "waiting to issue cert" list — the
+    /// source document stays exactly as-is, we just stop prompting. Set
+    /// dismiss=false to re-add it.</summary>
+    Task DismissPendingAsync(Guid companyId, Guid documentId, bool dismiss);
 }
