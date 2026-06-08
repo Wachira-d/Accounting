@@ -622,12 +622,31 @@
               '</optgroup>';
           }
         } catch(e) { this.bankAccounts = []; this.paymentChannels = []; }
-        // Load expense categories (chart of accounts type=Expense)
+        // Load posting accounts for the document line. Expenses are the
+        // common case, but a PV/expense doc can legitimately post to a
+        // Liability (คืนเงินทดรองกรรมการ / ชำระเงินกู้กรรมการ / เจ้าหนี้อื่น)
+        // or Asset (เงินมัดจำจ่าย / เงินทดรองจ่าย) account. The backend
+        // already accepts any ChartOfAccount id here; the dropdown just
+        // needed to offer them. Grouped with <optgroup> so Expense stays on
+        // top and the rest are findable.
         try {
-          const ac = await api.getAccounts('?type=Expense&pageSize=200');
-          this.expenseCategories = ac?.data?.items || ac?.data || [];
+          const [exRes, liRes, asRes] = await Promise.all([
+            api.getAccounts('?type=Expense&pageSize=300'),
+            api.getAccounts('?type=Liability&pageSize=300'),
+            api.getAccounts('?type=Asset&pageSize=300'),
+          ]);
+          const pick = (r) => (r?.data?.items || r?.data || []).filter(a => a.accountCode)
+            .sort((x, y) => (x.accountCode || '').localeCompare(y.accountCode || ''));
+          const expense = pick(exRes), liab = pick(liRes), asset = pick(asRes);
+          this.expenseCategories = [...expense, ...liab, ...asset];
           const sel = document.getElementById('fExpenseCategory');
-          this.expenseCategories.forEach(a => { sel.innerHTML += `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`; });
+          const opt = a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`;
+          const group = (label, list) => list.length
+            ? `<optgroup label="${label}">${list.map(opt).join('')}</optgroup>` : '';
+          sel.innerHTML = '<option value="">— ไม่ระบุ —</option>'
+            + group('ค่าใช้จ่าย / ต้นทุน', expense)
+            + group('หนี้สิน (เช่น คืนเงินทดรองกรรมการ, ชำระเงินกู้)', liab)
+            + group('สินทรัพย์ (เช่น เงินมัดจำ, เงินทดรองจ่าย)', asset);
         } catch(e) { this.expenseCategories = []; }
         // Check if email is configured for this company
         try {
