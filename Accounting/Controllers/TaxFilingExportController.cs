@@ -15,15 +15,42 @@ public class TaxFilingExportController : ControllerBase
 {
     private readonly ITaxFilingExportService _exportService;
     private readonly ISensitivityService _sensitivity;
+    private readonly Data.AccountingDbContext _db;
 
-    public TaxFilingExportController(ITaxFilingExportService exportService, ISensitivityService sensitivity)
+    public TaxFilingExportController(ITaxFilingExportService exportService,
+        ISensitivityService sensitivity, Data.AccountingDbContext db)
     {
         _exportService = exportService;
         _sensitivity = sensitivity;
+        _db = db;
+    }
+
+    /// <summary>Verify the caller actually belongs to {companyId}. Required
+    /// because [Authorize] only checks "is this a valid JWT?" — without this,
+    /// a user authenticated for company A could fetch company B's tax forms
+    /// by guessing the GUID. Returns null on success, 403 ActionResult on
+    /// failure. Cached per-request via _membershipChecked.</summary>
+    private Guid? _membershipCheckedFor;
+    private async Task<ActionResult?> EnsureMemberAsync(Guid companyId)
+    {
+        if (_membershipCheckedFor == companyId) return null;
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var user = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == userId).Select(u => new { u.IsSystemAdmin }).FirstOrDefaultAsync();
+        if (user == null) return Unauthorized();
+        if (user.IsSystemAdmin) { _membershipCheckedFor = companyId; return null; }
+        var isMember = await _db.CompanyUsers.AsNoTracking()
+            .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        if (!isMember)
+            return StatusCode(403, new ApiResponse<object>(false, null,
+                "คุณไม่ใช่สมาชิกของบริษัทนี้"));
+        _membershipCheckedFor = companyId;
+        return null;
     }
 
     private async Task<ActionResult?> CheckPayrollAsync(Guid companyId)
     {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (!await _sensitivity.CanViewAsync(companyId, userId, SensitivityKind.Payroll))
             return StatusCode(403, new ApiResponse<object>(false, new
@@ -47,6 +74,7 @@ public class TaxFilingExportController : ControllerBase
     [HttpGet("pnd3")]
     public async Task<IActionResult> ExportPnd3(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
         var result = await _exportService.ExportPnd3Async(companyId, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
@@ -55,6 +83,7 @@ public class TaxFilingExportController : ControllerBase
     [HttpGet("pnd53")]
     public async Task<IActionResult> ExportPnd53(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
         var result = await _exportService.ExportPnd53Async(companyId, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
@@ -83,6 +112,7 @@ public class TaxFilingExportController : ControllerBase
     [HttpGet("pp30")]
     public async Task<IActionResult> ExportPp30(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
         var result = await _exportService.ExportPp30Async(companyId, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
@@ -101,6 +131,8 @@ public class TaxFilingExportController : ControllerBase
     public async Task<ActionResult<ApiResponse<TaxFilingExportResult>>> Preview(
         Guid companyId, string formCode, [FromQuery] int year, [FromQuery] int month = 0)
     {
+        var member = await EnsureMemberAsync(companyId);
+        if (member != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)member;
         var code = formCode.ToUpper();
         // Block preview of payroll-derived forms behind the same Payroll gate.
         if (code is "PND1" or "PND1K" or "SSO110")

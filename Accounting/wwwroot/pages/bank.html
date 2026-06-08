@@ -1346,11 +1346,23 @@
         const statusDetail = document.getElementById('aiStatusDetail');
         if (statusBox) statusBox.style.display = '';
         if (statusText) statusText.textContent = `🧠 AI กำลังกระทบยอด ${fromStr} → ${toStr} (อาจใช้เวลาถึง ~1 นาที)...`;
-        if (statusDetail) statusDetail.textContent = '';
+        if (statusDetail) {
+          // Inline cancel link so the user can abort the wait (AbortController
+          // → server's CancellationToken → orchestrator stops the AI call).
+          // Without this they had to leave the page entirely to escape a hang.
+          statusDetail.innerHTML = '<a href="#" id="aiCancelLink" style="color:#dc2626;text-decoration:underline">ยกเลิกการรอ</a>';
+        }
+        const aiAbort = new AbortController();
+        this._bulkAiAbort = aiAbort;
+        const cancelLink = document.getElementById('aiCancelLink');
+        if (cancelLink) cancelLink.onclick = (ev) => {
+          ev.preventDefault();
+          aiAbort.abort();
+        };
         try {
           const accId = this.selectedAccount.id;
           const cid = Layout.getCompanyId();
-          const r = await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match?fromDate=${fromStr}&toDate=${toStr}`, {});
+          const r = await API.post(`/api/companies/${cid}/bank/accounts/${accId}/bulk-ai-match?fromDate=${fromStr}&toDate=${toStr}`, {}, aiAbort.signal);
           btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
           // Defensive: rate-limit / not-ready paths return {success:false,data:null}
           // WITHOUT throwing, so guard before touching plan fields.
@@ -1367,10 +1379,14 @@
           this.renderBulkPlan(r.data, r.message);
         } catch (e) {
           btn.disabled = false; btn.textContent = '🧠 AI match ทั้งเดือน (ปุ่มเดียว)';
-          const m = e?.message || 'เกิดข้อผิดพลาดในการเรียก AI';
-          if (statusText) statusText.textContent = '⚠️ เกิดข้อผิดพลาด';
+          // User-initiated cancel via AbortController — friendly message, no toast spam.
+          const wasAborted = e?.name === 'AbortError' || /aborted|abort/i.test(e?.message || '');
+          const m = wasAborted ? 'ยกเลิกการรอ AI แล้ว' : (e?.message || 'เกิดข้อผิดพลาดในการเรียก AI');
+          if (statusText) statusText.textContent = wasAborted ? 'ยกเลิกแล้ว' : '⚠️ เกิดข้อผิดพลาด';
           if (statusDetail) statusDetail.textContent = m;
-          Layout.toast(m, 'error');
+          if (!wasAborted) Layout.toast(m, 'error');
+        } finally {
+          this._bulkAiAbort = null;
         }
       },
 
@@ -1474,13 +1490,13 @@
           const sumCell = `<span style="font-weight:700;color:${mismatch?'#dc2626':'#16a34a'}">${fmtAmt(candSum)}</span>` +
             (mismatch ? `<div style="font-size:10px;color:#dc2626">ต่าง ${fmtAmt(candSum - bankAmt)}</div>` : '');
           return `<tr style="border-bottom:1px solid #f1f5f9;${hasDup?'background:#fff7ed':mismatch?'background:#fff7f7':''}">
-            <td><input type="checkbox" ${m.confidence>=0.85 && !mismatch && !hasDup?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" class="bulkMatchCheck"></td>
+            <td><input type="checkbox" ${m.confidence>=(m.aiValidated?0.85:0.95) && !mismatch && !hasDup?'checked':''} data-bulkidx="${idx}" data-conf="${m.confidence}" data-aiok="${m.aiValidated?1:0}" class="bulkMatchCheck"></td>
             <td>${bankCell}</td>
             <td><span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:999px;font-size:11px">${esc(m.matchType)}</span></td>
             <td style="font-size:12px;min-width:240px">${cands}</td>
             <td style="text-align:right;white-space:nowrap">${bankAmtCell}</td>
             <td style="text-align:right;white-space:nowrap">${sumCell}</td>
-            <td style="text-align:right"><span style="background:${confBg};color:${confColor};font-weight:700;padding:2px 8px;border-radius:6px">${conf}%</span></td>
+            <td style="text-align:right;white-space:nowrap"><span style="background:${confBg};color:${confColor};font-weight:700;padding:2px 8px;border-radius:6px">${conf}%</span>${m.aiValidated?'<span title="AI ตรวจสอบยืนยันแล้ว — เกณฑ์ติ๊ก 0.85" style="background:#ede9fe;color:#6d28d9;font-size:10px;padding:1px 5px;border-radius:4px;margin-left:4px">AI✓</span>':''}</td>
             <td style="font-size:11px;color:#475569">${esc(m.reasoning || '')}</td>
           </tr>`;
         }).join('');
@@ -1544,9 +1560,12 @@
       bulkSelect(mode) {
         document.querySelectorAll('.bulkMatchCheck').forEach(el => {
           const c = parseFloat(el.dataset.conf || '0');
+          const ai = el.dataset.aiok === '1';
+          // Server-only matches require 0.95; AI-validated matches (AI agreed)
+          // need only 0.85 — AI gave the second opinion the user wanted.
           el.checked = mode === 'all' ? true
             : mode === 'none' ? false
-            : c >= 0.85;   // 'high'
+            : c >= (ai ? 0.85 : 0.95);
         });
       },
 
@@ -2108,6 +2127,17 @@
         this.renderPickerCandidates();
         this.updateSelectionBar();
       },
+      // Direction of a candidate inferred from its doc-number prefix:
+      // RV / Receipt / Invoice = inflow (+); PV / Expense = outflow (−).
+      // For an IN bank line same-side adds and opposite-side subtracts —
+      // the net (= signed sum) is what must match the bank amount.
+      _candidateSign(item, bankIsIn) {
+        const n = (item.number || '').toUpperCase();
+        const isIn = n.startsWith('RV') || n.startsWith('REC') || n.startsWith('INV') || n.startsWith('TI') || n.startsWith('BN') || n.startsWith('DN');
+        const isOut = n.startsWith('PV') || n.startsWith('PAY') || n.startsWith('EX') || n.startsWith('PI');
+        if (!isIn && !isOut) return +1;            // unknown — additive
+        return (isIn === bankIsIn) ? +1 : -1;
+      },
       updateSelectionBar() {
         const sel = this._pickerSelected || [];
         const bar = document.getElementById('rSelectionBar');
@@ -2119,8 +2149,11 @@
           if (cntText) cntText.textContent = '(เลือกรายการก่อน)';
           return;
         }
-        const sum = sel.reduce((s, x) => s + (x.amount || 0), 0);
         const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+        const bankIsIn = (this._pickerData?.bankTransactionType || '') !== 'Withdrawal'
+                       && (this._pickerData?.bankTransactionType || '') !== 'Fee';
+        // Net (signed) sum so mixing RV + PV (net-settlement) totals correctly.
+        const sum = sel.reduce((s, x) => s + this._candidateSign(x, bankIsIn) * (x.amount || 0), 0);
         const diff = bankAmt - sum;
         document.getElementById('rSelectionCount').textContent = sel.length;
         document.getElementById('rSelectionSum').textContent = '฿' + Layout.money(sum);
@@ -2255,8 +2288,12 @@
         if (!sel.length) return;
         const transId = document.getElementById('rTransId').value;
         const type = sel[0].type;
-        const sum = sel.reduce((s, x) => s + x.amount, 0);
         const bankAmt = this._pickerData?.bankTransactionAmount || 0;
+        const bankIsIn = (this._pickerData?.bankTransactionType || '') !== 'Withdrawal'
+                       && (this._pickerData?.bankTransactionType || '') !== 'Fee';
+        // Net (signed) sum: RV on same side as bank adds, PV on opposite side
+        // subtracts. So a 5,000 receipt − 200 service fee = 4,800 net deposit.
+        const sum = sel.reduce((s, x) => s + this._candidateSign(x, bankIsIn) * x.amount, 0);
         const diff = Math.abs(bankAmt - sum);
 
         let msg;

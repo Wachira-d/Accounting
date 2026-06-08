@@ -90,9 +90,21 @@
           </div>
           <input type="hidden" id="fAddress">
 
-          <!-- ที่อยู่แบบแยกส่วน (หลัก) -->
+          <!-- ที่อยู่แบบแยกส่วน (หลัก) — กรอกรหัสไปรษณีย์ก่อน → ระบบเติม
+               จังหวัด/อำเภอ/ตำบลให้อัตโนมัติ (ผ่าน ThaiAddress.autoFillFromPostal).
+               เริ่มจาก zoom-out (รหัสไปรษณีย์ = ใหญ่สุด) แล้วไล่ลงมา zoom-in
+               (จังหวัด → อำเภอ → ตำบล) ลงท้ายด้วย บ้านเลขที่ — ตามที่
+               คนไทยกรอกฟอร์มราชการคุ้นชิน. -->
           <div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
             <div style="font-weight:600;margin-bottom:8px">ที่อยู่ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้สำหรับเอกสาร, e-Tax XML)</span></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#0369a1;font-size:11px">⤴ กรอกก่อน → เติมที่อยู่อัตโนมัติ</span></label><input type="text" class="form-input" id="fPostalCode" maxlength="5" inputmode="numeric" placeholder="10110"></div>
+              <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" class="form-input" id="fProvince"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">อำเภอ/เขต *</label><input type="text" class="form-input" id="fDistrict"></div>
+              <div class="form-group"><label class="form-label">ตำบล/แขวง *</label><input type="text" class="form-input" id="fSubDistrict"></div>
+            </div>
             <div class="form-row">
               <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="fBuildingNumber" placeholder="123/45"></div>
               <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="fBuildingName"></div>
@@ -100,14 +112,6 @@
             <div class="form-row">
               <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="fMoo" placeholder="3" maxlength="5"></div>
               <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label class="form-label">ตำบล/แขวง *</label><input type="text" class="form-input" id="fSubDistrict"></div>
-              <div class="form-group"><label class="form-label">อำเภอ/เขต *</label><input type="text" class="form-input" id="fDistrict"></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" class="form-input" id="fProvince"></div>
-              <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" class="form-input" id="fPostalCode" maxlength="5" inputmode="numeric"></div>
             </div>
             <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
           </div>
@@ -222,6 +226,21 @@
         const params = new URLSearchParams(window.location.search);
         const openId = params.get('id');
         if (openId) this.openEdit(openId);
+        // Cross-page "create new contact" flow: documents.html opens this
+        // page with ?name=<typed>&autoopen=1&returnto=opener. We auto-open
+        // the create modal, pre-fill the name, and on save postMessage the
+        // new id back so the opener tab can auto-pick it.
+        if (params.get('autoopen') === '1') {
+          this.openCreate();
+          const seed = params.get('name');
+          if (seed) {
+            const el = document.getElementById('fName');
+            if (el) el.value = seed;
+          }
+          if (params.get('returnto') === 'opener') {
+            this._returnToOpener = true;
+          }
+        }
       },
 
       // ตั้งค่าการบันทึกบัญชี — load chart of accounts ONCE on init,
@@ -371,11 +390,13 @@
             }).catch(() => {});
           }
         };
-        DbdLookup.attachNameSearch(document.getElementById('fName'), fillFromDbd);
+        DbdLookup.attachNameSearch(document.getElementById('fName'), fillFromDbd,
+          { enabledCheck: () => parseInt(document.getElementById('fContactType').value) === 2 });
         DbdLookup.attachTaxIdLookup(
           document.getElementById('fTaxId'),
           fillFromDbd,
-          document.getElementById('fDbdBtn')
+          document.getElementById('fDbdBtn'),
+          { enabledCheck: () => parseInt(document.getElementById('fContactType').value) === 2 }
         );
       },
       _allFieldIds: [
@@ -566,10 +587,27 @@
           defaultIrGrAccountId: document.getElementById('fDefaultIrGrAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
         };
         try {
-          if (id) await api.updateContact(id, data); else await api.createContact(data);
+          let savedId = id;
+          if (id) {
+            await api.updateContact(id, data);
+          } else {
+            const r = await api.createContact(data);
+            savedId = (r && r.data && (r.data.id || r.data.contactId)) || null;
+          }
           Layout.closeModal('formModal');
           Layout.toast(id ? 'แก้ไขสำเร็จ' : 'เพิ่มผู้ติดต่อสำเร็จ');
           await this.load();
+          // Cross-page hand-off: documents.html opened us with returnto=opener
+          // and is waiting for the new contact id. Post it back and close
+          // this tab — the opener auto-picks the contact.
+          if (this._returnToOpener && savedId && window.opener && !window.opener.closed) {
+            try {
+              window.opener.postMessage(
+                { type: 'contact-created', contactId: savedId, name: data.name, taxId: data.taxId },
+                window.location.origin);
+              setTimeout(() => window.close(), 300);
+            } catch (_) { /* opener gone — leave tab open */ }
+          }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async deleteContact(id) {

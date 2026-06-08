@@ -4390,17 +4390,22 @@ public class DocumentService : IDocumentService
     private static (string Status, string Reason) ComputeLifecycle(
         Document d, decimal? conversionPercent, List<DocumentBrief>? downstream)
     {
-        // Voided / Rejected always win — purpose terminated.
+        // Voided / Rejected always win — purpose terminated. The status
+        // badge already says "ยกเลิก" / "ถูกปฏิเสธ"; a separate lifecycle
+        // pill saying the same thing was just visual noise — return empty
+        // reason so the frontend hides the duplicate.
         if (d.Status == DocumentStatus.Voided)
-            return ("Cancelled", "× ยกเลิกแล้ว");
+            return ("Cancelled", "");
         if (d.Status == DocumentStatus.Rejected)
-            return ("Cancelled", "× ถูกปฏิเสธ");
+            return ("Cancelled", "");
 
-        // Draft / WaitingApproval — still being prepared. Reason mirrors status.
-        if (d.Status == DocumentStatus.Draft)
-            return ("Open", "⏳ ฉบับร่าง");
-        if (d.Status == DocumentStatus.WaitingApproval)
-            return ("Open", "⏳ รออนุมัติ");
+        // Draft / WaitingApproval — the status badge ALREADY says "ร่าง" /
+        // "รออนุมัติ". A second lifecycle pill repeating the same thing is
+        // visual noise (the UI showed "ร่าง" + "⏳ ฉบับร่าง" stacked on
+        // mobile). Return empty so the frontend hides the lifecycle pill;
+        // it appears only when lifecycle adds NEW info beyond status.
+        if (d.Status == DocumentStatus.Draft || d.Status == DocumentStatus.WaitingApproval)
+            return ("Open", "");
 
         // Per-type rules.
         switch (d.DocumentType)
@@ -4435,14 +4440,22 @@ public class DocumentService : IDocumentService
                 return ("Open", "⏳ รอดำเนินการต่อ");
             }
 
-            // One-shot terminal docs — Approved/Sent is the end of the line.
+            // One-shot terminal docs (PV/Receipt/RV/CIL/CN/DN). Once
+            // approved/paid, the status badge ("ชำระแล้ว" / "อนุมัติ")
+            // already conveys the whole story — a second pill repeating
+            // "✓ บันทึกเรียบร้อย" was duplicate visual noise. Return empty
+            // reason for those statuses; only mark "✓ บันทึกเรียบร้อย" for
+            // the in-between Sent state where the status badge is generic.
             case DocumentType.Receipt:
             case DocumentType.ReceiptVoucher:
             case DocumentType.PaymentVoucher:
             case DocumentType.CertificateInLieu:
             case DocumentType.CreditNote:
             case DocumentType.DebitNote:
-                return ("Done", "✓ บันทึกเรียบร้อย");
+                return d.Status == DocumentStatus.Paid
+                    || d.Status == DocumentStatus.Approved
+                    ? ("Done", "")
+                    : ("Done", "✓ บันทึกเรียบร้อย");
 
             default:
                 // Unknown type — fall back to status.

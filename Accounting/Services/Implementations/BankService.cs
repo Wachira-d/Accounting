@@ -19,11 +19,32 @@ public partial class BankService : IBankService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<BankService>? _logger;
+    private readonly IHttpContextAccessor? _httpContext;
 
-    public BankService(AccountingDbContext db, ILogger<BankService>? logger = null)
+    public BankService(AccountingDbContext db,
+        ILogger<BankService>? logger = null,
+        IHttpContextAccessor? httpContext = null)
     {
         _db = db;
         _logger = logger;
+        _httpContext = httpContext;
+    }
+
+    /// <summary>Resolve the current request's authenticated user id from the
+    /// JWT claims. Returns Guid.Empty when no HTTP context (background job)
+    /// or no valid claim — callers should skip audit-log writes in that case.</summary>
+    private Task<Guid> ResolveCurrentUserIdAsync(Guid companyId)
+    {
+        var ctx = _httpContext?.HttpContext;
+        if (ctx?.User is null) return Task.FromResult(Guid.Empty);
+        try
+        {
+            return Task.FromResult(Accounting.Helpers.JwtHelper.GetUserIdFromClaims(ctx.User));
+        }
+        catch
+        {
+            return Task.FromResult(Guid.Empty);
+        }
     }
 
     public async Task<BankAccountResponse> CreateBankAccountAsync(Guid companyId, CreateBankAccountRequest request)
@@ -392,6 +413,11 @@ public partial class BankService : IBankService
         var transaction = await _db.Set<BankTransaction>()
             .FirstOrDefaultAsync(t => t.Id == request.BankTransactionId && t.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการธนาคาร");
+
+        // FISCAL PERIOD GUARD — once a period is Closed/Locked the books are
+        // frozen for audit. Allowing a reconcile in a closed period would
+        // shift cash without an audit trail. Block at the door.
+        await EnsureFiscalPeriodOpenAsync(companyId, transaction.TransactionDate, "reconcile");
 
         // Validate mutual exclusivity: match to Payment XOR JournalEntry, not both
         if (request.MatchedPaymentId.HasValue && request.MatchedJournalEntryId.HasValue)
@@ -778,4 +804,22 @@ public partial class BankService : IBankService
         t.Id, t.BankAccountId, t.TransactionDate, t.TransactionType,
         t.Amount, t.BalanceAfter, t.Description, t.Reference, t.Payee,
         t.ReconciliationStatus, t.MatchedPaymentId);
+
+    /// <summary>Block reconciliation in a Closed or Locked fiscal period.
+    /// Throws InvalidOperationException with a clear Thai message naming the
+    /// period and action so the UI can show it directly. No-op when the date
+    /// falls outside any defined period (some companies haven't seeded their
+    /// fiscal year yet — we don't want to block those).</summary>
+    private async Task EnsureFiscalPeriodOpenAsync(Guid companyId, DateTime txnDate, string action)
+    {
+        var fp = await _db.FiscalPeriods.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted
+                && f.StartDate <= txnDate && f.EndDate >= txnDate)
+            .Select(f => new { f.PeriodName, f.Status })
+            .FirstOrDefaultAsync();
+        if (fp == null) return;          // no period defined → allow
+        if (fp.Status == FiscalPeriodStatus.Open) return;
+        throw new InvalidOperationException(
+            $"งวดบัญชี '{fp.PeriodName}' ถูก{(fp.Status == FiscalPeriodStatus.Locked ? "ล็อก" : "ปิด")}แล้ว — ห้ามทำ {action} ในงวดนี้");
+    }
 }

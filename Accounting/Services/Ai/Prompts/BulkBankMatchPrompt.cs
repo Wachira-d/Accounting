@@ -104,6 +104,7 @@ C. FLOW-AWARE WINDOW + MATCH STYLE. Classify each bank line by memo, then apply 
 
    C1. AGGREGATOR (Thai QR / KSHOP / K SHOP / KBank Shop / K-Plus Shop / MyQR / EDC / TrueMoney / ShopeePay / GrabPay / LineMan / Shopee / Lazada / NextPay / Stripe / Square / ""รับเงินจากการขายด้วย""): M:1 OK. Window [T−1 .. T] — the cut-off means a deposit bundles late-previous-day + same-day sales. NEVER T+1. Pick the SMALLEST subset summing EXACTLY. If 7 of 8 RVs sum exact, drop the 8th.
    C2. CARD SETTLEMENT (""Visa settle"" / ""MC settle"" / ""Card net"" / ""Merchant settle"" / ""POSNET""): M:1 OK. Window [T−2 .. T] (card nets settle 1-2 days AFTER the sale).
+   C2b. OTA / TRAVEL-AGENT SETTLEMENT (""Booking.com"" / ""Booking.C"" / ""Agoda"" / ""Expedia"" / ""Traveloka"" / ""Trip.com"" / ""Hotels.com"" / ""Airbnb"" / ""NRBA"" — often arriving via SMART): the agent collected the GUEST's payment, kept its COMMISSION, and remitted the NET. So bank.amount = Σ(booking Receipt/RV) − commission PaymentVoucher. This is a LEGITIMATE net-settlement (not the last-resort kind): find the booking RV(s) for that OTA's guests + the commission PV to the SAME agent (e.g. ""ค่าคอมมิชชั่น Booking.com B.V.""), emit ALL as POSITIVE amounts, and the renderer subtracts the PV. Example: RV 30,780 − commission PV 5,386.50 = 25,393.50 net deposit. Window is WIDE backward [T−45 .. T+2] because bookings predate the payout. If you can't find both the receipt(s) AND the commission, return unmatched + note ""น่าจะเป็นยอดสุทธิจาก OTA หักค่าคอม"".
    C3. PERSON-TO-PERSON TRANSFER (""รับโอนเงิน"" / ""K PLUS"" / ""Internet/Mobile KTB/SCB/BBL"" / ""PromptPay"" / ""พร้อมเพย์""): 1:1 ONLY. Window [T−1 .. T+1] (~instant; ±1 for receipt-entry lag). Memo carries first name + masked account suffix — use it to match contact.
    C4. AUTO-CREDIT (""รับโอนเงินอัตโนมัติ"" / ""SMART"" / ""ATS"" / ""โอนเข้าอัตโนมัติ"" / ""Direct credit""): 1:1. Window [T−2 .. T+1].
    C5. CHEQUE CLEARING (""เช็ค"" / ""Cheque"" / ""เรียกเก็บ"" / ""B/C"" / ""Bill collection"" / ""Clearing""): 1:1. Window [T−7 .. T+1] — the receipt was issued days BEFORE the cheque cleared.
@@ -186,7 +187,8 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
         decimal? WithholdingTax = null,           // WHT deducted on this payment
         decimal? VatAmount = null,                // VAT component if any
         string? Note = null,                      // free-text memo on the payment
-        string? Channel = null);                  // bank transfer / cash / QR / cheque
+        string? Channel = null,                   // bank transfer / cash / QR / cheque
+        string? ContactPhone = null);             // payer/payee phone — match PromptPay memos
 
     public sealed record OpenJeInput(
         string Id, string Number, DateTime Date, decimal NetAmount,
@@ -219,7 +221,8 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
         int? LineCount = null,                    // # of lines in the JE
         string? PaymentMethod = null,             // method recorded on the source doc
         string? Note = null,                      // free-text JE note
-        string? Tags = null);                     // tags / dimensions on the JE
+        string? Tags = null,                      // tags / dimensions on the JE
+        string? ContactPhone = null);             // payer/payee phone — match PromptPay memos
 
     public sealed record CompanyContext(
         string Name, string? TaxId, string BaseCurrency,
@@ -230,6 +233,15 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
         string AccountNumber, string Currency,
         decimal BankBalance, decimal? GlBalance);
 
+    /// <summary>One row of the company's chart of accounts, sent to AI so it
+    /// can refer to ACTUAL account codes when describing matches or suggesting
+    /// where a fee/WHT/adjustment line should post. Type uses the standard
+    /// Asset/Liability/Equity/Revenue/Expense enum names.</summary>
+    public sealed record ChartOfAccountInput(
+        string Code,            // e.g. "5503"
+        string Name,            // e.g. "ค่าธรรมเนียมธนาคาร"
+        string Type);           // "Asset" | "Liability" | "Equity" | "Revenue" | "Expense"
+
     public static AiRequest Build(
         Guid companyId,
         Guid bankAccountId,
@@ -239,8 +251,19 @@ MANY-BANKS-TO-ONE: if you notice that SEVERAL bank deposits together sum to ONE 
         IReadOnlyList<BankTxnInput> bankTxns,
         IReadOnlyList<OpenDocInput> openDocs,
         IReadOnlyList<OpenPaymentInput> openPayments,
-        IReadOnlyList<OpenJeInput> openJes)
+        IReadOnlyList<OpenJeInput> openJes,
+        IReadOnlyList<ChartOfAccountInput>? accounts = null)
     {
+        // NOTE: `accounts` is intentionally NOT included in the prompt — the
+        // matcher's job is to pair bank lines with ALREADY-POSTED documents.
+        // Their GL accounts were set at creation; AI doesn't need to choose
+        // accounts to match identity. The full chart only wastes prompt
+        // tokens. Resolution of fee/WHT/FX hints to real codes happens
+        // SERVER-SIDE via CompanyChartOfAccountsResolver after the AI call.
+        // The parameter stays in the signature for callers that want to opt
+        // in later (e.g. a "create JE from unmatched" flow) without an API break.
+        _ = accounts;
+
         var payload = new
         {
             task = "bulk_bank_statement_reconciliation",

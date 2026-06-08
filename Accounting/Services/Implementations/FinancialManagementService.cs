@@ -16,12 +16,22 @@ public partial class FinancialManagementService : IFinancialManagementService
     {
         var ym = DateTime.UtcNow.ToString("yyyyMM");
         var pat = $"JV-{ym}-";
-        var last = await _db.JournalEntries
+        // Race-safe: acquire a per-(company, prefix) advisory lock that auto-
+        // releases at transaction end. Two concurrent NextJvNumberAsync calls
+        // therefore serialise — no duplicate "JV-202605-0001" issues.
+        var lockKey = HashCode.Combine(companyId, "JV", ym);
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+        // Pull suffixes + take integer-max (string MaxAsync breaks past 9999
+        // because "9999" sorts AFTER "10000" lexicographically).
+        var suffixes = await _db.JournalEntries
             .Where(j => j.CompanyId == companyId && j.EntryNumber.StartsWith(pat))
-            .OrderByDescending(j => j.EntryNumber).Select(j => j.EntryNumber).FirstOrDefaultAsync();
+            .OrderByDescending(j => j.CreatedAt).Take(2000)
+            .Select(j => j.EntryNumber.Substring(pat.Length))
+            .ToListAsync();
         int seq = 1;
-        if (last != null && int.TryParse(last[pat.Length..], out var n)) seq = n + 1;
-        return $"{pat}{seq:D4}";
+        foreach (var s in suffixes)
+            if (int.TryParse(s, out var n) && n >= seq) seq = n + 1;
+        return seq <= 9999 ? $"{pat}{seq:D4}" : $"{pat}{seq:D5}";
     }
 
     private async Task<Guid?> GetFiscalPeriodIdAsync(Guid companyId, DateTime date)
@@ -35,10 +45,20 @@ public partial class FinancialManagementService : IFinancialManagementService
     {
         var ym = DateTime.UtcNow.ToString("yyyyMM");
         var pat = $"{prefix}-{ym}-";
-        // Count existing with this prefix
-        var count = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId && j.Reference != null && j.Reference.StartsWith(pat)).CountAsync();
-        return $"{pat}{(count + 1):D4}";
+        // Race-safe: advisory lock + numeric MAX. CountAsync was wrong even
+        // single-threaded — a voided ref leaves a gap that count+1 reuses
+        // (= duplicate). Use the actual max suffix instead.
+        var lockKey = HashCode.Combine(companyId, prefix, ym);
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+        var suffixes = await _db.JournalEntries
+            .Where(j => j.CompanyId == companyId && j.Reference != null && j.Reference.StartsWith(pat))
+            .OrderByDescending(j => j.CreatedAt).Take(2000)
+            .Select(j => j.Reference!.Substring(pat.Length))
+            .ToListAsync();
+        int seq = 1;
+        foreach (var s in suffixes)
+            if (int.TryParse(s, out var n) && n >= seq) seq = n + 1;
+        return seq <= 9999 ? $"{pat}{seq:D4}" : $"{pat}{seq:D5}";
     }
 
     // ==================== 1. PREPAID EXPENSES ====================
@@ -109,6 +129,15 @@ public partial class FinancialManagementService : IFinancialManagementService
                 && s.PrepaidExpense.Status == "Active")
             .OrderBy(s => s.ScheduledDate).ToListAsync();
 
+        if (schedules.Count == 0) return 0;
+
+        // ATOMICITY FIX: previously each schedule's JE insert + schedule
+        // update used a separate SaveChangesAsync. If the process crashed
+        // mid-loop the JE was already posted but the schedule was still
+        // marked unprocessed → next run would re-post → DOUBLE-AMORTISATION.
+        // Now wrap the whole loop in one transaction so either ALL schedules
+        // post atomically or NONE do.
+        await using var txn = await _db.Database.BeginTransactionAsync();
         int count = 0;
         foreach (var sched in schedules)
         {
@@ -131,17 +160,16 @@ public partial class FinancialManagementService : IFinancialManagementService
                 }
             };
             _db.JournalEntries.Add(je);
-            await _db.SaveChangesAsync();
 
             sched.IsProcessed = true;
-            sched.JournalEntryId = je.Id;
+            sched.JournalEntry = je;     // navigation so EF wires the FK after JE.Id is generated
             p.AmortizedAmount += sched.Amount;
             p.RemainingAmount = p.TotalAmount - p.AmortizedAmount;
             if (p.RemainingAmount <= 0) p.Status = "FullyAmortized";
-
-            await _db.SaveChangesAsync();
             count++;
         }
+        await _db.SaveChangesAsync();
+        await txn.CommitAsync();
         return count;
     }
 

@@ -159,7 +159,14 @@ public record BatchReconcileItem(
     string MatchType,  // "Payment", "JournalEntry", "Multiple"
     Guid? MatchedPaymentId,
     Guid? MatchedJournalEntryId,
-    List<Guid>? MatchedEntryIds);
+    List<Guid>? MatchedEntryIds,
+    // Audit context — frontend passes the confidence + whether AI validated
+    // the row + a serialised list of alternatives that were displayed, so the
+    // resulting BankMatchAuditLog row tells a future investigator exactly
+    // what the user saw at the moment of acceptance.
+    decimal? ConfidenceAtApply = null,
+    bool WasAiValidated = false,
+    string? AlternativesJson = null);
 
 public record UnmatchRequest(Guid BankTransactionId);
 

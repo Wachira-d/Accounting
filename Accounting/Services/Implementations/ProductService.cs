@@ -195,6 +195,16 @@ public class ProductService : IProductService
 
     public async Task<StockMovementResponse> AdjustStockAsync(Guid companyId, StockAdjustmentRequest request, string userId)
     {
+        // CONCURRENCY FIX: previously two parallel AdjustStockAsync calls for
+        // the same product would each read CurrentStock = X, add their qty,
+        // and save — last write wins and the other movement's quantity is
+        // silently lost. Take a Postgres advisory lock keyed by the product
+        // id so the read-modify-write becomes serial per-product. Auto-
+        // releases on transaction end (we wrap in a txn below).
+        await using var txn = await _db.Database.BeginTransactionAsync();
+        var prodLockKey = HashCode.Combine(request.ProductId, "stock-adj");
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", prodLockKey);
+
         var product = await _db.Products
             .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสินค้า");
@@ -221,6 +231,7 @@ public class ProductService : IProductService
 
         _db.StockMovements.Add(movement);
         await _db.SaveChangesAsync();
+        await txn.CommitAsync();
 
         return new StockMovementResponse(movement.Id, movement.ProductId, product.Name,
             movement.MovementDate, movement.MovementType, movement.Quantity,

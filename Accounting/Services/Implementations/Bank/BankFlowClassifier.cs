@@ -11,7 +11,8 @@ public enum BankFlowCategory
     Aggregator,    // KSHOP / Thai QR / wallets / marketplaces — daily M:1, [T−1..T]
     Transfer,      // person-to-person via PromptPay / Internet / Mobile — 1:1, [T−1..T+1]
     AutoCredit,    // SMART / ATS / "อัตโนมัติ" — 1:1 or scheduled, [T−2..T+1]
-    Cheque,        // เช็ค / B/C / bill collection — 1:1 with clearing delay, [T−7..T+1]
+    Cheque,        // เช็ค / B/C / bill collection — 1:1 with clearing delay, [T−30..T+1]
+    ChequeBounce,  // เช็คเด้ง / stop payment / cheque returned — reverses earlier cheque
     CounterCash,   // ฝากเงินสด / Counter — 1:1 may be late, [T−2..T+1]
     InwardTT,      // SWIFT / Inward TT / Remittance — 1:1 with FX variance, [T−7..T+2]
     BillPayment,   // ลูกค้าจ่ายผ่านเคาน์เตอร์/ชำระบิล — 1:1 with ref, [T−3..T+1]
@@ -19,6 +20,7 @@ public enum BankFlowCategory
     Refund,        // Refund / กลับรายการ — 1:1 reversal, wide backward
     Loan,          // Loan disbursement / เบิกสินเชื่อ / OD — 1:1, [T−2..T+2]
     CardSettle,    // Card / Visa/MC settlement — daily M:1, [T−2..T]
+    OtaSettlement, // Booking.com / Agoda / Expedia — Σ receipts − commission, wide back
     TaxRefund,     // คืนภาษี / RD refund — 1:1 wide forward
     Other,         // unclassified — conservative 1:1, [T−3..T+2]
 }
@@ -47,10 +49,28 @@ public static class BankFlowClassifier
             || s.Contains("posnet"))
             return BankFlowCategory.CardSettle;
 
+        // OTA travel agents remit the booking total NET of their commission, so
+        // the deposit = Σ(booking receipts) − commission PV. Check before the
+        // SMART/auto-credit rule because OTA payouts often arrive via SMART.
+        if (s.Contains("booking.c") || s.Contains("booking.com") || s.Contains("agoda")
+            || s.Contains("expedia") || s.Contains("traveloka") || s.Contains("ctrip")
+            || s.Contains("trip.com") || s.Contains("hotels.com") || s.Contains("makemytrip")
+            || s.Contains("airbnb") || s.Contains("nrba"))
+            return BankFlowCategory.OtaSettlement;
+
         if (s.Contains("smart") || s.Contains(" ats ") || s.Contains("รับโอนเงินอัตโนมัติ")
             || s.Contains("โอนเข้าอัตโนมัติ") || s.Contains("หักบัญชีอัตโนมัติ")
             || s.Contains("scheduled transfer") || s.Contains("direct credit"))
             return BankFlowCategory.AutoCredit;
+
+        // Bounce / stop payment — check BEFORE the plain Cheque rule because
+        // most bounce memos still contain "cheque/เช็ค". A bounced cheque
+        // reverses an earlier deposit (or charges a fee) and should NEVER be
+        // matched to a normal open invoice — different flow + different GL.
+        if (s.Contains("bounce") || s.Contains("returned cheque") || s.Contains("return cheque")
+            || s.Contains("เช็คคืน") || s.Contains("เช็คเด้ง") || s.Contains("stop payment")
+            || s.Contains("รายการคืนเช็ค") || s.Contains("ระงับการจ่าย"))
+            return BankFlowCategory.ChequeBounce;
 
         if (s.Contains("เช็ค") || s.Contains("cheque") || s.Contains("เรียกเก็บ")
             || s.Contains("bill collection") || s.Contains(" b/c ") || s.Contains("clearing"))
@@ -104,12 +124,18 @@ public static class BankFlowClassifier
         {
             BankFlowCategory.Aggregator  => (1, 0),
             BankFlowCategory.CardSettle  => (2, 0),
+            BankFlowCategory.OtaSettlement => (45, 2), // booking receipts span weeks before payout
             BankFlowCategory.Transfer    => (1, 1),
             BankFlowCategory.AutoCredit  => (2, 1),
             BankFlowCategory.BillPayment => (3, 1),
             BankFlowCategory.Loan        => (2, 2),
             BankFlowCategory.CounterCash => (2, 1),
-            BankFlowCategory.Cheque      => (7, 1),
+            // Cheque extended to 30 days back to cover POST-DATED cheques —
+            // a cheque dated 5 Jun cleared 20 Jun is normal (15-day gap).
+            BankFlowCategory.Cheque      => (30, 1),
+            // ChequeBounce: a deposit booked weeks ago that now reverses —
+            // need to find the ORIGINAL cheque, which can be far back.
+            BankFlowCategory.ChequeBounce => (60, 2),
             BankFlowCategory.InwardTT    => (7, 2),
             BankFlowCategory.Interest    => (2, 31),
             BankFlowCategory.Refund      => (60, 2),
@@ -131,4 +157,46 @@ public static class BankFlowClassifier
 
     public static bool IsAggregatorMemo(string? memo, string? payee = null, string? reference = null)
         => IsAggregatorFlow(Classify(memo, payee, reference));
+
+    /// <summary>True when the candidate's recorded payment method/channel is
+    /// consistent with the bank-flow category. A KShop bank deposit pairing
+    /// with a "Cheque" payment is almost certainly wrong; SWIFT inward TT
+    /// pairing with "Cash" is also wrong. Returns TRUE on unknown / null
+    /// channels so we never penalise candidates that simply don't carry the
+    /// signal — only an active CONTRADICTION drags confidence down.</summary>
+    public static bool IsChannelCompatible(BankFlowCategory cat, string? paymentChannel)
+    {
+        if (string.IsNullOrWhiteSpace(paymentChannel)) return true;
+        var ch = paymentChannel.ToLowerInvariant();
+        return cat switch
+        {
+            BankFlowCategory.Aggregator    => ch.Contains("qr") || ch.Contains("cash") || ch.Contains("kshop")
+                                              || ch.Contains("card") || ch.Contains("transfer") || ch.Contains("ewallet")
+                                              || ch.Contains("promptpay"),
+            BankFlowCategory.CardSettle    => ch.Contains("card") || ch.Contains("visa") || ch.Contains("master")
+                                              || ch.Contains("credit") || ch.Contains("debit") || ch.Contains("edc"),
+            BankFlowCategory.Cheque        => ch.Contains("cheque") || ch.Contains("check") || ch.Contains("เช็ค")
+                                              || ch.Contains("bill"),
+            BankFlowCategory.ChequeBounce  => ch.Contains("cheque") || ch.Contains("check") || ch.Contains("เช็ค")
+                                              || ch.Contains("bounce") || ch.Contains("return"),
+            BankFlowCategory.InwardTT      => ch.Contains("tt") || ch.Contains("swift") || ch.Contains("remit")
+                                              || ch.Contains("wire") || ch.Contains("foreign"),
+            BankFlowCategory.AutoCredit    => ch.Contains("smart") || ch.Contains("ats") || ch.Contains("auto")
+                                              || ch.Contains("transfer") || ch.Contains("scheduled"),
+            BankFlowCategory.Transfer      => ch.Contains("transfer") || ch.Contains("promptpay") || ch.Contains("โอน")
+                                              || ch.Contains("mobile") || ch.Contains("internet"),
+            BankFlowCategory.CounterCash   => ch.Contains("cash") || ch.Contains("counter") || ch.Contains("เคาน์เตอร์")
+                                              || ch.Contains("เงินสด"),
+            BankFlowCategory.BillPayment   => ch.Contains("bill") || ch.Contains("counter") || ch.Contains("payment")
+                                              || ch.Contains("ชำระบิล"),
+            BankFlowCategory.Interest      => ch.Contains("interest") || ch.Contains("ดอกเบี้ย"),
+            BankFlowCategory.Refund        => ch.Contains("refund") || ch.Contains("คืน") || ch.Contains("reverse"),
+            BankFlowCategory.Loan          => ch.Contains("loan") || ch.Contains("od") || ch.Contains("overdraft")
+                                              || ch.Contains("สินเชื่อ"),
+            BankFlowCategory.OtaSettlement => ch.Contains("transfer") || ch.Contains("ota") || ch.Contains("booking")
+                                              || ch.Contains("smart") || ch.Contains("tt"),
+            BankFlowCategory.TaxRefund     => ch.Contains("transfer") || ch.Contains("tax") || ch.Contains("ภาษี"),
+            _                              => true,
+        };
+    }
 }

@@ -866,7 +866,10 @@
             <td>${d.contactName} ${d.contactTaxId ? '<span class="text-gray-400 text-xs">('+d.contactTaxId+')</span>' : ''}</td>
             <td class="text-right">${Layout.money(d.subTotal)}</td>
             <td class="text-right font-semibold text-danger">${Layout.money(d.withholdingTaxAmount)}</td>
-            <td><button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button></td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button>
+              <button class="btn btn-sm btn-secondary" onclick="Page.dismissPending('${d.documentId}','${(d.documentNumber||'').replace(/'/g,"\\'")}')" title="ข้ามเอกสารนี้ — จะไม่แสดงในรายการรอออกอีก (ไม่ลบเอกสารต้นทาง)">ข้าม</button>
+            </td>
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -880,6 +883,24 @@
           Layout.toast('สร้างใบหัก ณ ที่จ่ายสำเร็จ');
           await this.openPending();
           await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async dismissPending(docId, docNumber) {
+        // Soft-skip: source doc is untouched, we just stop prompting. The
+        // backend sets Document.WhtCertSkipped=true; the pending query
+        // excludes those. Confirm so the user doesn't dismiss by misclick.
+        const ok = await Layout.confirmDanger({
+          title: 'ข้ามเอกสารนี้?',
+          message: `เอกสาร ${docNumber} จะถูกซ่อนจากรายการ "รอออกใบหัก ณ ที่จ่าย"<br>` +
+                   '(เอกสารต้นทางจะไม่ถูกลบ — แค่ไม่เตือนให้สร้างใบหักอีก)',
+          confirmText: 'ข้าม', cancelText: 'ยกเลิก'
+        });
+        if (!ok) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.dismissPendingWht(docId);
+          Layout.toast('ข้ามเอกสารนี้แล้ว');
+          await this.openPending();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async generateSelected() {

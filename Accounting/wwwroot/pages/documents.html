@@ -133,7 +133,17 @@
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
-              <input type="text" class="form-input" id="fContact" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษี...">
+              <!-- ช่องค้นหา + ปุ่ม "+ สร้างใหม่" ติดกัน — เมื่อหาในรายการแล้วไม่เจอ
+                   ผู้ใช้คลิกเปิดหน้าสร้างผู้ติดต่อใหม่ในแท็บใหม่ได้ทันที
+                   โดยไม่ต้องทิ้งเอกสารที่กำลังกรอก. ค่าที่พิมพ์ค้างไว้ใน
+                   ช่องค้นหาจะถูก pass ผ่าน query string `name=...` ให้หน้า
+                   contacts ช่วยตั้งค่าเริ่มต้นได้. -->
+              <div style="display:flex;gap:6px">
+                <input type="text" class="form-input" id="fContact" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษี..." style="flex:1">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnCreateContact"
+                  title="เพิ่มผู้ติดต่อใหม่ (เปิดแท็บใหม่)"
+                  onclick="Page.openCreateContact()" style="white-space:nowrap">+ สร้างใหม่</button>
+              </div>
             </div>
           </div>
           <div class="form-row">
@@ -483,6 +493,23 @@
   <script>
     const Page = {
       page: 1, docType: '', side: '', contacts: [], projects: [], selectedDocs: new Set(),
+
+      // Open the contact-create page in a new tab pre-seeded with whatever
+      // the user already typed in the search box. The new tab can postMessage
+      // its created-contact id back, which we capture below to auto-pick.
+      openCreateContact() {
+        const typed = (document.getElementById('fContact')?.value || '').trim();
+        const params = new URLSearchParams();
+        if (typed) params.set('name', typed);
+        params.set('autoopen', '1');
+        params.set('returnto', 'opener');
+        const url = '/pages/contacts.html' + (params.toString() ? '?' + params.toString() : '');
+        const win = window.open(url, '_blank');
+        if (!win) {
+          Layout.toast('เบราว์เซอร์บล็อก popup — เปิด /pages/contacts.html เองครับ', 'error');
+        }
+      },
+
       onDocCheck(cb) {
         if (cb.checked) this.selectedDocs.add(cb.dataset.id);
         else this.selectedDocs.delete(cb.dataset.id);
@@ -535,6 +562,20 @@
         });
       },
       async init() {
+        // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
+        // posts the new contact id back via postMessage; we auto-pick it
+        // here so the user doesn't have to retype/search after creating.
+        window.addEventListener('message', (ev) => {
+          if (ev.origin !== window.location.origin) return;
+          const d = ev.data;
+          if (!d || d.type !== 'contact-created' || !d.contactId) return;
+          if (this._contactAC) {
+            this._contactAC.setValue(d.contactId, d.name || '');
+            this._selectedContact = { id: d.contactId, name: d.name, taxId: d.taxId };
+            Layout.toast(`เลือกผู้ติดต่อใหม่: ${d.name || d.contactId}`);
+          }
+        });
+
         // Detect page context: sidebar links use ?side= param, also support expense-docs nav id
         const params = new URLSearchParams(window.location.search);
         const sideParam = params.get('side');
@@ -1308,8 +1349,13 @@
               Cancelled:      ['#f1f5f9', '#64748b'],
               Open:           ['#dbeafe', '#1e40af'],
             }[d.lifecycleStatus] || ['#f1f5f9', '#475569'];
-            const lifecycleBadge = d.lifecycleStatus
-              ? `<span title="${this.escapeHtml(d.lifecycleReason || '')}" style="margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700">${this.escapeHtml(d.lifecycleReason || d.lifecycleStatus)}</span>`
+            // Lifecycle pill — render ONLY when a non-empty reason is present.
+            // The backend now suppresses the reason whenever the lifecycle
+            // would just repeat the status badge (Voided/Rejected/Paid PV/
+            // Approved CIL etc.), so the pill appears only when it adds NEW
+            // info beyond status (e.g., "◐ จ่าย 50%" / "✓ แปลงครบ").
+            const lifecycleBadge = (d.lifecycleStatus && (d.lifecycleReason || '').trim())
+              ? `<span title="${this.escapeHtml(d.lifecycleReason || '')}" style="margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700">${this.escapeHtml(d.lifecycleReason)}</span>`
               : '';
             // Aging badge — surfaced inline next to the document number.
             // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
@@ -1989,7 +2035,20 @@
           document.getElementById('detailContent').innerHTML = banners + `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
               <div><div class="text-xs text-gray-500" data-i18n="common.type">ประเภท</div><div class="font-medium">${Layout.docTypeLabel(d.documentType)}</div></div>
-              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}${d.lifecycleStatus ? ` <span style="margin-left:6px;padding:2px 8px;background:${({Done:'#dcfce7',PartiallyDone:'#fef3c7',Cancelled:'#f1f5f9',Open:'#dbeafe'}[d.lifecycleStatus]||'#f1f5f9')};color:${({Done:'#15803d',PartiallyDone:'#92400e',Cancelled:'#64748b',Open:'#1e40af'}[d.lifecycleStatus]||'#475569')};border-radius:8px;font-size:11px;font-weight:700">${this.escapeHtml(d.lifecycleReason || d.lifecycleStatus)}</span>` : ''}</div></div>
+              <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(d.status)}${(() => {
+                // Render the SECOND (lifecycle) pill only when it adds NEW
+                // info beyond the status badge — never when the backend
+                // returned an empty reason (Draft/WaitingApproval) or a
+                // duplicate of the status label (server-side rule already
+                // suppresses these, but guard here too).
+                const lr = (d.lifecycleReason || '').trim();
+                if (!d.lifecycleStatus || !lr) return '';
+                const statusLabel = (Layout.statusLabel ? Layout.statusLabel(d.status) : '').trim();
+                if (statusLabel && lr.replace(/[⏳×✓◐\s]/g,'').includes(statusLabel.replace(/[⏳×✓◐\s]/g,'')) && lr.length <= statusLabel.length + 4) return '';
+                const bg = ({Done:'#dcfce7',PartiallyDone:'#fef3c7',Cancelled:'#f1f5f9',Open:'#dbeafe'}[d.lifecycleStatus]||'#f1f5f9');
+                const fg = ({Done:'#15803d',PartiallyDone:'#92400e',Cancelled:'#64748b',Open:'#1e40af'}[d.lifecycleStatus]||'#475569');
+                return ` <span style="margin-left:6px;padding:2px 8px;background:${bg};color:${fg};border-radius:8px;font-size:11px;font-weight:700">${this.escapeHtml(lr)}</span>`;
+              })()}</div></div>
               <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>

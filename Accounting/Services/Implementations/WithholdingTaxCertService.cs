@@ -333,10 +333,21 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .Select(w => w.DocumentId!.Value)
             .ToListAsync();
 
+        // STATUS GUARD: voided / rejected / draft documents must NOT show up
+        // in the "waiting to issue cert" list. A cancelled PV is a non-event
+        // for tax purposes — no WHT cert should ever be created against it,
+        // and the lingering row in the modal lets the user accidentally issue
+        // a cert that ties back to a voided source doc. Also exclude soft-
+        // deleted rows (was missing from this query entirely).
         var query = _db.Documents
             .Include(d => d.Lines)
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
+                && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected
+                && d.Status != DocumentStatus.Draft
+                && !d.WhtCertSkipped
                 && d.WithholdingTaxAmount > 0
                 && !existingCertDocIds.Contains(d.Id)
                 && (d.DocumentType == DocumentType.PurchaseInvoice
@@ -358,6 +369,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 l.Description, l.IncomeTypeCode, l.Amount,
                 l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList()
         )).ToList();
+    }
+
+    public async Task DismissPendingAsync(Guid companyId, Guid documentId, bool dismiss)
+    {
+        var doc = await _db.Documents.FirstOrDefaultAsync(d =>
+            d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        doc.WhtCertSkipped = dismiss;
+        await _db.SaveChangesAsync();
     }
 
     public async Task<BulkGenerateWhtResponse> BulkGenerateAsync(

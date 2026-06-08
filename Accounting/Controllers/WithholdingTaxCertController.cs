@@ -110,6 +110,23 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<List<PendingWhtDocumentResponse>>(true, result));
     }
 
+    /// <summary>Dismiss a document from the "waiting to issue cert" list — the
+    /// source document is left exactly as-is, we just stop prompting the user
+    /// to issue a cert for it. POST /pending/{docId}/dismiss to skip;
+    /// /pending/{docId}/restore to bring it back.</summary>
+    [HttpPost("pending/{documentId:guid}/dismiss")]
+    public async Task<ActionResult<ApiResponse<object>>> DismissPending(Guid companyId, Guid documentId)
+    {
+        await _whtService.DismissPendingAsync(companyId, documentId, dismiss: true);
+        return Ok(new ApiResponse<object>(true, null, "ข้ามเอกสารนี้แล้ว — จะไม่แสดงในรายการรอออกอีก"));
+    }
+    [HttpPost("pending/{documentId:guid}/restore")]
+    public async Task<ActionResult<ApiResponse<object>>> RestorePending(Guid companyId, Guid documentId)
+    {
+        await _whtService.DismissPendingAsync(companyId, documentId, dismiss: false);
+        return Ok(new ApiResponse<object>(true, null, "คืนเอกสารสู่รายการรอออก"));
+    }
+
     /// <summary>Bulk generate WHT certs for all pending documents in a period</summary>
     [HttpPost("bulk-generate")]
     public async Task<ActionResult<ApiResponse<BulkGenerateWhtResponse>>> BulkGenerate(

@@ -9,8 +9,13 @@ const DbdLookup = {
   // ===== Autocomplete: ค้นหาจากชื่อบริษัท =====
   // inputEl: input element ที่ user พิมพ์ชื่อ
   // onSelect: callback(result) เมื่อ user เลือกรายการ
-  attachNameSearch(inputEl, onSelect) {
+  // options.enabledCheck: () => bool — return false to skip DBD entirely
+  //                       (e.g., when contact type is not juristic). Without
+  //                       this, a personal contact's name search hits DBD,
+  //                       gets "ไม่พบข้อมูล", and confuses the user.
+  attachNameSearch(inputEl, onSelect, options = {}) {
     if (!inputEl) return;
+    const enabledCheck = options.enabledCheck || (() => true);
 
     const wrapper = document.createElement('div');
     wrapper.style.cssText = 'position:relative';
@@ -26,6 +31,8 @@ const DbdLookup = {
 
     inputEl.addEventListener('input', () => {
       clearTimeout(this._debounceTimer);
+      // Skip DBD lookup when the caller says we shouldn't (non-juristic).
+      if (!enabledCheck()) { dropdown.style.display = 'none'; return; }
       const q = inputEl.value.trim();
       if (q.length < 2) { dropdown.style.display = 'none'; return; }
 
@@ -83,10 +90,12 @@ const DbdLookup = {
   // inputEl: input element ที่ user กรอกเลขทะเบียน
   // onResult: callback(result) เมื่อดึงข้อมูลสำเร็จ
   // btnEl: (optional) ปุ่มดึงข้อมูล ถ้าไม่ระบุจะ auto-fetch เมื่อกรอกครบ 13 หลัก
-  attachTaxIdLookup(inputEl, onResult, btnEl) {
+  attachTaxIdLookup(inputEl, onResult, btnEl, options = {}) {
     if (!inputEl) return;
+    const enabledCheck = options.enabledCheck || (() => true);
 
     const doLookup = async () => {
+      if (!enabledCheck()) return;     // non-juristic → skip silently
       const taxId = inputEl.value.replace(/[^0-9]/g, '');
       if (taxId.length !== 13) {
         if (typeof Layout !== 'undefined') Layout.toast('กรุณากรอกเลขผู้เสียภาษี 13 หลัก', 'error');

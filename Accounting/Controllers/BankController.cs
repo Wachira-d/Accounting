@@ -190,6 +190,78 @@ public class BankController : ControllerBase
         return Ok(new ApiResponse<BankTransactionResponse>(true, result, "ยกเลิกการจับคู่สำเร็จ"));
     }
 
+    public sealed record BatchUnmatchRequest(List<Guid> BankTransactionIds);
+
+    /// <summary>List rejected (BankTransactionId, CandidateId) pairs for a
+    /// bank account. Lets the UI render an "unblock" list so the user can
+    /// take back a previous rejection if they later change their mind.</summary>
+    [HttpGet("accounts/{accountId:guid}/match-exclusions")]
+    public async Task<ActionResult<ApiResponse<object>>> ListMatchExclusions(
+        Guid companyId, Guid accountId,
+        [FromServices] Data.AccountingDbContext db)
+    {
+        var rows = await db.BankMatchExclusions.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted
+                && db.BankTransactions.Any(t => t.Id == x.BankTransactionId && t.BankAccountId == accountId))
+            .OrderByDescending(x => x.RejectedAt)
+            .Take(200)
+            .Select(x => new {
+                id = x.Id,
+                bankTxnId = x.BankTransactionId,
+                candidateId = x.CandidateId,
+                candidateType = x.CandidateType,
+                rejectedAt = x.RejectedAt,
+                reason = x.RejectionReason,
+            })
+            .ToListAsync();
+        return Ok(new ApiResponse<object>(true, rows, $"พบ {rows.Count} รายการที่เคยปฏิเสธ"));
+    }
+
+    /// <summary>Clear a rejection so the matcher can propose this pair again
+    /// on the next bulk run.</summary>
+    [HttpDelete("match-exclusions/{exclusionId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> ClearMatchExclusion(
+        Guid companyId, Guid exclusionId,
+        [FromServices] Data.AccountingDbContext db)
+    {
+        var row = await db.BankMatchExclusions
+            .FirstOrDefaultAsync(x => x.Id == exclusionId && x.CompanyId == companyId);
+        if (row == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการปฏิเสธ"));
+        row.IsDeleted = true;
+        await db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, "ยกเลิกการปฏิเสธสำเร็จ — รอบหน้าจะเสนอคู่นี้อีก"));
+    }
+
+    /// <summary>Bulk-unmatch — reverses N bank reconciliations in one call.
+    /// Loops UnmatchTransactionAsync per id; individual failures don't abort
+    /// the rest, but their reasons come back in the response so the user
+    /// knows what still needs attention.</summary>
+    [HttpPost("accounts/{accountId:guid}/batch-unmatch")]
+    public async Task<ActionResult<ApiResponse<object>>> BatchUnmatch(
+        Guid companyId, Guid accountId, [FromBody] BatchUnmatchRequest req)
+    {
+        if (req.BankTransactionIds == null || req.BankTransactionIds.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องเลือก bank transaction อย่างน้อย 1 รายการ"));
+        var ok = 0;
+        var failed = new List<object>();
+        foreach (var id in req.BankTransactionIds.Distinct())
+        {
+            try
+            {
+                await _bankService.UnmatchTransactionAsync(companyId, new UnmatchRequest(id));
+                ok++;
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new { bankTxnId = id, reason = ex.Message });
+            }
+        }
+        return Ok(new ApiResponse<object>(true,
+            new { unmatched = ok, failed },
+            $"ยกเลิกการจับคู่ {ok}/{req.BankTransactionIds.Count} รายการ" +
+            (failed.Count > 0 ? $" — ล้มเหลว {failed.Count}" : "")));
+    }
+
     /// <summary>
     /// List ranked match candidates (Payments + JournalEntries) for a bank transaction.
     /// Used by the manual reconciliation picker so the user can choose from a list
