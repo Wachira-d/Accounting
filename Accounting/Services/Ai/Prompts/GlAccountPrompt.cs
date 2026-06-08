@@ -27,6 +27,11 @@ Rules:
    - ภาษีหัก ณ ที่จ่าย (WHT asset) → 1521 typically
 4. Flag if the amount is unusual for that account type (e.g. ฿500,000 in office supplies).
 5. Must pick from candidate_accounts only. If nothing fits well, lower confidence to <0.6 and explain in reasoning.
+6. SETTLEMENT vs NEW-ASSET direction (critical — this is a Payment Voucher, money OUT of the company):
+   - ""คืนเงินทดรองกรรมการ / จ่ายคืนกรรมการ / ชำระเงินกู้กรรมการ"" = the company is REPAYING money the director advanced TO the company. That settles a LIABILITY → pick the เจ้าหนี้กรรมการ / เงินทดรองรับจากกรรมการ / เงินกู้ยืมกรรมการ account (2xxx Liability). Do NOT pick a ลูกหนี้/receivable (1xxx Asset) — paying out does not create a receivable here.
+   - Only pick ลูกหนี้กรรมการ / เงินทดรองจ่าย (1xxx Asset) when the company is GIVING a NEW advance TO the director/employee (creating a receivable), e.g. ""เบิกเงินทดรอง / จ่ายเงินทดรองให้กรรมการ"".
+   - Keyword ""คืน / ชำระคืน / repay / refund / settle"" on a Payment Voucher ⇒ reduce a LIABILITY, not add an ASSET.
+   - When the chart has BOTH a ลูกหนี้กรรมการ (Asset) and a เจ้าหนี้กรรมการ (Liability) with similar names, use the verb + money direction above to choose; never match on the shared phrase ""เงินทดรองกรรมการ"" alone.
 
 Respond ONLY as JSON:
 {

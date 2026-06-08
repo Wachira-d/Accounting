@@ -351,7 +351,7 @@
                   <span title="ติ๊กไว้ = ห้ามกรอกอิสระ ต้องเลือกจากสินค้าที่บันทึกในระบบเท่านั้น (ป้องกันชื่อสะกดผิด + ทำให้รายงานสรุปสินค้ารวมยอดได้ถูกต้อง)">เฉพาะสินค้าในระบบ</span>
                 </label>
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none">
-                  <input type="checkbox" id="fPricesIncludeVat" style="margin:0" onchange="Page.recalc && Page.recalc()">
+                  <input type="checkbox" id="fPricesIncludeVat" style="margin:0" onchange="Page.calcSum()">
                   <span title="ติ๊กเมื่อราคา/หน่วยที่กรอกรวม VAT 7% แล้ว — ระบบจะถอด VAT ออกให้อัตโนมัติเพื่อแยกฐานภาษีให้ถูกต้อง">ราคารวมภาษี</span>
                 </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
@@ -1466,6 +1466,13 @@
         }
       },
       calcSum() {
+        // "ราคารวมภาษี" (fPricesIncludeVat): when ticked, the price/unit
+        // entered is GROSS (VAT already included), so we strip VAT out to get
+        // the pre-VAT base. WHT is always computed on the pre-VAT base per
+        // Thai practice. This mirrors the backend ComputeLineAmounts so the
+        // on-screen totals match what gets saved.
+        const inclVat = document.getElementById('fPricesIncludeVat')?.checked || false;
+        const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
         let sub = 0, vat = 0, wht = 0;
         document.querySelectorAll('#linesBody tr').forEach(row => {
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
@@ -1473,10 +1480,18 @@
           const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
           const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
           const whtR = parseFloat(row.querySelector('[data-f="wht"]').value) || 0;
-          const amt = qty * price * (1 - disc / 100);
-          sub += amt;
-          vat += amt * vatR / 100;
-          wht += amt * whtR / 100;
+          const entered = qty * price * (1 - disc / 100);
+          let net, lineVat;
+          if (inclVat && vatR > 0) {
+            net = r2(entered / (1 + vatR / 100));   // back out the VAT
+            lineVat = r2(entered - net);
+          } else {
+            net = r2(entered);
+            lineVat = r2(entered * vatR / 100);
+          }
+          sub += net;
+          vat += lineVat;
+          wht += r2(net * whtR / 100);
         });
         document.getElementById('sumSubTotal').textContent = Layout.money(sub);
         document.getElementById('sumVat').textContent = Layout.money(vat);

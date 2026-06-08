@@ -671,7 +671,7 @@ public class IntegrationService : IIntegrationService
                 relatedDocId = original?.Id;
             }
 
-            var lines = BuildDocumentLines(request.Lines);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
 
@@ -769,7 +769,7 @@ public class IntegrationService : IIntegrationService
                 relatedDocId = original?.Id;
             }
 
-            var lines = BuildDocumentLines(request.Lines);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
 
@@ -977,8 +977,29 @@ public class IntegrationService : IIntegrationService
         }
     }
 
-    private static List<DocumentLine> BuildDocumentLines(List<InboundInvoiceLineRequest> lines, decimal defaultVatRate = 7)
+    private async Task<List<DocumentLine>> BuildDocumentLinesAsync(
+        Guid companyId, List<InboundInvoiceLineRequest> lines, decimal defaultVatRate = 7)
     {
+        // Resolve any line-level AccountCode the partner sent → ChartOfAccount
+        // id, so the document line carries its real GL account and the JE
+        // posts there. Previously AccountCode was dropped (AccountId never set)
+        // and the journal fell back to the first generic expense account.
+        var codes = lines
+            .Where(l => !string.IsNullOrWhiteSpace(l.AccountCode))
+            .Select(l => l.AccountCode!.Trim())
+            .Distinct()
+            .ToList();
+        var codeToId = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        if (codes.Count > 0)
+        {
+            var rows = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
+                            && codes.Contains(a.AccountCode))
+                .Select(a => new { a.AccountCode, a.Id })
+                .ToListAsync();
+            foreach (var r in rows) codeToId[r.AccountCode] = r.Id;
+        }
+
         return lines.Select((line, i) =>
         {
             var lineAmount = line.Quantity * line.UnitPrice;
@@ -988,6 +1009,11 @@ public class IntegrationService : IIntegrationService
             var lineVat = lineNet * lineVatRate / 100;
             var lineWhtRate = line.WithholdingTaxRate ?? 0;
             var lineWht = Math.Round(lineNet * lineWhtRate / 100, 2, MidpointRounding.AwayFromZero);
+
+            Guid? accountId = null;
+            if (!string.IsNullOrWhiteSpace(line.AccountCode)
+                && codeToId.TryGetValue(line.AccountCode!.Trim(), out var aid))
+                accountId = aid;
 
             return new DocumentLine
             {
@@ -1002,7 +1028,9 @@ public class IntegrationService : IIntegrationService
                 VatRate = lineVatRate,
                 VatAmount = lineVat,
                 WithholdingTaxRate = lineWhtRate,
-                WithholdingTaxAmount = lineWht
+                WithholdingTaxAmount = lineWht,
+                // Honour the partner's AccountCode → real GL account on the line.
+                AccountId = accountId
             };
         }).ToList();
     }
@@ -1171,14 +1199,38 @@ public class IntegrationService : IIntegrationService
                     return null;
                 }
 
-                // Dr: ค่าใช้จ่าย
-                journalLines.Add(new JournalEntryLine
+                // Dr: ค่าใช้จ่าย — ONE debit per document line using that line's
+                // resolved GL account (from the partner's AccountCode) so each
+                // category posts to its own account. Falls back to the generic
+                // expense account only for lines that didn't carry/resolve a
+                // code. (Previously this was a single generic-expense line for
+                // the whole SubTotal — the limitation the partner reported.)
+                var expenseLines = document.Lines
+                    .Where(l => !l.IsDeleted)
+                    .OrderBy(l => l.LineOrder)
+                    .ToList();
+                if (expenseLines.Count > 0)
                 {
-                    AccountId = expenseAccount.Id,
-                    DebitAmount = document.SubTotal,
-                    Description = $"ค่าใช้จ่าย - {document.DocumentNumber}",
-                    LineOrder = lineOrder++
-                });
+                    foreach (var dl in expenseLines)
+                        journalLines.Add(new JournalEntryLine
+                        {
+                            AccountId = dl.AccountId ?? expenseAccount.Id,
+                            DebitAmount = dl.Amount,
+                            Description = string.IsNullOrWhiteSpace(dl.Description)
+                                ? $"ค่าใช้จ่าย - {document.DocumentNumber}" : dl.Description,
+                            LineOrder = lineOrder++
+                        });
+                }
+                else
+                {
+                    journalLines.Add(new JournalEntryLine
+                    {
+                        AccountId = expenseAccount.Id,
+                        DebitAmount = document.SubTotal,
+                        Description = $"ค่าใช้จ่าย - {document.DocumentNumber}",
+                        LineOrder = lineOrder++
+                    });
+                }
 
                 // Dr: ภาษีซื้อ
                 if (vatAccount != null && document.VatAmount > 0)
@@ -1251,7 +1303,7 @@ public class IntegrationService : IIntegrationService
 
     private async Task<Guid?> CreatePaymentJournalAsync(Guid companyId, Guid integrationId, Payment payment, Document document, InboundPaymentRequest request)
     {
-        // Find cash/bank account for debit
+        // Find cash/bank account for the money side.
         var paymentMethod = request.PaymentMethod?.ToLower();
         var cashAccountCode = paymentMethod switch
         {
@@ -1260,13 +1312,36 @@ public class IntegrationService : IIntegrationService
             "creditcard" => "112",
             _ => "111"
         };
-
-        var debitAccount = await _db.ChartOfAccounts
+        var cashAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(cashAccountCode) && a.IsActive);
-        var creditAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive); // ลูกหนี้การค้า
+        if (cashAccount == null) return null;
 
-        if (debitAccount == null || creditAccount == null) return null;
+        // DIRECTION FIX: branch by document type. The integration path used to
+        // ALWAYS post Dr Cash / Cr AR(113) — correct for receiving customer
+        // money, but WRONG for a Payment Voucher / expense settlement, which
+        // must Dr AP (settle เจ้าหนี้) / Cr Cash. Mirror DocumentService's
+        // revenue-vs-expense split so integration-created payments hit the
+        // right side.
+        var revenueTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.Receipt, DocumentType.DebitNote, DocumentType.BillingNote,
+            DocumentType.ReceiptVoucher };
+        var isRevenue = revenueTypes.Contains(document.DocumentType);
+
+        // AR for revenue (113); AP for expense (211 → 212 fallback).
+        ChartOfAccount? counterpart;
+        if (isRevenue)
+        {
+            counterpart = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive);
+        }
+        else
+        {
+            counterpart = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive)
+                ?? await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive);
+        }
+        if (counterpart == null) return null;
 
         // Find fiscal period
         var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
@@ -1275,14 +1350,15 @@ public class IntegrationService : IIntegrationService
             && f.EndDate >= payment.PaymentDate
             && f.Status == FiscalPeriodStatus.Open);
 
-        var payJournalNumber = await GetNextJournalNumberAsync(companyId, "RV");
+        var prefix = isRevenue ? "RV" : "PV";
+        var payJournalNumber = await GetNextJournalNumberAsync(companyId, prefix);
         var je = new JournalEntry
         {
             CompanyId = companyId,
             EntryNumber = payJournalNumber,
             EntryDate = NormalizeDate(payment.PaymentDate),
-            JournalType = JournalType.CashReceipts,
-            Description = $"รับชำระ {document.DocumentNumber}",
+            JournalType = isRevenue ? JournalType.CashReceipts : JournalType.CashPayments,
+            Description = (isRevenue ? "รับชำระ " : "จ่ายชำระ ") + document.DocumentNumber,
             Reference = payment.PaymentNumber,
             Status = JournalEntryStatus.Posted,
             IsAutoGenerated = true,
@@ -1290,11 +1366,17 @@ public class IntegrationService : IIntegrationService
             FiscalPeriodId = fiscalPeriod?.Id,
             TotalDebit = payment.Amount,
             TotalCredit = payment.Amount,
-            Lines = new List<JournalEntryLine>
-            {
-                new() { AccountId = debitAccount.Id, DebitAmount = payment.Amount, Description = $"รับชำระ ({request.PaymentMethod})", LineOrder = 1 },
-                new() { AccountId = creditAccount.Id, CreditAmount = payment.Amount, Description = $"ตัดลูกหนี้ {document.DocumentNumber}", LineOrder = 2 }
-            }
+            Lines = isRevenue
+                ? new List<JournalEntryLine>
+                {
+                    new() { AccountId = cashAccount.Id, DebitAmount = payment.Amount, Description = $"รับชำระ ({request.PaymentMethod})", LineOrder = 1 },
+                    new() { AccountId = counterpart.Id, CreditAmount = payment.Amount, Description = $"ตัดลูกหนี้ {document.DocumentNumber}", LineOrder = 2 }
+                }
+                : new List<JournalEntryLine>
+                {
+                    new() { AccountId = counterpart.Id, DebitAmount = payment.Amount, Description = $"ตัดเจ้าหนี้ {document.DocumentNumber}", LineOrder = 1 },
+                    new() { AccountId = cashAccount.Id, CreditAmount = payment.Amount, Description = $"จ่ายชำระ ({request.PaymentMethod})", LineOrder = 2 }
+                }
         };
 
         _db.JournalEntries.Add(je);
@@ -1682,7 +1764,7 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense);
             var vatRate = request.VatRate ?? 7m;
-            var lines = BuildDocumentLines(request.Lines, vatRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
@@ -1765,7 +1847,7 @@ public class IntegrationService : IIntegrationService
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu);
             var vatRate = request.VatRate ?? 7m;
-            var lines = BuildDocumentLines(request.Lines, vatRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
