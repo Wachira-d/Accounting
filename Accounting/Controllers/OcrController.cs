@@ -21,6 +21,32 @@ public class OcrController : ControllerBase
     public OcrController(IOcrService service, IOcrQuotaService quota, AccountingDbContext db)
     { _service = service; _quota = quota; _db = db; }
 
+    /// <summary>Resolve a REAL user id to stamp on uploads. JWT/user-key auth
+    /// gives a genuine user. Integration (int_) key auth sets NameIdentifier to
+    /// the IntegrationId (not a User), so we attribute the upload to the
+    /// company's Owner instead — otherwise the FileAttachment→User FK throws
+    /// and the whole OCR upload 500s. Falls back to any company member.</summary>
+    private async Task<Guid> ResolveUploaderUserIdAsync(Guid companyId)
+    {
+        Guid claimId;
+        try { claimId = JwtHelper.GetUserIdFromClaims(User); }
+        catch { claimId = Guid.Empty; }
+        if (claimId != Guid.Empty
+            && await _db.Users.AsNoTracking().AnyAsync(u => u.Id == claimId))
+            return claimId;
+
+        var ownerId = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.Role == Models.Enums.UserRole.Owner)
+            .Select(cu => cu.UserId)
+            .FirstOrDefaultAsync();
+        if (ownerId != Guid.Empty) return ownerId;
+
+        return await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId)
+            .Select(cu => cu.UserId)
+            .FirstOrDefaultAsync();
+    }
+
     [HttpPost("upload")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UploadAndScan(
@@ -109,7 +135,10 @@ public class OcrController : ControllerBase
             StoragePath = filePath,
             EntityType = "OcrScan",
             EntityId = Guid.NewGuid(),
-            UploadedByUserId = JwtHelper.GetUserIdFromClaims(User)
+            // Resolve a REAL user for the FK. An integration (int_) key sets
+            // NameIdentifier to the IntegrationId — NOT a User — so using it
+            // raw violated FileAttachment→User FK and 500'd the whole upload.
+            UploadedByUserId = await ResolveUploaderUserIdAsync(companyId)
         };
         _db.FileAttachments.Add(attachment);
         await _db.SaveChangesAsync();
