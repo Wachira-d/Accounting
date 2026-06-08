@@ -30,11 +30,15 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public partial class PdfGenerationService
 {
-    private byte[] BuildWhtCertPdf(WithholdingTaxCert cert, Company company)
+    private byte[] BuildWhtCertPdf(WithholdingTaxCert cert, Company company,
+        byte[]? signatureBytes = null, string? signerName = null)
     {
         EnsureThaiFontsRegistered();
         var fontChain = GetFontFamilyChain(null);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
+        // Only use the signature if it actually decodes to an image QuestPDF
+        // can embed — a corrupt base64 must never blank the whole page.
+        var sigImg = LooksLikeImage(signatureBytes) ? signatureBytes : null;
 
         var fullAddress = string.Join(" ", new[] {
             company.Address, company.SubDistrict, company.District,
@@ -56,11 +60,12 @@ public partial class PdfGenerationService
                     page.Size(PageSizes.A4);
                     page.Margin(10, Unit.Millimetre);
                     page.PageColor(Colors.White);
-                    page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(9.5f).LineHeight(1.15f));
+                    page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(9.5f));
                     page.Content().Column(col =>
                     {
                         BuildCopyHeader(col, copyNum);
-                        col.Item().Border(1.5f).BorderColor(Colors.Black).Column(form =>
+                        // Heavy outer frame (matches the official form's 2.5px border).
+                        col.Item().Border(2f).BorderColor(Colors.Black).Column(form =>
                         {
                             BuildTitleBar(form, cert.CertificateNumber);
                             BuildPartyBlock(form, "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย", company.TaxId, company.Name, fullAddress);
@@ -70,7 +75,7 @@ public partial class PdfGenerationService
                             BuildTotalInWords(form, cert.TotalTaxAmount);
                             BuildFundLine(form);
                             BuildConditionsRow(form, cert);
-                            BuildBottomSplit(form, cert.IssuedDate);
+                            BuildBottomSplit(form, cert.IssuedDate, sigImg, signerName);
                         });
                         BuildFootnote(col);
                     });
@@ -105,7 +110,7 @@ public partial class PdfGenerationService
             r.ConstantItem(110);   // spacer
             r.RelativeItem().AlignCenter().Column(c =>
             {
-                c.Item().AlignCenter().Text("หนังสือรับรองการหักภาษี ณ ที่จ่าย").FontSize(15).Bold().LetterSpacing(0.05f);
+                c.Item().AlignCenter().Text("หนังสือรับรองการหักภาษี ณ ที่จ่าย").FontSize(15).Bold();
                 c.Item().AlignCenter().Text("ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร").FontSize(10);
             });
             r.ConstantItem(110).Column(c =>
@@ -134,6 +139,16 @@ public partial class PdfGenerationService
                         t.Span("*").FontColor(Colors.Red.Darken2).FontSize(9);
                     });
                     rr.AutoItem().Element(e => DrawTinBoxes(e, taxId));
+                });
+            });
+            // Row 1b: legacy 10-digit TIN row (matches the official form which
+            // still prints the old format underneath the 13-digit boxes).
+            c.Item().PaddingTop(2).Row(r =>
+            {
+                r.RelativeItem().AlignRight().Row(rr =>
+                {
+                    rr.AutoItem().AlignBottom().PaddingRight(4).Text("เลขประจำตัวผู้เสียภาษีอากร").FontSize(8.5f);
+                    rr.AutoItem().Element(e => DrawOldTinBoxes(e, taxId));
                 });
             });
             // Row 2: name field with dotted underline
@@ -172,6 +187,28 @@ public partial class PdfGenerationService
                     var ch = i < digits.Length ? digits[i].ToString().Trim() : "";
                     r.AutoItem().Border(1).BorderColor(Colors.Black).Width(15).Height(17)
                         .AlignCenter().AlignMiddle().Text(ch).FontSize(10).Bold();
+                }
+            }
+        });
+    }
+
+    // ── Legacy 10-digit TIN boxes, grouped 3-4-3 ─────────────────────
+    private static void DrawOldTinBoxes(QuestPDF.Infrastructure.IContainer e, string? taxId)
+    {
+        var dg = Regex.Replace(taxId ?? "", @"\D", "");
+        if (dg.Length > 10) dg = dg[..10];
+        dg = dg.PadRight(10);
+        e.Row(r =>
+        {
+            int[][] groups = { new[]{0,3}, new[]{3,7}, new[]{7,10} };
+            for (int g = 0; g < groups.Length; g++)
+            {
+                if (g > 0) r.AutoItem().Width(5);
+                for (int i = groups[g][0]; i < groups[g][1]; i++)
+                {
+                    var ch = i < dg.Length ? dg[i].ToString().Trim() : "";
+                    r.AutoItem().Border(0.8f).BorderColor(Colors.Black).Width(12).Height(14)
+                        .AlignCenter().AlignMiddle().Text(ch).FontSize(8.5f);
                 }
             }
         });
@@ -261,10 +298,9 @@ public partial class PdfGenerationService
                 h.Cell().Border(1).BorderColor(Colors.Black).Padding(3).AlignCenter()
                     .Text("ภาษีที่หัก\nและนำส่งไว้").FontSize(9).Bold();
             });
-            void Row(string label, (decimal Inc, decimal Tax, DateTime? Date) m, float labelSize = 9f)
+            // Three numeric cells shared by every row.
+            void NumCells((decimal Inc, decimal Tax, DateTime? Date) m)
             {
-                tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3)
-                    .Text(label).FontSize(labelSize);
                 tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3).AlignCenter()
                     .Text(FmtDate(m.Date)).FontSize(9);
                 tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3).AlignRight()
@@ -272,13 +308,39 @@ public partial class PdfGenerationService
                 tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3).AlignRight()
                     .Text(FmtAmt(m.Tax)).FontSize(9);
             }
+            void Row(string label, (decimal Inc, decimal Tax, DateTime? Date) m, float labelSize = 9f)
+            {
+                tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3)
+                    .Text(label).FontSize(labelSize);
+                NumCells(m);
+            }
             Row("1. เงินเดือน ค่าจ้าง เบี้ยเลี้ยง โบนัส ฯลฯ ตามมาตรา 40 (1)", Match("1", "40(1)"));
             Row("2. ค่าธรรมเนียม ค่านายหน้า ฯลฯ ตามมาตรา 40 (2)", Match("2", "40(2)"));
             Row("3. ค่าแห่งลิขสิทธิ์ ฯลฯ ตามมาตรา 40 (3)", Match("3", "40(3)"));
             Row("4. (ก) ดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)", Match("4a", "40(4)(a)"));
-            Row("    (ข) เงินปันผล เงินส่วนแบ่งกำไร ฯลฯ ตามมาตรา 40 (4) (ข)", Match("4b", "40(4)(b)"));
-            Row("5. การจ่ายเงินได้ที่ต้องหักภาษี ณ ที่จ่าย ตามคำสั่งกรมสรรพากร ตามมาตรา 3 เตรส " +
-                "เช่น รางวัล ส่วนลด ค่าโฆษณา ค่าเช่า ค่าขนส่ง ค่าบริการ ค่าเบี้ยประกันวินาศภัย ฯลฯ",
+            // Row 4(ข) — the dividend block with the full nested sub-list, to
+            // match the official RD form verbatim.
+            tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3).Column(cell =>
+            {
+                cell.Item().Text("    (ข) เงินปันผล เงินส่วนแบ่งกำไร ฯลฯ ตามมาตรา 40 (4) (ข)").FontSize(8);
+                cell.Item().PaddingLeft(10).Text("(1) กรณีผู้ได้รับเงินปันผลได้รับเครดิตภาษี โดยจ่ายจาก").FontSize(7.5f);
+                cell.Item().PaddingLeft(16).Text("กำไรสุทธิของกิจการที่ต้องเสียภาษีเงินได้นิติบุคคลในอัตราดังนี้").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(1.1) อัตราร้อยละ 30 ของกำไรสุทธิ").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(1.2) อัตราร้อยละ 25 ของกำไรสุทธิ").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(1.3) อัตราร้อยละ 20 ของกำไรสุทธิ").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(1.4) อัตราอื่น ๆ (ระบุ) ............... ของกำไรสุทธิ").FontSize(7.5f);
+                cell.Item().PaddingLeft(10).Text("(2) กรณีผู้ได้รับเงินปันผลไม่ได้รับเครดิตภาษี เนื่องจากจ่ายจาก").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(2.1) กำไรสุทธิของกิจการที่ได้รับยกเว้นภาษีเงินได้นิติบุคคล").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(2.2) เงินปันผลหรือเงินส่วนแบ่งของกำไรที่ได้รับยกเว้นไม่ต้องนำมารวมคำนวณเป็นรายได้").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(2.3) กำไรสุทธิส่วนที่ได้หักผลขาดทุนสุทธิยกมาไม่เกิน 5 ปีก่อนรอบบัญชีปีปัจจุบัน").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(2.4) กำไรที่รับรู้ทางบัญชีโดยวิธีส่วนได้เสีย (equity method)").FontSize(7.5f);
+                cell.Item().PaddingLeft(22).Text("(2.5) อื่น ๆ (ระบุ) ............................................").FontSize(7.5f);
+            });
+            NumCells(Match("4b", "40(4)(b)"));
+            Row("5. การจ่ายเงินได้ที่ต้องหักภาษี ณ ที่จ่าย ตามคำสั่งกรมสรรพากรที่ออกตามมาตรา 3 เตรส " +
+                "เช่น รางวัล ส่วนลดหรือประโยชน์ใด ๆ เนื่องจากการส่งเสริมการขาย รางวัลในการประกวด การแข่งขัน " +
+                "การชิงโชค ค่าแสดงของนักแสดงสาธารณะ ค่าจ้างทำของ ค่าโฆษณา ค่าเช่า ค่าขนส่ง ค่าบริการ " +
+                "ค่าเบี้ยประกันวินาศภัย ฯลฯ",
                 Match("5", "6", "7", "8", "40(5)", "40(6)", "40(7)", "40(8)"), 8f);
             Row("6. อื่น ๆ (ระบุ) ........................................................",
                 Match("9", "99", "other"));
@@ -325,7 +387,8 @@ public partial class PdfGenerationService
         });
     }
 
-    private static void BuildBottomSplit(QuestPDF.Fluent.ColumnDescriptor col, DateTime? issuedDate)
+    private static void BuildBottomSplit(QuestPDF.Fluent.ColumnDescriptor col, DateTime? issuedDate,
+        byte[]? signatureImage = null, string? signerName = null)
     {
         var dd = issuedDate?.Day.ToString() ?? "____";
         var mm = issuedDate?.Month.ToString() ?? "____";
@@ -339,29 +402,69 @@ public partial class PdfGenerationService
                     "ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ " +
                     "แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร").FontSize(8);
             });
-            r.RelativeItem(65).Padding(6).Column(c =>
+            // Right cell: signature column on the left + circular stamp pinned
+            // to the right edge, vertically centred — matches the official form
+            // (HTML: stamp is position:absolute right, top:50%).
+            r.RelativeItem(65).Padding(6).Row(rr =>
             {
-                c.Item().Text("ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ")
-                    .FontSize(9);
-                c.Item().PaddingTop(20).AlignRight().Text(t =>
+                rr.RelativeItem().Column(c =>
                 {
-                    t.Span("ลงชื่อ ");
-                    t.Span("__________________________");
-                    t.Span(" ผู้จ่ายเงิน");
+                    c.Item().Text("ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ")
+                        .FontSize(9);
+                    // Signature image drawn ABOVE the "ลงชื่อ" line when present.
+                    if (signatureImage != null)
+                    {
+                        c.Item().PaddingTop(6).AlignCenter().Element(e =>
+                        {
+                            try { e.Height(15, Unit.Millimetre).Image(signatureImage); }
+                            catch { /* decorative — never block the PDF */ }
+                        });
+                        c.Item().AlignCenter().Text(t =>
+                        {
+                            t.Span("ลงชื่อ ");
+                            t.Span(string.IsNullOrWhiteSpace(signerName) ? "__________________" : signerName!).Bold();
+                            t.Span(" ผู้จ่ายเงิน");
+                        });
+                    }
+                    else
+                    {
+                        c.Item().PaddingTop(18).AlignCenter().Text(t =>
+                        {
+                            t.Span("ลงชื่อ ");
+                            t.Span("__________________");
+                            t.Span(" ผู้จ่ายเงิน");
+                        });
+                        if (!string.IsNullOrWhiteSpace(signerName))
+                            c.Item().AlignCenter().Text(t => { t.Span("( "); t.Span(signerName!).Bold(); t.Span(" )"); }).FontSize(8);
+                    }
+                    c.Item().PaddingTop(4).AlignCenter().Text(t =>
+                    {
+                        t.Span(dd).Bold(); t.Span(" / ");
+                        t.Span(mm).Bold(); t.Span(" / ");
+                        t.Span(yy).Bold();
+                    });
+                    c.Item().AlignCenter().Text("(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)").FontSize(7).FontColor(Colors.Grey.Darken1);
                 });
-                c.Item().PaddingTop(4).AlignCenter().Text(t =>
-                {
-                    t.Span(dd).Bold(); t.Span(" / ");
-                    t.Span(mm).Bold(); t.Span(" / ");
-                    t.Span(yy).Bold();
-                });
-                c.Item().AlignCenter().Text("(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)").FontSize(7).FontColor(Colors.Grey.Darken1);
-                c.Item().PaddingTop(4).AlignRight().Element(e =>
-                    e.Border(1).BorderColor(Colors.Grey.Darken1).Width(70).Height(70)
-                     .AlignCenter().AlignMiddle().Text("ประทับตรา\nนิติบุคคล\n(ถ้ามี)")
-                     .FontSize(8).FontColor(Colors.Grey.Darken1).Italic());
+                // Circular company-seal placeholder, vertically centred.
+                rr.ConstantItem(82).AlignMiddle().PaddingLeft(6).Element(DrawStampCircle);
             });
         });
+    }
+
+    // ── "ประทับตรานิติบุคคล (ถ้ามี)" seal area ──────────────────────
+    // QuestPDF (this version) has no border-radius and Canvas/SkiaSharp isn't
+    // referenced elsewhere in the project, so to stay build-safe we draw a
+    // bordered square positioned to the RIGHT of the signature, vertically
+    // centred — matching the official form's stamp PLACEMENT (the previous
+    // version pushed it to the bottom of the column). The caption keeps the
+    // standard 3-line italic text.
+    private static void DrawStampCircle(QuestPDF.Infrastructure.IContainer e)
+    {
+        e.Width(78).Height(78)
+         .Border(1f).BorderColor(Colors.Grey.Darken1)
+         .AlignCenter().AlignMiddle()
+         .Text("ประทับตรา\nนิติบุคคล\n(ถ้ามี)")
+         .FontSize(8).FontColor(Colors.Grey.Darken1).Italic();
     }
 
     private static void BuildFootnote(QuestPDF.Fluent.ColumnDescriptor col)
