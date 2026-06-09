@@ -611,8 +611,6 @@ var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "uploads");
 if (!Directory.Exists(uploadsPath)) Directory.CreateDirectory(uploadsPath);
 try
 {
-    var webRoot = app.Environment.WebRootPath
-        ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
     foreach (var sub in new[] { "uploads", "uploads/logos", "uploads/attachments", "uploads/banners" })
     {
         var p = Path.Combine(webRoot, sub);
