@@ -47,26 +47,52 @@ public class MicrosoftGraphEmailSender : IEmailSender
             var client = _httpFactory.CreateClient("Graph");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
+            // Build the message as a dictionary so we can conditionally add the
+            // "from" field (anonymous objects can't omit a property at runtime).
+            var graphMessage = new Dictionary<string, object?>
+            {
+                ["subject"] = message.Subject,
+                ["body"] = new { contentType = "HTML", content = message.HtmlBody },
+                ["toRecipients"] = message.To.Select(addr => new { emailAddress = new { address = addr } }).ToArray(),
+                ["ccRecipients"] = message.Cc.Select(addr => new { emailAddress = new { address = addr } }).ToArray(),
+                ["bccRecipients"] = message.Bcc.Select(addr => new { emailAddress = new { address = addr } }).ToArray(),
+                ["replyTo"] = string.IsNullOrWhiteSpace(message.ReplyTo)
+                    ? Array.Empty<object>()
+                    : new[] { new { emailAddress = new { address = message.ReplyTo } } },
+                ["attachments"] = message.Attachments.Select(a => new
+                {
+                    @odata_type = "#microsoft.graph.fileAttachment",
+                    name = a.FileName,
+                    contentType = a.ContentType,
+                    contentBytes = Convert.ToBase64String(a.Content)
+                }).ToArray()
+            };
+
+            // SEND-AS: when the configured From address differs from the sending
+            // mailbox (e.g. a shared/distribution address like
+            // "Accounting@contoso.com" sent through the licensed mailbox
+            // "user@contoso.com"), set the message "from" so the recipient sees
+            // that identity. REQUIRES the sending mailbox (_senderUpn) to have
+            // "Send As" rights on that address in Exchange — otherwise Graph
+            // returns ErrorAccessDenied. When the From matches the mailbox (or is
+            // blank) we omit it and Graph defaults to the mailbox owner (the
+            // previous behaviour — no regression for single-mailbox setups).
+            if (!string.IsNullOrWhiteSpace(message.FromAddress)
+                && !string.Equals(message.FromAddress, _senderUpn, StringComparison.OrdinalIgnoreCase))
+            {
+                graphMessage["from"] = new
+                {
+                    emailAddress = new
+                    {
+                        address = message.FromAddress,
+                        name = string.IsNullOrWhiteSpace(message.FromName) ? message.FromAddress : message.FromName
+                    }
+                };
+            }
+
             var payload = new
             {
-                message = new
-                {
-                    subject = message.Subject,
-                    body = new { contentType = "HTML", content = message.HtmlBody },
-                    toRecipients = message.To.Select(addr => new { emailAddress = new { address = addr } }).ToArray(),
-                    ccRecipients = message.Cc.Select(addr => new { emailAddress = new { address = addr } }).ToArray(),
-                    bccRecipients = message.Bcc.Select(addr => new { emailAddress = new { address = addr } }).ToArray(),
-                    replyTo = string.IsNullOrWhiteSpace(message.ReplyTo)
-                        ? Array.Empty<object>()
-                        : new[] { new { emailAddress = new { address = message.ReplyTo } } },
-                    attachments = message.Attachments.Select(a => new
-                    {
-                        @odata_type = "#microsoft.graph.fileAttachment",
-                        name = a.FileName,
-                        contentType = a.ContentType,
-                        contentBytes = Convert.ToBase64String(a.Content)
-                    }).ToArray()
-                },
+                message = graphMessage,
                 saveToSentItems = true
             };
 

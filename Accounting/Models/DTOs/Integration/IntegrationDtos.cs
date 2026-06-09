@@ -92,7 +92,13 @@ public record InboundInvoiceRequest(
     /// receipt image with the invoice. Each attachment is decoded and saved
     /// after the document is created — its FileAttachment row will be linked
     /// to the new document automatically.</summary>
-    List<InboundAttachment>? Attachments = null);
+    List<InboundAttachment>? Attachments = null,
+    // ── Preparer identity from the source system (same as InboundExpenseRequest) ──
+    // Name + signature image ("data:image/...;base64,..." or raw base64) of the
+    // real preparer, stamped into the "ผู้จัดทำ" slot of the created document.
+    // Both null → falls back to the company Owner as before.
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null);
 
 /// <summary>
 /// Base64-encoded file attachment for external integrations. Server enforces:
