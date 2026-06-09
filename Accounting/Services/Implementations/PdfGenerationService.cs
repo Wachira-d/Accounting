@@ -71,14 +71,20 @@ public partial class PdfGenerationService : IPdfGenerationService
         //  3. (Inside RenderDocumentPdfNative) last-resort HTML→QuestPDF
         //     parser path so a composition bug can never blank the document.
         var signers = await ResolveSignersAsync(document);
+        // GL posting summary at the foot of the document — only when the
+        // company turned it on (CompanySettings.ShowGlEntryOnDocument). Used
+        // for internal audit. Was previously fetched CLIENT-side only, so the
+        // server PDF/HTML never showed it — this wires it into both renderers.
+        var gl = settings?.ShowGlEntryOnDocument == true
+            ? await LoadGlPostingAsync(companyId, document.Id) : null;
 
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
         {
-            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
+            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
             pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
-        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
+        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -113,7 +119,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
-        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
+        var gl = settings?.ShowGlEntryOnDocument == true
+            ? await LoadGlPostingAsync(companyId, document.Id) : null;
+        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
     }
 
     public async Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId)
@@ -261,6 +269,40 @@ public partial class PdfGenerationService : IPdfGenerationService
         string? Name,
         string? Title);
 
+    /// <summary>The document's posted journal entry, summarised for the
+    /// "การลงบัญชี (Dr./Cr.)" block printed at the end of the document when the
+    /// company enabled ShowGlEntryOnDocument.</summary>
+    internal sealed record GlPostingLine(string AccountCode, string AccountName, decimal Debit, decimal Credit);
+    internal sealed record GlPostingSummary(string EntryNumber, DateTime EntryDate,
+        IReadOnlyList<GlPostingLine> Lines, decimal TotalDebit, decimal TotalCredit);
+
+    /// <summary>Load the document's GL posting (the auto-generated journal
+    /// entry) for the end-of-document Dr/Cr summary. Prefers the Posted entry;
+    /// excludes reversed entries. Returns null when the doc has no journal yet
+    /// (e.g. still Draft) so the block is simply omitted.</summary>
+    private async Task<GlPostingSummary?> LoadGlPostingAsync(Guid companyId, Guid documentId)
+    {
+        var je = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                        && !j.IsDeleted && j.ReversedByEntryId == null)
+            .OrderByDescending(j => j.Status == JournalEntryStatus.Posted)
+            .ThenByDescending(j => j.EntryDate)
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.TotalCredit })
+            .FirstOrDefaultAsync();
+        if (je == null) return null;
+
+        var lines = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
+            .OrderBy(l => l.LineOrder)
+            .Select(l => new GlPostingLine(
+                l.Account != null ? l.Account.AccountCode : "",
+                l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
+                l.DebitAmount, l.CreditAmount))
+            .ToListAsync();
+        if (lines.Count == 0) return null;
+        return new GlPostingSummary(je.EntryNumber, je.EntryDate, lines, je.TotalDebit, je.TotalCredit);
+    }
+
     /// <summary>Resolve the signers for a document, aligned positionally to the
     /// template's signature label slots (signers[0] → SignatureLabel1, etc.):
     ///   slot 0 = preparer  — the document creator (CreatedBy).
@@ -391,7 +433,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
-        IReadOnlyList<DocumentSigner>? signers = null)
+        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
     {
         var lang = langOverride ?? template.Language;
         var sb = new StringBuilder();
@@ -578,6 +620,35 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (template.SignatureLabel2 != null) Box(template.SignatureLabel2, sigAt(1));
             if (template.SignatureCount >= 3 && template.SignatureLabel3 != null) Box(template.SignatureLabel3, sigAt(2));
             sb.AppendLine("</div>");
+        }
+
+        // ── การลงบัญชี (Dr./Cr.) — internal-audit posting summary ──────────
+        if (gl != null && gl.Lines.Count > 0)
+        {
+            var en = (langOverride ?? template.Language) == "en";
+            sb.AppendLine("<div class='gl-summary' style='margin-top:22px;border-top:1px dashed #94a3b8;padding-top:8px'>");
+            sb.AppendLine($"<div style='font-size:11px;font-weight:700;color:#475569;margin-bottom:4px'>{(en ? "Accounting entry (for internal audit)" : "การบันทึกบัญชี (สำหรับตรวจสอบภายใน)")} — {WebUtility.HtmlEncode(gl.EntryNumber)} · {gl.EntryDate:dd/MM/yyyy}</div>");
+            sb.AppendLine("<table style='width:100%;border-collapse:collapse;font-size:11px'>");
+            sb.AppendLine($"<thead><tr style='background:#f1f5f9'>" +
+                $"<th style='text-align:left;padding:3px 6px;border:1px solid #cbd5e1'>{(en ? "Account" : "บัญชี")}</th>" +
+                $"<th style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1;width:110px'>{(en ? "Debit" : "เดบิต")}</th>" +
+                $"<th style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1;width:110px'>{(en ? "Credit" : "เครดิต")}</th></tr></thead><tbody>");
+            foreach (var l in gl.Lines)
+            {
+                var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} - {l.AccountName}";
+                var dr = l.Debit != 0 ? l.Debit.ToString("N2") : "";
+                var cr = l.Credit != 0 ? l.Credit.ToString("N2") : "";
+                // Credit accounts get a small indent so the entry reads like a journal.
+                var pad = l.Credit != 0 && l.Debit == 0 ? "padding-left:22px" : "";
+                sb.AppendLine($"<tr><td style='padding:3px 6px;border:1px solid #cbd5e1;{pad}'>{WebUtility.HtmlEncode(name)}</td>" +
+                    $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{dr}</td>" +
+                    $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{cr}</td></tr>");
+            }
+            sb.AppendLine($"<tr style='font-weight:700;background:#f8fafc'>" +
+                $"<td style='padding:3px 6px;border:1px solid #cbd5e1;text-align:right'>{(en ? "Total" : "รวม")}</td>" +
+                $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{gl.TotalDebit:N2}</td>" +
+                $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{gl.TotalCredit:N2}</td></tr>");
+            sb.AppendLine("</tbody></table></div>");
         }
 
         sb.AppendLine("</div></body></html>");

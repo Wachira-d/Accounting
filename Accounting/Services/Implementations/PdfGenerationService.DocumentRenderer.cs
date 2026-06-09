@@ -28,7 +28,7 @@ public partial class PdfGenerationService
 {
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
-        IReadOnlyList<DocumentSigner>? signers = null)
+        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
     {
         EnsureThaiFontsRegistered();
         var lang = langOverride ?? template.Language ?? "th";
@@ -80,6 +80,7 @@ public partial class PdfGenerationService
                         ComposeSummary(col, doc, template, accent, layout);
                         ComposeFooter(col, doc, template);
                         ComposeSignatures(col, template, b, signers);
+                        ComposeGlPosting(col, gl, lang);
                     });
 
                     page.Footer().AlignRight().Text(t =>
@@ -481,6 +482,42 @@ public partial class PdfGenerationService
                         c.Item().AlignCenter().Text(s.Title!).FontSize(9).FontColor("#666");
                 });
             }
+        });
+    }
+
+    /// <summary>การลงบัญชี (Dr./Cr.) summary at the foot of the document — for
+    /// internal audit. Rendered only when the company enabled it AND the doc
+    /// has a posted journal entry.</summary>
+    private static void ComposeGlPosting(ColumnDescriptor col, GlPostingSummary? gl, string lang)
+    {
+        if (gl == null || gl.Lines.Count == 0) return;
+        var en = lang == "en";
+        col.Item().PaddingTop(18).BorderTop(0.8f).BorderColor("#94A3B8").PaddingTop(6).Column(c =>
+        {
+            c.Item().Text($"{(en ? "Accounting entry (for internal audit)" : "การบันทึกบัญชี (สำหรับตรวจสอบภายใน)")} — {gl.EntryNumber} · {gl.EntryDate:dd/MM/yyyy}")
+                .FontSize(9).Bold().FontColor("#475569");
+            c.Item().PaddingTop(3).Table(tbl =>
+            {
+                tbl.ColumnsDefinition(cd => { cd.RelativeColumn(60); cd.RelativeColumn(20); cd.RelativeColumn(20); });
+                tbl.Header(h =>
+                {
+                    h.Cell().Background("#F1F5F9").Border(0.5f).BorderColor("#CBD5E1").Padding(3).Text(en ? "Account" : "บัญชี").FontSize(9).Bold();
+                    h.Cell().Background("#F1F5F9").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(en ? "Debit" : "เดบิต").FontSize(9).Bold();
+                    h.Cell().Background("#F1F5F9").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(en ? "Credit" : "เครดิต").FontSize(9).Bold();
+                });
+                foreach (var l in gl.Lines)
+                {
+                    var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} - {l.AccountName}";
+                    bool creditOnly = l.Credit != 0 && l.Debit == 0;
+                    tbl.Cell().Border(0.5f).BorderColor("#CBD5E1").PaddingVertical(3)
+                        .PaddingLeft(creditOnly ? 18 : 6).PaddingRight(6).Text(name).FontSize(9);
+                    tbl.Cell().Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(l.Debit != 0 ? l.Debit.ToString("N2") : "").FontSize(9);
+                    tbl.Cell().Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(l.Credit != 0 ? l.Credit.ToString("N2") : "").FontSize(9);
+                }
+                tbl.Cell().Background("#F8FAFC").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(en ? "Total" : "รวม").FontSize(9).Bold();
+                tbl.Cell().Background("#F8FAFC").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(gl.TotalDebit.ToString("N2")).FontSize(9).Bold();
+                tbl.Cell().Background("#F8FAFC").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(gl.TotalCredit.ToString("N2")).FontSize(9).Bold();
+            });
         });
     }
 }
