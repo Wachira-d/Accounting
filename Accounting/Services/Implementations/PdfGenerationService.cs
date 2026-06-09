@@ -622,33 +622,26 @@ public partial class PdfGenerationService : IPdfGenerationService
             sb.AppendLine("</div>");
         }
 
-        // ── การลงบัญชี (Dr./Cr.) — internal-audit posting summary ──────────
+        // ── การลงบัญชี (Dr./Cr.) — compact internal-audit footnote ─────────
+        // One tight line per posting: "Dr 5xx ชื่อบัญชี ........ 1,940.00".
+        // No header / border / totals row — Dr=Cr is implied by the entry.
         if (gl != null && gl.Lines.Count > 0)
         {
             var en = (langOverride ?? template.Language) == "en";
-            sb.AppendLine("<div class='gl-summary' style='margin-top:22px;border-top:1px dashed #94a3b8;padding-top:8px'>");
-            sb.AppendLine($"<div style='font-size:11px;font-weight:700;color:#475569;margin-bottom:4px'>{(en ? "Accounting entry (for internal audit)" : "การบันทึกบัญชี (สำหรับตรวจสอบภายใน)")} — {WebUtility.HtmlEncode(gl.EntryNumber)} · {gl.EntryDate:dd/MM/yyyy}</div>");
-            sb.AppendLine("<table style='width:100%;border-collapse:collapse;font-size:11px'>");
-            sb.AppendLine($"<thead><tr style='background:#f1f5f9'>" +
-                $"<th style='text-align:left;padding:3px 6px;border:1px solid #cbd5e1'>{(en ? "Account" : "บัญชี")}</th>" +
-                $"<th style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1;width:110px'>{(en ? "Debit" : "เดบิต")}</th>" +
-                $"<th style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1;width:110px'>{(en ? "Credit" : "เครดิต")}</th></tr></thead><tbody>");
+            sb.AppendLine("<div style='margin-top:16px;border-top:1px solid #cbd5e1;padding-top:5px;font-size:10.5px;color:#334155'>");
+            sb.AppendLine($"<span style='font-weight:700;color:#64748b'>{(en ? "Posting" : "การบันทึกบัญชี")}</span> " +
+                $"<span style='color:#94a3b8'>{WebUtility.HtmlEncode(gl.EntryNumber)} · {gl.EntryDate:dd/MM/yy}</span>");
             foreach (var l in gl.Lines)
             {
-                var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} - {l.AccountName}";
-                var dr = l.Debit != 0 ? l.Debit.ToString("N2") : "";
-                var cr = l.Credit != 0 ? l.Credit.ToString("N2") : "";
-                // Credit accounts get a small indent so the entry reads like a journal.
-                var pad = l.Credit != 0 && l.Debit == 0 ? "padding-left:22px" : "";
-                sb.AppendLine($"<tr><td style='padding:3px 6px;border:1px solid #cbd5e1;{pad}'>{WebUtility.HtmlEncode(name)}</td>" +
-                    $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{dr}</td>" +
-                    $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{cr}</td></tr>");
+                var isDr = l.Debit != 0;
+                var tag = isDr ? "Dr" : "Cr";
+                var amt = (isDr ? l.Debit : l.Credit).ToString("N2");
+                var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} {l.AccountName}";
+                var indent = isDr ? "" : "padding-left:16px;";
+                sb.AppendLine($"<div style='display:flex;justify-content:space-between;{indent}line-height:1.45'>" +
+                    $"<span><b>{tag}</b> {WebUtility.HtmlEncode(name)}</span><span>{amt}</span></div>");
             }
-            sb.AppendLine($"<tr style='font-weight:700;background:#f8fafc'>" +
-                $"<td style='padding:3px 6px;border:1px solid #cbd5e1;text-align:right'>{(en ? "Total" : "รวม")}</td>" +
-                $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{gl.TotalDebit:N2}</td>" +
-                $"<td style='text-align:right;padding:3px 6px;border:1px solid #cbd5e1'>{gl.TotalCredit:N2}</td></tr>");
-            sb.AppendLine("</tbody></table></div>");
+            sb.AppendLine("</div>");
         }
 
         sb.AppendLine("</div></body></html>");

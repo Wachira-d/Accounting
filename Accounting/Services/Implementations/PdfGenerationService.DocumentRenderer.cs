@@ -492,32 +492,28 @@ public partial class PdfGenerationService
     {
         if (gl == null || gl.Lines.Count == 0) return;
         var en = lang == "en";
-        col.Item().PaddingTop(18).BorderTop(0.8f).BorderColor("#94A3B8").PaddingTop(6).Column(c =>
+        col.Item().PaddingTop(14).BorderTop(0.6f).BorderColor("#CBD5E1").PaddingTop(5).Column(c =>
         {
-            c.Item().Text($"{(en ? "Accounting entry (for internal audit)" : "การบันทึกบัญชี (สำหรับตรวจสอบภายใน)")} — {gl.EntryNumber} · {gl.EntryDate:dd/MM/yyyy}")
-                .FontSize(9).Bold().FontColor("#475569");
-            c.Item().PaddingTop(3).Table(tbl =>
+            c.Item().Text(t =>
             {
-                tbl.ColumnsDefinition(cd => { cd.RelativeColumn(60); cd.RelativeColumn(20); cd.RelativeColumn(20); });
-                tbl.Header(h =>
-                {
-                    h.Cell().Background("#F1F5F9").Border(0.5f).BorderColor("#CBD5E1").Padding(3).Text(en ? "Account" : "บัญชี").FontSize(9).Bold();
-                    h.Cell().Background("#F1F5F9").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(en ? "Debit" : "เดบิต").FontSize(9).Bold();
-                    h.Cell().Background("#F1F5F9").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(en ? "Credit" : "เครดิต").FontSize(9).Bold();
-                });
-                foreach (var l in gl.Lines)
-                {
-                    var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} - {l.AccountName}";
-                    bool creditOnly = l.Credit != 0 && l.Debit == 0;
-                    tbl.Cell().Border(0.5f).BorderColor("#CBD5E1").PaddingVertical(3)
-                        .PaddingLeft(creditOnly ? 18 : 6).PaddingRight(6).Text(name).FontSize(9);
-                    tbl.Cell().Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(l.Debit != 0 ? l.Debit.ToString("N2") : "").FontSize(9);
-                    tbl.Cell().Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(l.Credit != 0 ? l.Credit.ToString("N2") : "").FontSize(9);
-                }
-                tbl.Cell().Background("#F8FAFC").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(en ? "Total" : "รวม").FontSize(9).Bold();
-                tbl.Cell().Background("#F8FAFC").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(gl.TotalDebit.ToString("N2")).FontSize(9).Bold();
-                tbl.Cell().Background("#F8FAFC").Border(0.5f).BorderColor("#CBD5E1").Padding(3).AlignRight().Text(gl.TotalCredit.ToString("N2")).FontSize(9).Bold();
+                t.Span($"{(en ? "Posting" : "การบันทึกบัญชี")} ").FontSize(8.5f).Bold().FontColor("#64748B");
+                t.Span($"{gl.EntryNumber} · {gl.EntryDate:dd/MM/yy}").FontSize(8.5f).FontColor("#94A3B8");
             });
+            foreach (var l in gl.Lines)
+            {
+                var isDr = l.Debit != 0;
+                var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} {l.AccountName}";
+                var amt = (isDr ? l.Debit : l.Credit).ToString("N2");
+                c.Item().PaddingTop(2).PaddingLeft(isDr ? 0 : 16).Row(r =>
+                {
+                    r.RelativeItem().Text(t =>
+                    {
+                        t.Span(isDr ? "Dr " : "Cr ").FontSize(9).Bold().FontColor("#334155");
+                        t.Span(name).FontSize(9).FontColor("#334155");
+                    });
+                    r.ConstantItem(70).AlignRight().Text(amt).FontSize(9).FontColor("#334155");
+                });
+            }
         });
     }
 }
