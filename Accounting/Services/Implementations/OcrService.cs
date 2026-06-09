@@ -90,7 +90,7 @@ public class OcrService : IOcrService
         _rdComplianceValidator = rdComplianceValidator;
     }
 
-    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null)
+    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null)
     {
         // Normalize the user's engine preference into one of three modes.
         // "auto" = current cascade; "azure" = Tier 1 only (no local fallback
@@ -137,7 +137,11 @@ public class OcrService : IOcrService
             // operator via X-Acting-User, or the web user, or the owner) so the
             // auto-created document's creator signature reflects who actually
             // ran this scan instead of a generic literal.
-            CreatedBy = file.UploadedByUserId != Guid.Empty ? file.UploadedByUserId.ToString() : null
+            CreatedBy = file.UploadedByUserId != Guid.Empty ? file.UploadedByUserId.ToString() : null,
+            // Structured order/project metadata the partner uploaded with the
+            // file — drives auto project allocation per line below. Stored even
+            // when extraction yields no items so it survives reload.
+            ExternalMetadataJson = externalMetadataJson
         };
 
         _db.Set<OcrScanResult>().Add(scanResult);
@@ -564,11 +568,33 @@ public class OcrService : IOcrService
             scanResult.ScanStatus = "Completed";
             scanResult.ProcessedAt = DateTime.UtcNow;
 
+            // ── External metadata → auto project allocation ──
+            // When the partner uploaded order/project metadata with the file,
+            // link each OCR'd line back to its originating project so the
+            // created document's lines get ProjectId pre-selected. Runs BEFORE
+            // serialization + AutoCreate so both the persisted JSON and any
+            // auto-created document carry the allocation. Fully fail-safe.
+            if (extractedData.Items.Count > 0 && !string.IsNullOrWhiteSpace(externalMetadataJson))
+            {
+                try
+                {
+                    var projectMatcher = new Ocr.OcrMetadataProjectMatcher(_db, _aiAugmenter, _logger);
+                    var matchTrace = await projectMatcher.ApplyAsync(
+                        companyId, scanResult.Id, externalMetadataJson, extractedData.Items);
+                    foreach (var t in matchTrace)
+                        extractedData.ReasoningTrace.Add("[ProjectMatch] " + t);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "OCR project metadata matching failed for scan {Sid}", scanResult.Id);
+                }
+            }
+
             // Store extracted items and account suggestions
             if (extractedData.Items.Count > 0)
             {
                 scanResult.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(
-                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode }));
+                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode, i.ProjectId, i.ProjectName }));
             }
 
             scanResult.ExpenseCategory = extractedData.ExpenseCategory;

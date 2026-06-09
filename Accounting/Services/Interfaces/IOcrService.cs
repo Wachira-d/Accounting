@@ -14,8 +14,14 @@ public interface IOcrService
     /// explicitly asked for Azure-grade accuracy). "local" skips Tier 1 so
     /// no Azure cost is incurred. Tier 0 always runs regardless — it's free,
     /// 100% accurate, and consumes no engine quota.
+    ///
+    /// <paramref name="externalMetadataJson"/>: optional structured payload an
+    /// external system uploads alongside the file (order/project line info).
+    /// When present, OcrMetadataProjectMatcher links each extracted line back
+    /// to its originating project so created DocumentLines get ProjectId
+    /// pre-selected for automatic cost allocation.
     /// </summary>
-    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null);
+    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null);
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);

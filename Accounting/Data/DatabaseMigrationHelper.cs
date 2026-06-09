@@ -1654,6 +1654,12 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PaymentTermsDays" integer NULL;
             """,
 
+            // External-system metadata payload (project/order info uploaded
+            // alongside the file) — drives auto project allocation per line.
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExternalMetadataJson" text NULL;
+            """,
+
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """
             CREATE TABLE IF NOT EXISTS "OcrLearnedPatterns" (
