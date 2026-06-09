@@ -544,6 +544,11 @@ builder.Services.AddHsts(options =>
 
 var app = builder.Build();
 
+// Non-null web root for static-file fallbacks below. WebRootPath can be null
+// when wwwroot doesn't exist at startup; coalesce to ContentRoot/wwwroot so the
+// Path.Combine call sites stay non-null (silences CS8604) and still resolve.
+var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+
 // ===== Middleware Pipeline (order matters!) =====
 
 // 1. Exception handling (outermost)
@@ -667,7 +672,7 @@ app.MapGet("/site/{**catchAll}", context =>
     // marketing-page response under this URL.
     context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
     return Results.File(
-        Path.Combine(app.Environment.WebRootPath, "storefront.html"),
+        Path.Combine(webRoot, "storefront.html"),
         "text/html"
     ).ExecuteAsync(context);
 });
@@ -765,7 +770,7 @@ app.MapFallback(context =>
     {
         context.Response.Headers["X-CMS-Site-Match"] = "fallback:storefront.html (middleware did not rewrite)";
         return Results.File(
-            Path.Combine(app.Environment.WebRootPath, "storefront.html"),
+            Path.Combine(webRoot, "storefront.html"),
             "text/html"
         ).ExecuteAsync(context);
     }
@@ -784,7 +789,7 @@ app.MapFallback(context =>
 
     // Non-API routes: serve index.html for SPA client-side routing
     return Results.File(
-        Path.Combine(app.Environment.WebRootPath, "index.html"),
+        Path.Combine(webRoot, "index.html"),
         "text/html"
     ).ExecuteAsync(context);
 });

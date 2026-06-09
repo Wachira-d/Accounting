@@ -139,6 +139,39 @@ public class DocumentService : IDocumentService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>Mirror of <see cref="SyncProjectCostEntriesAsync"/> for a
+    /// void / un-approve: soft-delete the auto-spawned ProjectCostEntry rows
+    /// for this document and back their amounts out of each Project.ActualCost.
+    /// Without this, voiding a cost document left the project's actual cost
+    /// permanently inflated. Idempotent — rows already soft-deleted are skipped
+    /// so a re-void never double-subtracts. Uses the stored entry.Amount (what
+    /// was actually booked) rather than re-deriving from lines. Caller owns the
+    /// SaveChanges (runs inside the void transaction).</summary>
+    private async Task ReverseProjectCostEntriesAsync(Guid companyId, Document doc)
+    {
+        var lineIds = doc.Lines?.Select(l => l.Id).ToList() ?? new List<Guid>();
+        var entries = await _db.ProjectCostEntries
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                && (c.DocumentId == doc.Id
+                    || (c.DocumentLineId.HasValue && lineIds.Contains(c.DocumentLineId.Value))))
+            .ToListAsync();
+        if (entries.Count == 0) return;
+
+        var perProject = new Dictionary<Guid, decimal>();
+        foreach (var e in entries)
+        {
+            e.IsDeleted = true;
+            e.UpdatedAt = DateTime.UtcNow;
+            perProject[e.ProjectId] = perProject.GetValueOrDefault(e.ProjectId) + e.Amount;
+        }
+        var ids = perProject.Keys.ToList();
+        var projects = await _db.Projects
+            .Where(p => p.CompanyId == companyId && ids.Contains(p.Id))
+            .ToListAsync();
+        foreach (var p in projects)
+            p.ActualCost = Math.Max(0, p.ActualCost - perProject[p.Id]);
+    }
+
     /// <summary>Resolve THB exchange rate for a document. THB → 1. Explicit
     /// override wins; otherwise auto-fetch the BoT mid-rate at DocumentDate.
     /// Throws if BoT lookup fails — silent fallback to 1 on non-THB would
@@ -1275,6 +1308,14 @@ public class DocumentService : IDocumentService
                 //     Same Draft skip: drafts never decremented stock.
                 if (doc.Status != DocumentStatus.Draft)
                     await ApplyStockMovementsAsync(companyId, doc, -1, "system-void");
+
+                // 6c) Back out this document's auto-booked project cost entries
+                //     — mirror of SyncProjectCostEntriesAsync at approval. Soft-
+                //     deletes the PCE rows and subtracts from Project.ActualCost
+                //     so a voided cost doc no longer inflates the project's
+                //     actual cost. Same Draft skip: drafts never booked a PCE.
+                if (doc.Status != DocumentStatus.Draft)
+                    await ReverseProjectCostEntriesAsync(companyId, doc);
 
                 // 7) Finally void the document itself + clear the stale
                 //    aging value. The list-row gate already suppresses the

@@ -542,6 +542,9 @@ public class IntegrationService : IIntegrationService
                 TotalAmount = totalAmount,
                 BalanceDue = totalAmount,
                 Notes = request.Notes,
+                // Preparer identity from the source system → "ผู้จัดทำ" slot.
+                PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
+                PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
                 Lines = lines
             };
 

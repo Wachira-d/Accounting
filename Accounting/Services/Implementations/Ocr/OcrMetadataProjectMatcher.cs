@@ -69,10 +69,13 @@ internal sealed class OcrMetadataProjectMatcher
         }
 
         // ── 1. Resolve each distinct project reference to a real Project ──
-        var resolved = await ResolveOrdersAsync(companyId, orders, ct);
+        // (auto-creates the project from the metadata when none exists yet, so
+        //  the partner's projects mirror into NextAcc on first sync).
+        var externalSystem = ParseTopLevelString(metadataJson, "source", "system");
+        var resolved = await ResolveOrdersAsync(companyId, orders, externalSystem, trace, ct);
         if (resolved.Count == 0)
         {
-            trace.Add($"พบ {orders.Count} รายการใน metadata แต่จับคู่โครงการในระบบไม่ได้ (ตรวจรหัส/ชื่อโครงการ)");
+            trace.Add($"พบ {orders.Count} รายการใน metadata แต่จับคู่/สร้างโครงการในระบบไม่ได้ (ขาดรหัส/ชื่อโครงการ)");
             return trace;
         }
 
@@ -261,20 +264,25 @@ internal sealed class OcrMetadataProjectMatcher
         return null;
     }
 
-    // ── Project resolution ───────────────────────────────────────────────
+    // A project row we match against (and can append freshly-created rows to).
+    private sealed record ProjectRow(Guid Id, string Code, string Name, string? ExternalId);
+
+    // ── Project resolution (with auto-create) ────────────────────────────
     private async Task<List<ResolvedOrder>> ResolveOrdersAsync(
-        Guid companyId, List<OrderItem> orders, CancellationToken ct)
+        Guid companyId, List<OrderItem> orders, string? externalSystem,
+        List<string> trace, CancellationToken ct)
     {
         // Pull the company's projects once; match in memory (project counts are
         // small per tenant, and we need flexible Code/ExternalId/Name fallback).
-        var projects = await _db.Set<Project>().AsNoTracking()
+        var projects = (await _db.Set<Project>().AsNoTracking()
             .Where(p => p.CompanyId == companyId && !p.IsDeleted)
             .Select(p => new { p.Id, p.Code, p.Name, p.ExternalId })
-            .ToListAsync(ct);
-        if (projects.Count == 0) return new();
+            .ToListAsync(ct))
+            .Select(p => new ProjectRow(p.Id, p.Code, p.Name, p.ExternalId))
+            .ToList();
 
         var result = new List<ResolvedOrder>();
-        // Cache per (code|extId|name) key so we don't re-scan for repeated orders.
+        // Cache per (code|extId|name) key so we don't re-scan / re-create.
         var cache = new Dictionary<string, (Guid Id, string Name)?>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var o in orders)
@@ -305,11 +313,72 @@ internal sealed class OcrMetadataProjectMatcher
                         string.Equals(x.Name?.Trim(), o.ProjectName, StringComparison.OrdinalIgnoreCase));
                     if (p != null) hit = (p.Id, p.Name);
                 }
+                // 4) AUTO-CREATE — no existing project matched, but the metadata
+                //    carries enough identity (a name and/or code) to mirror the
+                //    partner's project into NextAcc. The new row is tracked and
+                //    persisted by the caller's later SaveChanges (same context).
+                if (hit == null && (!string.IsNullOrWhiteSpace(o.ProjectName) || !string.IsNullOrWhiteSpace(o.ProjectCode)))
+                {
+                    var created = CreateProject(companyId, o, externalSystem, projects);
+                    projects.Add(created);                 // so sibling orders match it
+                    hit = (created.Id, created.Name);
+                    trace.Add($"สร้างโครงการใหม่จาก metadata: \"{created.Name}\" (รหัส {created.Code})");
+                }
                 cache[key] = hit;
             }
             if (hit != null) result.Add(new ResolvedOrder(o, hit.Value.Id, hit.Value.Name));
         }
         return result;
+    }
+
+    /// <summary>Mirror a partner project into NextAcc from the order metadata.
+    /// Tracked-only (no SaveChanges) — the OCR scan's later save commits it
+    /// atomically with the assigned line ProjectIds.</summary>
+    private ProjectRow CreateProject(
+        Guid companyId, OrderItem o, string? externalSystem, List<ProjectRow> existing)
+    {
+        // Prefer the partner's code (we already know it matches nothing); else
+        // synthesise a unique one. Guard against colliding with a code we just
+        // generated for another order in the same payload.
+        var code = !string.IsNullOrWhiteSpace(o.ProjectCode) ? o.ProjectCode!.Trim() : "";
+        if (code.Length == 0 || existing.Any(x => string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase)))
+            code = $"EXT-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
+
+        var name = !string.IsNullOrWhiteSpace(o.ProjectName) ? o.ProjectName!.Trim()
+                 : !string.IsNullOrWhiteSpace(o.ProjectCode) ? o.ProjectCode!.Trim()
+                 : code;
+
+        var entity = new Project
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = companyId,
+            Code = code,
+            Name = name,
+            Status = "Active",
+            StartDate = DateTime.UtcNow.Date,
+            ExternalId = string.IsNullOrWhiteSpace(o.ProjectExternalId) ? null : o.ProjectExternalId,
+            ExternalSystem = string.IsNullOrWhiteSpace(externalSystem) ? null : externalSystem,
+            LastSyncedAt = DateTime.UtcNow,
+        };
+        _db.Set<Project>().Add(entity);
+        return new ProjectRow(entity.Id, entity.Code, entity.Name, entity.ExternalId);
+    }
+
+    /// <summary>Read a top-level string property (first non-empty among names).</summary>
+    private static string? ParseTopLevelString(string json, params string[] names)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            foreach (var n in names)
+                if (doc.RootElement.TryGetProperty(n, out var v)
+                    && v.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(v.GetString()))
+                    return v.GetString()!.Trim();
+        }
+        catch { /* malformed → no source */ }
+        return null;
     }
 
     // ── AI fallback ──────────────────────────────────────────────────────
