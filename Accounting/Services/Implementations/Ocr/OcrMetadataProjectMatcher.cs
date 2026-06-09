@@ -32,7 +32,7 @@ namespace Accounting.Services.Implementations.Ocr;
 /// outage simply leaves ProjectId null (manual pick, exactly as before) — it
 /// never breaks the scan.
 /// </summary>
-public sealed class OcrMetadataProjectMatcher
+internal sealed class OcrMetadataProjectMatcher
 {
     private readonly AccountingDbContext _db;
     private readonly IOcrAiAugmenter? _ai;
