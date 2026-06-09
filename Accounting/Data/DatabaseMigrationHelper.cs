@@ -2657,6 +2657,15 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtCertSkipped" boolean NOT NULL DEFAULT false;
             """,
+            // External preparer signature override — name + signature image
+            // (base64/data-URI) supplied by an integrating system for the
+            // "ผู้จัดทำ" slot when the preparer is not a NextAcc User.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PreparerName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PreparerSignatureBase64" text NULL;
+            """,
             // Per-payment GL funding override — pay from เงินทดรองกรรมการ /
             // เงินสดย่อย / clearing instead of the default cash/bank GL.
             """

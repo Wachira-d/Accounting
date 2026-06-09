@@ -368,6 +368,28 @@ public partial class PdfGenerationService : IPdfGenerationService
         // (customer) keeps its index even when the approver hasn't signed.
         var signers = new List<DocumentSigner> { FromUser(creatorId), FromUser(approverId) };
 
+        // EXTERNAL PREPARER OVERRIDE (slot 0 = ผู้จัดทำ). When an integrating
+        // system supplied the preparer's name / signature inline, the real
+        // preparer isn't a NextAcc User so the CreatedBy→User lookup above
+        // found nothing. Merge the partner-supplied identity into slot 0 —
+        // non-destructively: a real User signature already resolved is kept;
+        // we only fill what's missing (image and/or name).
+        if (!string.IsNullOrWhiteSpace(doc.PreparerName) || !string.IsNullOrWhiteSpace(doc.PreparerSignatureBase64))
+        {
+            var cur = signers[0];
+            string? dataUri = cur.SignatureImageDataUri;
+            byte[]? bytes = cur.SignatureImageBytes;
+            if ((bytes is null || bytes.Length == 0) && !string.IsNullOrWhiteSpace(doc.PreparerSignatureBase64))
+            {
+                var raw = doc.PreparerSignatureBase64!.Trim();
+                dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? raw : "data:image/png;base64," + raw;
+                bytes = TryDecodeBase64Image(raw);
+            }
+            var name = !string.IsNullOrWhiteSpace(cur.Name) ? cur.Name : doc.PreparerName?.Trim();
+            signers[0] = new DocumentSigner(dataUri, bytes, name, cur.Title);
+        }
+
         // slot 2 — external/customer signature captured via the approval flow.
         var custSig = await _db.DocumentApprovals.AsNoTracking()
             .Where(a => a.DocumentId == doc.Id
