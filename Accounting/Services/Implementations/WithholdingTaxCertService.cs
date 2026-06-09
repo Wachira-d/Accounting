@@ -11,10 +11,77 @@ namespace Accounting.Services.Implementations;
 public class WithholdingTaxCertService : IWithholdingTaxCertService
 {
     private readonly AccountingDbContext _db;
+    private readonly IPdfGenerationService _pdf;
+    private readonly IFileAttachmentService _attachments;
+    private readonly ILogger<WithholdingTaxCertService> _logger;
 
-    public WithholdingTaxCertService(AccountingDbContext db)
+    public WithholdingTaxCertService(AccountingDbContext db, IPdfGenerationService pdf,
+        IFileAttachmentService attachments, ILogger<WithholdingTaxCertService> logger)
     {
         _db = db;
+        _pdf = pdf;
+        _attachments = attachments;
+        _logger = logger;
+    }
+
+    /// <summary>Generate the issued WHT certificate's PDF and attach it to the
+    /// linked source document (the ใบสำคัญจ่าย / expense it was withheld on) so
+    /// the cert travels with that document automatically. No-op when the cert
+    /// isn't linked to a document. Idempotent — won't re-attach the same cert.
+    /// Fully fail-safe: a generation/storage hiccup never blocks issuing.</summary>
+    private async Task AttachCertPdfToDocumentAsync(Guid companyId, Guid certId)
+    {
+        try
+        {
+            var cert = await _db.WithholdingTaxCerts.AsNoTracking()
+                .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId);
+            if (cert?.DocumentId == null) return;   // not linked → nothing to attach to
+
+            var fileName = $"WHT-{cert.CertificateNumber}.pdf";
+
+            // Idempotent: skip if this cert's PDF is already on the document.
+            var already = await _db.FileAttachments.AnyAsync(f =>
+                f.CompanyId == companyId && !f.IsDeleted
+                && f.EntityType == "Document" && f.EntityId == cert.DocumentId.Value
+                && f.OriginalFileName == fileName);
+            if (already) return;
+
+            var pdf = await _pdf.GenerateWithholdingTaxCertPdfAsync(companyId, certId);
+            var uploaderId = await ResolveUploaderUserIdAsync(companyId, cert.CreatedBy);
+            if (uploaderId == Guid.Empty) return;   // no user to attribute → skip silently
+
+            await _attachments.UploadBytesAsync(companyId, "Document", cert.DocumentId.Value,
+                fileName, "application/pdf", pdf.PdfData, uploaderId);
+
+            _logger.LogInformation("Auto-attached WHT cert {Cert} PDF to document {DocId}",
+                cert.CertificateNumber, cert.DocumentId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Auto-attach WHT cert PDF failed for cert {CertId}", certId);
+        }
+    }
+
+    /// <summary>Resolve a REAL user id to stamp on the auto-generated attachment.
+    /// cert.CreatedBy may be a user GUID (web flow) or a literal like
+    /// "integration-sync" (partner sync); fall back to the company Owner, then
+    /// any member, so the FileAttachment→User FK never throws.</summary>
+    private async Task<Guid> ResolveUploaderUserIdAsync(Guid companyId, string? createdBy)
+    {
+        if (Guid.TryParse(createdBy, out var uid)
+            && await _db.Users.AsNoTracking().AnyAsync(u => u.Id == uid))
+            return uid;
+
+        var ownerId = await _db.Set<CompanyUser>().AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
+            .Select(cu => cu.UserId)
+            .FirstOrDefaultAsync();
+        if (ownerId != Guid.Empty) return ownerId;
+
+        return await _db.Set<CompanyUser>().AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId)
+            .Select(cu => cu.UserId)
+            .FirstOrDefaultAsync();
     }
 
     public async Task<WithholdingTaxCertResponse> CreateAsync(Guid companyId, CreateWithholdingTaxCertRequest request, string createdBy)
@@ -134,6 +201,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         cert.Status = WithholdingTaxCertStatus.Issued;
         cert.IssuedDate = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        // Save the issued cert PDF as an attachment on its source document.
+        await AttachCertPdfToDocumentAsync(companyId, cert.Id);
 
         return await GetByIdAsync(companyId, cert.Id);
     }
@@ -319,6 +389,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         _db.WithholdingTaxCerts.Add(cert);
         await _db.SaveChangesAsync();
+
+        // When the cert is issued straight away (integration sync / one-click),
+        // save its PDF onto the source document automatically.
+        if (autoIssue)
+            await AttachCertPdfToDocumentAsync(companyId, cert.Id);
 
         return await GetByIdAsync(companyId, cert.Id);
     }

@@ -87,6 +87,47 @@ public class FileAttachmentService : IFileAttachmentService
         return MapToResponse(attachment, user?.FullName ?? "");
     }
 
+    public async Task<FileAttachmentResponse> UploadBytesAsync(Guid companyId, string entityType, Guid entityId,
+        string originalFileName, string contentType, byte[] content, Guid uploadedByUserId)
+    {
+        var extension = Path.GetExtension(originalFileName);
+        if (!AllowedExtensions.Contains(extension))
+            throw new InvalidOperationException($"ประเภทไฟล์ {extension} ไม่ได้รับอนุญาต");
+
+        var maxSize = contentType.StartsWith("image/") ? MaxFileSizeImage : MaxFileSizeDefault;
+        if (content.LongLength > maxSize)
+            throw new InvalidOperationException($"ขนาดไฟล์เกินกำหนด (สูงสุด {maxSize / (1024 * 1024)} MB)");
+
+        var companyDir = Path.Combine(_storagePath, companyId.ToString(), entityType);
+        Directory.CreateDirectory(companyDir);
+
+        var uniqueFileName = $"{Guid.NewGuid()}{extension}";
+        var actualStoragePath = Path.Combine(companyDir, uniqueFileName);
+        await File.WriteAllBytesAsync(actualStoragePath, content);
+
+        var attachment = new FileAttachment
+        {
+            CompanyId = companyId,
+            EntityType = entityType,
+            EntityId = entityId,
+            FileName = uniqueFileName,
+            OriginalFileName = originalFileName,
+            ContentType = contentType,
+            FileSize = content.LongLength,
+            StoragePath = actualStoragePath,
+            UploadedByUserId = uploadedByUserId
+        };
+
+        _db.FileAttachments.Add(attachment);
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("File saved from bytes: {FileName} ({FileSize} bytes) for {EntityType}/{EntityId}",
+            originalFileName, content.LongLength, entityType, entityId);
+
+        var user = await _db.Users.FindAsync(uploadedByUserId);
+        return MapToResponse(attachment, user?.FullName ?? "");
+    }
+
     public async Task<List<FileAttachmentResponse>> GetByEntityAsync(Guid companyId, string entityType, Guid entityId)
     {
         var attachments = await _db.FileAttachments
