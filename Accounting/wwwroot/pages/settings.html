@@ -812,7 +812,7 @@
           const status = document.getElementById('emailStatus');
           if (c.configured) {
             status.innerHTML = `<div style="padding:10px;background:#dcfce7;border-radius:6px;color:#166534;font-size:13px">✓ ตั้งค่าและทดสอบสำเร็จ • ${c.lastTestedAt ? new Date(c.lastTestedAt).toLocaleString('th-TH') : ''}</div>`;
-          } else if (c.lastTestStatus) {
+          } else if (c.lastTestStatus && c.lastTestStatus !== 'OK') {
             status.innerHTML = `<div style="padding:10px;background:#fee2e2;border-radius:6px;color:#991b1b;font-size:13px">⚠ ทดสอบล่าสุดไม่ผ่าน: ${c.lastTestStatus}</div>`;
           } else {
             status.innerHTML = `<div style="padding:10px;background:#fef3c7;border-radius:6px;color:#78350f;font-size:13px">⚠ ยังไม่ได้ทดสอบ — กรอกข้อมูลแล้วกด "ทดสอบส่งอีเมล" เพื่อยืนยัน</div>`;
