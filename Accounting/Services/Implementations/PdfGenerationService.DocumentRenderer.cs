@@ -28,7 +28,7 @@ public partial class PdfGenerationService
 {
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
-        IReadOnlyList<DocumentSigner>? signers = null)
+        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
     {
         EnsureThaiFontsRegistered();
         var lang = langOverride ?? template.Language ?? "th";
@@ -80,6 +80,7 @@ public partial class PdfGenerationService
                         ComposeSummary(col, doc, template, accent, layout);
                         ComposeFooter(col, doc, template);
                         ComposeSignatures(col, template, b, signers);
+                        ComposeGlPosting(col, gl, lang);
                     });
 
                     page.Footer().AlignRight().Text(t =>
@@ -479,6 +480,38 @@ public partial class PdfGenerationService
                         c.Item().AlignCenter().Text(s.Name!).FontSize(10).Bold();
                     if (s != null && !string.IsNullOrWhiteSpace(s.Title))
                         c.Item().AlignCenter().Text(s.Title!).FontSize(9).FontColor("#666");
+                });
+            }
+        });
+    }
+
+    /// <summary>การลงบัญชี (Dr./Cr.) summary at the foot of the document — for
+    /// internal audit. Rendered only when the company enabled it AND the doc
+    /// has a posted journal entry.</summary>
+    private static void ComposeGlPosting(ColumnDescriptor col, GlPostingSummary? gl, string lang)
+    {
+        if (gl == null || gl.Lines.Count == 0) return;
+        var en = lang == "en";
+        col.Item().PaddingTop(14).BorderTop(0.6f).BorderColor("#CBD5E1").PaddingTop(5).Column(c =>
+        {
+            c.Item().Text(t =>
+            {
+                t.Span($"{(en ? "Posting" : "การบันทึกบัญชี")} ").FontSize(8.5f).Bold().FontColor("#64748B");
+                t.Span($"{gl.EntryNumber} · {gl.EntryDate:dd/MM/yy}").FontSize(8.5f).FontColor("#94A3B8");
+            });
+            foreach (var l in gl.Lines)
+            {
+                var isDr = l.Debit != 0;
+                var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} {l.AccountName}";
+                var amt = (isDr ? l.Debit : l.Credit).ToString("N2");
+                c.Item().PaddingTop(2).PaddingLeft(isDr ? 0 : 16).Row(r =>
+                {
+                    r.RelativeItem().Text(t =>
+                    {
+                        t.Span(isDr ? "Dr " : "Cr ").FontSize(9).Bold().FontColor("#334155");
+                        t.Span(name).FontSize(9).FontColor("#334155");
+                    });
+                    r.ConstantItem(70).AlignRight().Text(amt).FontSize(9).FontColor("#334155");
                 });
             }
         });

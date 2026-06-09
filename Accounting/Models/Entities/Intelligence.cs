@@ -142,6 +142,14 @@ public class OcrScanResult : TenantEntity
     public decimal? ExtractedTotalAmount { get; set; }
     public string? ExtractedItemsJson { get; set; }       // JSON of line items
 
+    /// <summary>Structured metadata an external system (e.g. a project /
+    /// materials-ordering system) sends ALONGSIDE the uploaded document.
+    /// Lists each ordered item with its originating project/order so we can
+    /// auto-match the OCR'd invoice lines back to the source project and
+    /// pre-select DocumentLine.ProjectId — no manual project picking.
+    /// Stored verbatim as received (JSON).</summary>
+    public string? ExternalMetadataJson { get; set; }
+
     // ─── Buyer side of the document (the customer on a sales doc, or
     // "us" on a supplier doc). Persisted so the RD-compliance warning
     // "ใบกำกับ ≥ ฿1,000 ควรระบุเลขผู้เสียภาษีของผู้ซื้อ" stops false-

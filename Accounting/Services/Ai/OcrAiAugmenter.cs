@@ -39,7 +39,28 @@ public interface IOcrAiAugmenter
         string lineDescription, decimal amount, string currency,
         string? localBestAccountCode, decimal localConfidence,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Match one OCR'd invoice line → the project it belongs to, using the
+    /// candidate projects (each with sample ordered materials) derived from the
+    /// external-system metadata. Only called by OcrMetadataProjectMatcher when
+    /// the deterministic pass left the line unresolved AND ≥2 projects are in
+    /// play. Answer is a Project id string (one of the candidates) or null.
+    /// </summary>
+    Task<OcrAiAugmentationResult> MatchLineProjectAsync(
+        Guid companyId, Guid scanResultId,
+        string lineDescription, decimal? amount,
+        IReadOnlyList<ProjectMatchCandidate> candidates,
+        CancellationToken ct = default);
 }
+
+/// <summary>A candidate project the AI may assign an OCR line to — id + name +
+/// a few sample materials that were ordered for it (the matching signal).</summary>
+public sealed record ProjectMatchCandidate(
+    string ProjectId,
+    string ProjectName,
+    string? ProjectCode,
+    IReadOnlyList<string> SampleMaterials);
 
 public sealed record OcrAiAugmentationResult(
     string? Answer,             // chosen value (AI's or local fallback)
@@ -363,5 +384,53 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 Reasoning: $"Augmenter exception: {ex.Message}",
                 UsedAi: false, FeedbackId: null);
         }
+    }
+
+    public async Task<OcrAiAugmentationResult> MatchLineProjectAsync(
+        Guid companyId, Guid scanResultId,
+        string lineDescription, decimal? amount,
+        IReadOnlyList<ProjectMatchCandidate> candidates,
+        CancellationToken ct = default)
+    {
+        // Nothing to disambiguate with fewer than two candidates.
+        if (candidates == null || candidates.Count < 2)
+            return Empty("no candidates");
+        try
+        {
+            var req = ProjectMatchPrompt.Build(companyId, scanResultId, lineDescription, amount, candidates);
+            var resp = await _orchestrator.AskAsync(req, ct);
+
+            // Hallucination guard — AI must return one of the candidate ids.
+            var valid = candidates.Select(c => c.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!resp.UsedAi || string.IsNullOrEmpty(resp.PrimaryAnswer) || !valid.Contains(resp.PrimaryAnswer))
+            {
+                if (resp.UsedAi)
+                    _logger.LogWarning(
+                        "OcrAiAugmenter.MatchLineProject: AI returned project '{Ans}' not in candidates ({N}). Leaving line unassigned.",
+                        resp.PrimaryAnswer, candidates.Count);
+                return Empty("AI gave no usable project");
+            }
+
+            return new OcrAiAugmentationResult(
+                Answer: resp.PrimaryAnswer,
+                Confidence: resp.Confidence,
+                Alternatives: resp.Alternatives,
+                Risks: resp.Risks,
+                ComplianceFlags: resp.ComplianceFlags,
+                Reasoning: resp.Reasoning,
+                UsedAi: true,
+                FeedbackId: resp.FeedbackId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "OcrAiAugmenter.MatchLineProject failed");
+            return Empty($"exception: {ex.Message}");
+        }
+
+        static OcrAiAugmentationResult Empty(string why) => new(
+            Answer: null, Confidence: null,
+            Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
+            ComplianceFlags: Array.Empty<string>(),
+            Reasoning: why, UsedAi: false, FeedbackId: null);
     }
 }

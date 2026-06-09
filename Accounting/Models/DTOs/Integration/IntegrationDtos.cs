@@ -153,7 +153,15 @@ public record InboundExpenseRequest(
     decimal? VatRate,
     string? Notes,
     bool IncludeVat = true,
-    List<InboundAttachment>? Attachments = null);
+    List<InboundAttachment>? Attachments = null,
+    // ── Preparer identity from the source system ──
+    // The partner names the real person who prepared the voucher and may
+    // ship their signature image inline (a "data:image/png;base64,..." URI
+    // or raw base64). When present, this person + signature is stamped into
+    // the "ผู้จัดทำ" slot of the document — even though they are not a
+    // NextAcc User. Both null → falls back to the company Owner as before.
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null);
 
 /// <summary>ใบรับรองแทนใบเสร็จจากระบบภายนอก</summary>
 public record InboundCertificateInLieuRequest(

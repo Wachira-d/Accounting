@@ -71,14 +71,20 @@ public partial class PdfGenerationService : IPdfGenerationService
         //  3. (Inside RenderDocumentPdfNative) last-resort HTML→QuestPDF
         //     parser path so a composition bug can never blank the document.
         var signers = await ResolveSignersAsync(document);
+        // GL posting summary at the foot of the document — only when the
+        // company turned it on (CompanySettings.ShowGlEntryOnDocument). Used
+        // for internal audit. Was previously fetched CLIENT-side only, so the
+        // server PDF/HTML never showed it — this wires it into both renderers.
+        var gl = settings?.ShowGlEntryOnDocument == true
+            ? await LoadGlPostingAsync(companyId, document.Id) : null;
 
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
         {
-            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
+            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
             pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
-        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
+        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -113,7 +119,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
-        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers);
+        var gl = settings?.ShowGlEntryOnDocument == true
+            ? await LoadGlPostingAsync(companyId, document.Id) : null;
+        return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
     }
 
     public async Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId)
@@ -261,6 +269,40 @@ public partial class PdfGenerationService : IPdfGenerationService
         string? Name,
         string? Title);
 
+    /// <summary>The document's posted journal entry, summarised for the
+    /// "การลงบัญชี (Dr./Cr.)" block printed at the end of the document when the
+    /// company enabled ShowGlEntryOnDocument.</summary>
+    internal sealed record GlPostingLine(string AccountCode, string AccountName, decimal Debit, decimal Credit);
+    internal sealed record GlPostingSummary(string EntryNumber, DateTime EntryDate,
+        IReadOnlyList<GlPostingLine> Lines, decimal TotalDebit, decimal TotalCredit);
+
+    /// <summary>Load the document's GL posting (the auto-generated journal
+    /// entry) for the end-of-document Dr/Cr summary. Prefers the Posted entry;
+    /// excludes reversed entries. Returns null when the doc has no journal yet
+    /// (e.g. still Draft) so the block is simply omitted.</summary>
+    private async Task<GlPostingSummary?> LoadGlPostingAsync(Guid companyId, Guid documentId)
+    {
+        var je = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                        && !j.IsDeleted && j.ReversedByEntryId == null)
+            .OrderByDescending(j => j.Status == JournalEntryStatus.Posted)
+            .ThenByDescending(j => j.EntryDate)
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.TotalCredit })
+            .FirstOrDefaultAsync();
+        if (je == null) return null;
+
+        var lines = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
+            .OrderBy(l => l.LineOrder)
+            .Select(l => new GlPostingLine(
+                l.Account != null ? l.Account.AccountCode : "",
+                l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
+                l.DebitAmount, l.CreditAmount))
+            .ToListAsync();
+        if (lines.Count == 0) return null;
+        return new GlPostingSummary(je.EntryNumber, je.EntryDate, lines, je.TotalDebit, je.TotalCredit);
+    }
+
     /// <summary>Resolve the signers for a document, aligned positionally to the
     /// template's signature label slots (signers[0] → SignatureLabel1, etc.):
     ///   slot 0 = preparer  — the document creator (CreatedBy).
@@ -325,6 +367,28 @@ public partial class PdfGenerationService : IPdfGenerationService
         // slot 0 + slot 1 are always present (blank when unsigned) so slot 2
         // (customer) keeps its index even when the approver hasn't signed.
         var signers = new List<DocumentSigner> { FromUser(creatorId), FromUser(approverId) };
+
+        // EXTERNAL PREPARER OVERRIDE (slot 0 = ผู้จัดทำ). When an integrating
+        // system supplied the preparer's name / signature inline, the real
+        // preparer isn't a NextAcc User so the CreatedBy→User lookup above
+        // found nothing. Merge the partner-supplied identity into slot 0 —
+        // non-destructively: a real User signature already resolved is kept;
+        // we only fill what's missing (image and/or name).
+        if (!string.IsNullOrWhiteSpace(doc.PreparerName) || !string.IsNullOrWhiteSpace(doc.PreparerSignatureBase64))
+        {
+            var cur = signers[0];
+            string? dataUri = cur.SignatureImageDataUri;
+            byte[]? bytes = cur.SignatureImageBytes;
+            if ((bytes is null || bytes.Length == 0) && !string.IsNullOrWhiteSpace(doc.PreparerSignatureBase64))
+            {
+                var raw = doc.PreparerSignatureBase64!.Trim();
+                dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? raw : "data:image/png;base64," + raw;
+                bytes = TryDecodeBase64Image(raw);
+            }
+            var name = !string.IsNullOrWhiteSpace(cur.Name) ? cur.Name : doc.PreparerName?.Trim();
+            signers[0] = new DocumentSigner(dataUri, bytes, name, cur.Title);
+        }
 
         // slot 2 — external/customer signature captured via the approval flow.
         var custSig = await _db.DocumentApprovals.AsNoTracking()
@@ -391,7 +455,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
-        IReadOnlyList<DocumentSigner>? signers = null)
+        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
     {
         var lang = langOverride ?? template.Language;
         var sb = new StringBuilder();
@@ -577,6 +641,28 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (template.SignatureLabel1 != null) Box(template.SignatureLabel1, sigAt(0));
             if (template.SignatureLabel2 != null) Box(template.SignatureLabel2, sigAt(1));
             if (template.SignatureCount >= 3 && template.SignatureLabel3 != null) Box(template.SignatureLabel3, sigAt(2));
+            sb.AppendLine("</div>");
+        }
+
+        // ── การลงบัญชี (Dr./Cr.) — compact internal-audit footnote ─────────
+        // One tight line per posting: "Dr 5xx ชื่อบัญชี ........ 1,940.00".
+        // No header / border / totals row — Dr=Cr is implied by the entry.
+        if (gl != null && gl.Lines.Count > 0)
+        {
+            var en = (langOverride ?? template.Language) == "en";
+            sb.AppendLine("<div style='margin-top:16px;border-top:1px solid #cbd5e1;padding-top:5px;font-size:10.5px;color:#334155'>");
+            sb.AppendLine($"<span style='font-weight:700;color:#64748b'>{(en ? "Posting" : "การบันทึกบัญชี")}</span> " +
+                $"<span style='color:#94a3b8'>{WebUtility.HtmlEncode(gl.EntryNumber)} · {gl.EntryDate:dd/MM/yy}</span>");
+            foreach (var l in gl.Lines)
+            {
+                var isDr = l.Debit != 0;
+                var tag = isDr ? "Dr" : "Cr";
+                var amt = (isDr ? l.Debit : l.Credit).ToString("N2");
+                var name = string.IsNullOrWhiteSpace(l.AccountCode) ? l.AccountName : $"{l.AccountCode} {l.AccountName}";
+                var indent = isDr ? "" : "padding-left:16px;";
+                sb.AppendLine($"<div style='display:flex;justify-content:space-between;{indent}line-height:1.45'>" +
+                    $"<span><b>{tag}</b> {WebUtility.HtmlEncode(name)}</span><span>{amt}</span></div>");
+            }
             sb.AppendLine("</div>");
         }
 

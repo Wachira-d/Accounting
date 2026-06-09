@@ -135,6 +135,22 @@ public class Document : TenantEntity
     public string? WitnessPosition { get; set; }          // ตำแหน่งพยาน
     public DateTime? PaymentDate { get; set; }            // วันที่จ่ายเงินจริง
 
+    // ===== External preparer signature override =====
+    // When a document is created by an integrating system (e.g. TakeTime
+    // syncing a payment voucher), the real preparer is a user of THAT system,
+    // not a NextAcc User — so the normal CreatedBy(GUID)→User.Signature lookup
+    // finds nothing. The partner can ship the preparer's name + signature image
+    // inline; we store them here and ResolveSignersAsync stamps them into the
+    // "ผู้จัดทำ" slot directly, before any User/Owner fallback.
+
+    /// <summary>Display name of the external preparer ("ผู้จัดทำ"). Set only
+    /// when the document originates from an integration that supplied it.</summary>
+    public string? PreparerName { get; set; }
+
+    /// <summary>External preparer's signature image — a "data:image/...;base64,"
+    /// URI or raw base64. Rendered in the preparer slot when present.</summary>
+    public string? PreparerSignatureBase64 { get; set; }
+
     // ===== OCR Self-Learning =====
     // Watermark set by VendorIntelligenceService.TrainFromDocumentAsync after this
     // document's data has been counted into the per-vendor intelligence cache.

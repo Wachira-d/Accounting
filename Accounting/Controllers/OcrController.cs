@@ -57,7 +57,12 @@ public class OcrController : ControllerBase
         // exhausted engines can't be chosen client-side; the server still
         // re-validates azure quota and returns 429 if the user beat the
         // quota refresh.
-        [FromQuery] string? preferredEngine = null)
+        [FromQuery] string? preferredEngine = null,
+        // Optional structured metadata an external system sends ALONGSIDE the
+        // file (a multipart form field) — order/project line info used to
+        // auto-allocate each OCR'd line to its originating project. Free-text
+        // JSON; ignored when absent or unparseable.
+        [FromForm] string? metadata = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
@@ -146,7 +151,7 @@ public class OcrController : ControllerBase
         OcrResultResponse result;
         try
         {
-            result = await _service.ScanAsync(companyId, attachment.Id, preferredEngine);
+            result = await _service.ScanAsync(companyId, attachment.Id, preferredEngine, metadata);
         }
         catch
         {

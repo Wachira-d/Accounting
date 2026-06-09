@@ -1261,6 +1261,12 @@ public enum AiFeatureKey
     /// so it's useful from day one.</summary>
     PaymentTypeSuggestion = 28,
 
+    /// <summary>Match an OCR'd invoice line → the originating project from
+    /// the external-system metadata uploaded alongside the file, so cost is
+    /// allocated to the right job automatically. Deterministic matcher runs
+    /// first; AI only adjudicates lines that span ≥2 candidate projects.</summary>
+    OcrProjectMatch = 29,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

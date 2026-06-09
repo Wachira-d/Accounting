@@ -1787,6 +1787,12 @@ public class IntegrationService : IIntegrationService
                 TotalAmount = totalAmount,
                 BalanceDue = totalAmount,
                 Notes = request.Notes,
+                // Preparer identity from the source system. Stamped into the
+                // "ผู้จัดทำ" signature slot since the real preparer is a user of
+                // the partner system, not a NextAcc User. Whitespace-only values
+                // are treated as absent (fall back to Owner downstream).
+                PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
+                PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
                 Lines = lines
             };
 

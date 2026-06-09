@@ -1654,6 +1654,12 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PaymentTermsDays" integer NULL;
             """,
 
+            // External-system metadata payload (project/order info uploaded
+            // alongside the file) — drives auto project allocation per line.
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExternalMetadataJson" text NULL;
+            """,
+
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """
             CREATE TABLE IF NOT EXISTS "OcrLearnedPatterns" (
@@ -2650,6 +2656,15 @@ public static class DatabaseMigrationHelper
             // issue WHT cert" list without deleting the source document.
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtCertSkipped" boolean NOT NULL DEFAULT false;
+            """,
+            // External preparer signature override — name + signature image
+            // (base64/data-URI) supplied by an integrating system for the
+            // "ผู้จัดทำ" slot when the preparer is not a NextAcc User.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PreparerName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PreparerSignatureBase64" text NULL;
             """,
             // Per-payment GL funding override — pay from เงินทดรองกรรมการ /
             // เงินสดย่อย / clearing instead of the default cash/bank GL.
