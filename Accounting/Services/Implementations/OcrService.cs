@@ -581,8 +581,8 @@ public class OcrService : IOcrService
                     var projectMatcher = new Ocr.OcrMetadataProjectMatcher(_db, _aiAugmenter, _logger);
                     var matchTrace = await projectMatcher.ApplyAsync(
                         companyId, scanResult.Id, externalMetadataJson, extractedData.Items);
-                    foreach (var t in matchTrace)
-                        extractedData.ReasoningTrace.Add("[ProjectMatch] " + t);
+                    foreach (var traceLine in matchTrace)
+                        extractedData.ReasoningTrace.Add("[ProjectMatch] " + traceLine);
                 }
                 catch (Exception ex)
                 {
