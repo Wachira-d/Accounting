@@ -62,7 +62,15 @@ public class OcrController : ControllerBase
         // file (a multipart form field) — order/project line info used to
         // auto-allocate each OCR'd line to its originating project. Free-text
         // JSON; ignored when absent or unparseable.
-        [FromForm] string? metadata = null)
+        [FromForm] string? metadata = null,
+        // Whether to AUTO-CREATE the inferred target document right after the
+        // scan. Web/human uploads must leave this null → the gating below
+        // resolves to false so the user picks the doc type explicitly in the
+        // review UI (matches the business flow). Integration partner syncs
+        // (authenticated by an int_ key) default to true to preserve their
+        // historical zero-touch behavior; partners or web callers can override
+        // with ?autoCreate=true / false at any time.
+        [FromQuery] bool? autoCreate = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
@@ -148,10 +156,18 @@ public class OcrController : ControllerBase
         _db.FileAttachments.Add(attachment);
         await _db.SaveChangesAsync();
 
+        // EFFECTIVE auto-create flag:
+        //   explicit ?autoCreate=… wins; otherwise default by auth context —
+        //   integration partner key (carries IntegrationId) → true (preserves
+        //   "zero-touch sync"); web/JWT/acc_ key → false (user picks).
+        var isIntegrationPartner = HttpContext.Items.ContainsKey("IntegrationId")
+            || User.FindFirst("IntegrationId") != null;
+        var effectiveAutoCreate = autoCreate ?? isIntegrationPartner;
+
         OcrResultResponse result;
         try
         {
-            result = await _service.ScanAsync(companyId, attachment.Id, preferredEngine, metadata);
+            result = await _service.ScanAsync(companyId, attachment.Id, preferredEngine, metadata, effectiveAutoCreate);
         }
         catch
         {

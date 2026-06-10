@@ -20,8 +20,15 @@ public interface IOcrService
     /// When present, OcrMetadataProjectMatcher links each extracted line back
     /// to its originating project so created DocumentLines get ProjectId
     /// pre-selected for automatic cost allocation.
+    ///
+    /// <paramref name="autoCreate"/>: when true, ScanAsync also creates the
+    /// inferred target document automatically (the historical integration
+    /// behavior). Web / human-driven uploads pass false — the scan only
+    /// suggests the target type and the user explicitly creates via
+    /// CreateDocumentFromScanAsync. Integration partner syncs opt in to true
+    /// to keep their existing zero-touch behavior.
     /// </summary>
-    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null);
+    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false);
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);

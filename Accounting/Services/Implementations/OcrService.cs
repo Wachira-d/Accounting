@@ -90,7 +90,7 @@ public class OcrService : IOcrService
         _rdComplianceValidator = rdComplianceValidator;
     }
 
-    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null)
+    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false)
     {
         // Normalize the user's engine preference into one of three modes.
         // "auto" = current cascade; "azure" = Tier 1 only (no local fallback
@@ -1527,7 +1527,28 @@ public class OcrService : IOcrService
             var hasUsableDocNumber = !string.IsNullOrWhiteSpace(extractedData.DocumentNumber);
             var criticalFieldsOk = hasUsableTotal && hasUsableDate && hasUsableDocNumber;
 
-            if (scanResult.Confidence >= autoCreateThreshold
+            // AUTO-CREATE GATING — the business flow now mandates that web /
+            // human-driven OCR only SUGGESTS the target document type (saved on
+            // the scan as TargetDocumentType); the user makes the final create
+            // decision in the review UI by calling CreateDocumentFromScanAsync.
+            // Only callers that explicitly opt in (e.g. integration partner API
+            // syncs) skip the user step. autoCreate=false → record the inferred
+            // target as a NOTE and stop.
+            if (!autoCreate)
+            {
+                if (scanResult.Confidence >= autoCreateThreshold
+                    && scanResult.MatchedContactId.HasValue
+                    && criticalFieldsOk
+                    && !scanResult.IsDuplicate
+                    && !scanResult.CreatedDocumentId.HasValue)
+                {
+                    var suggested = string.IsNullOrWhiteSpace(scanResult.TargetDocumentType)
+                        ? "เอกสาร" : scanResult.TargetDocumentType;
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Suggest] ระบบแนะนำหมวด \"{suggested}\" — กด \"สร้างเอกสาร\" ในหน้าตรวจสอบเพื่อยืนยัน";
+                }
+            }
+            else if (scanResult.Confidence >= autoCreateThreshold
                 && scanResult.MatchedContactId.HasValue
                 && !scanResult.IsDuplicate
                 && !scanResult.CreatedDocumentId.HasValue
@@ -1543,7 +1564,8 @@ public class OcrService : IOcrService
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-create failed: {ex.Message}";
                 }
             }
-            else if (scanResult.Confidence >= autoCreateThreshold
+            else if (autoCreate
+                  && scanResult.Confidence >= autoCreateThreshold
                   && scanResult.MatchedContactId.HasValue
                   && !criticalFieldsOk)
             {
