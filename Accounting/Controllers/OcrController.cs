@@ -883,7 +883,14 @@ public class OcrController : ControllerBase
         // audit log before the row is removed.
         [FromQuery] string? reason = null)
     {
-        await _service.DeleteScanAsync(companyId, scanId, cascade, reason);
+        // Capture the operator id so the audit row records WHO labelled+deleted,
+        // not just when. Falls back to Guid.Empty when the caller is an int_
+        // key with no real user (passed as null so the audit row stays clean).
+        Guid? actor;
+        try { actor = JwtHelper.GetUserIdFromClaims(User); if (actor == Guid.Empty) actor = null; }
+        catch { actor = null; }
+
+        await _service.DeleteScanAsync(companyId, scanId, cascade, reason, actor);
         return Ok(new ApiResponse<object>(true, null,
             cascade ? "ลบ scan และเอกสารที่สร้างอัตโนมัติเรียบร้อย" : "ลบสำเร็จ"));
     }

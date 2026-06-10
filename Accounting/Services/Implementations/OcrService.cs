@@ -3999,7 +3999,7 @@ public class OcrService : IOcrService
         catch { /* malformed JSON — leave as-is */ }
     }
 
-    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null)
+    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null, Guid? performedByUserId = null)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -4013,6 +4013,7 @@ public class OcrService : IOcrService
             _db.AuditLogs.Add(new AuditLog
             {
                 CompanyId = companyId,
+                UserId = performedByUserId,
                 Action = Models.Enums.AuditAction.Delete,
                 EntityType = "OcrScanResult",
                 EntityId = scanResultId.ToString(),
