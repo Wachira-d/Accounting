@@ -314,7 +314,7 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">ประมวลผลเอกสาร</h2>
-        <p class="page-subtitle">สแกนและสร้างเอกสารอัตโนมัติจากรูปภาพ/ไฟล์</p>
+        <p class="page-subtitle">สแกน วิเคราะห์ และแนะนำหมวดเอกสาร — คุณตรวจสอบและยืนยันก่อนสร้างเสมอ</p>
       </div>
       <button class="btn btn-secondary" onclick="Page.refreshAll()">&#x21bb; รีเฟรช</button>
     </div>
@@ -382,11 +382,13 @@
          data-tour-step="2"
          data-tour-text="ขั้นที่ 2 — ระบบ OCR จะอ่านข้อความและแสดงผลที่นี่ แต่ละการ์ดมีปุ่ม ✓ อนุมัติ / ✎ แก้ไข / 📦 นำเข้าสต็อก"></div>
 
-    <!-- Auto-create threshold config -->
+    <!-- Confidence highlight threshold — scans below this are flagged for
+         closer review. (Web scans never auto-create; the user always confirms
+         the suggested document type in the review modal.) -->
     <div class="config-section" style="margin-top:20px"
          data-tour-step="3"
-         data-tour-text="ขั้นที่ 3 — ตั้งค่าความมั่นใจขั้นต่ำที่ระบบจะสร้างเอกสารอัตโนมัติโดยไม่ต้องอนุมัติทีละใบ (แนะนำ 85%)">
-      <label>&#x2699;&#xFE0F; สร้างเอกสารอัตโนมัติเมื่อ confidence &ge;</label>
+         data-tour-text="ขั้นที่ 3 — ตั้งค่าความมั่นใจขั้นต่ำ scan ที่ต่ำกว่านี้จะถูกเน้นให้ตรวจสอบละเอียด (แนะนำ 85%) — ระบบจะแนะนำหมวดเอกสารให้ แต่คุณเป็นผู้กดสร้างเสมอ">
+      <label>&#x2699;&#xFE0F; เน้นตรวจสอบเมื่อ confidence &lt;</label>
       <input type="range" class="threshold-slider" id="thresholdSlider" min="0" max="100" value="85" oninput="Page.onThresholdChange(this.value)">
       <input type="number" class="threshold-input" id="thresholdInput" min="0" max="100" value="85" onchange="Page.onThresholdInputChange(this.value)">
       <span class="text-sm text-gray-500">%</span>
@@ -891,20 +893,14 @@
           progressEl.classList.add('done');
           statusEl.textContent = 'สแกนสำเร็จ';
 
-          // If confidence >= threshold and scan completed, auto-create
+          // Business-flow: web scans only SUGGEST the target document type —
+          // the user reviews and explicitly clicks "สร้างเอกสาร". No client-
+          // side auto-create (the server suppresses it for web uploads too).
           if (scan.scanStatus === 'Completed' && scan.confidence != null) {
-            const confPercent = Math.round(scan.confidence * 100);
-            if (confPercent >= this.threshold && !scan.createdDocumentId) {
-              statusEl.textContent = 'กำลังสร้างเอกสารอัตโนมัติ...';
-              try {
-                await api.ocrCreateDocument(scan.id);
-                statusEl.textContent = 'สร้างเอกสารอัตโนมัติสำเร็จ!';
-                statusEl.style.color = '#059669';
-              } catch (autoErr) {
-                statusEl.textContent = 'สแกนสำเร็จ (สร้างอัตโนมัติไม่ได้: ' + autoErr.message + ')';
-                statusEl.style.color = '#D97706';
-              }
-            }
+            const suggested = scan.targetDocumentType
+              ? ` — ระบบแนะนำ: ${scan.targetDocumentType}` : '';
+            statusEl.textContent = `สแกนสำเร็จ${suggested} (กด "ตรวจสอบ" เพื่อยืนยันและสร้างเอกสาร)`;
+            statusEl.style.color = '#059669';
           } else if (scan.scanStatus === 'Processing') {
             statusEl.innerHTML = '<span class="scanning-pulse"></span> กำลังประมวลผล...';
             this.pollScanStatus(scan.id, itemEl);
@@ -950,16 +946,10 @@
                 statusEl.textContent = 'ประมวลผลเสร็จแล้ว';
                 statusEl.style.color = '#059669';
               }
-              // Auto-create if threshold met
-              if (scan.confidence != null) {
-                const confPercent = Math.round(scan.confidence * 100);
-                if (confPercent >= this.threshold && !scan.createdDocumentId) {
-                  try {
-                    await api.ocrCreateDocument(scan.id);
-                    if (statusEl) statusEl.textContent = 'สร้างเอกสารอัตโนมัติสำเร็จ!';
-                  } catch {}
-                }
-              }
+              // Business-flow: no client-side auto-create — the user
+              // reviews the suggestion and creates the document explicitly.
+              if (statusEl && scan.targetDocumentType)
+                statusEl.textContent = `ประมวลผลเสร็จ — ระบบแนะนำ: ${scan.targetDocumentType} (รอตรวจสอบ)`;
               this.loadScans();
               return;
             } else if (scan.scanStatus === 'Failed') {
@@ -1424,10 +1414,14 @@
             '⚠️ ถ้าเอกสารถูกอนุมัติแล้ว ระบบจะปฏิเสธ — ต้อง void จากหน้าเอกสารแทน'
           : 'ลบเอกสารสแกนนี้?';
         if (!confirm(msg)) return;
+        // Optional "label before delete" (per the business flow): a short
+        // reason ("ไม่ใช่เอกสารบริษัท", "ค่าใช้จ่ายต้องห้าม", "เอกสารไม่ถูกต้องตามสรรพากร"
+        // ฯลฯ) is stored in the audit log so the deletion is explainable later.
+        const reason = (prompt('ระบุเหตุผล/ป้ายกำกับการลบ (ไม่บังคับ — ใช้บันทึกตรวจสอบ):', '') || '').trim() || null;
         const api = Layout.api();
         if (!api) return;
         try {
-          await api.ocrDelete(scanId, cascade);
+          await api.ocrDelete(scanId, cascade, reason);
           Layout.toast(cascade ? 'ลบ scan + เอกสารสำเร็จ' : 'ลบสำเร็จ');
           this.loadScans();
         } catch (err) {
@@ -1703,6 +1697,23 @@
                 </select>
                 <span style="font-size:11px;color:#92400e">บทบาทของเรา: <strong>${scan.ourRole === 'Seller' ? 'ผู้ขาย' : 'ผู้ซื้อ'}</strong></span>
               </div>
+              ${scan.suggestedEntryMode ? `
+              <div style="margin:8px 0;padding:8px 12px;border-radius:8px;font-size:13px;${scan.suggestedEntryMode === 'Stock'
+                ? 'background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46'
+                : 'background:#eff6ff;border:1px solid #93c5fd;color:#1e40af'}">
+                💡 ระบบแนะนำ: <strong>${scan.suggestedEntryMode === 'Stock' ? 'บันทึกเข้า Stock (ผู้ขายรายนี้เคยนำเข้าสินค้า)' : 'บันทึกเป็นค่าใช้จ่าย'}</strong>
+                ${scan.suggestedEntryMode === 'Stock' ? '— ใช้ปุ่ม "นำเข้าสต็อก" หลังตรวจสอบรายการ' : ''}
+              </div>` : ''}
+              ${(() => {
+                try {
+                  const pos = scan.openPoNumbersJson ? JSON.parse(scan.openPoNumbersJson) : null;
+                  if (!pos || !pos.length) return '';
+                  return `<div style="margin:8px 0;padding:8px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;font-size:13px;color:#9a3412">
+                    📦 <strong>ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ ${pos.length} ใบ</strong> (${pos.slice(0, 3).map(p => Layout.esc(p)).join(', ')})<br>
+                    หากรายการนี้สั่งผ่าน PO กรุณาบันทึกรับตามใบสั่งซื้อ — ไม่ควรสร้างเอกสารใหม่ซ้ำ
+                  </div>`;
+                } catch { return ''; }
+              })()}
               <div class="review-field">
                 <label>ชื่อผู้ขาย</label>
                 <input type="text" class="form-input" id="revVendorName" value="${Layout.esc(scan.extractedVendorName || '')}">
@@ -1839,7 +1850,14 @@
                        onfocus="Page.searchContacts(this.value)">
                 <input type="hidden" id="revMatchedContactId" value="${scan.matchedContactId || ''}">
                 <div class="contact-search-results" id="contactSearchResults"></div>
-                ${scan.matchedContactId ? `<div style="margin-top:6px;font-size:13px;color:#059669;font-weight:500">&#x2705; จับคู่แล้ว (ID: ${Layout.esc(scan.matchedContactId)})</div>` : ''}
+                ${scan.matchedContactId ? `<div style="margin-top:6px;font-size:13px;color:#059669;font-weight:500">&#x2705; จับคู่แล้ว (ID: ${Layout.esc(scan.matchedContactId)})</div>` : `
+                <div style="margin-top:8px;padding:10px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
+                  ⚠️ <strong>ไม่พบผู้ติดต่อ และระบบสร้างอัตโนมัติไม่ได้</strong> (เช่น เอกสารไม่มีเลขผู้เสียภาษีให้ดึงข้อมูล)<br>
+                  กรุณาค้นหาจากรายชื่อด้านบน หรือ
+                  <a href="/pages/contacts.html?company=${Layout.getCompanyId()}&autoopen=1&name=${encodeURIComponent(scan.extractedVendorName || '')}&taxId=${encodeURIComponent(scan.extractedVendorTaxId || '')}" target="_blank"
+                     style="color:#1d4ed8;font-weight:600">➕ เพิ่มผู้ติดต่อใหม่</a>
+                  แล้วกลับมาเลือกอีกครั้ง
+                </div>`}
               </div>
             </div>
 

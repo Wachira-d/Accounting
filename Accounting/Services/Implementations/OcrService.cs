@@ -1164,9 +1164,33 @@ public class OcrService : IOcrService
 
             if (!string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
-                var matchedContact = await _db.Contacts
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == extractedData.VendorTaxId && !c.IsDeleted);
-                scanResult.MatchedContactId = matchedContact?.Id;
+                // Same juristic TaxId can exist as SEVERAL contacts — one per
+                // branch (สำนักงานใหญ่ 00000 + สาขา 00001, …). Pick the contact
+                // whose BranchCode matches the OCR'd branch; blank/absent codes
+                // normalize to head-office 00000 so legacy rows still match.
+                var taxMatches = await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && c.TaxId == extractedData.VendorTaxId && !c.IsDeleted)
+                    .Select(c => new { c.Id, c.Name, c.BranchCode })
+                    .ToListAsync();
+                if (taxMatches.Count == 1)
+                {
+                    scanResult.MatchedContactId = taxMatches[0].Id;
+                }
+                else if (taxMatches.Count > 1)
+                {
+                    static string NormBranch(string? b)
+                    {
+                        var digits = new string((b ?? "").Where(char.IsDigit).ToArray());
+                        return digits.Length == 0 ? "00000" : digits.PadLeft(5, '0');
+                    }
+                    var ocrBranch = NormBranch(extractedData.VendorBranchCode);
+                    var byBranch = taxMatches.FirstOrDefault(c => NormBranch(c.BranchCode) == ocrBranch);
+                    var pick = byBranch ?? taxMatches[0];
+                    scanResult.MatchedContactId = pick.Id;
+                    extractedData.ReasoningTrace.Add(byBranch != null
+                        ? $"[Branch] TaxID ตรง {taxMatches.Count} รายชื่อ — เลือกตามสาขา {ocrBranch}: '{pick.Name}'"
+                        : $"[Branch] TaxID ตรง {taxMatches.Count} รายชื่อ แต่ไม่มีสาขา {ocrBranch} — ใช้รายแรก '{pick.Name}' (โปรดตรวจสอบ)");
+                }
             }
 
             if (!scanResult.MatchedContactId.HasValue && !string.IsNullOrEmpty(extractedData.VendorName))
@@ -1429,6 +1453,64 @@ public class OcrService : IOcrService
                         scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Enrich] อัปเดตข้อมูล Contact ที่ว่างของ {existing.Name}";
                     }
                 }
+            }
+
+            // ─── PO check by vendor (business-flow step) ───
+            // When the matched vendor has open Purchase Orders in the system,
+            // the operator should book this paper through the PO/receiving
+            // function instead of a fresh expense — surface the open POs so
+            // the review UI can warn before they create a duplicate booking.
+            if (scanResult.MatchedContactId.HasValue)
+            {
+                try
+                {
+                    var poCutoff = DateTime.UtcNow.AddMonths(-6);
+                    var openPos = await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                            && d.ContactId == scanResult.MatchedContactId.Value
+                            && d.DocumentType == DocumentType.PurchaseOrder
+                            && d.Status != DocumentStatus.Voided
+                            && d.Status != DocumentStatus.Rejected
+                            && d.Status != DocumentStatus.Draft
+                            && d.DocumentDate >= poCutoff)
+                        .OrderByDescending(d => d.DocumentDate)
+                        .Select(d => d.DocumentNumber)
+                        .Take(5)
+                        .ToListAsync();
+                    if (openPos.Count > 0)
+                    {
+                        scanResult.OpenPoNumbersJson = System.Text.Json.JsonSerializer.Serialize(openPos);
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                            + $"\n[PO] ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ {openPos.Count} ใบ ({string.Join(", ", openPos.Take(3))}) — หากรายการนี้สั่งผ่าน PO กรุณาบันทึกผ่านฟังก์ชันรับตามใบสั่งซื้อ ไม่ใช่สร้างใหม่";
+                    }
+                }
+                catch (Exception poEx)
+                {
+                    _logger.LogWarning(poEx, "Open-PO check failed (non-fatal) for scan {ScanId}", scanResult.Id);
+                }
+            }
+
+            // ─── Stock vs Expense suggestion (business-flow step) ───
+            // Recommend which entry mode the operator should pick:
+            //   "Stock"   — this vendor has product aliases on file (we've
+            //               imported their goods to stock before) and the scan
+            //               has line items → likely an inventory purchase.
+            //   "Expense" — everything else (services, utilities, one-offs).
+            // A hint only — the user still chooses; never blocks anything.
+            try
+            {
+                var hasLines = extractedData.Items.Count > 0;
+                var vendorHasProductHistory = scanResult.MatchedContactId.HasValue
+                    && await _db.ProductAliases.AsNoTracking().AnyAsync(a =>
+                        a.CompanyId == companyId && !a.IsDeleted
+                        && a.ContactId == scanResult.MatchedContactId.Value);
+                scanResult.SuggestedEntryMode = (hasLines && vendorHasProductHistory) ? "Stock" : "Expense";
+                if (scanResult.SuggestedEntryMode == "Stock")
+                    extractedData.ReasoningTrace.Add("[EntryMode] ผู้ขายเคยนำเข้าสินค้าเข้า Stock — แนะนำ \"บันทึกเข้า Stock\"");
+            }
+            catch (Exception emEx)
+            {
+                _logger.LogWarning(emEx, "Entry-mode suggestion failed (non-fatal) for scan {ScanId}", scanResult.Id);
             }
 
             // ─── Potential Fixed Asset detection (Phase 4) ───
@@ -3917,11 +3999,34 @@ public class OcrService : IOcrService
         catch { /* malformed JSON — leave as-is */ }
     }
 
-    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false)
+    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
+
+        // "Label before delete" (business-flow step): the scan row is removed
+        // for good, so persist the operator's label/reason to the audit log —
+        // it both explains the deletion later and is queryable for training.
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = Models.Enums.AuditAction.Delete,
+                EntityType = "OcrScanResult",
+                EntityId = scanResultId.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    result.OriginalFileName,
+                    result.ExtractedVendorName,
+                    result.ExtractedDocumentNumber,
+                    result.ExtractedTotalAmount,
+                    Label = reason.Trim(),
+                }),
+                Timestamp = DateTime.UtcNow
+            });
+        }
 
         // Handle the auto-created document case. Two flows:
         //   • cascadeCreatedDocument = false → bail out (old behavior) so the
@@ -4080,7 +4185,9 @@ public class OcrService : IOcrService
             r.PotentialAssetLinesJson,
             Quality: BuildQualityDto(r),
             HasHandwriting: r.HasHandwriting,
-            HandwritingConfidence: r.HandwritingConfidence);
+            HandwritingConfidence: r.HandwritingConfidence,
+            SuggestedEntryMode: r.SuggestedEntryMode,
+            OpenPoNumbersJson: r.OpenPoNumbersJson);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)

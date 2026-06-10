@@ -876,9 +876,14 @@ public class OcrController : ControllerBase
     /// or paid (those need to be voided via the normal Documents flow).
     /// </summary>
     [HttpDelete("{scanId:guid}")]
-    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid companyId, Guid scanId, [FromQuery] bool cascade = false)
+    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid companyId, Guid scanId,
+        [FromQuery] bool cascade = false,
+        // Optional operator label explaining WHY the scan is being discarded
+        // ("ไม่ใช่เอกสารบริษัท", "ค่าใช้จ่ายต้องห้าม", …). Persisted to the
+        // audit log before the row is removed.
+        [FromQuery] string? reason = null)
     {
-        await _service.DeleteScanAsync(companyId, scanId, cascade);
+        await _service.DeleteScanAsync(companyId, scanId, cascade, reason);
         return Ok(new ApiResponse<object>(true, null,
             cascade ? "ลบ scan และเอกสารที่สร้างอัตโนมัติเรียบร้อย" : "ลบสำเร็จ"));
     }

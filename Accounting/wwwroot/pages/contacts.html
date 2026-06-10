@@ -237,6 +237,13 @@
             const el = document.getElementById('fName');
             if (el) el.value = seed;
           }
+          // OCR review's "เพิ่มผู้ติดต่อใหม่" link also seeds the tax id so
+          // the user can hit "ดึงข้อมูล" (DBD lookup) immediately.
+          const seedTax = params.get('taxId');
+          if (seedTax) {
+            const tx = document.getElementById('fTaxId');
+            if (tx && !tx.value) tx.value = seedTax;
+          }
           if (params.get('returnto') === 'opener') {
             this._returnToOpener = true;
           }

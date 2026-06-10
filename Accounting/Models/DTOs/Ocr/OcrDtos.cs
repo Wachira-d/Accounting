@@ -48,7 +48,15 @@ public record OcrResultResponse(
     /// hand-written content on the document. Auto-create is suppressed
     /// when this is true; UI shows a "✋ ตรวจสอบยอดเงิน" alert.</summary>
     bool HasHandwriting = false,
-    decimal? HandwritingConfidence = null);
+    decimal? HandwritingConfidence = null,
+    /// <summary>Suggested entry mode for the review UI: "Stock" when the
+    /// vendor has product-alias history + the scan has line items, else
+    /// "Expense". Hint only — the user picks the final mode.</summary>
+    string? SuggestedEntryMode = null,
+    /// <summary>Open Purchase Order numbers of the matched vendor (JSON
+    /// array, last 6 months, max 5). Non-null ⇒ UI warns the operator to
+    /// book via the PO/receiving function instead of creating fresh.</summary>
+    string? OpenPoNumbersJson = null);
 
 public record OcrQualityGradeDto(string Letter, int Score, string Color);
 

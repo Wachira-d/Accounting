@@ -746,7 +746,7 @@ const API = {
       ocrRejectMatch: (id, data) => API.post(`${base}/ocr/${id}/reject-match`, data),
       ocrCorrect: (id, data) => API.post(`${base}/ocr/${id}/correct`, data),
       ocrMatchContact: (scanId, contactId) => API.post(`${base}/ocr/${scanId}/match-contact/${contactId}`),
-      ocrDelete: (scanId, cascade = false) => API.del(`${base}/ocr/${scanId}${cascade ? '?cascade=true' : ''}`),
+      ocrDelete: (scanId, cascade = false, reason = null) => API.del(`${base}/ocr/${scanId}?cascade=${cascade ? 'true' : 'false'}${reason ? '&reason=' + encodeURIComponent(reason) : ''}`),
       // Webhooks
       getWebhooks: () => API.get(`${base}/webhooks`),
       createWebhook: (d) => API.post(`${base}/webhooks`, d),

@@ -1659,6 +1659,14 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExternalMetadataJson" text NULL;
             """,
+            // Business-flow hints computed at scan time: suggested entry mode
+            // (Stock/Expense) + open POs of the matched vendor.
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "SuggestedEntryMode" varchar(20) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OpenPoNumbersJson" text NULL;
+            """,
 
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """

@@ -58,7 +58,7 @@ public interface IOcrService
         Guid? projectId, string? projectName, bool onlyEmpty);
 
     Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
-    Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false);
+    Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null);
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,
         Controllers.OcrController.RegisterAssetFromScanRequest req,
         IFixedAssetService assetService, string createdBy);
