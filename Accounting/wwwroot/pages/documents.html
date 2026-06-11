@@ -156,10 +156,10 @@
                .payment-voucher-only based on docType. -->
           <div class="form-row payment-voucher-only" style="display:none">
             <div class="form-group">
-              <label class="form-label" data-help="จ่ายทันที = เงินออกเลย ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้ | เครดิต = ตั้งเป็นเจ้าหนี้ มีวันครบกำหนด รอจ่ายภายหลัง">ประเภทการจ่าย</label>
+              <label class="form-label" data-help="ใบสำคัญจ่าย = การจ่ายเงินจริง (เงินออกทันที ลงเงินสด/ธนาคาร) | เครดิตใช้เฉพาะใบที่แปลงมาจากเอกสารตั้งหนี้ (ใบแจ้งหนี้ซื้อ/ใบบันทึกค่าใช้จ่าย) — ถ้ายังไม่จ่ายให้ตั้งหนี้ด้วยใบบันทึกค่าใช้จ่ายแทน">ประเภทการจ่าย</label>
               <select class="form-select" id="fPaymentType" onchange="Page.onPaymentTypeChange(true)">
                 <option value="Cash">จ่ายทันที (เงินสด/โอน)</option>
-                <option value="Credit">เครดิต (ตั้งเจ้าหนี้)</option>
+                <option value="Credit">เครดิต (เฉพาะใบที่อ้างอิงเอกสารตั้งหนี้)</option>
               </select>
             </div>
             <div class="form-group" id="paymentTypeHint" style="display:flex;align-items:flex-end">
@@ -1073,9 +1073,18 @@
         if (dueGroup) dueGroup.style.display = isCash ? 'none' : '';
         if (isCash && due) due.value = '';
         const hint = document.querySelector('#paymentTypeHint span');
-        if (hint) hint.textContent = isCash
-          ? 'เงินออกทันที — ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้'
-          : 'ตั้งเป็นเจ้าหนี้ — มีวันครบกำหนด รอจ่ายภายหลัง';
+        if (hint) {
+          if (isCash) {
+            hint.style.color = '#64748b';
+            hint.textContent = 'เงินออกทันที — ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้';
+          } else {
+            // Role separation (หลักบัญชีไทย): a standalone PV must be real
+            // disbursement — the "ตั้งหนี้" job belongs to ใบบันทึกค่าใช้จ่าย.
+            // Server rejects Credit on a PV that doesn't settle a source doc.
+            hint.style.color = '#b45309';
+            hint.textContent = '⚠ ใบสำคัญจ่าย = จ่ายเงินจริง — ถ้าต้องการตั้งหนี้รอจ่าย ให้ใช้ "ใบบันทึกค่าใช้จ่าย" แล้วแปลงเป็นใบสำคัญจ่ายเมื่อจ่าย (เครดิตใช้ได้เฉพาะใบที่อ้างอิงเอกสารตั้งหนี้)';
+          }
+        }
       },
 
       /**

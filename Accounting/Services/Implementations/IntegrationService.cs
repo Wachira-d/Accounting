@@ -1789,6 +1789,11 @@ public class IntegrationService : IIntegrationService
                 WithholdingTaxAmount = totalWht,
                 TotalAmount = totalAmount,
                 BalanceDue = totalAmount,
+                // Role separation: an Expense from the partner sync is the
+                // request/accrual side (ตั้งหนี้) — its GL credits AP; cash
+                // moves later via /payments or a PV. Mark Credit so the doc
+                // ages correctly instead of sitting type-less.
+                PaymentType = Models.Enums.PaymentType.Credit,
                 Notes = request.Notes,
                 // Preparer identity from the source system. Stamped into the
                 // "ผู้จัดทำ" signature slot since the real preparer is a user of

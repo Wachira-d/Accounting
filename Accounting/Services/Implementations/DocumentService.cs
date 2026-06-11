@@ -387,23 +387,40 @@ public class DocumentService : IDocumentService
                 CreatedBy = createdBy
             };
 
-            // ===== Settlement basis (Payment Voucher: เครดิต vs จ่ายทันที) =====
-            // Resolve the effective payment type. A standalone Payment Voucher
-            // (no source PI) defaults to Cash — that mirrors the existing JE
-            // (Dr Expense / Cr Cash) and fixes the long-standing bug where such
-            // a voucher set BalanceDue = total and wrongly showed as ค้างชำระ.
-            // A PV settling a prior PurchaseInvoice (RelatedDocumentId) is, by
-            // definition, paying off a credit liability → treated as the cash
-            // outflow that clears AP (handled in posting). Non-PV documents keep
-            // their existing behaviour (type left null).
+            // ===== Settlement basis + ROLE SEPARATION (หลักบัญชีไทย) =====
+            // ใบบันทึกค่าใช้จ่าย (Expense)   = "คำขอ/ตั้งหนี้" — บันทึกภาระ
+            //   ค่าใช้จ่ายเข้าเจ้าหนี้ ไม่มีเงินออก (GL: Dr ค่าใช้จ่าย / Cr เจ้าหนี้)
+            // ใบสำคัญจ่าย (PaymentVoucher)  = "การดำเนินการจ่ายเงินจริง" —
+            //   เงินออกเสมอ (GL: Cr เงินสด/ธนาคาร; ถ้าอ้างอิงเอกสารตั้งหนี้
+            //   จะตัดเจ้าหนี้ให้ด้วย) จึงห้ามเป็น "เครดิต" แบบลอย ๆ
             if (request.DocumentType == DocumentType.PaymentVoucher)
             {
-                // doc.RelatedDocumentId is set by the conversion path (PV
-                // settling a prior PurchaseInvoice); null on a directly-created
-                // PV → defaults to Cash (จ่ายทันที).
+                // A standalone PV must represent real cash leaving the company.
+                // "Credit" is only meaningful when this PV SETTLES a prior
+                // liability doc (PI/Expense via RelatedDocumentId from the
+                // conversion path). An unpaid obligation belongs on an
+                // Expense (ตั้งหนี้) instead.
+                if (!doc.RelatedDocumentId.HasValue
+                    && request.PaymentType == Models.Enums.PaymentType.Credit)
+                    throw new InvalidOperationException(
+                        "ใบสำคัญจ่ายคือเอกสารการจ่ายเงินจริง (เงินออกทันที) — " +
+                        "หากยังไม่ได้จ่าย/ต้องการตั้งหนี้ไว้ก่อน กรุณาใช้ \"ใบบันทึกค่าใช้จ่าย\" " +
+                        "แล้วแปลงเป็นใบสำคัญจ่ายเมื่อจ่ายเงินจริง");
                 doc.PaymentType = request.PaymentType
                     ?? (doc.RelatedDocumentId.HasValue ? Models.Enums.PaymentType.Credit
                                                        : Models.Enums.PaymentType.Cash);
+            }
+            else if (request.DocumentType == DocumentType.Expense)
+            {
+                // The request/accrual document never moves cash by itself —
+                // marking it "จ่ายทันที" would flag it paid while its GL
+                // posting still credits AP, leaving a payable nobody clears.
+                if (request.PaymentType == Models.Enums.PaymentType.Cash)
+                    throw new InvalidOperationException(
+                        "ใบบันทึกค่าใช้จ่ายคือเอกสารตั้งหนี้/คำขอ (ยังไม่จ่ายเงิน) — " +
+                        "ถ้าจ่ายเงินสดทันทีให้ใช้ \"ใบสำคัญจ่าย\" หรือบันทึกใบนี้เป็นตั้งหนี้ " +
+                        "แล้วแปลงเป็นใบสำคัญจ่าย/บันทึกการชำระเมื่อจ่ายจริง");
+                doc.PaymentType = Models.Enums.PaymentType.Credit;
             }
             else if (request.DocumentType == DocumentType.CertificateInLieu)
             {
@@ -887,7 +904,25 @@ public class DocumentService : IDocumentService
             // voucher must stay fully paid (BalanceDue = 0, no due date) even
             // after its lines/total change — otherwise editing it would
             // re-introduce a phantom outstanding balance.
-            if (request.PaymentType.HasValue) doc.PaymentType = request.PaymentType;
+            // ROLE SEPARATION (same rules as create): an Expense is the
+            // request/accrual side — it can never become "จ่ายทันที"; a
+            // standalone PV is the disbursement side — it can never become
+            // an unpaid "เครดิต" liability.
+            if (request.PaymentType.HasValue)
+            {
+                if (doc.DocumentType == DocumentType.Expense
+                    && request.PaymentType == Models.Enums.PaymentType.Cash)
+                    throw new InvalidOperationException(
+                        "ใบบันทึกค่าใช้จ่ายคือเอกสารตั้งหนี้/คำขอ (ยังไม่จ่ายเงิน) — " +
+                        "การจ่ายให้ทำผ่าน \"ใบสำคัญจ่าย\" หรือบันทึกการชำระเงิน");
+                if (doc.DocumentType == DocumentType.PaymentVoucher
+                    && !doc.RelatedDocumentId.HasValue
+                    && request.PaymentType == Models.Enums.PaymentType.Credit)
+                    throw new InvalidOperationException(
+                        "ใบสำคัญจ่ายคือเอกสารการจ่ายเงินจริง — หากยังไม่ได้จ่าย " +
+                        "กรุณาใช้ \"ใบบันทึกค่าใช้จ่าย\" (ตั้งหนี้) แทน");
+                doc.PaymentType = request.PaymentType;
+            }
             if (doc.PaymentType == Models.Enums.PaymentType.Cash)
             {
                 doc.PaidAmount = doc.TotalAmount;
