@@ -152,6 +152,23 @@ public class OcrScanResult : TenantEntity
     /// warns "this vendor has open POs — book via the PO function instead".</summary>
     public string? OpenPoNumbersJson { get; set; }
 
+    /// <summary>Operator's chosen Purchase Order to receive this scan against
+    /// (the "ฟังก์ชันชื่อแทน / รับตาม PO" function in the business flow). When
+    /// set, CreateDocumentFromScanAsync inherits the PO's GL accounts on
+    /// matched lines and stamps the new Purchase Invoice as RelatedDocumentId
+    /// = PO id, so the receiving ties back to the order.</summary>
+    public Guid? LinkedPurchaseOrderId { get; set; }
+
+    /// <summary>Denormalised PO DocumentNumber so list endpoints can render
+    /// the "ผูกกับ PO {n}" chip without an extra join per row. Stays in sync
+    /// because PO numbers don't change post-creation.</summary>
+    public string? LinkedPurchaseOrderNumber { get; set; }
+
+    /// <summary>JSON map of {ocrLineIndex → poLineId} the operator confirmed
+    /// when linking to a PO. Drives per-line GL inheritance + ProductAlias
+    /// learning on document creation.</summary>
+    public string? PoLineMappingsJson { get; set; }
+
     /// <summary>Structured metadata an external system (e.g. a project /
     /// materials-ordering system) sends ALONGSIDE the uploaded document.
     /// Lists each ordered item with its originating project/order so we can

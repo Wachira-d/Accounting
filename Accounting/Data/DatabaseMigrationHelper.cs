@@ -1667,6 +1667,17 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OpenPoNumbersJson" text NULL;
             """,
+            // PO linkage (the "ฟังก์ชันชื่อแทน / รับตาม PO" function): which PO
+            // the operator linked this scan to + per-line OCR↔PO mappings.
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LinkedPurchaseOrderId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LinkedPurchaseOrderNumber" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PoLineMappingsJson" text NULL;
+            """,
 
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """

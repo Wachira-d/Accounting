@@ -279,6 +279,34 @@ public class OcrController : ControllerBase
         }, req.ProjectId.HasValue ? verb + "แล้ว" : "ล้าง project ทุกบรรทัดแล้ว"));
     }
 
+    /// <summary>List the matched vendor's open Purchase Orders for the
+    /// review modal's "เลือก PO" picker — each PO comes back with its
+    /// line items inline so the operator can map OCR↔PO lines without
+    /// a second call.</summary>
+    [HttpGet("{scanId:guid}/open-pos")]
+    public async Task<ActionResult<ApiResponse<List<OpenPurchaseOrderDto>>>> GetOpenPos(Guid companyId, Guid scanId)
+        => Ok(new ApiResponse<List<OpenPurchaseOrderDto>>(true,
+            await _service.GetOpenPosForScanAsync(companyId, scanId)));
+
+    /// <summary>Link this scan to one of the vendor's open POs and record the
+    /// per-line OCR↔PO mappings (the "ฟังก์ชันชื่อแทน" function). When
+    /// CreateDocument fires later, the resulting Purchase Invoice inherits the
+    /// PO's GL accounts on mapped lines and links back via RelatedDocumentId.</summary>
+    [HttpPost("{scanId:guid}/link-po")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> LinkPo(
+        Guid companyId, Guid scanId, [FromBody] LinkPurchaseOrderRequest request)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.LinkPurchaseOrderAsync(companyId, scanId, request, User.Identity?.Name ?? "ocr-po-link"),
+            "ผูกกับใบสั่งซื้อสำเร็จ"));
+
+    /// <summary>Remove the PO linkage from a scan (no document yet created).
+    /// Lets the operator re-pick or fall back to plain expense entry.</summary>
+    [HttpDelete("{scanId:guid}/link-po")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UnlinkPo(Guid companyId, Guid scanId)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.UnlinkPurchaseOrderAsync(companyId, scanId),
+            "ยกเลิกการผูก PO แล้ว"));
+
     public sealed record SetLineProjectRequest(int LineIndex, Guid? ProjectId, string? ProjectName);
 
     /// <summary>Assign / clear a project on one OCR-extracted line.

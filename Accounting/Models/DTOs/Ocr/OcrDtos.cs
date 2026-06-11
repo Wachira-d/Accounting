@@ -56,7 +56,29 @@ public record OcrResultResponse(
     /// <summary>Open Purchase Order numbers of the matched vendor (JSON
     /// array, last 6 months, max 5). Non-null ⇒ UI warns the operator to
     /// book via the PO/receiving function instead of creating fresh.</summary>
-    string? OpenPoNumbersJson = null);
+    string? OpenPoNumbersJson = null,
+    /// <summary>When the operator chose a PO to receive against, this is
+    /// the PO document id; the review UI shows a "ผูกกับ PO ..." chip.</summary>
+    Guid? LinkedPurchaseOrderId = null,
+    string? LinkedPurchaseOrderNumber = null);
+
+/// <summary>One open PO of the matched vendor — what the picker modal
+/// renders. Lines come back inline so the operator can map OCR ↔ PO line
+/// without a second roundtrip.</summary>
+public record OpenPurchaseOrderDto(
+    Guid Id, string DocumentNumber, DateTime DocumentDate, string Status,
+    decimal TotalAmount, IReadOnlyList<OpenPurchaseOrderLineDto> Lines);
+
+public record OpenPurchaseOrderLineDto(
+    Guid Id, int LineOrder, string Description, decimal Quantity,
+    decimal UnitPrice, decimal Amount, Guid? AccountId, string? AccountCode);
+
+/// <summary>Body of POST /ocr/{scanId}/link-po — the chosen PO plus the
+/// per-OCR-line mapping (line index → PO line id). Unmapped indices are
+/// omitted; nulls explicitly clear a mapping.</summary>
+public record LinkPurchaseOrderRequest(
+    Guid PurchaseOrderId,
+    Dictionary<int, Guid?>? LineMappings);
 
 public record OcrQualityGradeDto(string Letter, int Score, string Color);
 

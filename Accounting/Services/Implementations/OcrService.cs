@@ -50,6 +50,7 @@ public class OcrService : IOcrService
     private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
     private readonly Services.Ai.IOcrAiAugmenter? _aiAugmenter;
     private readonly Services.Interfaces.IAccountingService? _accounting;
+    private readonly Ocr.ProductMatcher? _productMatcher;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -67,11 +68,13 @@ public class OcrService : IOcrService
         Ocr.RdComplianceValidator? rdComplianceValidator = null,
         Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null,
         Services.Ai.IOcrAiAugmenter? aiAugmenter = null,
-        Services.Interfaces.IAccountingService? accounting = null)
+        Services.Interfaces.IAccountingService? accounting = null,
+        Ocr.ProductMatcher? productMatcher = null)
     {
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
         _accounting = accounting;
+        _productMatcher = productMatcher;
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -3135,6 +3138,39 @@ public class OcrService : IOcrService
             };
         }
 
+        // ─── PO LINKAGE — receive against the operator-linked PO ───
+        // When the scan was linked to a PO via /link-po, force the target to
+        // PurchaseInvoice and stamp RelatedDocumentId so the new PI ties back
+        // to the order. Lines mapped to PO lines inherit the PO's AccountId
+        // (resolved below in the lines loop) instead of re-deriving from OCR.
+        Document? linkedPo = null;
+        Dictionary<int, Guid?> poLineMap = new();
+        if (result.LinkedPurchaseOrderId.HasValue)
+        {
+            linkedPo = await _db.Documents.AsNoTracking()
+                .Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.Id == result.LinkedPurchaseOrderId.Value
+                    && d.CompanyId == companyId && !d.IsDeleted);
+            if (linkedPo != null)
+            {
+                docType = DocumentType.PurchaseInvoice;
+                if (!string.IsNullOrWhiteSpace(result.PoLineMappingsJson))
+                {
+                    try
+                    {
+                        var raw = System.Text.Json.JsonSerializer
+                            .Deserialize<Dictionary<string, Guid?>>(result.PoLineMappingsJson) ?? new();
+                        foreach (var (k, v) in raw)
+                            if (int.TryParse(k, out var idx)) poLineMap[idx] = v;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "PoLineMappingsJson parse failed for scan {ScanId}", result.Id);
+                    }
+                }
+            }
+        }
+
         // Resolve contact if matched
         Guid? contactId = result.MatchedContactId;
         if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
@@ -3192,7 +3228,11 @@ public class OcrService : IOcrService
             TotalAmount = result.ExtractedTotalAmount ?? 0,
             BalanceDue = result.ExtractedTotalAmount ?? 0,
             Reference = result.ExtractedDocumentNumber,
-            Notes = $"Created from OCR scan: {result.OriginalFileName}",
+            Notes = linkedPo != null
+                ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
+                : $"Created from OCR scan: {result.OriginalFileName}",
+            // Linkback so the new PI's "อ้างอิงเอกสาร" surfaces the PO.
+            RelatedDocumentId = linkedPo?.Id,
             CreatedBy = createdBy
         };
 
@@ -3217,10 +3257,24 @@ public class OcrService : IOcrService
         if (items.Count > 0)
         {
             int lineOrder = 1;
-            foreach (var item in items)
+            for (var i = 0; i < items.Count; i++)
             {
+                var item = items[i];
                 Guid? lineAccountId = null;
-                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
+                string? lineProductCode = null;
+                // PO-line override (highest priority): when this OCR line was
+                // mapped to a PO line via /link-po, inherit the PO's GL account
+                // + product code so the receiving entry matches the order.
+                if (linkedPo != null && poLineMap.TryGetValue(i, out var mappedPoLineId) && mappedPoLineId.HasValue)
+                {
+                    var poLine = linkedPo.Lines.FirstOrDefault(l => l.Id == mappedPoLineId.Value && !l.IsDeleted);
+                    if (poLine != null)
+                    {
+                        lineAccountId = poLine.AccountId;
+                        lineProductCode = poLine.ProductCode;
+                    }
+                }
+                if (lineAccountId == null && !string.IsNullOrEmpty(item.SuggestedAccountCode))
                 {
                     var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
@@ -3235,6 +3289,7 @@ public class OcrService : IOcrService
                     Amount = item.Amount ?? 0,
                     VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
                     AccountId = lineAccountId,
+                    ProductCode = lineProductCode,
                     ProjectId = item.ProjectId,
                 });
             }
@@ -4188,7 +4243,9 @@ public class OcrService : IOcrService
             HasHandwriting: r.HasHandwriting,
             HandwritingConfidence: r.HandwritingConfidence,
             SuggestedEntryMode: r.SuggestedEntryMode,
-            OpenPoNumbersJson: r.OpenPoNumbersJson);
+            OpenPoNumbersJson: r.OpenPoNumbersJson,
+            LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
+            LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
@@ -4248,6 +4305,138 @@ public class OcrService : IOcrService
             $"[Tier 0] ดึงค่าจาก e-Tax XML ที่ฝังใน PDF/A-3 — เอกสาร {etax.DocumentTypeName} " +
             $"({etax.DocumentTypeCode}) เลขที่ {etax.DocumentNumber}, ยอดรวม {etax.GrandTotal:N2} {etax.Currency}");
         return data;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PO LINKAGE — the "ฟังก์ชันชื่อแทน / รับตาม PO" function from the diagram
+    // ════════════════════════════════════════════════════════════════════════
+
+    public async Task<List<OpenPurchaseOrderDto>> GetOpenPosForScanAsync(Guid companyId, Guid scanResultId)
+    {
+        var scan = await _db.Set<OcrScanResult>().AsNoTracking()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (!scan.MatchedContactId.HasValue) return new();
+
+        // Lookback window matches the ScanAsync warning (6 mo) so the picker
+        // mirrors the banner — never surfaces a PO the warning didn't flag.
+        var cutoff = DateTime.UtcNow.AddMonths(-6);
+        var pos = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines).ThenInclude(l => l.Account)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.ContactId == scan.MatchedContactId.Value
+                && d.DocumentType == DocumentType.PurchaseOrder
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected
+                && d.Status != DocumentStatus.Draft
+                && d.DocumentDate >= cutoff)
+            .OrderByDescending(d => d.DocumentDate)
+            .ToListAsync();
+
+        return pos.Select(p => new OpenPurchaseOrderDto(
+            p.Id, p.DocumentNumber, p.DocumentDate, p.Status.ToString(),
+            p.TotalAmount,
+            p.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+                .Select(l => new OpenPurchaseOrderLineDto(
+                    l.Id, l.LineOrder, l.Description, l.Quantity, l.UnitPrice, l.Amount,
+                    l.AccountId, l.Account?.AccountCode))
+                .ToList())).ToList();
+    }
+
+    public async Task<OcrResultResponse> LinkPurchaseOrderAsync(Guid companyId, Guid scanResultId,
+        LinkPurchaseOrderRequest request, string performedBy)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (scan.CreatedDocumentId.HasValue)
+            throw new InvalidOperationException("เอกสารถูกสร้างจาก scan นี้แล้ว — ไม่สามารถเปลี่ยน PO ที่ผูกได้");
+
+        // Resolve the PO — must belong to the same company AND be the vendor
+        // we matched on this scan (prevents linking to an unrelated supplier's
+        // PO by id-tampering).
+        var po = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == request.PurchaseOrderId
+                && d.CompanyId == companyId && !d.IsDeleted
+                && d.DocumentType == DocumentType.PurchaseOrder)
+            ?? throw new KeyNotFoundException("ไม่พบใบสั่งซื้อ");
+        if (scan.MatchedContactId.HasValue && po.ContactId != scan.MatchedContactId.Value)
+            throw new InvalidOperationException("ใบสั่งซื้อนี้ไม่ใช่ของผู้ขายที่จับคู่ไว้");
+
+        // Sanity-check the line mappings — each non-null poLineId must belong
+        // to THIS PO. Drop invalid pairs silently rather than failing the link.
+        var validPoLineIds = po.Lines.Where(l => !l.IsDeleted).Select(l => l.Id).ToHashSet();
+        var cleaned = new Dictionary<int, Guid?>();
+        if (request.LineMappings != null)
+        {
+            foreach (var kv in request.LineMappings)
+            {
+                if (kv.Value == null) cleaned[kv.Key] = null;
+                else if (validPoLineIds.Contains(kv.Value.Value)) cleaned[kv.Key] = kv.Value;
+            }
+        }
+
+        scan.LinkedPurchaseOrderId = po.Id;
+        scan.LinkedPurchaseOrderNumber = po.DocumentNumber;
+        scan.PoLineMappingsJson = cleaned.Count > 0
+            ? System.Text.Json.JsonSerializer.Serialize(cleaned.ToDictionary(k => k.Key.ToString(), k => k.Value))
+            : null;
+        // Pre-stamp the inferred target type so the dropdown reflects the
+        // pick — operator can still override before clicking "สร้างเอกสาร".
+        scan.TargetDocumentType = nameof(DocumentType.PurchaseInvoice);
+        scan.ProcessingNotes = (scan.ProcessingNotes ?? "")
+            + $"\n[PO link] ผูกกับใบสั่งซื้อ {po.DocumentNumber} ({cleaned.Values.Count(v => v.HasValue)}/{cleaned.Count} บรรทัด)";
+
+        // Learn the OCR↔PO line aliases. Mapped PO lines that have a ProductCode
+        // we can resolve get an alias row keyed to this vendor — next scan from
+        // the same supplier matches the wording instantly.
+        if (cleaned.Count > 0 && _productMatcher != null && !string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+        {
+            try
+            {
+                var ocrLines = System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+                foreach (var (ocrIdx, poLineId) in cleaned.Where(kv => kv.Value.HasValue))
+                {
+                    if (ocrIdx < 0 || ocrIdx >= ocrLines.Count) continue;
+                    var ocrDesc = ocrLines[ocrIdx].Description;
+                    if (string.IsNullOrWhiteSpace(ocrDesc)) continue;
+
+                    var poLine = po.Lines.First(l => l.Id == poLineId!.Value);
+                    if (string.IsNullOrWhiteSpace(poLine.ProductCode)) continue;
+                    var product = await _db.Products.AsNoTracking()
+                        .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                            && p.Code == poLine.ProductCode && !p.IsDeleted);
+                    if (product == null) continue;
+
+                    await _productMatcher.RecordAliasAsync(companyId, product.Id, ocrDesc!,
+                        scan.MatchedContactId, performedBy, source: "po-link");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PO-link alias learning failed (non-fatal) for scan {Id}", scanResultId);
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return MapToResponse(scan);
+    }
+
+    public async Task<OcrResultResponse> UnlinkPurchaseOrderAsync(Guid companyId, Guid scanResultId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (scan.CreatedDocumentId.HasValue)
+            throw new InvalidOperationException("เอกสารถูกสร้างจาก scan นี้แล้ว — ยกเลิกการผูก PO ไม่ได้");
+
+        scan.LinkedPurchaseOrderId = null;
+        scan.LinkedPurchaseOrderNumber = null;
+        scan.PoLineMappingsJson = null;
+        await _db.SaveChangesAsync();
+        return MapToResponse(scan);
     }
 }
 

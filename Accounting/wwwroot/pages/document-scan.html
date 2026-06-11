@@ -1452,6 +1452,149 @@
         }
       },
 
+      // ============= PO linkage (รับตาม PO + ฟังก์ชันชื่อแทน) =============
+      // Operator clicks "🔗 ผูกกับ PO" in the open-PO banner; the picker
+      // fetches the matched vendor's open POs (with line items) and lets
+      // the user pick one + auto-map each OCR line to a PO line by best
+      // description match (manual override available). Submit calls
+      // /link-po — server records the link + aliases + pre-selects
+      // PurchaseInvoice as the target type.
+      async openPoPicker(scanId) {
+        const api = Layout.api(); if (!api) return;
+        let pos = [];
+        try {
+          const res = await api.ocrOpenPos(scanId);
+          pos = res?.data || res || [];
+        } catch (err) {
+          Layout.toast('โหลดรายการ PO ไม่สำเร็จ: ' + err.message, 'error');
+          return;
+        }
+        if (!pos.length) { Layout.toast('ไม่พบใบสั่งซื้อค้างสำหรับผู้ขายรายนี้', 'error'); return; }
+
+        const ocrItems = (this._reviewScan?.extractedItems || []).map((it, i) => ({
+          idx: i, desc: it.description || '', qty: it.quantity, price: it.unitPrice, amount: it.amount,
+        }));
+
+        // Best-effort auto-mapping: take the first PO by default; per-line,
+        // assign the PO line with the closest description (substring or
+        // shared 2-gram count). Operator can override via dropdowns.
+        const norm = s => (s || '').replace(/[\s\p{P}]/gu, '').toLowerCase();
+        const bigrams = s => { const set = new Set(); for (let i = 0; i < s.length - 1; i++) set.add(s.substr(i,2)); return set; };
+        const sim = (a, b) => {
+          const x = norm(a), y = norm(b);
+          if (!x || !y) return 0;
+          if (x.includes(y) || y.includes(x)) return 1;
+          const bx = bigrams(x), by = bigrams(y); if (!bx.size || !by.size) return 0;
+          let inter = 0; bx.forEach(g => { if (by.has(g)) inter++; });
+          return (2 * inter) / (bx.size + by.size);
+        };
+        const autoMap = (poLines) => {
+          const used = new Set();
+          return ocrItems.map(o => {
+            let best = null, bestScore = 0;
+            for (const l of poLines) {
+              if (used.has(l.id)) continue;
+              const s = sim(o.desc, l.description);
+              if (s > bestScore) { bestScore = s; best = l; }
+            }
+            if (best && bestScore >= 0.4) { used.add(best.id); return best.id; }
+            return null;
+          });
+        };
+
+        let pickedPoIdx = 0;
+        let mappings = autoMap(pos[pickedPoIdx].lines || []);
+
+        const onPoChange = (newIdx) => {
+          pickedPoIdx = parseInt(newIdx);
+          mappings = autoMap(pos[pickedPoIdx].lines || []);
+          render();
+        };
+        const onMapChange = (ocrIdx, val) => { mappings[ocrIdx] = val || null; };
+
+        const render = () => {
+          const po = pos[pickedPoIdx];
+          const lineRows = ocrItems.length ? ocrItems.map((o, i) => `
+            <tr>
+              <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:13px">
+                <div style="font-weight:500">${Layout.esc(o.desc) || '-'}</div>
+                <div style="color:#6b7280;font-size:11px">${o.qty ?? '-'} × ฿${o.price?.toLocaleString() ?? '-'} = ฿${o.amount?.toLocaleString() ?? '-'}</div>
+              </td>
+              <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">
+                <select class="form-input" style="min-width:280px"
+                        onchange="Page._poMapPick(${i}, this.value)">
+                  <option value="">— ไม่ผูก —</option>
+                  ${(po.lines || []).map(l => `
+                    <option value="${l.id}" ${mappings[i] === l.id ? 'selected' : ''}>${Layout.esc(l.description)} (฿${l.amount?.toLocaleString()})${l.accountCode ? ' — '+Layout.esc(l.accountCode) : ''}</option>`).join('')}
+                </select>
+              </td>
+            </tr>`).join('') : '<tr><td colspan="2" style="padding:14px;text-align:center;color:#6b7280">ไม่มีรายการ OCR ให้ผูก</td></tr>';
+
+          document.getElementById('poPickerBody').innerHTML = `
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+              <label style="font-weight:600">เลือกใบสั่งซื้อ</label>
+              <select class="form-input" onchange="Page._poPickerChange(this.value)" style="flex:1">
+                ${pos.map((p, i) => `<option value="${i}" ${i===pickedPoIdx?'selected':''}>${Layout.esc(p.documentNumber)} — ${new Date(p.documentDate).toLocaleDateString('th-TH')} — ฿${p.totalAmount?.toLocaleString()}</option>`).join('')}
+              </select>
+            </div>
+            <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden">
+              <thead><tr style="background:#f9fafb">
+                <th style="text-align:left;padding:8px;font-size:12px;color:#6b7280">บรรทัด OCR</th>
+                <th style="text-align:left;padding:8px;font-size:12px;color:#6b7280">บรรทัด PO (จับคู่อัตโนมัติ — เปลี่ยนได้)</th>
+              </tr></thead>
+              <tbody>${lineRows}</tbody>
+            </table>`;
+        };
+
+        // Bind callbacks to Page so the inline onchange handlers resolve.
+        this._poMapPick = onMapChange;
+        this._poPickerChange = onPoChange;
+
+        // Simple custom modal — reuses the page's modal-overlay styles
+        // (Layout already injects them globally).
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+        overlay.innerHTML = `
+          <div style="background:white;border-radius:12px;padding:20px;width:min(900px,95vw);max-height:85vh;overflow:auto;box-shadow:0 25px 50px rgba(0,0,0,.25)">
+            <h3 style="margin:0 0 12px 0;font-size:18px">🔗 ผูก OCR กับใบสั่งซื้อ (รับตาม PO)</h3>
+            <p style="margin:0 0 14px 0;font-size:13px;color:#6b7280">เลือก PO + ตรวจสอบการจับคู่แต่ละบรรทัด (ระบบจับคู่ให้อัตโนมัติตามชื่อรายการ — เปลี่ยนได้) เมื่อกด "บันทึก" บรรทัดที่จับคู่จะใช้บัญชี GL จาก PO และระบบจะจำชื่อ OCR เป็น "ชื่อแทน" สำหรับสินค้านั้น</p>
+            <div id="poPickerBody"></div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+              <button class="btn btn-outline" onclick="this.closest('div[style*=fixed]').remove()">ยกเลิก</button>
+              <button class="btn btn-primary" id="poPickerSaveBtn">บันทึกการผูก</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+        render();
+
+        document.getElementById('poPickerSaveBtn').onclick = async () => {
+          const body = {
+            purchaseOrderId: pos[pickedPoIdx].id,
+            lineMappings: mappings.reduce((acc, v, i) => { acc[i] = v || null; return acc; }, {}),
+          };
+          try {
+            await api.ocrLinkPo(scanId, body);
+            Layout.toast('ผูกกับ PO สำเร็จ');
+            overlay.remove();
+            // Reload the review modal so the linked-PO chip + pre-selected
+            // target doc type (PurchaseInvoice) reflect the new state.
+            this.openReview(scanId);
+          } catch (err) {
+            Layout.toast('ผูก PO ไม่สำเร็จ: ' + err.message, 'error');
+          }
+        };
+      },
+
+      async unlinkPo(scanId) {
+        if (!confirm('ยกเลิกการผูกกับใบสั่งซื้อ?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.ocrUnlinkPo(scanId);
+          Layout.toast('ยกเลิกการผูก PO แล้ว');
+          this.openReview(scanId);
+        } catch (err) { Layout.toast('ยกเลิกไม่สำเร็จ: ' + err.message, 'error'); }
+      },
+
       // ============= Fixed Asset registration =============
       // Lightweight dialog implementation using prompt(). A fuller modal
       // form (with CoA picker for AssetAccount / DepExp / AccDep) is the
@@ -1704,13 +1847,18 @@
                 💡 ระบบแนะนำ: <strong>${scan.suggestedEntryMode === 'Stock' ? 'บันทึกเข้า Stock (ผู้ขายรายนี้เคยนำเข้าสินค้า)' : 'บันทึกเป็นค่าใช้จ่าย'}</strong>
                 ${scan.suggestedEntryMode === 'Stock' ? '— ใช้ปุ่ม "นำเข้าสต็อก" หลังตรวจสอบรายการ' : ''}
               </div>` : ''}
-              ${(() => {
+              ${scan.linkedPurchaseOrderId ? `
+              <div style="margin:8px 0;padding:10px 14px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;color:#065f46;display:flex;justify-content:space-between;align-items:center;gap:10px">
+                <span>✅ <strong>ผูกกับใบสั่งซื้อ ${Layout.esc(scan.linkedPurchaseOrderNumber || '')}</strong> — ระบบจะใช้บัญชี GL จาก PO เมื่อสร้างเอกสาร</span>
+                <button class="btn btn-sm btn-outline" onclick="Page.unlinkPo('${scan.id}')" style="border-color:#059669;color:#065f46">ยกเลิกการผูก</button>
+              </div>
+              ` : (() => {
                 try {
                   const pos = scan.openPoNumbersJson ? JSON.parse(scan.openPoNumbersJson) : null;
                   if (!pos || !pos.length) return '';
-                  return `<div style="margin:8px 0;padding:8px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;font-size:13px;color:#9a3412">
-                    📦 <strong>ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ ${pos.length} ใบ</strong> (${pos.slice(0, 3).map(p => Layout.esc(p)).join(', ')})<br>
-                    หากรายการนี้สั่งผ่าน PO กรุณาบันทึกรับตามใบสั่งซื้อ — ไม่ควรสร้างเอกสารใหม่ซ้ำ
+                  return `<div style="margin:8px 0;padding:8px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;font-size:13px;color:#9a3412;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span>📦 <strong>ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ ${pos.length} ใบ</strong> (${pos.slice(0, 3).map(p => Layout.esc(p)).join(', ')}) — หากรายการนี้สั่งผ่าน PO กรุณารับตามใบสั่งซื้อ ไม่ควรสร้างเอกสารซ้ำ</span>
+                    <button class="btn btn-sm btn-primary" onclick="Page.openPoPicker('${scan.id}')" style="white-space:nowrap">🔗 ผูกกับ PO</button>
                   </div>`;
                 } catch { return ''; }
               })()}
