@@ -4121,7 +4121,13 @@ public class DocumentService : IDocumentService
                 //     directly — never touches AP.
                 if (doc.PaymentType == Models.Enums.PaymentType.Credit)
                 {
-                    var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
+                    // Role separation now BLOCKS this combination on create/
+                    // edit (PV is real disbursement; ตั้งหนี้ belongs on an
+                    // Expense). Path is kept for legacy approval/re-post of
+                    // documents created before the rule landed — route them
+                    // to the SAME payable the matching Expense would use
+                    // (เจ้าหนี้อื่น 21220) so AP reports stay consistent.
+                    var apAccount = await ResolvePayableAccountAsync(companyId, DocumentType.Expense, doc.Contact);
                     if (apAccount != null)
                         AddLine(apAccount.Id, 0, doc.TotalAmount,
                             $"เจ้าหนี้ - {doc.DocumentNumber}");
