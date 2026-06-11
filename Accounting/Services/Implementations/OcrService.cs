@@ -3213,6 +3213,38 @@ public class OcrService : IOcrService
             : null;
         DateTime? paymentDate = docType == DocumentType.PaymentVoucher ? docDate : null;
 
+        // ── Pre-fill: header WHT + reconstructed sub-total ──
+        // The scan records HasWht + WhtRate (the % read off the paper); the
+        // baht amount is recomputed from the ex-VAT base so the created
+        // document carries the withholding without the user re-keying it.
+        var headerSubTotal = result.ExtractedSubTotal
+            ?? Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
+        var headerWht = whtRate > 0 ? Math.Round(headerSubTotal * whtRate / 100m, 2) : 0m;
+
+        // ── Pre-fill: scan-level suggested debit GL ──
+        // Used as the line-account fallback when a line has neither a PO
+        // mapping nor its own SuggestedAccountCode — so every line lands with
+        // a GL pick wherever the classifier produced one.
+        Guid? scanDebitAccountId = null;
+        if (!string.IsNullOrWhiteSpace(result.SuggestedAccountsJson))
+        {
+            try
+            {
+                using var sa = System.Text.Json.JsonDocument.Parse(result.SuggestedAccountsJson);
+                if (sa.RootElement.TryGetProperty("DebitAccountCode", out var dac)
+                    && dac.ValueKind == System.Text.Json.JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(dac.GetString()))
+                {
+                    scanDebitAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.CompanyId == companyId && a.AccountCode == dac.GetString() && !a.IsDeleted)
+                        .Select(a => (Guid?)a.Id)
+                        .FirstOrDefaultAsync();
+                }
+            }
+            catch { /* malformed suggestion JSON — line GL stays empty */ }
+        }
+
         // Transaction holds the per-tenant advisory lock for the duration
         // of the sequence-number assignment + insert, so concurrent OCR
         // creations don't collide.
@@ -3228,10 +3260,13 @@ public class OcrService : IOcrService
             DueDate = dueDate,
             PaymentDate = paymentDate,
             ContactId = contactId.Value,
-            SubTotal = result.ExtractedSubTotal ?? 0,
+            SubTotal = headerSubTotal,
             VatAmount = result.ExtractedVatAmount ?? 0,
+            WithholdingTaxAmount = headerWht,
             TotalAmount = result.ExtractedTotalAmount ?? 0,
-            BalanceDue = result.ExtractedTotalAmount ?? 0,
+            // Net payable = grand total − withholding (consistent with the
+            // integration + manual-entry flows).
+            BalanceDue = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - headerWht),
             Reference = result.ExtractedDocumentNumber,
             Notes = linkedPo != null
                 ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
@@ -3261,6 +3296,13 @@ public class OcrService : IOcrService
 
         if (items.Count > 0)
         {
+            // Pro-rate the header VAT across lines by amount share (the
+            // paper rarely itemises VAT per line). Remainder lands on the
+            // last line so the lines sum exactly to the header VAT.
+            var lineAmountSum = items.Sum(x => x.Amount ?? 0);
+            var headerVat = result.ExtractedVatAmount ?? 0;
+            decimal vatAssigned = 0;
+
             int lineOrder = 1;
             for (var i = 0; i < items.Count; i++)
             {
@@ -3285,19 +3327,48 @@ public class OcrService : IOcrService
                         a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
                     lineAccountId = lineAccount?.Id;
                 }
+                // Final fallback: the scan-level suggested debit GL — keeps
+                // every line pre-filled when the classifier only produced a
+                // document-level pick.
+                lineAccountId ??= scanDebitAccountId;
+
+                var amount = item.Amount ?? 0;
+                // Last line absorbs the rounding remainder.
+                decimal lineVat = 0;
+                if (headerVat > 0 && lineAmountSum > 0)
+                {
+                    lineVat = i == items.Count - 1
+                        ? Math.Round(headerVat - vatAssigned, 2)
+                        : Math.Round(headerVat * amount / lineAmountSum, 2);
+                    vatAssigned += lineVat;
+                }
+
                 document.Lines.Add(new DocumentLine
                 {
                     LineOrder = lineOrder++,
                     Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
                     Quantity = item.Quantity ?? 1,
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
-                    Amount = item.Amount ?? 0,
-                    VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                    Amount = amount,
+                    VatRate = headerVat > 0 ? 7 : 0,
+                    VatAmount = lineVat,
+                    // WHT read off the paper → pre-fill rate + baht per line so
+                    // the WHT cert auto-generation has line data ready.
+                    WithholdingTaxRate = whtRate,
+                    WithholdingTaxAmount = whtRate > 0 ? Math.Round(amount * whtRate / 100m, 2) : 0,
                     AccountId = lineAccountId,
                     ProductCode = lineProductCode,
                     ProjectId = item.ProjectId,
                 });
             }
+
+            // Header-level project: when every line carries the same project
+            // (e.g. set by the metadata matcher or the review UI's main-project
+            // picker), surface it on the header too — list pages + project
+            // P&L fallbacks read the header field.
+            var lineProjects = items.Select(x => x.ProjectId).Distinct().ToList();
+            if (lineProjects.Count == 1 && lineProjects[0].HasValue)
+                document.ProjectId = lineProjects[0];
         }
         else
         {
@@ -3308,10 +3379,15 @@ public class OcrService : IOcrService
                 LineOrder = 1,
                 Description = result.DocumentType ?? "รายการจาก OCR",
                 Quantity = 1,
-                UnitPrice = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
-                Amount = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                UnitPrice = headerSubTotal,
+                Amount = headerSubTotal,
                 VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
                 VatAmount = result.ExtractedVatAmount ?? 0,
+                WithholdingTaxRate = whtRate,
+                WithholdingTaxAmount = headerWht,
+                // Scan-level suggested debit GL — previously this branch left
+                // the account empty even when the classifier knew the answer.
+                AccountId = scanDebitAccountId,
             });
         }
 
