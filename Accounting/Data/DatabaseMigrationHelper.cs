@@ -1678,6 +1678,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PoLineMappingsJson" text NULL;
             """,
+            // Header discount read off the paper (raw-text enrichment).
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExtractedDiscountAmount" numeric(18,2) NULL;
+            """,
 
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """

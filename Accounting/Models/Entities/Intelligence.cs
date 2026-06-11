@@ -140,6 +140,8 @@ public class OcrScanResult : TenantEntity
     public decimal? ExtractedSubTotal { get; set; }
     public decimal? ExtractedVatAmount { get; set; }
     public decimal? ExtractedTotalAmount { get; set; }
+    /// <summary>Header discount (ส่วนลด) read off the paper.</summary>
+    public decimal? ExtractedDiscountAmount { get; set; }
     public string? ExtractedItemsJson { get; set; }       // JSON of line items
 
     /// <summary>Business-flow hint: which entry mode the operator should pick

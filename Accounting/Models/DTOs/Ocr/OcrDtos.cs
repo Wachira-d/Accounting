@@ -60,7 +60,9 @@ public record OcrResultResponse(
     /// <summary>When the operator chose a PO to receive against, this is
     /// the PO document id; the review UI shows a "ผูกกับ PO ..." chip.</summary>
     Guid? LinkedPurchaseOrderId = null,
-    string? LinkedPurchaseOrderNumber = null);
+    string? LinkedPurchaseOrderNumber = null,
+    /// <summary>Header discount (ส่วนลด) read off the paper.</summary>
+    decimal? ExtractedDiscountAmount = null);
 
 /// <summary>One open PO of the matched vendor — what the picker modal
 /// renders. Lines come back inline so the operator can map OCR ↔ PO line
@@ -103,7 +105,9 @@ public record OcrLineItemDto(
     /// to DocumentLine.ProjectId so each line books cost against the
     /// right project. Null = use document-level project (default).</summary>
     Guid? ProjectId = null,
-    string? ProjectName = null);
+    string? ProjectName = null,
+    /// <summary>Unit detected from the description (ถุง/เส้น/กล่อง…).</summary>
+    string? Unit = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 

@@ -571,6 +571,14 @@ public class OcrService : IOcrService
             scanResult.ScanStatus = "Completed";
             scanResult.ProcessedAt = DateTime.UtcNow;
 
+            // ── Paper enrichment (engine-agnostic) ──
+            // Pulls fields the structured extractors don't return — explicit
+            // due date (→ credit terms), header discount, per-line unit —
+            // straight off the raw text. Must run BEFORE items serialization
+            // (units persist into ExtractedItemsJson) and BEFORE the role
+            // inferrer (derived credit terms flip the PV/PI decision).
+            EnrichFromRawText(extractedData, extractedText);
+
             // ── External metadata → auto project allocation ──
             // When the partner uploaded order/project metadata with the file,
             // link each OCR'd line back to its originating project so the
@@ -597,8 +605,9 @@ public class OcrService : IOcrService
             if (extractedData.Items.Count > 0)
             {
                 scanResult.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(
-                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode, i.ProjectId, i.ProjectName }));
+                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode, i.ProjectId, i.ProjectName, i.Unit }));
             }
+            scanResult.ExtractedDiscountAmount = extractedData.DiscountAmount;
 
             scanResult.ExpenseCategory = extractedData.ExpenseCategory;
             // NOTE: HasWht/WhtRate/PaymentTermsDays/DocumentType/Confidence are re-synced
@@ -1482,14 +1491,36 @@ public class OcrService : IOcrService
                             && d.Status != DocumentStatus.Draft
                             && d.DocumentDate >= poCutoff)
                         .OrderByDescending(d => d.DocumentDate)
-                        .Select(d => d.DocumentNumber)
+                        .Select(d => new { d.Id, d.DocumentNumber })
                         .Take(5)
                         .ToListAsync();
                     if (openPos.Count > 0)
                     {
-                        scanResult.OpenPoNumbersJson = System.Text.Json.JsonSerializer.Serialize(openPos);
+                        scanResult.OpenPoNumbersJson = System.Text.Json.JsonSerializer.Serialize(
+                            openPos.Select(p => p.DocumentNumber));
                         scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
-                            + $"\n[PO] ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ {openPos.Count} ใบ ({string.Join(", ", openPos.Take(3))}) — หากรายการนี้สั่งผ่าน PO กรุณาบันทึกผ่านฟังก์ชันรับตามใบสั่งซื้อ ไม่ใช่สร้างใหม่";
+                            + $"\n[PO] ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ {openPos.Count} ใบ ({string.Join(", ", openPos.Take(3).Select(p => p.DocumentNumber))}) — หากรายการนี้สั่งผ่าน PO กรุณาบันทึกผ่านฟังก์ชันรับตามใบสั่งซื้อ ไม่ใช่สร้างใหม่";
+
+                        // AUTO-LINK BY PAPER REFERENCE: many invoices print the
+                        // buyer's PO number ("อ้างอิงใบสั่งซื้อ PO-2026-0012").
+                        // When exactly ONE open PO's number appears verbatim in
+                        // the OCR text, link automatically — the strongest
+                        // possible match signal, no user action needed. Two or
+                        // more hits stay manual (ambiguous).
+                        if (!scanResult.LinkedPurchaseOrderId.HasValue)
+                        {
+                            var hits = openPos.Where(p =>
+                                    p.DocumentNumber.Length >= 4
+                                    && extractedText.Contains(p.DocumentNumber, StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            if (hits.Count == 1)
+                            {
+                                scanResult.LinkedPurchaseOrderId = hits[0].Id;
+                                scanResult.LinkedPurchaseOrderNumber = hits[0].DocumentNumber;
+                                scanResult.ProcessingNotes += $"\n[PO] พบเลขที่ {hits[0].DocumentNumber} บนเอกสาร → ผูกกับใบสั่งซื้อให้อัตโนมัติ";
+                                extractedData.ReasoningTrace.Add($"[PO] เอกสารอ้างอิง {hits[0].DocumentNumber} → auto-link");
+                            }
+                        }
                     }
                 }
                 catch (Exception poEx)
@@ -3262,6 +3293,7 @@ public class OcrService : IOcrService
             ContactId = contactId.Value,
             SubTotal = headerSubTotal,
             VatAmount = result.ExtractedVatAmount ?? 0,
+            DiscountAmount = result.ExtractedDiscountAmount ?? 0,
             WithholdingTaxAmount = headerWht,
             TotalAmount = result.ExtractedTotalAmount ?? 0,
             // Net payable = grand total − withholding (consistent with the
@@ -3348,6 +3380,7 @@ public class OcrService : IOcrService
                     LineOrder = lineOrder++,
                     Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
                     Quantity = item.Quantity ?? 1,
+                    Unit = string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
                     Amount = amount,
                     VatRate = headerVat > 0 ? 7 : 0,
@@ -4239,7 +4272,7 @@ public class OcrService : IOcrService
             {
                 items = data.Items.Select(i => new OcrLineItemDto(
                     i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
-                    i.ProjectId, i.ProjectName)).ToList();
+                    i.ProjectId, i.ProjectName, i.Unit)).ToList();
             }
         }
 
@@ -4274,7 +4307,8 @@ public class OcrService : IOcrService
                     el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null,
                     el.TryGetProperty("ProjectId", out var pid) && pid.ValueKind == System.Text.Json.JsonValueKind.String
                         && Guid.TryParse(pid.GetString(), out var pg) ? pg : (Guid?)null,
-                    el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null
+                    el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null,
+                    el.TryGetProperty("Unit", out var un) ? un.GetString() : null
                 )).ToList();
             }
             catch { }
@@ -4326,7 +4360,8 @@ public class OcrService : IOcrService
             SuggestedEntryMode: r.SuggestedEntryMode,
             OpenPoNumbersJson: r.OpenPoNumbersJson,
             LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
-            LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber);
+            LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber,
+            ExtractedDiscountAmount: data?.DiscountAmount ?? r.ExtractedDiscountAmount);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
@@ -4386,6 +4421,76 @@ public class OcrService : IOcrService
             $"[Tier 0] ดึงค่าจาก e-Tax XML ที่ฝังใน PDF/A-3 — เอกสาร {etax.DocumentTypeName} " +
             $"({etax.DocumentTypeCode}) เลขที่ {etax.DocumentNumber}, ยอดรวม {etax.GrandTotal:N2} {etax.Currency}");
         return data;
+    }
+
+    /// <summary>Engine-agnostic raw-text enrichment — fields no structured
+    /// extractor returns today. Fail-safe: any regex/date mishap simply leaves
+    /// the field null (the user can still key it in the review UI).</summary>
+    private void EnrichFromRawText(OcrExtractedData data, string rawText)
+    {
+        if (string.IsNullOrEmpty(rawText)) return;
+        var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
+
+        // 1) Explicit due date ("ครบกำหนด 15/07/2569", "Due Date: 15/07/2026")
+        //    → credit terms in days. The Net-N regex in the parser covers
+        //    "เครดิต 30 วัน"; this covers papers that print a date instead.
+        if (!data.PaymentTermsDays.HasValue && data.DocumentDate.HasValue)
+        {
+            try
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(text,
+                    @"(?:ครบกำหนด(?:ชำระ)?|กำหนดชำระ|due\s*date)\s*:?\s*(?:วันที่)?\s*(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (m.Success
+                    && int.TryParse(m.Groups[1].Value, out var dd)
+                    && int.TryParse(m.Groups[2].Value, out var mm)
+                    && int.TryParse(m.Groups[3].Value, out var yy))
+                {
+                    // Year heuristic: 4-digit ≥2400 = Buddhist Era → −543;
+                    // 2-digit ≥60 = short BE (69 → 2569 → 2026); else short CE.
+                    var year = yy switch
+                    {
+                        >= 2400 => yy - 543,
+                        >= 100 => yy,
+                        >= 60 => 2500 + yy - 543,
+                        _ => 2000 + yy,
+                    };
+                    var due = new DateTime(year, mm, dd);
+                    var days = (due.Date - data.DocumentDate.Value.Date).Days;
+                    if (days is > 0 and <= 365)
+                    {
+                        data.PaymentTermsDays = days;
+                        data.ReasoningTrace.Add($"[Enrich] วันครบกำหนด {due:dd/MM/yyyy} บนเอกสาร → เครดิตเทอม {days} วัน");
+                    }
+                }
+            }
+            catch { /* unparseable date — leave terms empty */ }
+        }
+
+        // 2) Header discount ("ส่วนลด 500.00"). Sanity: must be positive and
+        //    smaller than the grand total, otherwise it's a misread.
+        if (!data.DiscountAmount.HasValue)
+        {
+            var dm = System.Text.RegularExpressions.Regex.Match(text,
+                @"(?:ส่วนลด(?:รวม|การค้า)?|discount)\s*:?\s*(?:฿|บาท)?\s*([\d,]+(?:\.\d{1,2})?)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (dm.Success
+                && decimal.TryParse(dm.Groups[1].Value.Replace(",", ""), out var disc)
+                && disc > 0 && disc < (data.TotalAmount ?? decimal.MaxValue))
+            {
+                data.DiscountAmount = disc;
+                data.ReasoningTrace.Add($"[Enrich] ส่วนลดบนเอกสาร ฿{disc:N2}");
+            }
+        }
+
+        // 3) Per-line unit from the description (ถุง/เส้น/กล่อง/ลัง…) — reuses
+        //    the stock-import unit detector so the two paths agree.
+        foreach (var it in data.Items)
+        {
+            if (!string.IsNullOrEmpty(it.Unit) || string.IsNullOrEmpty(it.Description)) continue;
+            var u = Ocr.ProductMatcher.DetectUnit(it.Description);
+            if (!string.IsNullOrEmpty(u)) it.Unit = u;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -4544,6 +4649,9 @@ internal class OcrExtractedData
     public decimal? VatAmount { get; set; }
     public decimal? TotalAmount { get; set; }
     public string? ExpenseCategory { get; set; }
+    /// <summary>Header discount (ส่วนลด) read off the paper — flows to
+    /// Document.DiscountAmount on creation.</summary>
+    public decimal? DiscountAmount { get; set; }
     public string? DebitAccountCode { get; set; }
     public string? DebitAccountName { get; set; }
     public string? CreditAccountCode { get; set; }
@@ -4591,4 +4699,7 @@ internal class OcrExtractedLineItem
     /// user's allocation work + auto-create uses it.</summary>
     public Guid? ProjectId { get; set; }
     public string? ProjectName { get; set; }
+    /// <summary>Unit (ถุง/เส้น/กล่อง…) detected from the description —
+    /// flows to DocumentLine.Unit instead of the blanket "ชิ้น" default.</summary>
+    public string? Unit { get; set; }
 }
