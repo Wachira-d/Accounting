@@ -3207,42 +3207,109 @@ public class OcrService : IOcrService
             }
         }
 
-        // Resolve contact if matched
-        Guid? contactId = result.MatchedContactId;
-        if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
-        {
-            var contact = await _db.Contacts
-                .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == result.ExtractedVendorTaxId);
-            contactId = contact?.Id;
-        }
+        // ── TYPE-DEPENDENT DATA ──────────────────────────────────────────
+        // The user may switch the target type in the review dropdown; every
+        // field whose MEANING depends on the type must follow the FINAL pick,
+        // not the scan's default assumption.
+        //
+        // Sales-side targets bill OUR customer — the counterparty is the
+        // BUYER printed on the paper, not the vendor (on a sales doc the
+        // vendor block is us).
+        var isSalesSide = docType is DocumentType.Invoice or DocumentType.TaxInvoice
+            or DocumentType.Receipt or DocumentType.ReceiptVoucher
+            or DocumentType.Quotation or DocumentType.BillingNote
+            || (result.OurRole == "Seller"
+                && docType is DocumentType.CreditNote or DocumentType.DebitNote);
 
-        if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))
+        Guid? contactId;
+        if (isSalesSide)
         {
-            // Create a new supplier contact from extracted data
-            var newContact = new Contact
+            // Counterparty = buyer on the paper. MatchedContactId points at the
+            // vendor side, which on a sales doc is ourselves — never use it as
+            // the primary pick here.
+            contactId = null;
+            var buyerTax = result.BuyerTaxId;
+            var buyerNm = result.BuyerName;
+            if (!string.IsNullOrWhiteSpace(buyerTax))
+                contactId = await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && c.TaxId == buyerTax && !c.IsDeleted)
+                    .Select(c => (Guid?)c.Id)
+                    .FirstOrDefaultAsync();
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
+                contactId = await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name.Contains(buyerNm))
+                    .Select(c => (Guid?)c.Id)
+                    .FirstOrDefaultAsync();
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
             {
-                CompanyId = companyId,
-                Name = result.ExtractedVendorName,
-                TaxId = result.ExtractedVendorTaxId,
-                IsCustomer = false,
-                IsSupplier = true,
-                CreatedBy = createdBy
-            };
-            _db.Contacts.Add(newContact);
-            contactId = newContact.Id;
+                var cust = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = buyerNm!,
+                    TaxId = buyerTax,
+                    IsCustomer = true,
+                    IsSupplier = false,
+                    CreatedBy = createdBy
+                };
+                _db.Contacts.Add(cust);
+                contactId = cust.Id;
+            }
+            // Last resort so creation doesn't hard-fail when the buyer block
+            // was unreadable — the user can re-pick the customer on the doc.
+            contactId ??= result.MatchedContactId;
+        }
+        else
+        {
+            // Purchase side (PV / PI / Expense / CertInLieu …) — the vendor.
+            contactId = result.MatchedContactId;
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
+            {
+                var contact = await _db.Contacts
+                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == result.ExtractedVendorTaxId);
+                contactId = contact?.Id;
+            }
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))
+            {
+                // Create a new supplier contact from extracted data
+                var newContact = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = result.ExtractedVendorName,
+                    TaxId = result.ExtractedVendorTaxId,
+                    IsCustomer = false,
+                    IsSupplier = true,
+                    CreatedBy = createdBy
+                };
+                _db.Contacts.Add(newContact);
+                contactId = newContact.Id;
+            }
         }
 
         if (!contactId.HasValue)
             throw new InvalidOperationException("Cannot create document: no contact could be resolved from OCR data.");
 
-        // Due date from the OCR-read credit terms (doc date + Net N). PaymentDate
-        // is only meaningful for a payment voucher (we scanned a paid receipt) —
-        // the cash actually moved on the document date.
+        // CertificateInLieu legal fields — the printed form needs a certifier
+        // (the person attesting the payment happened) — default to the
+        // creating user; the reason gets a sensible RD-compliant default the
+        // user can refine in the editor.
+        string? certifierName = null;
+        if (docType == DocumentType.CertificateInLieu && Guid.TryParse(createdBy, out var certUid))
+            certifierName = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == certUid)
+                .Select(u => u.FullName)
+                .FirstOrDefaultAsync();
+
+        // Dates follow the FINAL doc type: paid-evidence types (PV / Receipt /
+        // ReceiptVoucher / CertInLieu) record WHEN the money moved and carry
+        // no credit due date; credit types (PI / Invoice / Expense / …) are
+        // the reverse — due date from the OCR-read terms, no payment date.
         var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
-        DateTime? dueDate = result.PaymentTermsDays.HasValue
-            ? docDate.AddDays(result.PaymentTermsDays.Value)
+        var isPaidType = docType is DocumentType.PaymentVoucher or DocumentType.Receipt
+            or DocumentType.ReceiptVoucher or DocumentType.CertificateInLieu;
+        DateTime? dueDate = isPaidType ? null
+            : result.PaymentTermsDays.HasValue ? docDate.AddDays(result.PaymentTermsDays.Value)
             : null;
-        DateTime? paymentDate = docType == DocumentType.PaymentVoucher ? docDate : null;
+        DateTime? paymentDate = isPaidType ? docDate : null;
 
         // ── Pre-fill: header WHT + reconstructed sub-total ──
         // The scan records HasWht + WhtRate (the % read off the paper); the
@@ -3305,6 +3372,10 @@ public class OcrService : IOcrService
                 : $"Created from OCR scan: {result.OriginalFileName}",
             // Linkback so the new PI's "อ้างอิงเอกสาร" surfaces the PO.
             RelatedDocumentId = linkedPo?.Id,
+            // ใบรับรองแทนใบเสร็จ — legal fields the printed form requires.
+            CertificateReason = docType == DocumentType.CertificateInLieu
+                ? "ผู้ขาย/ผู้รับเงินไม่สามารถออกใบเสร็จรับเงินได้" : null,
+            CertifierName = certifierName,
             CreatedBy = createdBy
         };
 
