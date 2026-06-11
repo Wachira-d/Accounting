@@ -1659,6 +1659,29 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExternalMetadataJson" text NULL;
             """,
+            // Business-flow hints computed at scan time: suggested entry mode
+            // (Stock/Expense) + open POs of the matched vendor.
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "SuggestedEntryMode" varchar(20) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OpenPoNumbersJson" text NULL;
+            """,
+            // PO linkage (the "ฟังก์ชันชื่อแทน / รับตาม PO" function): which PO
+            // the operator linked this scan to + per-line OCR↔PO mappings.
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LinkedPurchaseOrderId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "LinkedPurchaseOrderNumber" varchar(50) NULL;
+            """,
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "PoLineMappingsJson" text NULL;
+            """,
+            // Header discount read off the paper (raw-text enrichment).
+            """
+            ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExtractedDiscountAmount" numeric(18,2) NULL;
+            """,
 
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """

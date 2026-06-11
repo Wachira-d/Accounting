@@ -20,8 +20,15 @@ public interface IOcrService
     /// When present, OcrMetadataProjectMatcher links each extracted line back
     /// to its originating project so created DocumentLines get ProjectId
     /// pre-selected for automatic cost allocation.
+    ///
+    /// <paramref name="autoCreate"/>: when true, ScanAsync also creates the
+    /// inferred target document automatically (the historical integration
+    /// behavior). Web / human-driven uploads pass false — the scan only
+    /// suggests the target type and the user explicitly creates via
+    /// CreateDocumentFromScanAsync. Integration partner syncs opt in to true
+    /// to keep their existing zero-touch behavior.
     /// </summary>
-    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null);
+    Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false);
     Task<OcrResultResponse> GetResultAsync(Guid companyId, Guid scanResultId);
     Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request);
     Task<OcrResultResponse> CreateDocumentFromScanAsync(Guid companyId, Guid scanResultId, string createdBy, string? targetTypeOverride = null);
@@ -50,8 +57,25 @@ public interface IOcrService
     Task SetAllExtractedLineProjectsAsync(Guid companyId, Guid scanResultId,
         Guid? projectId, string? projectName, bool onlyEmpty);
 
+    /// <summary>List the matched vendor's open Purchase Orders together with
+    /// their line items so the review UI can render the "เลือก PO" picker.
+    /// Returns empty when no contact is matched or no open POs exist.</summary>
+    Task<List<OpenPurchaseOrderDto>> GetOpenPosForScanAsync(Guid companyId, Guid scanResultId);
+
+    /// <summary>Link this scan to one of the vendor's open POs and record the
+    /// per-line OCR↔PO mappings. Persists the link + mappings on the scan,
+    /// learns each mapped OCR description as a ProductAlias (when the PO line
+    /// has a ProductCode that resolves), and returns the updated scan.</summary>
+    Task<OcrResultResponse> LinkPurchaseOrderAsync(Guid companyId, Guid scanResultId,
+        LinkPurchaseOrderRequest request, string performedBy);
+
+    /// <summary>Clear the scan's PO linkage. The created document, if any, is
+    /// untouched — only the scan-level link is removed so the operator can
+    /// re-pick or fall back to a plain expense.</summary>
+    Task<OcrResultResponse> UnlinkPurchaseOrderAsync(Guid companyId, Guid scanResultId);
+
     Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
-    Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false);
+    Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null, Guid? performedByUserId = null);
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,
         Controllers.OcrController.RegisterAssetFromScanRequest req,
         IFixedAssetService assetService, string createdBy);

@@ -40,7 +40,11 @@ public static class OcrDocumentRoleInferrer
         // for the Buyer + TaxInvoice/Invoice case. Lets companies on
         // accrual-basis (A/P workflow) keep getting PurchaseInvoice
         // instead. See CompanySettings.OcrBuyerInvoiceDefaultTarget.
-        DocumentType? buyerInvoiceDefaultTarget = null)
+        DocumentType? buyerInvoiceDefaultTarget = null,
+        // OCR-extracted credit terms ("เครดิต 30 วัน" / "Net 30"). > 0 means
+        // the paper grants credit — i.e. NOT yet paid — which flips an
+        // invoice's target from PaymentVoucher to PurchaseInvoice (ตั้งหนี้).
+        int? paymentTermsDays = null)
     {
         var reasons = new List<string>();
         var text = (rawText ?? "").ToLowerInvariant();
@@ -162,6 +166,20 @@ public static class OcrDocumentRoleInferrer
         var hasQuotation = ContainsAny(text, "ใบเสนอราคา", "quotation");
         var hasBillingNote = ContainsAny(text, "ใบวางบิล", "billing note");
         var hasWhtCert = ContainsAll(text, "หัก ณ ที่จ่าย", "รับรอง") || text.Contains("withholding tax certificate");
+        // ── Markers that decide PAID-vs-UNPAID and EVIDENCE QUALITY ──
+        // บิลเงินสด = informal cash bill. With a valid 13-digit vendor TaxId it
+        // is acceptable expense evidence (→ PaymentVoucher); WITHOUT one, RD
+        // deductibility requires a ใบรับรองแทนใบเสร็จ backing the payment.
+        var hasCashBill = ContainsAny(text, "บิลเงินสด", "cash bill", "cash sale");
+        // ใบกำกับภาษีอย่างย่อ (abbreviated tax invoice — retail/POS) is by
+        // definition a paid-at-the-till document → PaymentVoucher.
+        var hasAbbrevTaxInvoice = ContainsAny(text, "ใบกำกับภาษีอย่างย่อ", "abbreviated tax invoice");
+        // Explicit paid stamps on the paper.
+        var hasPaidMarker = ContainsAny(text,
+            "ชำระแล้ว", "ชำระเงินสด", "จ่ายเงินสด", "รับเงินแล้ว", "รับเงินเรียบร้อย",
+            "ได้รับเงิน", "paid in full", "payment received", "cash received");
+        var vendorTaxValid = !string.IsNullOrEmpty(vendorTaxId)
+            && vendorTaxId.Count(char.IsDigit) == 13;
 
         // ─── Step 3: Resolve scanned doc type (refines OCR's initial guess) ─
         DocumentType? scanned = previousScannedType;
@@ -171,6 +189,7 @@ public static class OcrDocumentRoleInferrer
         else if (hasReceipt && hasTaxInvoice) scanned = DocumentType.TaxInvoice;  // combined paper
         else if (hasTaxInvoice) scanned = DocumentType.TaxInvoice;
         else if (hasReceipt) scanned = DocumentType.Receipt;
+        else if (hasCashBill) scanned = DocumentType.Receipt;   // no CashBill enum — closest paper type
         else if (hasInvoice) scanned = DocumentType.Invoice;
         else if (hasBillingNote) scanned = DocumentType.BillingNote;
         else if (hasDeliveryNote) scanned = DocumentType.DeliveryNote;
@@ -190,6 +209,24 @@ public static class OcrDocumentRoleInferrer
                 target = DocumentType.CreditNote;
             else if (hasDebitNote)
                 target = DocumentType.DebitNote;
+            else if (hasCashBill && !vendorTaxValid)
+            {
+                // บิลเงินสดที่ไม่มีเลขผู้เสียภาษีผู้ขาย — หลักฐานไม่ครบตาม
+                // เกณฑ์สรรพากร (รายจ่ายต้องมีหลักฐานระบุผู้รับเงินชัดเจน) →
+                // ออกใบรับรองแทนใบเสร็จประกอบการจ่าย เพื่อให้รายจ่ายนี้
+                // นำมาหักภาษีได้
+                target = DocumentType.CertificateInLieu;
+                reasons.Add("บิลเงินสดไม่มีเลขผู้เสียภาษีผู้ขาย → แนะนำใบรับรองแทนใบเสร็จ (หลักฐานไม่ครบตามเกณฑ์สรรพากร)");
+            }
+            else if (hasCashBill || hasAbbrevTaxInvoice)
+            {
+                // บิลเงินสด (มี TaxId ครบ) / ใบกำกับภาษีอย่างย่อ = จ่ายเงินสด
+                // หน้าร้านแล้วแน่นอน → ใบสำคัญจ่าย
+                target = DocumentType.PaymentVoucher;
+                reasons.Add(hasAbbrevTaxInvoice
+                    ? "ใบกำกับภาษีอย่างย่อ (POS/ค้าปลีก) = จ่ายเงินสดแล้ว → ใบสำคัญจ่าย"
+                    : "บิลเงินสด (มีเลขผู้เสียภาษีครบ) = จ่ายแล้ว → ใบสำคัญจ่าย");
+            }
             else if (hasReceipt)
                 // We already paid (the supplier handed us a receipt) →
                 // book a payment voucher even when the paper also shows a
@@ -198,22 +235,45 @@ public static class OcrDocumentRoleInferrer
                 target = DocumentType.PaymentVoucher;
             else if (hasTaxInvoice || hasInvoice)
             {
-                // Default = PaymentVoucher (cash-basis flow — most Thai
-                // SMEs). Companies on accrual-basis A/P can override via
-                // CompanySettings.OcrBuyerInvoiceDefaultTarget which is
-                // threaded in here. VendorIntelligence still overrides
-                // both when it has high-confidence history for a vendor.
-                target = buyerInvoiceDefaultTarget ?? DocumentType.PaymentVoucher;
-                if (buyerInvoiceDefaultTarget != null && buyerInvoiceDefaultTarget != DocumentType.PaymentVoucher)
-                    reasons.Add($"target = {target} (จากการตั้งค่าบริษัท — flow บัญชี A/P)");
+                if (hasPaidMarker)
+                {
+                    // Paid stamp on the invoice itself ("ชำระแล้ว" ฯลฯ) —
+                    // the strongest possible signal that cash already moved.
+                    target = DocumentType.PaymentVoucher;
+                    reasons.Add("พบตราประทับ/ข้อความ \"ชำระแล้ว\" บนใบกำกับ → ใบสำคัญจ่าย");
+                }
+                else if (paymentTermsDays is > 0)
+                {
+                    // The paper grants credit terms — by definition NOT yet
+                    // paid → set up the payable (PurchaseInvoice) regardless
+                    // of the company's cash-basis default. The user can still
+                    // override in the review dropdown.
+                    target = DocumentType.PurchaseInvoice;
+                    reasons.Add($"ใบกำกับมีเครดิตเทอม {paymentTermsDays} วัน = ยังไม่จ่าย → ใบแจ้งหนี้ซื้อ (ตั้งหนี้)");
+                }
+                else
+                {
+                    // Default = PaymentVoucher (cash-basis flow — most Thai
+                    // SMEs). Companies on accrual-basis A/P can override via
+                    // CompanySettings.OcrBuyerInvoiceDefaultTarget which is
+                    // threaded in here. VendorIntelligence still overrides
+                    // both when it has high-confidence history for a vendor.
+                    target = buyerInvoiceDefaultTarget ?? DocumentType.PaymentVoucher;
+                    if (buyerInvoiceDefaultTarget != null && buyerInvoiceDefaultTarget != DocumentType.PaymentVoucher)
+                        reasons.Add($"target = {target} (จากการตั้งค่าบริษัท — flow บัญชี A/P)");
+                }
             }
             else if (hasPurchaseOrder)
                 target = DocumentType.PurchaseOrder;
             else
+            {
                 // No clear marker — fall back to Expense (general journal
                 // entry). The invoice/taxInvoice branch above is what the
                 // PaymentVoucher default applies to.
                 target = DocumentType.Expense;
+                if (!vendorTaxValid)
+                    reasons.Add("ไม่พบเลขผู้เสียภาษีผู้ขาย — หากต้องการให้รายจ่ายหักภาษีได้ พิจารณาออกใบรับรองแทนใบเสร็จ");
+            }
         }
         else // Seller
         {

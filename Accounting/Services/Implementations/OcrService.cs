@@ -50,6 +50,7 @@ public class OcrService : IOcrService
     private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
     private readonly Services.Ai.IOcrAiAugmenter? _aiAugmenter;
     private readonly Services.Interfaces.IAccountingService? _accounting;
+    private readonly Ocr.ProductMatcher? _productMatcher;
 
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
@@ -67,11 +68,13 @@ public class OcrService : IOcrService
         Ocr.RdComplianceValidator? rdComplianceValidator = null,
         Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null,
         Services.Ai.IOcrAiAugmenter? aiAugmenter = null,
-        Services.Interfaces.IAccountingService? accounting = null)
+        Services.Interfaces.IAccountingService? accounting = null,
+        Ocr.ProductMatcher? productMatcher = null)
     {
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
         _accounting = accounting;
+        _productMatcher = productMatcher;
         _db = db;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -90,7 +93,7 @@ public class OcrService : IOcrService
         _rdComplianceValidator = rdComplianceValidator;
     }
 
-    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null)
+    public async Task<OcrResultResponse> ScanAsync(Guid companyId, Guid fileAttachmentId, string? preferredEngine = null, string? externalMetadataJson = null, bool autoCreate = false)
     {
         // Normalize the user's engine preference into one of three modes.
         // "auto" = current cascade; "azure" = Tier 1 only (no local fallback
@@ -568,6 +571,14 @@ public class OcrService : IOcrService
             scanResult.ScanStatus = "Completed";
             scanResult.ProcessedAt = DateTime.UtcNow;
 
+            // ── Paper enrichment (engine-agnostic) ──
+            // Pulls fields the structured extractors don't return — explicit
+            // due date (→ credit terms), header discount, per-line unit —
+            // straight off the raw text. Must run BEFORE items serialization
+            // (units persist into ExtractedItemsJson) and BEFORE the role
+            // inferrer (derived credit terms flip the PV/PI decision).
+            EnrichFromRawText(extractedData, extractedText);
+
             // ── External metadata → auto project allocation ──
             // When the partner uploaded order/project metadata with the file,
             // link each OCR'd line back to its originating project so the
@@ -594,8 +605,9 @@ public class OcrService : IOcrService
             if (extractedData.Items.Count > 0)
             {
                 scanResult.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(
-                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode, i.ProjectId, i.ProjectName }));
+                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode, i.ProjectId, i.ProjectName, i.Unit }));
             }
+            scanResult.ExtractedDiscountAmount = extractedData.DiscountAmount;
 
             scanResult.ExpenseCategory = extractedData.ExpenseCategory;
             // NOTE: HasWht/WhtRate/PaymentTermsDays/DocumentType/Confidence are re-synced
@@ -640,7 +652,12 @@ public class OcrService : IOcrService
                     companyTaxId: companyContext?.TaxId,
                     companyName: companyContext?.Name,
                     previousScannedType: prevScanned,
-                    buyerInvoiceDefaultTarget: buyerInvoiceTarget);
+                    buyerInvoiceDefaultTarget: buyerInvoiceTarget,
+                    // Credit terms read off THIS paper (regex "เครดิต N วัน" /
+                    // "Net N") — flips invoice target PV→PI when > 0. The
+                    // VendorIntel history backfill runs AFTER this point on
+                    // purpose: only the paper's own terms prove "unpaid".
+                    paymentTermsDays: extractedData.PaymentTermsDays);
                 if (role.ScannedDocType.HasValue)
                     extractedData.DocumentType = role.ScannedDocType.Value.ToString();
                 extractedData.OurRole = role.OurRole;
@@ -1164,9 +1181,39 @@ public class OcrService : IOcrService
 
             if (!string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
-                var matchedContact = await _db.Contacts
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == extractedData.VendorTaxId && !c.IsDeleted);
-                scanResult.MatchedContactId = matchedContact?.Id;
+                // Same juristic TaxId can exist as SEVERAL contacts — one per
+                // branch (สำนักงานใหญ่ 00000 + สาขา 00001, …). Pick the contact
+                // whose BranchCode matches the OCR'd branch; blank/absent codes
+                // normalize to head-office 00000 so legacy rows still match.
+                var taxMatches = await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && c.TaxId == extractedData.VendorTaxId && !c.IsDeleted)
+                    .Select(c => new { c.Id, c.Name, c.BranchCode })
+                    .ToListAsync();
+                if (taxMatches.Count == 1)
+                {
+                    scanResult.MatchedContactId = taxMatches[0].Id;
+                }
+                else if (taxMatches.Count > 1)
+                {
+                    static string NormBranch(string? b)
+                    {
+                        var digits = new string((b ?? "").Where(char.IsDigit).ToArray());
+                        return digits.Length == 0 ? "00000" : digits.PadLeft(5, '0');
+                    }
+                    var ocrBranch = NormBranch(extractedData.VendorBranchCode);
+                    var byBranch = taxMatches.FirstOrDefault(c => NormBranch(c.BranchCode) == ocrBranch);
+                    // Deterministic fallback: head office (00000) first, then
+                    // lowest branch code — an unordered query made the pick
+                    // change between scans.
+                    var pick = byBranch ?? taxMatches
+                        .OrderBy(c => NormBranch(c.BranchCode))
+                        .ThenBy(c => c.Id)
+                        .First();
+                    scanResult.MatchedContactId = pick.Id;
+                    extractedData.ReasoningTrace.Add(byBranch != null
+                        ? $"[Branch] TaxID ตรง {taxMatches.Count} รายชื่อ — เลือกตามสาขา {ocrBranch}: '{pick.Name}'"
+                        : $"[Branch] TaxID ตรง {taxMatches.Count} รายชื่อ แต่ไม่มีสาขา {ocrBranch} — ใช้รายแรก '{pick.Name}' (โปรดตรวจสอบ)");
+                }
             }
 
             if (!scanResult.MatchedContactId.HasValue && !string.IsNullOrEmpty(extractedData.VendorName))
@@ -1431,6 +1478,87 @@ public class OcrService : IOcrService
                 }
             }
 
+            // ─── PO check by vendor (business-flow step) ───
+            // When the matched vendor has open Purchase Orders in the system,
+            // the operator should book this paper through the PO/receiving
+            // function instead of a fresh expense — surface the open POs so
+            // the review UI can warn before they create a duplicate booking.
+            if (scanResult.MatchedContactId.HasValue)
+            {
+                try
+                {
+                    var poCutoff = DateTime.UtcNow.AddMonths(-6);
+                    var openPos = await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                            && d.ContactId == scanResult.MatchedContactId.Value
+                            && d.DocumentType == DocumentType.PurchaseOrder
+                            && d.Status != DocumentStatus.Voided
+                            && d.Status != DocumentStatus.Rejected
+                            && d.Status != DocumentStatus.Draft
+                            && d.Status != DocumentStatus.Paid   // fully billed = no longer open
+                            && d.DocumentDate >= poCutoff)
+                        .OrderByDescending(d => d.DocumentDate)
+                        .Select(d => new { d.Id, d.DocumentNumber })
+                        .Take(5)
+                        .ToListAsync();
+                    if (openPos.Count > 0)
+                    {
+                        scanResult.OpenPoNumbersJson = System.Text.Json.JsonSerializer.Serialize(
+                            openPos.Select(p => p.DocumentNumber));
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                            + $"\n[PO] ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ {openPos.Count} ใบ ({string.Join(", ", openPos.Take(3).Select(p => p.DocumentNumber))}) — หากรายการนี้สั่งผ่าน PO กรุณาบันทึกผ่านฟังก์ชันรับตามใบสั่งซื้อ ไม่ใช่สร้างใหม่";
+
+                        // AUTO-LINK BY PAPER REFERENCE: many invoices print the
+                        // buyer's PO number ("อ้างอิงใบสั่งซื้อ PO-2026-0012").
+                        // When exactly ONE open PO's number appears verbatim in
+                        // the OCR text, link automatically — the strongest
+                        // possible match signal, no user action needed. Two or
+                        // more hits stay manual (ambiguous).
+                        if (!scanResult.LinkedPurchaseOrderId.HasValue)
+                        {
+                            var hits = openPos.Where(p =>
+                                    p.DocumentNumber.Length >= 4
+                                    && extractedText.Contains(p.DocumentNumber, StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            if (hits.Count == 1)
+                            {
+                                scanResult.LinkedPurchaseOrderId = hits[0].Id;
+                                scanResult.LinkedPurchaseOrderNumber = hits[0].DocumentNumber;
+                                scanResult.ProcessingNotes += $"\n[PO] พบเลขที่ {hits[0].DocumentNumber} บนเอกสาร → ผูกกับใบสั่งซื้อให้อัตโนมัติ";
+                                extractedData.ReasoningTrace.Add($"[PO] เอกสารอ้างอิง {hits[0].DocumentNumber} → auto-link");
+                            }
+                        }
+                    }
+                }
+                catch (Exception poEx)
+                {
+                    _logger.LogWarning(poEx, "Open-PO check failed (non-fatal) for scan {ScanId}", scanResult.Id);
+                }
+            }
+
+            // ─── Stock vs Expense suggestion (business-flow step) ───
+            // Recommend which entry mode the operator should pick:
+            //   "Stock"   — this vendor has product aliases on file (we've
+            //               imported their goods to stock before) and the scan
+            //               has line items → likely an inventory purchase.
+            //   "Expense" — everything else (services, utilities, one-offs).
+            // A hint only — the user still chooses; never blocks anything.
+            try
+            {
+                var hasLines = extractedData.Items.Count > 0;
+                var vendorHasProductHistory = scanResult.MatchedContactId.HasValue
+                    && await _db.ProductAliases.AsNoTracking().AnyAsync(a =>
+                        a.CompanyId == companyId && !a.IsDeleted
+                        && a.ContactId == scanResult.MatchedContactId.Value);
+                scanResult.SuggestedEntryMode = (hasLines && vendorHasProductHistory) ? "Stock" : "Expense";
+                if (scanResult.SuggestedEntryMode == "Stock")
+                    extractedData.ReasoningTrace.Add("[EntryMode] ผู้ขายเคยนำเข้าสินค้าเข้า Stock — แนะนำ \"บันทึกเข้า Stock\"");
+            }
+            catch (Exception emEx)
+            {
+                _logger.LogWarning(emEx, "Entry-mode suggestion failed (non-fatal) for scan {ScanId}", scanResult.Id);
+            }
+
             // ─── Potential Fixed Asset detection (Phase 4) ───
             // Inspect line items for capital-asset signals BEFORE the auto-
             // create gate. When at least one line crosses the threshold, the
@@ -1527,7 +1655,28 @@ public class OcrService : IOcrService
             var hasUsableDocNumber = !string.IsNullOrWhiteSpace(extractedData.DocumentNumber);
             var criticalFieldsOk = hasUsableTotal && hasUsableDate && hasUsableDocNumber;
 
-            if (scanResult.Confidence >= autoCreateThreshold
+            // AUTO-CREATE GATING — the business flow now mandates that web /
+            // human-driven OCR only SUGGESTS the target document type (saved on
+            // the scan as TargetDocumentType); the user makes the final create
+            // decision in the review UI by calling CreateDocumentFromScanAsync.
+            // Only callers that explicitly opt in (e.g. integration partner API
+            // syncs) skip the user step. autoCreate=false → record the inferred
+            // target as a NOTE and stop.
+            if (!autoCreate)
+            {
+                if (scanResult.Confidence >= autoCreateThreshold
+                    && scanResult.MatchedContactId.HasValue
+                    && criticalFieldsOk
+                    && !scanResult.IsDuplicate
+                    && !scanResult.CreatedDocumentId.HasValue)
+                {
+                    var suggested = string.IsNullOrWhiteSpace(scanResult.TargetDocumentType)
+                        ? "เอกสาร" : scanResult.TargetDocumentType;
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + $"\n[Suggest] ระบบแนะนำหมวด \"{suggested}\" — กด \"สร้างเอกสาร\" ในหน้าตรวจสอบเพื่อยืนยัน";
+                }
+            }
+            else if (scanResult.Confidence >= autoCreateThreshold
                 && scanResult.MatchedContactId.HasValue
                 && !scanResult.IsDuplicate
                 && !scanResult.CreatedDocumentId.HasValue
@@ -1543,7 +1692,8 @@ public class OcrService : IOcrService
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $" Auto-create failed: {ex.Message}";
                 }
             }
-            else if (scanResult.Confidence >= autoCreateThreshold
+            else if (autoCreate
+                  && scanResult.Confidence >= autoCreateThreshold
                   && scanResult.MatchedContactId.HasValue
                   && !criticalFieldsOk)
             {
@@ -3031,42 +3181,184 @@ public class OcrService : IOcrService
             };
         }
 
-        // Resolve contact if matched
-        Guid? contactId = result.MatchedContactId;
-        if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
+        // ─── PO LINKAGE — receive against the operator-linked PO ───
+        // When the scan was linked to a PO via /link-po, force the target to
+        // PurchaseInvoice and stamp RelatedDocumentId so the new PI ties back
+        // to the order. Lines mapped to PO lines inherit the PO's AccountId
+        // (resolved below in the lines loop) instead of re-deriving from OCR.
+        Document? linkedPo = null;
+        Dictionary<int, Guid?> poLineMap = new();
+        if (result.LinkedPurchaseOrderId.HasValue)
         {
-            var contact = await _db.Contacts
-                .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == result.ExtractedVendorTaxId);
-            contactId = contact?.Id;
+            linkedPo = await _db.Documents.AsNoTracking()
+                .Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.Id == result.LinkedPurchaseOrderId.Value
+                    && d.CompanyId == companyId && !d.IsDeleted);
+            if (linkedPo != null)
+            {
+                docType = DocumentType.PurchaseInvoice;
+                if (!string.IsNullOrWhiteSpace(result.PoLineMappingsJson))
+                {
+                    try
+                    {
+                        var raw = System.Text.Json.JsonSerializer
+                            .Deserialize<Dictionary<string, Guid?>>(result.PoLineMappingsJson) ?? new();
+                        foreach (var (k, v) in raw)
+                            if (int.TryParse(k, out var idx)) poLineMap[idx] = v;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "PoLineMappingsJson parse failed for scan {ScanId}", result.Id);
+                    }
+                }
+            }
         }
 
-        if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))
+        // ── TYPE-DEPENDENT DATA ──────────────────────────────────────────
+        // The user may switch the target type in the review dropdown; every
+        // field whose MEANING depends on the type must follow the FINAL pick,
+        // not the scan's default assumption.
+        //
+        // Sales-side targets bill OUR customer — the counterparty is the
+        // BUYER printed on the paper, not the vendor (on a sales doc the
+        // vendor block is us).
+        var isSalesSide = docType is DocumentType.Invoice or DocumentType.TaxInvoice
+            or DocumentType.Receipt or DocumentType.ReceiptVoucher
+            or DocumentType.Quotation or DocumentType.BillingNote
+            || (result.OurRole == "Seller"
+                && docType is DocumentType.CreditNote or DocumentType.DebitNote);
+
+        Guid? contactId;
+        if (isSalesSide)
         {
-            // Create a new supplier contact from extracted data
-            var newContact = new Contact
+            // Counterparty = buyer on the paper. MatchedContactId points at the
+            // vendor side, which on a sales doc is ourselves — never use it as
+            // the primary pick here.
+            contactId = null;
+            var buyerTax = result.BuyerTaxId;
+            var buyerNm = result.BuyerName;
+            if (!string.IsNullOrWhiteSpace(buyerTax))
+                contactId = await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && c.TaxId == buyerTax && !c.IsDeleted)
+                    .Select(c => (Guid?)c.Id)
+                    .FirstOrDefaultAsync();
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
+                contactId = await _db.Contacts
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name.Contains(buyerNm))
+                    .Select(c => (Guid?)c.Id)
+                    .FirstOrDefaultAsync();
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
             {
-                CompanyId = companyId,
-                Name = result.ExtractedVendorName,
-                TaxId = result.ExtractedVendorTaxId,
-                IsCustomer = false,
-                IsSupplier = true,
-                CreatedBy = createdBy
-            };
-            _db.Contacts.Add(newContact);
-            contactId = newContact.Id;
+                var cust = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = buyerNm!,
+                    TaxId = buyerTax,
+                    IsCustomer = true,
+                    IsSupplier = false,
+                    CreatedBy = createdBy
+                };
+                _db.Contacts.Add(cust);
+                contactId = cust.Id;
+            }
+            // Last resort so creation doesn't hard-fail when the buyer block
+            // was unreadable — the user can re-pick the customer on the doc.
+            contactId ??= result.MatchedContactId;
+        }
+        else
+        {
+            // Purchase side (PV / PI / Expense / CertInLieu …) — the vendor.
+            contactId = result.MatchedContactId;
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
+            {
+                var contact = await _db.Contacts
+                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == result.ExtractedVendorTaxId);
+                contactId = contact?.Id;
+            }
+            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))
+            {
+                // Create a new supplier contact from extracted data
+                var newContact = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = result.ExtractedVendorName,
+                    TaxId = result.ExtractedVendorTaxId,
+                    IsCustomer = false,
+                    IsSupplier = true,
+                    CreatedBy = createdBy
+                };
+                _db.Contacts.Add(newContact);
+                contactId = newContact.Id;
+            }
         }
 
         if (!contactId.HasValue)
             throw new InvalidOperationException("Cannot create document: no contact could be resolved from OCR data.");
 
-        // Due date from the OCR-read credit terms (doc date + Net N). PaymentDate
-        // is only meaningful for a payment voucher (we scanned a paid receipt) —
-        // the cash actually moved on the document date.
+        // CertificateInLieu legal fields — the printed form needs a certifier
+        // (the person attesting the payment happened) — default to the
+        // creating user; the reason gets a sensible RD-compliant default the
+        // user can refine in the editor.
+        string? certifierName = null;
+        if (docType == DocumentType.CertificateInLieu && Guid.TryParse(createdBy, out var certUid))
+            certifierName = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == certUid)
+                .Select(u => u.FullName)
+                .FirstOrDefaultAsync();
+
+        // Dates follow the FINAL doc type: paid-evidence types (PV / Receipt /
+        // ReceiptVoucher / CertInLieu) record WHEN the money moved and carry
+        // no credit due date; credit types (PI / Invoice / Expense / …) are
+        // the reverse — due date from the OCR-read terms, no payment date.
         var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
-        DateTime? dueDate = result.PaymentTermsDays.HasValue
-            ? docDate.AddDays(result.PaymentTermsDays.Value)
+        var isPaidType = docType is DocumentType.PaymentVoucher or DocumentType.Receipt
+            or DocumentType.ReceiptVoucher or DocumentType.CertificateInLieu;
+        DateTime? dueDate = isPaidType ? null
+            : result.PaymentTermsDays.HasValue ? docDate.AddDays(result.PaymentTermsDays.Value)
             : null;
-        DateTime? paymentDate = docType == DocumentType.PaymentVoucher ? docDate : null;
+        DateTime? paymentDate = isPaidType ? docDate : null;
+
+        // ── Pre-fill: header WHT + reconstructed sub-total ──
+        // The scan records HasWht + WhtRate (the % read off the paper); the
+        // baht amount is recomputed from the ex-VAT base so the created
+        // document carries the withholding without the user re-keying it.
+        // WHT base is ALWAYS (grand total − VAT) — not ExtractedSubTotal,
+        // which on discounted papers is the PRE-discount figure and would
+        // overstate the withholding by discount × rate.
+        var headerSubTotal = result.ExtractedSubTotal
+            ?? Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
+        var headerWht = whtRate > 0 ? Math.Round(whtBase * whtRate / 100m, 2) : 0m;
+        // App-wide convention (DocumentService / IntegrationService):
+        // TotalAmount = SubTotal + VAT − WHT (net payable). The paper's grand
+        // total does NOT deduct WHT, so subtract here — otherwise
+        // TotalAmount ≠ PaidAmount + BalanceDue and a later edit-recompute
+        // shifts the total by the WHT amount.
+        var headerTotal = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - headerWht);
+
+        // ── Pre-fill: scan-level suggested debit GL ──
+        // Used as the line-account fallback when a line has neither a PO
+        // mapping nor its own SuggestedAccountCode — so every line lands with
+        // a GL pick wherever the classifier produced one.
+        Guid? scanDebitAccountId = null;
+        if (!string.IsNullOrWhiteSpace(result.SuggestedAccountsJson))
+        {
+            try
+            {
+                using var sa = System.Text.Json.JsonDocument.Parse(result.SuggestedAccountsJson);
+                if (sa.RootElement.TryGetProperty("DebitAccountCode", out var dac)
+                    && dac.ValueKind == System.Text.Json.JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(dac.GetString()))
+                {
+                    scanDebitAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.CompanyId == companyId && a.AccountCode == dac.GetString() && !a.IsDeleted)
+                        .Select(a => (Guid?)a.Id)
+                        .FirstOrDefaultAsync();
+                }
+            }
+            catch { /* malformed suggestion JSON — line GL stays empty */ }
+        }
 
         // Transaction holds the per-tenant advisory lock for the duration
         // of the sequence-number assignment + insert, so concurrent OCR
@@ -3083,12 +3375,28 @@ public class OcrService : IOcrService
             DueDate = dueDate,
             PaymentDate = paymentDate,
             ContactId = contactId.Value,
-            SubTotal = result.ExtractedSubTotal ?? 0,
+            SubTotal = headerSubTotal,
             VatAmount = result.ExtractedVatAmount ?? 0,
-            TotalAmount = result.ExtractedTotalAmount ?? 0,
-            BalanceDue = result.ExtractedTotalAmount ?? 0,
+            DiscountAmount = result.ExtractedDiscountAmount ?? 0,
+            WithholdingTaxAmount = headerWht,
+            TotalAmount = headerTotal,
+            // Paid-evidence types are cash-settled at creation — the app's
+            // convention (DocumentService edit/approve paths) keeps such docs
+            // at BalanceDue=0 / PaidAmount=Total so they never appear in the
+            // aging / ค้างชำระ reports. Credit types carry the full balance.
+            PaymentType = isPaidType ? Models.Enums.PaymentType.Cash : null,
+            PaidAmount = isPaidType ? headerTotal : 0,
+            BalanceDue = isPaidType ? 0 : headerTotal,
             Reference = result.ExtractedDocumentNumber,
-            Notes = $"Created from OCR scan: {result.OriginalFileName}",
+            Notes = linkedPo != null
+                ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
+                : $"Created from OCR scan: {result.OriginalFileName}",
+            // Linkback so the new PI's "อ้างอิงเอกสาร" surfaces the PO.
+            RelatedDocumentId = linkedPo?.Id,
+            // ใบรับรองแทนใบเสร็จ — legal fields the printed form requires.
+            CertificateReason = docType == DocumentType.CertificateInLieu
+                ? "ผู้ขาย/ผู้รับเงินไม่สามารถออกใบเสร็จรับเงินได้" : null,
+            CertifierName = certifierName,
             CreatedBy = createdBy
         };
 
@@ -3112,28 +3420,96 @@ public class OcrService : IOcrService
 
         if (items.Count > 0)
         {
+            // Pro-rate the header VAT across lines by amount share (the
+            // paper rarely itemises VAT per line). Remainder lands on the
+            // last line so the lines sum exactly to the header VAT.
+            var lineAmountSum = items.Sum(x => x.Amount ?? 0);
+            var headerVat = result.ExtractedVatAmount ?? 0;
+            decimal vatAssigned = 0;
+            decimal whtAssigned = 0;
+
             int lineOrder = 1;
-            foreach (var item in items)
+            for (var i = 0; i < items.Count; i++)
             {
+                var item = items[i];
                 Guid? lineAccountId = null;
-                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
+                string? lineProductCode = null;
+                Guid? lineSourceLineId = null;
+                // PO-line override (highest priority): when this OCR line was
+                // mapped to a PO line via /link-po, inherit the PO's GL account
+                // + product code so the receiving entry matches the order.
+                // SourceLineId records the consumption — ComputeConsumptionAsync
+                // keys 3-way-match / PO fulfillment on it; without it the PO
+                // stays 100% open after receiving (duplicate-booking risk).
+                if (linkedPo != null && poLineMap.TryGetValue(i, out var mappedPoLineId) && mappedPoLineId.HasValue)
+                {
+                    var poLine = linkedPo.Lines.FirstOrDefault(l => l.Id == mappedPoLineId.Value && !l.IsDeleted);
+                    if (poLine != null)
+                    {
+                        lineAccountId = poLine.AccountId;
+                        lineProductCode = poLine.ProductCode;
+                        lineSourceLineId = poLine.Id;
+                    }
+                }
+                if (lineAccountId == null && !string.IsNullOrEmpty(item.SuggestedAccountCode))
                 {
                     var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
                     lineAccountId = lineAccount?.Id;
                 }
+                // Final fallback: the scan-level suggested debit GL — keeps
+                // every line pre-filled when the classifier only produced a
+                // document-level pick.
+                lineAccountId ??= scanDebitAccountId;
+
+                var amount = item.Amount ?? 0;
+                // Last line absorbs the rounding remainder (both VAT and WHT)
+                // so the line sums tie out exactly to the header figures.
+                decimal lineVat = 0;
+                if (headerVat > 0 && lineAmountSum > 0)
+                {
+                    lineVat = i == items.Count - 1
+                        ? Math.Round(headerVat - vatAssigned, 2)
+                        : Math.Round(headerVat * amount / lineAmountSum, 2);
+                    vatAssigned += lineVat;
+                }
+                decimal lineWht = 0;
+                if (headerWht > 0 && lineAmountSum > 0)
+                {
+                    lineWht = i == items.Count - 1
+                        ? Math.Round(headerWht - whtAssigned, 2)
+                        : Math.Round(headerWht * amount / lineAmountSum, 2);
+                    whtAssigned += lineWht;
+                }
+
                 document.Lines.Add(new DocumentLine
                 {
                     LineOrder = lineOrder++,
                     Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
                     Quantity = item.Quantity ?? 1,
+                    Unit = string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
-                    Amount = item.Amount ?? 0,
-                    VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
+                    Amount = amount,
+                    VatRate = headerVat > 0 ? 7 : 0,
+                    VatAmount = lineVat,
+                    // WHT read off the paper → pre-fill rate + baht per line so
+                    // the WHT cert auto-generation has line data ready.
+                    WithholdingTaxRate = whtRate,
+                    WithholdingTaxAmount = lineWht,
                     AccountId = lineAccountId,
+                    ProductCode = lineProductCode,
+                    SourceLineId = lineSourceLineId,
                     ProjectId = item.ProjectId,
                 });
             }
+
+            // Header-level project: when every line carries the same project
+            // (e.g. set by the metadata matcher or the review UI's main-project
+            // picker), surface it on the header too — list pages + project
+            // P&L fallbacks read the header field.
+            var lineProjects = items.Select(x => x.ProjectId).Distinct().ToList();
+            if (lineProjects.Count == 1 && lineProjects[0].HasValue)
+                document.ProjectId = lineProjects[0];
         }
         else
         {
@@ -3144,10 +3520,15 @@ public class OcrService : IOcrService
                 LineOrder = 1,
                 Description = result.DocumentType ?? "รายการจาก OCR",
                 Quantity = 1,
-                UnitPrice = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
-                Amount = result.ExtractedSubTotal ?? result.ExtractedTotalAmount ?? 0,
+                UnitPrice = headerSubTotal,
+                Amount = headerSubTotal,
                 VatRate = result.ExtractedVatAmount > 0 ? 7 : 0,
                 VatAmount = result.ExtractedVatAmount ?? 0,
+                WithholdingTaxRate = whtRate,
+                WithholdingTaxAmount = headerWht,
+                // Scan-level suggested debit GL — previously this branch left
+                // the account empty even when the classifier knew the answer.
+                AccountId = scanDebitAccountId,
             });
         }
 
@@ -3895,7 +4276,7 @@ public class OcrService : IOcrService
         catch { /* malformed JSON — leave as-is */ }
     }
 
-    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false)
+    public async Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null, Guid? performedByUserId = null)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -3953,6 +4334,32 @@ public class OcrService : IOcrService
             }
         }
 
+        // "Label before delete" (business-flow step): the scan row is removed
+        // for good, so persist the operator's label/reason to the audit log.
+        // Added AFTER every validation that can throw — otherwise a failed
+        // delete left a pending audit row in the tracked context that a later
+        // SaveChanges on the same scoped context would persist.
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = performedByUserId,
+                Action = Models.Enums.AuditAction.Delete,
+                EntityType = "OcrScanResult",
+                EntityId = scanResultId.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    result.OriginalFileName,
+                    result.ExtractedVendorName,
+                    result.ExtractedDocumentNumber,
+                    result.ExtractedTotalAmount,
+                    Label = reason.Trim(),
+                }),
+                Timestamp = DateTime.UtcNow
+            });
+        }
+
         _db.Set<OcrScanResult>().Remove(result);
         await _db.SaveChangesAsync();
     }
@@ -3975,7 +4382,7 @@ public class OcrService : IOcrService
             {
                 items = data.Items.Select(i => new OcrLineItemDto(
                     i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
-                    i.ProjectId, i.ProjectName)).ToList();
+                    i.ProjectId, i.ProjectName, i.Unit)).ToList();
             }
         }
 
@@ -4010,7 +4417,8 @@ public class OcrService : IOcrService
                     el.TryGetProperty("SuggestedAccountCode", out var s) ? s.GetString() : null,
                     el.TryGetProperty("ProjectId", out var pid) && pid.ValueKind == System.Text.Json.JsonValueKind.String
                         && Guid.TryParse(pid.GetString(), out var pg) ? pg : (Guid?)null,
-                    el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null
+                    el.TryGetProperty("ProjectName", out var pn) ? pn.GetString() : null,
+                    el.TryGetProperty("Unit", out var un) ? un.GetString() : null
                 )).ToList();
             }
             catch { }
@@ -4058,7 +4466,12 @@ public class OcrService : IOcrService
             r.PotentialAssetLinesJson,
             Quality: BuildQualityDto(r),
             HasHandwriting: r.HasHandwriting,
-            HandwritingConfidence: r.HandwritingConfidence);
+            HandwritingConfidence: r.HandwritingConfidence,
+            SuggestedEntryMode: r.SuggestedEntryMode,
+            OpenPoNumbersJson: r.OpenPoNumbersJson,
+            LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
+            LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber,
+            ExtractedDiscountAmount: data?.DiscountAmount ?? r.ExtractedDiscountAmount);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
@@ -4119,6 +4532,209 @@ public class OcrService : IOcrService
             $"({etax.DocumentTypeCode}) เลขที่ {etax.DocumentNumber}, ยอดรวม {etax.GrandTotal:N2} {etax.Currency}");
         return data;
     }
+
+    /// <summary>Engine-agnostic raw-text enrichment — fields no structured
+    /// extractor returns today. Fail-safe: any regex/date mishap simply leaves
+    /// the field null (the user can still key it in the review UI).</summary>
+    private void EnrichFromRawText(OcrExtractedData data, string rawText)
+    {
+        if (string.IsNullOrEmpty(rawText)) return;
+        var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
+
+        // 1) Explicit due date ("ครบกำหนด 15/07/2569", "Due Date: 15/07/2026")
+        //    → credit terms in days. The Net-N regex in the parser covers
+        //    "เครดิต 30 วัน"; this covers papers that print a date instead.
+        if (!data.PaymentTermsDays.HasValue && data.DocumentDate.HasValue)
+        {
+            try
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(text,
+                    @"(?:ครบกำหนด(?:ชำระ)?|กำหนดชำระ|due\s*date)\s*:?\s*(?:วันที่)?\s*(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (m.Success
+                    && int.TryParse(m.Groups[1].Value, out var dd)
+                    && int.TryParse(m.Groups[2].Value, out var mm)
+                    && int.TryParse(m.Groups[3].Value, out var yy))
+                {
+                    // Year heuristic: 4-digit ≥2400 = Buddhist Era → −543;
+                    // 2-digit ≥60 = short BE (69 → 2569 → 2026); else short CE.
+                    var year = yy switch
+                    {
+                        >= 2400 => yy - 543,
+                        >= 100 => yy,
+                        >= 60 => 2500 + yy - 543,
+                        _ => 2000 + yy,
+                    };
+                    var due = new DateTime(year, mm, dd);
+                    var days = (due.Date - data.DocumentDate.Value.Date).Days;
+                    if (days is > 0 and <= 365)
+                    {
+                        data.PaymentTermsDays = days;
+                        data.ReasoningTrace.Add($"[Enrich] วันครบกำหนด {due:dd/MM/yyyy} บนเอกสาร → เครดิตเทอม {days} วัน");
+                    }
+                }
+            }
+            catch { /* unparseable date — leave terms empty */ }
+        }
+
+        // 2) Header discount ("ส่วนลด 500.00"). Sanity: must be positive and
+        //    smaller than the grand total, otherwise it's a misread.
+        if (!data.DiscountAmount.HasValue)
+        {
+            var dm = System.Text.RegularExpressions.Regex.Match(text,
+                @"(?:ส่วนลด(?:รวม|การค้า)?|discount)\s*:?\s*(?:฿|บาท)?\s*([\d,]+(?:\.\d{1,2})?)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (dm.Success
+                && decimal.TryParse(dm.Groups[1].Value.Replace(",", ""), out var disc)
+                && disc > 0 && disc < (data.TotalAmount ?? decimal.MaxValue))
+            {
+                data.DiscountAmount = disc;
+                data.ReasoningTrace.Add($"[Enrich] ส่วนลดบนเอกสาร ฿{disc:N2}");
+            }
+        }
+
+        // 3) Per-line unit from the description (ถุง/เส้น/กล่อง/ลัง…) — reuses
+        //    the stock-import unit detector so the two paths agree.
+        foreach (var it in data.Items)
+        {
+            if (!string.IsNullOrEmpty(it.Unit) || string.IsNullOrEmpty(it.Description)) continue;
+            var u = Ocr.ProductMatcher.DetectUnit(it.Description);
+            if (!string.IsNullOrEmpty(u)) it.Unit = u;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PO LINKAGE — the "ฟังก์ชันชื่อแทน / รับตาม PO" function from the diagram
+    // ════════════════════════════════════════════════════════════════════════
+
+    public async Task<List<OpenPurchaseOrderDto>> GetOpenPosForScanAsync(Guid companyId, Guid scanResultId)
+    {
+        var scan = await _db.Set<OcrScanResult>().AsNoTracking()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (!scan.MatchedContactId.HasValue) return new();
+
+        // Lookback window matches the ScanAsync warning (6 mo) so the picker
+        // mirrors the banner — never surfaces a PO the warning didn't flag.
+        var cutoff = DateTime.UtcNow.AddMonths(-6);
+        var pos = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines).ThenInclude(l => l.Account)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.ContactId == scan.MatchedContactId.Value
+                && d.DocumentType == DocumentType.PurchaseOrder
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Rejected
+                && d.Status != DocumentStatus.Draft
+                && d.Status != DocumentStatus.Paid   // fully billed = no longer open
+                && d.DocumentDate >= cutoff)
+            .OrderByDescending(d => d.DocumentDate)
+            .ToListAsync();
+
+        return pos.Select(p => new OpenPurchaseOrderDto(
+            p.Id, p.DocumentNumber, p.DocumentDate, p.Status.ToString(),
+            p.TotalAmount,
+            p.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+                .Select(l => new OpenPurchaseOrderLineDto(
+                    l.Id, l.LineOrder, l.Description, l.Quantity, l.UnitPrice, l.Amount,
+                    l.AccountId, l.Account?.AccountCode))
+                .ToList())).ToList();
+    }
+
+    public async Task<OcrResultResponse> LinkPurchaseOrderAsync(Guid companyId, Guid scanResultId,
+        LinkPurchaseOrderRequest request, string performedBy)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (scan.CreatedDocumentId.HasValue)
+            throw new InvalidOperationException("เอกสารถูกสร้างจาก scan นี้แล้ว — ไม่สามารถเปลี่ยน PO ที่ผูกได้");
+
+        // Resolve the PO — must belong to the same company AND be the vendor
+        // we matched on this scan (prevents linking to an unrelated supplier's
+        // PO by id-tampering).
+        var po = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == request.PurchaseOrderId
+                && d.CompanyId == companyId && !d.IsDeleted
+                && d.DocumentType == DocumentType.PurchaseOrder)
+            ?? throw new KeyNotFoundException("ไม่พบใบสั่งซื้อ");
+        if (scan.MatchedContactId.HasValue && po.ContactId != scan.MatchedContactId.Value)
+            throw new InvalidOperationException("ใบสั่งซื้อนี้ไม่ใช่ของผู้ขายที่จับคู่ไว้");
+
+        // Sanity-check the line mappings — each non-null poLineId must belong
+        // to THIS PO. Drop invalid pairs silently rather than failing the link.
+        var validPoLineIds = po.Lines.Where(l => !l.IsDeleted).Select(l => l.Id).ToHashSet();
+        var cleaned = new Dictionary<int, Guid?>();
+        if (request.LineMappings != null)
+        {
+            foreach (var kv in request.LineMappings)
+            {
+                if (kv.Value == null) cleaned[kv.Key] = null;
+                else if (validPoLineIds.Contains(kv.Value.Value)) cleaned[kv.Key] = kv.Value;
+            }
+        }
+
+        scan.LinkedPurchaseOrderId = po.Id;
+        scan.LinkedPurchaseOrderNumber = po.DocumentNumber;
+        scan.PoLineMappingsJson = cleaned.Count > 0
+            ? System.Text.Json.JsonSerializer.Serialize(cleaned.ToDictionary(k => k.Key.ToString(), k => k.Value))
+            : null;
+        // Pre-stamp the inferred target type so the dropdown reflects the
+        // pick — operator can still override before clicking "สร้างเอกสาร".
+        scan.TargetDocumentType = nameof(DocumentType.PurchaseInvoice);
+        scan.ProcessingNotes = (scan.ProcessingNotes ?? "")
+            + $"\n[PO link] ผูกกับใบสั่งซื้อ {po.DocumentNumber} ({cleaned.Values.Count(v => v.HasValue)}/{cleaned.Count} บรรทัด)";
+
+        // Learn the OCR↔PO line aliases. Mapped PO lines that have a ProductCode
+        // we can resolve get an alias row keyed to this vendor — next scan from
+        // the same supplier matches the wording instantly.
+        if (cleaned.Count > 0 && _productMatcher != null && !string.IsNullOrWhiteSpace(scan.ExtractedItemsJson))
+        {
+            try
+            {
+                var ocrLines = System.Text.Json.JsonSerializer
+                    .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+                foreach (var (ocrIdx, poLineId) in cleaned.Where(kv => kv.Value.HasValue))
+                {
+                    if (ocrIdx < 0 || ocrIdx >= ocrLines.Count) continue;
+                    var ocrDesc = ocrLines[ocrIdx].Description;
+                    if (string.IsNullOrWhiteSpace(ocrDesc)) continue;
+
+                    var poLine = po.Lines.First(l => l.Id == poLineId!.Value);
+                    if (string.IsNullOrWhiteSpace(poLine.ProductCode)) continue;
+                    var product = await _db.Products.AsNoTracking()
+                        .FirstOrDefaultAsync(p => p.CompanyId == companyId
+                            && p.Code == poLine.ProductCode && !p.IsDeleted);
+                    if (product == null) continue;
+
+                    await _productMatcher.RecordAliasAsync(companyId, product.Id, ocrDesc!,
+                        scan.MatchedContactId, performedBy, source: "po-link");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PO-link alias learning failed (non-fatal) for scan {Id}", scanResultId);
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return MapToResponse(scan);
+    }
+
+    public async Task<OcrResultResponse> UnlinkPurchaseOrderAsync(Guid companyId, Guid scanResultId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการสแกน");
+        if (scan.CreatedDocumentId.HasValue)
+            throw new InvalidOperationException("เอกสารถูกสร้างจาก scan นี้แล้ว — ยกเลิกการผูก PO ไม่ได้");
+
+        scan.LinkedPurchaseOrderId = null;
+        scan.LinkedPurchaseOrderNumber = null;
+        scan.PoLineMappingsJson = null;
+        await _db.SaveChangesAsync();
+        return MapToResponse(scan);
+    }
 }
 
 internal class OcrExtractedData
@@ -4144,6 +4760,9 @@ internal class OcrExtractedData
     public decimal? VatAmount { get; set; }
     public decimal? TotalAmount { get; set; }
     public string? ExpenseCategory { get; set; }
+    /// <summary>Header discount (ส่วนลด) read off the paper — flows to
+    /// Document.DiscountAmount on creation.</summary>
+    public decimal? DiscountAmount { get; set; }
     public string? DebitAccountCode { get; set; }
     public string? DebitAccountName { get; set; }
     public string? CreditAccountCode { get; set; }
@@ -4191,4 +4810,7 @@ internal class OcrExtractedLineItem
     /// user's allocation work + auto-create uses it.</summary>
     public Guid? ProjectId { get; set; }
     public string? ProjectName { get; set; }
+    /// <summary>Unit (ถุง/เส้น/กล่อง…) detected from the description —
+    /// flows to DocumentLine.Unit instead of the blanket "ชิ้น" default.</summary>
+    public string? Unit { get; set; }
 }

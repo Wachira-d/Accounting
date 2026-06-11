@@ -62,7 +62,15 @@ public class OcrController : ControllerBase
         // file (a multipart form field) — order/project line info used to
         // auto-allocate each OCR'd line to its originating project. Free-text
         // JSON; ignored when absent or unparseable.
-        [FromForm] string? metadata = null)
+        [FromForm] string? metadata = null,
+        // Whether to AUTO-CREATE the inferred target document right after the
+        // scan. Web/human uploads must leave this null → the gating below
+        // resolves to false so the user picks the doc type explicitly in the
+        // review UI (matches the business flow). Integration partner syncs
+        // (authenticated by an int_ key) default to true to preserve their
+        // historical zero-touch behavior; partners or web callers can override
+        // with ?autoCreate=true / false at any time.
+        [FromQuery] bool? autoCreate = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์"));
@@ -148,10 +156,18 @@ public class OcrController : ControllerBase
         _db.FileAttachments.Add(attachment);
         await _db.SaveChangesAsync();
 
+        // EFFECTIVE auto-create flag:
+        //   explicit ?autoCreate=… wins; otherwise default by auth context —
+        //   integration partner key (carries IntegrationId) → true (preserves
+        //   "zero-touch sync"); web/JWT/acc_ key → false (user picks).
+        var isIntegrationPartner = HttpContext.Items.ContainsKey("IntegrationId")
+            || User.FindFirst("IntegrationId") != null;
+        var effectiveAutoCreate = autoCreate ?? isIntegrationPartner;
+
         OcrResultResponse result;
         try
         {
-            result = await _service.ScanAsync(companyId, attachment.Id, preferredEngine, metadata);
+            result = await _service.ScanAsync(companyId, attachment.Id, preferredEngine, metadata, effectiveAutoCreate);
         }
         catch
         {
@@ -171,8 +187,18 @@ public class OcrController : ControllerBase
     }
 
     [HttpPost("scan/{fileAttachmentId:guid}")]
-    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Scan(Guid companyId, Guid fileAttachmentId)
-        => Ok(new ApiResponse<OcrResultResponse>(true, await _service.ScanAsync(companyId, fileAttachmentId)));
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Scan(
+        Guid companyId, Guid fileAttachmentId, [FromQuery] bool? autoCreate = null)
+    {
+        // Same auto-create defaulting as /upload — integration partners using
+        // the two-step upload-then-scan flow keep their zero-touch behavior;
+        // web/JWT callers default to suggest-only.
+        var isIntegrationPartner = HttpContext.Items.ContainsKey("IntegrationId")
+            || User.FindFirst("IntegrationId") != null;
+        var effective = autoCreate ?? isIntegrationPartner;
+        return Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.ScanAsync(companyId, fileAttachmentId, autoCreate: effective)));
+    }
 
     /// <summary>
     /// Re-process an existing scan without consuming additional quota.
@@ -262,6 +288,34 @@ public class OcrController : ControllerBase
             onlyEmpty = req.OnlyEmpty,
         }, req.ProjectId.HasValue ? verb + "แล้ว" : "ล้าง project ทุกบรรทัดแล้ว"));
     }
+
+    /// <summary>List the matched vendor's open Purchase Orders for the
+    /// review modal's "เลือก PO" picker — each PO comes back with its
+    /// line items inline so the operator can map OCR↔PO lines without
+    /// a second call.</summary>
+    [HttpGet("{scanId:guid}/open-pos")]
+    public async Task<ActionResult<ApiResponse<List<OpenPurchaseOrderDto>>>> GetOpenPos(Guid companyId, Guid scanId)
+        => Ok(new ApiResponse<List<OpenPurchaseOrderDto>>(true,
+            await _service.GetOpenPosForScanAsync(companyId, scanId)));
+
+    /// <summary>Link this scan to one of the vendor's open POs and record the
+    /// per-line OCR↔PO mappings (the "ฟังก์ชันชื่อแทน" function). When
+    /// CreateDocument fires later, the resulting Purchase Invoice inherits the
+    /// PO's GL accounts on mapped lines and links back via RelatedDocumentId.</summary>
+    [HttpPost("{scanId:guid}/link-po")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> LinkPo(
+        Guid companyId, Guid scanId, [FromBody] LinkPurchaseOrderRequest request)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.LinkPurchaseOrderAsync(companyId, scanId, request, User.Identity?.Name ?? "ocr-po-link"),
+            "ผูกกับใบสั่งซื้อสำเร็จ"));
+
+    /// <summary>Remove the PO linkage from a scan (no document yet created).
+    /// Lets the operator re-pick or fall back to plain expense entry.</summary>
+    [HttpDelete("{scanId:guid}/link-po")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UnlinkPo(Guid companyId, Guid scanId)
+        => Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.UnlinkPurchaseOrderAsync(companyId, scanId),
+            "ยกเลิกการผูก PO แล้ว"));
 
     public sealed record SetLineProjectRequest(int LineIndex, Guid? ProjectId, string? ProjectName);
 
@@ -860,9 +914,21 @@ public class OcrController : ControllerBase
     /// or paid (those need to be voided via the normal Documents flow).
     /// </summary>
     [HttpDelete("{scanId:guid}")]
-    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid companyId, Guid scanId, [FromQuery] bool cascade = false)
+    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid companyId, Guid scanId,
+        [FromQuery] bool cascade = false,
+        // Optional operator label explaining WHY the scan is being discarded
+        // ("ไม่ใช่เอกสารบริษัท", "ค่าใช้จ่ายต้องห้าม", …). Persisted to the
+        // audit log before the row is removed.
+        [FromQuery] string? reason = null)
     {
-        await _service.DeleteScanAsync(companyId, scanId, cascade);
+        // Capture the operator id so the audit row records WHO labelled+deleted,
+        // not just when. Falls back to Guid.Empty when the caller is an int_
+        // key with no real user (passed as null so the audit row stays clean).
+        Guid? actor;
+        try { actor = JwtHelper.GetUserIdFromClaims(User); if (actor == Guid.Empty) actor = null; }
+        catch { actor = null; }
+
+        await _service.DeleteScanAsync(companyId, scanId, cascade, reason, actor);
         return Ok(new ApiResponse<object>(true, null,
             cascade ? "ลบ scan และเอกสารที่สร้างอัตโนมัติเรียบร้อย" : "ลบสำเร็จ"));
     }

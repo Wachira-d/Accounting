@@ -140,7 +140,36 @@ public class OcrScanResult : TenantEntity
     public decimal? ExtractedSubTotal { get; set; }
     public decimal? ExtractedVatAmount { get; set; }
     public decimal? ExtractedTotalAmount { get; set; }
+    /// <summary>Header discount (ส่วนลด) read off the paper.</summary>
+    public decimal? ExtractedDiscountAmount { get; set; }
     public string? ExtractedItemsJson { get; set; }       // JSON of line items
+
+    /// <summary>Business-flow hint: which entry mode the operator should pick
+    /// for this scan — "Stock" (vendor has product-alias history + line items)
+    /// or "Expense" (everything else). Suggestion only; user decides.</summary>
+    public string? SuggestedEntryMode { get; set; }
+
+    /// <summary>JSON array of open Purchase Order numbers found for the matched
+    /// vendor at scan time (last 6 months, max 5). Non-null ⇒ the review UI
+    /// warns "this vendor has open POs — book via the PO function instead".</summary>
+    public string? OpenPoNumbersJson { get; set; }
+
+    /// <summary>Operator's chosen Purchase Order to receive this scan against
+    /// (the "ฟังก์ชันชื่อแทน / รับตาม PO" function in the business flow). When
+    /// set, CreateDocumentFromScanAsync inherits the PO's GL accounts on
+    /// matched lines and stamps the new Purchase Invoice as RelatedDocumentId
+    /// = PO id, so the receiving ties back to the order.</summary>
+    public Guid? LinkedPurchaseOrderId { get; set; }
+
+    /// <summary>Denormalised PO DocumentNumber so list endpoints can render
+    /// the "ผูกกับ PO {n}" chip without an extra join per row. Stays in sync
+    /// because PO numbers don't change post-creation.</summary>
+    public string? LinkedPurchaseOrderNumber { get; set; }
+
+    /// <summary>JSON map of {ocrLineIndex → poLineId} the operator confirmed
+    /// when linking to a PO. Drives per-line GL inheritance + ProductAlias
+    /// learning on document creation.</summary>
+    public string? PoLineMappingsJson { get; set; }
 
     /// <summary>Structured metadata an external system (e.g. a project /
     /// materials-ordering system) sends ALONGSIDE the uploaded document.
