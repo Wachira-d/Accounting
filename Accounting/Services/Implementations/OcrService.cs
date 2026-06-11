@@ -643,7 +643,12 @@ public class OcrService : IOcrService
                     companyTaxId: companyContext?.TaxId,
                     companyName: companyContext?.Name,
                     previousScannedType: prevScanned,
-                    buyerInvoiceDefaultTarget: buyerInvoiceTarget);
+                    buyerInvoiceDefaultTarget: buyerInvoiceTarget,
+                    // Credit terms read off THIS paper (regex "เครดิต N วัน" /
+                    // "Net N") — flips invoice target PV→PI when > 0. The
+                    // VendorIntel history backfill runs AFTER this point on
+                    // purpose: only the paper's own terms prove "unpaid".
+                    paymentTermsDays: extractedData.PaymentTermsDays);
                 if (role.ScannedDocType.HasValue)
                     extractedData.DocumentType = role.ScannedDocType.Value.ToString();
                 extractedData.OurRole = role.OurRole;
