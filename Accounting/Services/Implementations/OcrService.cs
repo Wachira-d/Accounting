@@ -1202,7 +1202,13 @@ public class OcrService : IOcrService
                     }
                     var ocrBranch = NormBranch(extractedData.VendorBranchCode);
                     var byBranch = taxMatches.FirstOrDefault(c => NormBranch(c.BranchCode) == ocrBranch);
-                    var pick = byBranch ?? taxMatches[0];
+                    // Deterministic fallback: head office (00000) first, then
+                    // lowest branch code — an unordered query made the pick
+                    // change between scans.
+                    var pick = byBranch ?? taxMatches
+                        .OrderBy(c => NormBranch(c.BranchCode))
+                        .ThenBy(c => c.Id)
+                        .First();
                     scanResult.MatchedContactId = pick.Id;
                     extractedData.ReasoningTrace.Add(byBranch != null
                         ? $"[Branch] TaxID ตรง {taxMatches.Count} รายชื่อ — เลือกตามสาขา {ocrBranch}: '{pick.Name}'"
@@ -1489,6 +1495,7 @@ public class OcrService : IOcrService
                             && d.Status != DocumentStatus.Voided
                             && d.Status != DocumentStatus.Rejected
                             && d.Status != DocumentStatus.Draft
+                            && d.Status != DocumentStatus.Paid   // fully billed = no longer open
                             && d.DocumentDate >= poCutoff)
                         .OrderByDescending(d => d.DocumentDate)
                         .Select(d => new { d.Id, d.DocumentNumber })
@@ -3315,10 +3322,20 @@ public class OcrService : IOcrService
         // The scan records HasWht + WhtRate (the % read off the paper); the
         // baht amount is recomputed from the ex-VAT base so the created
         // document carries the withholding without the user re-keying it.
+        // WHT base is ALWAYS (grand total − VAT) — not ExtractedSubTotal,
+        // which on discounted papers is the PRE-discount figure and would
+        // overstate the withholding by discount × rate.
         var headerSubTotal = result.ExtractedSubTotal
             ?? Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
-        var headerWht = whtRate > 0 ? Math.Round(headerSubTotal * whtRate / 100m, 2) : 0m;
+        var headerWht = whtRate > 0 ? Math.Round(whtBase * whtRate / 100m, 2) : 0m;
+        // App-wide convention (DocumentService / IntegrationService):
+        // TotalAmount = SubTotal + VAT − WHT (net payable). The paper's grand
+        // total does NOT deduct WHT, so subtract here — otherwise
+        // TotalAmount ≠ PaidAmount + BalanceDue and a later edit-recompute
+        // shifts the total by the WHT amount.
+        var headerTotal = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - headerWht);
 
         // ── Pre-fill: scan-level suggested debit GL ──
         // Used as the line-account fallback when a line has neither a PO
@@ -3362,10 +3379,14 @@ public class OcrService : IOcrService
             VatAmount = result.ExtractedVatAmount ?? 0,
             DiscountAmount = result.ExtractedDiscountAmount ?? 0,
             WithholdingTaxAmount = headerWht,
-            TotalAmount = result.ExtractedTotalAmount ?? 0,
-            // Net payable = grand total − withholding (consistent with the
-            // integration + manual-entry flows).
-            BalanceDue = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - headerWht),
+            TotalAmount = headerTotal,
+            // Paid-evidence types are cash-settled at creation — the app's
+            // convention (DocumentService edit/approve paths) keeps such docs
+            // at BalanceDue=0 / PaidAmount=Total so they never appear in the
+            // aging / ค้างชำระ reports. Credit types carry the full balance.
+            PaymentType = isPaidType ? Models.Enums.PaymentType.Cash : null,
+            PaidAmount = isPaidType ? headerTotal : 0,
+            BalanceDue = isPaidType ? 0 : headerTotal,
             Reference = result.ExtractedDocumentNumber,
             Notes = linkedPo != null
                 ? $"Created from OCR scan: {result.OriginalFileName} (รับตาม PO {linkedPo.DocumentNumber})"
@@ -3405,6 +3426,7 @@ public class OcrService : IOcrService
             var lineAmountSum = items.Sum(x => x.Amount ?? 0);
             var headerVat = result.ExtractedVatAmount ?? 0;
             decimal vatAssigned = 0;
+            decimal whtAssigned = 0;
 
             int lineOrder = 1;
             for (var i = 0; i < items.Count; i++)
@@ -3412,9 +3434,13 @@ public class OcrService : IOcrService
                 var item = items[i];
                 Guid? lineAccountId = null;
                 string? lineProductCode = null;
+                Guid? lineSourceLineId = null;
                 // PO-line override (highest priority): when this OCR line was
                 // mapped to a PO line via /link-po, inherit the PO's GL account
                 // + product code so the receiving entry matches the order.
+                // SourceLineId records the consumption — ComputeConsumptionAsync
+                // keys 3-way-match / PO fulfillment on it; without it the PO
+                // stays 100% open after receiving (duplicate-booking risk).
                 if (linkedPo != null && poLineMap.TryGetValue(i, out var mappedPoLineId) && mappedPoLineId.HasValue)
                 {
                     var poLine = linkedPo.Lines.FirstOrDefault(l => l.Id == mappedPoLineId.Value && !l.IsDeleted);
@@ -3422,6 +3448,7 @@ public class OcrService : IOcrService
                     {
                         lineAccountId = poLine.AccountId;
                         lineProductCode = poLine.ProductCode;
+                        lineSourceLineId = poLine.Id;
                     }
                 }
                 if (lineAccountId == null && !string.IsNullOrEmpty(item.SuggestedAccountCode))
@@ -3436,7 +3463,8 @@ public class OcrService : IOcrService
                 lineAccountId ??= scanDebitAccountId;
 
                 var amount = item.Amount ?? 0;
-                // Last line absorbs the rounding remainder.
+                // Last line absorbs the rounding remainder (both VAT and WHT)
+                // so the line sums tie out exactly to the header figures.
                 decimal lineVat = 0;
                 if (headerVat > 0 && lineAmountSum > 0)
                 {
@@ -3444,6 +3472,14 @@ public class OcrService : IOcrService
                         ? Math.Round(headerVat - vatAssigned, 2)
                         : Math.Round(headerVat * amount / lineAmountSum, 2);
                     vatAssigned += lineVat;
+                }
+                decimal lineWht = 0;
+                if (headerWht > 0 && lineAmountSum > 0)
+                {
+                    lineWht = i == items.Count - 1
+                        ? Math.Round(headerWht - whtAssigned, 2)
+                        : Math.Round(headerWht * amount / lineAmountSum, 2);
+                    whtAssigned += lineWht;
                 }
 
                 document.Lines.Add(new DocumentLine
@@ -3459,9 +3495,10 @@ public class OcrService : IOcrService
                     // WHT read off the paper → pre-fill rate + baht per line so
                     // the WHT cert auto-generation has line data ready.
                     WithholdingTaxRate = whtRate,
-                    WithholdingTaxAmount = whtRate > 0 ? Math.Round(amount * whtRate / 100m, 2) : 0,
+                    WithholdingTaxAmount = lineWht,
                     AccountId = lineAccountId,
                     ProductCode = lineProductCode,
+                    SourceLineId = lineSourceLineId,
                     ProjectId = item.ProjectId,
                 });
             }
@@ -4245,30 +4282,6 @@ public class OcrService : IOcrService
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
 
-        // "Label before delete" (business-flow step): the scan row is removed
-        // for good, so persist the operator's label/reason to the audit log —
-        // it both explains the deletion later and is queryable for training.
-        if (!string.IsNullOrWhiteSpace(reason))
-        {
-            _db.AuditLogs.Add(new AuditLog
-            {
-                CompanyId = companyId,
-                UserId = performedByUserId,
-                Action = Models.Enums.AuditAction.Delete,
-                EntityType = "OcrScanResult",
-                EntityId = scanResultId.ToString(),
-                OldValues = System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    result.OriginalFileName,
-                    result.ExtractedVendorName,
-                    result.ExtractedDocumentNumber,
-                    result.ExtractedTotalAmount,
-                    Label = reason.Trim(),
-                }),
-                Timestamp = DateTime.UtcNow
-            });
-        }
-
         // Handle the auto-created document case. Two flows:
         //   • cascadeCreatedDocument = false → bail out (old behavior) so the
         //     user can't accidentally orphan or delete a document they
@@ -4319,6 +4332,32 @@ public class OcrService : IOcrService
                 try { if (File.Exists(file.StoragePath)) File.Delete(file.StoragePath); } catch { }
                 _db.FileAttachments.Remove(file);
             }
+        }
+
+        // "Label before delete" (business-flow step): the scan row is removed
+        // for good, so persist the operator's label/reason to the audit log.
+        // Added AFTER every validation that can throw — otherwise a failed
+        // delete left a pending audit row in the tracked context that a later
+        // SaveChanges on the same scoped context would persist.
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = performedByUserId,
+                Action = Models.Enums.AuditAction.Delete,
+                EntityType = "OcrScanResult",
+                EntityId = scanResultId.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    result.OriginalFileName,
+                    result.ExtractedVendorName,
+                    result.ExtractedDocumentNumber,
+                    result.ExtractedTotalAmount,
+                    Label = reason.Trim(),
+                }),
+                Timestamp = DateTime.UtcNow
+            });
         }
 
         _db.Set<OcrScanResult>().Remove(result);
@@ -4586,6 +4625,7 @@ public class OcrService : IOcrService
                 && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Rejected
                 && d.Status != DocumentStatus.Draft
+                && d.Status != DocumentStatus.Paid   // fully billed = no longer open
                 && d.DocumentDate >= cutoff)
             .OrderByDescending(d => d.DocumentDate)
             .ToListAsync();

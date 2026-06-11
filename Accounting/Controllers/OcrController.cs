@@ -187,8 +187,18 @@ public class OcrController : ControllerBase
     }
 
     [HttpPost("scan/{fileAttachmentId:guid}")]
-    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Scan(Guid companyId, Guid fileAttachmentId)
-        => Ok(new ApiResponse<OcrResultResponse>(true, await _service.ScanAsync(companyId, fileAttachmentId)));
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Scan(
+        Guid companyId, Guid fileAttachmentId, [FromQuery] bool? autoCreate = null)
+    {
+        // Same auto-create defaulting as /upload — integration partners using
+        // the two-step upload-then-scan flow keep their zero-touch behavior;
+        // web/JWT callers default to suggest-only.
+        var isIntegrationPartner = HttpContext.Items.ContainsKey("IntegrationId")
+            || User.FindFirst("IntegrationId") != null;
+        var effective = autoCreate ?? isIntegrationPartner;
+        return Ok(new ApiResponse<OcrResultResponse>(true,
+            await _service.ScanAsync(companyId, fileAttachmentId, autoCreate: effective)));
+    }
 
     /// <summary>
     /// Re-process an existing scan without consuming additional quota.

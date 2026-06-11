@@ -1417,7 +1417,11 @@
         // Optional "label before delete" (per the business flow): a short
         // reason ("ไม่ใช่เอกสารบริษัท", "ค่าใช้จ่ายต้องห้าม", "เอกสารไม่ถูกต้องตามสรรพากร"
         // ฯลฯ) is stored in the audit log so the deletion is explainable later.
-        const reason = (prompt('ระบุเหตุผล/ป้ายกำกับการลบ (ไม่บังคับ — ใช้บันทึกตรวจสอบ):', '') || '').trim() || null;
+        // null = user hit "ยกเลิก" on the prompt → abort the whole deletion;
+        // empty string = no label, proceed (the label is optional).
+        const reasonInput = prompt('ระบุเหตุผล/ป้ายกำกับการลบ (ไม่บังคับ — ใช้บันทึกตรวจสอบ, กดยกเลิกเพื่อไม่ลบ):', '');
+        if (reasonInput === null) return;
+        const reason = reasonInput.trim() || null;
         const api = Layout.api();
         if (!api) return;
         try {
