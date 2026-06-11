@@ -2098,19 +2098,23 @@ public class DocumentService : IDocumentService
         // GRN inserted between PO and PurchaseInvoice so partial receipts
         // are tracked + 3-way match can validate billing against actual
         // receipt quantities.
+        // Role separation (หลักบัญชีไทย): the PR→PO→GRN trade chain is backed
+        // by the supplier's invoice and lands on ใบแจ้งหนี้ซื้อ (เจ้าหนี้การค้า
+        // 21210) ONLY. ใบบันทึกค่าใช้จ่าย is the non-trade expense claim
+        // (เจ้าหนี้อื่น 21220) and is never part of the PO chain — keeping the
+        // two payable ledgers reconcilable independently.
         [DocumentType.PurchaseRequisition] = new[] { DocumentType.PurchaseOrder },
         [DocumentType.PurchaseOrder] = new[]
         {
             DocumentType.GoodsReceiptNote,        // partial GRN against PO
             DocumentType.PurchaseInvoice,         // skip GRN when buying services
-            DocumentType.Expense,
         },
         [DocumentType.GoodsReceiptNote] = new[]
         {
             // From GRN, AP creates the bill. SourceLineId on the new
             // invoice line points back to the GRN line so 3-way match
             // can verify "billed qty ≤ received qty".
-            DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PurchaseInvoice,
         },
         [DocumentType.PurchaseInvoice] = new[]
         {
@@ -3397,6 +3401,35 @@ public class DocumentService : IDocumentService
         return await FindAccountAsync(companyId, "21240");
     }
 
+    /// <summary>Resolve the PAYABLE account by document role — the heart of
+    /// the trade-vs-non-trade separation (หลักบัญชีไทย):
+    ///   • ใบแจ้งหนี้ซื้อ (PurchaseInvoice) = trade purchase backed by the
+    ///     supplier's invoice → เจ้าหนี้การค้า (21210 / "212" family).
+    ///   • ใบบันทึกค่าใช้จ่าย (Expense) = internal expense request / claim
+    ///     with no supplier trade invoice → เจ้าหนี้อื่น (21220), so trade
+    ///     payables stay clean for supplier statement reconciliation.
+    /// The contact's pinned DefaultApAccount still wins for both (the user
+    /// explicitly chose where that vendor's balance lives). Falls back to the
+    /// 212 family when 21220 doesn't exist in a custom chart.</summary>
+    private async Task<ChartOfAccount?> ResolvePayableAccountAsync(
+        Guid companyId, DocumentType sourceType, Contact? contact)
+    {
+        if (sourceType == DocumentType.Expense)
+        {
+            // Pinned per-contact AP override wins (same rule as FindAccountAsync).
+            if (contact?.DefaultApAccountId is Guid pinnedId)
+            {
+                var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.Id == pinnedId && a.CompanyId == companyId && a.IsActive);
+                if (pinned != null) return pinned;
+            }
+            var other = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive);
+            if (other != null) return other;
+        }
+        return await FindAccountAsync(companyId, "212", contact);
+    }
+
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
@@ -3890,16 +3923,21 @@ public class DocumentService : IDocumentService
                     AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
             }
 
-            // Cr: เจ้าหนี้การค้า (212). On Accrual the AP carries NET of WHT
-            // (we'll withhold when we pay). On Cash the AP carries GROSS
-            // (full amount we owe before deducting the WHT we'll withhold
-            // when actually paying).
-            var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
+            // Cr: payable — role-separated (หลักบัญชีไทย):
+            //   PurchaseInvoice → เจ้าหนี้การค้า (21210) — supplier trade invoice.
+            //   Expense         → เจ้าหนี้อื่น (21220) — internal expense claim,
+            //                     no trade invoice; keeps 21210 reconcilable
+            //                     against supplier statements.
+            // On Accrual the payable carries NET of WHT (we'll withhold when we
+            // pay). On Cash it carries GROSS (full amount owed before deducting
+            // the WHT we'll withhold when actually paying).
+            var apAccount = await ResolvePayableAccountAsync(companyId, doc.DocumentType, doc.Contact);
             var apAmountAtInvoice = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
                 ? doc.TotalAmount + doc.WithholdingTaxAmount
                 : doc.TotalAmount;
             if (apAccount != null)
-                AddLine(apAccount.Id, 0, apAmountAtInvoice, $"เจ้าหนี้การค้า - {doc.DocumentNumber}");
+                AddLine(apAccount.Id, 0, apAmountAtInvoice,
+                    $"{(doc.DocumentType == DocumentType.Expense ? "เจ้าหนี้อื่น (ตั้งหนี้ค่าใช้จ่าย)" : "เจ้าหนี้การค้า")} - {doc.DocumentNumber}");
 
             // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย (21916 ภ.ง.ด.3 / 21917 ภ.ง.ด.53).
             // Accrual only — Cash basis defers to the PaymentVoucher path.
@@ -4016,7 +4054,16 @@ public class DocumentService : IDocumentService
 
             if (doc.RelatedDocumentId.HasValue)
             {
-                var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
+                // Settlement must CLEAR the same payable account the source
+                // document CREDITED — an Expense booked เจ้าหนี้อื่น (21220),
+                // a PurchaseInvoice booked เจ้าหนี้การค้า (21210). Resolve by
+                // the source doc's type so the liability nets to zero on the
+                // right account.
+                var sourceType = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType)
+                    .FirstOrDefaultAsync() ?? DocumentType.PurchaseInvoice;
+                var apAccount = await ResolvePayableAccountAsync(companyId, sourceType, doc.Contact);
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     // Cash basis: PI booked AP at GROSS, skipped the WHT
@@ -4304,7 +4351,9 @@ public class DocumentService : IDocumentService
         }
         else
         {
-            var apAccount = await FindAccountAsync(companyId, "212", doc.Contact);
+            // Clear the payable on the SAME account the source doc credited —
+            // Expense → เจ้าหนี้อื่น (21220), PI → เจ้าหนี้การค้า (21210).
+            var apAccount = await ResolvePayableAccountAsync(companyId, doc.DocumentType, doc.Contact);
             if (apAccount != null)
             {
                 var apClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;

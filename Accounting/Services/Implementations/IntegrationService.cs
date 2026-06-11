@@ -1184,12 +1184,21 @@ public class IntegrationService : IIntegrationService
             }
             else if (isExpense)
             {
-                // Expense:
+                // Expense (role separation — หลักบัญชีไทย):
                 // Dr: ค่าใช้จ่าย (5xxxx) = SubTotal
                 // Dr: ภาษีซื้อ (1140x) = VatAmount (ถ้ามี)
-                // Cr: เจ้าหนี้การค้า (211xx) = TotalAmount
+                // Cr: เจ้าหนี้อื่น (21220) — the Expense doc is the non-trade
+                //     expense claim, NOT a supplier trade invoice. Falls back
+                //     down the 212 family, then the legacy 211 prefix, so
+                //     custom charts still post.
                 var apAccount = await _db.ChartOfAccounts
-                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
+                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive)
+                    ?? await _db.ChartOfAccounts
+                        .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
+                        .OrderBy(a => a.AccountCode)
+                        .FirstOrDefaultAsync()
+                    ?? await _db.ChartOfAccounts
+                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
                 var expenseAccount = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive);
                 var vatAccount = document.VatAmount > 0
@@ -1339,10 +1348,19 @@ public class IntegrationService : IIntegrationService
         }
         else
         {
-            counterpart = await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive)
+            // Clear the SAME payable account the document's journal credited:
+            // Expense → เจ้าหนี้อื่น (21220); trade docs → 212 family; legacy
+            // 211 prefix last so old charts keep working.
+            counterpart = document.DocumentType == DocumentType.Expense
+                ? await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive)
+                : null;
+            counterpart ??= await _db.ChartOfAccounts
+                    .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
+                    .OrderBy(a => a.AccountCode)
+                    .FirstOrDefaultAsync()
                 ?? await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive);
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
         }
         if (counterpart == null) return null;
 

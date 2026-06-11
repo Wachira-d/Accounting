@@ -119,9 +119,9 @@
                 <optgroup label="📤 ฝั่งรายจ่าย" id="fDocTypeExpense">
                   <option value="PurchaseRequisition" title="ใบขอซื้อภายใน (PR) — แผนกขออนุมัติซื้อ ก่อนสั่งจริง, ไม่ลง GL">ใบขอซื้อ (PR)</option>
                   <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) ส่งให้ vendor — Commitment, ยังไม่ลง GL, ใช้ track ยอดสั่งซื้อ">ใบสั่งซื้อ (PO)</option>
-                  <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ที่ vendor ออกใบกำกับให้ — Dr Inventory/Asset + VAT / Cr AP, กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
-                  <option value="Expense" title="ค่าใช้จ่ายทั่วไป (ค่าน้ำ ค่าไฟ ค่าเช่า) — บริษัทจ่ายเอง — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
-                  <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ใช้ตอนชำระ PI / Expense ทีหลัง — Dr AP / Cr Cash — ตัดยอดเจ้าหนี้">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                  <option value="PurchaseInvoice" title="การค้า: มีใบแจ้งหนี้/ใบกำกับจากผู้ขาย — Dr สินค้า/ค่าใช้จ่าย + ภาษีซื้อ / Cr เจ้าหนี้การค้า (21210), กระทบสต๊อก, อยู่ในสาย PO→GRN→PI">ใบแจ้งหนี้ซื้อ (มีใบแจ้งหนี้ผู้ขาย — เจ้าหนี้การค้า)</option>
+                  <option value="Expense" title="คำขอ/ตั้งหนี้ค่าใช้จ่าย: ค่าใช้จ่ายภายใน-เบิกจ่าย ไม่มีใบแจ้งหนี้การค้า — Dr ค่าใช้จ่าย / Cr เจ้าหนี้อื่น (21220) — ยังไม่จ่ายเงิน จ่ายผ่านใบสำคัญจ่าย — ไม่กระทบสต๊อก">ใบบันทึกค่าใช้จ่าย (คำขอ/ตั้งหนี้ — เจ้าหนี้อื่น)</option>
+                  <option value="PaymentVoucher" title="การจ่ายเงินจริง: เงินออกทันที — Dr เจ้าหนี้ (ถ้าอ้างอิงเอกสารตั้งหนี้) หรือ Dr ค่าใช้จ่าย / Cr เงินสด-ธนาคาร — ตัดยอดเจ้าหนี้">ใบสำคัญจ่าย (จ่ายเงินจริง/ตัดหนี้)</option>
                   <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — ใช้เมื่อ vendor ออกใบเสร็จไม่ได้ (ตลาดสด, taxi, ผู้ขายไม่จด VAT) — บริษัทออกใบรับรองให้ตัวเอง">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
                 </optgroup>
               </select>
@@ -459,9 +459,9 @@
               </optgroup>
               <optgroup label="📤 ฝั่งรายจ่าย">
                 <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) — commitment, ยังไม่ลง GL">ใบสั่งซื้อ (PO)</option>
-                <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ — Dr Inventory/Asset+VAT / Cr AP — กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
-                <option value="Expense" title="ค่าใช้จ่ายทั่วไป (บริษัทจ่ายเอง) — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
-                <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ชำระ PI/Expense ทีหลัง — Dr AP / Cr Cash">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                <option value="PurchaseInvoice" title="การค้า: มีใบแจ้งหนี้ผู้ขาย — Dr สินค้า/ค่าใช้จ่าย+ภาษีซื้อ / Cr เจ้าหนี้การค้า (21210) — กระทบสต๊อก">ใบแจ้งหนี้ซื้อ (มีใบแจ้งหนี้ผู้ขาย — เจ้าหนี้การค้า)</option>
+                <option value="Expense" title="คำขอ/ตั้งหนี้: ค่าใช้จ่ายภายใน ไม่มีใบแจ้งหนี้การค้า — Dr ค่าใช้จ่าย / Cr เจ้าหนี้อื่น (21220) — จ่ายผ่านใบสำคัญจ่าย">ใบบันทึกค่าใช้จ่าย (คำขอ/ตั้งหนี้ — เจ้าหนี้อื่น)</option>
+                <option value="PaymentVoucher" title="การจ่ายเงินจริง — Dr เจ้าหนี้ / Cr เงินสด-ธนาคาร — ตัดหนี้ที่ตั้งไว้">ใบสำคัญจ่าย (จ่ายเงินจริง/ตัดหนี้)</option>
                 <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — กรณี vendor ออกใบเสร็จไม่ได้">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
               </optgroup>
             </select>
