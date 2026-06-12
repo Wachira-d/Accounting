@@ -92,6 +92,21 @@
       <div class="card" style="padding:24px" id="reportContent">
         <p class="text-gray-400 text-center">เลือกเดือนและประเภทรายงานเพื่อดูข้อมูล</p>
       </div>
+
+      <!-- SSO year-config: เพดานค่าจ้าง + อัตราสมทบ ปรับได้รายปี
+           (พรฎ. ขั้นบันได: 15,000 → 17,500 ปี 2569 → 20,000 ปี 2572 →
+           23,000 ปี 2575) — แถว override บันทึกลง SsoYearConfigs -->
+      <div class="card" style="padding:24px;margin-top:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <h3 style="margin:0;font-size:16px">⚙️ ตั้งค่าประกันสังคมรายปี (เพดานค่าจ้าง / อัตราสมทบ)</h3>
+          <button class="btn btn-sm btn-outline" onclick="Page.loadSsoConfig()">↻ โหลดใหม่</button>
+        </div>
+        <p class="text-gray-400" style="font-size:12px;margin:0 0 12px">
+          ค่าเริ่มต้นเป็นไปตามกฎหมาย (เพดาน 17,500 ตั้งแต่ปี 2569 / ค.ศ. 2026) —
+          แก้เฉพาะปีที่มีประกาศเปลี่ยน เช่น ลดอัตราชั่วคราว แล้วกดบันทึกรายแถว
+        </p>
+        <div id="ssoConfigTable"><p class="text-gray-400 text-center">กำลังโหลด...</p></div>
+      </div>
     </div>
 
     <!-- Employee Modal -->
@@ -258,7 +273,91 @@ const Page = {
     if (tab === 'employees') this.loadEmployees();
     else if (tab === 'runs') this.loadRuns();
     else if (tab === 'leaves') this.loadLeaves();
-    else if (tab === 'reports') this.loadReports();
+    else if (tab === 'reports') { this.loadReports(); this.loadSsoConfig(); }
+  },
+
+  // ===== SSO year-config (เพดานค่าจ้าง/อัตราสมทบ รายปี) =====
+  async loadSsoConfig() {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const box = document.getElementById('ssoConfigTable'); if (!box) return;
+    try {
+      const res = await fetch(`/api/companies/${cid}/payroll/sso-config`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const j = await res.json();
+      if (!j.success) { box.innerHTML = `<p class="text-gray-400">${Layout.esc(j.message || 'โหลดไม่สำเร็จ')}</p>`; return; }
+      const rows = j.data || [];
+      box.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#f8fafc;color:#64748b">
+            <th style="text-align:left;padding:8px">ปี (ค.ศ. / พ.ศ.)</th>
+            <th style="text-align:right;padding:8px">เพดานค่าจ้าง/เดือน</th>
+            <th style="text-align:right;padding:8px">อัตราลูกจ้าง %</th>
+            <th style="text-align:right;padding:8px">อัตรานายจ้าง %</th>
+            <th style="text-align:right;padding:8px">สมทบสูงสุด/เดือน</th>
+            <th style="text-align:center;padding:8px">ที่มา</th>
+            <th style="padding:8px"></th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r => `<tr style="border-top:1px solid #e5e7eb${r.isOverride ? ';background:#fffbeb' : ''}">
+              <td style="padding:6px 8px;font-weight:600">${r.year} / ${r.year + 543}</td>
+              <td style="padding:6px 8px;text-align:right">
+                <input type="number" id="ssoCeil_${r.year}" value="${r.wageCeiling}" min="1000" step="500"
+                       style="width:110px;text-align:right" class="form-input form-input-sm"></td>
+              <td style="padding:6px 8px;text-align:right">
+                <input type="number" id="ssoRate_${r.year}" value="${r.ratePercent}" min="0.5" max="30" step="0.5"
+                       style="width:70px;text-align:right" class="form-input form-input-sm"></td>
+              <td style="padding:6px 8px;text-align:right">
+                <input type="number" id="ssoErRate_${r.year}" value="${r.employerRatePercent}" min="0.5" max="30" step="0.5"
+                       style="width:70px;text-align:right" class="form-input form-input-sm"></td>
+              <td style="padding:6px 8px;text-align:right;font-weight:600">${(r.maxMonthlyContribution || 0).toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
+              <td style="padding:6px 8px;text-align:center">${r.isOverride
+                ? '<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">กำหนดเอง</span>'
+                : '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:10px;font-size:11px">ตามกฎหมาย</span>'}</td>
+              <td style="padding:6px 8px;white-space:nowrap">
+                <button class="btn btn-sm btn-primary" onclick="Page.saveSsoConfig(${r.year})">บันทึก</button>
+                ${r.isOverride ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.resetSsoConfig(${r.year})" title="ลบค่าที่กำหนดเอง กลับไปใช้ตามกฎหมาย">↺</button>` : ''}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+    } catch (err) {
+      box.innerHTML = `<p class="text-gray-400">โหลดไม่สำเร็จ: ${Layout.esc(err.message)}</p>`;
+    }
+  },
+
+  async saveSsoConfig(year) {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const ceil = parseFloat(document.getElementById(`ssoCeil_${year}`)?.value);
+    const rate = parseFloat(document.getElementById(`ssoRate_${year}`)?.value);
+    const erRate = parseFloat(document.getElementById(`ssoErRate_${year}`)?.value);
+    if (!ceil || !rate) { Layout.toast('กรอกเพดานค่าจ้างและอัตราให้ครบ', 'error'); return; }
+    try {
+      const res = await fetch(`/api/companies/${cid}/payroll/sso-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ year, wageCeiling: ceil, ratePercent: rate, employerRatePercent: erRate || rate })
+      });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+      Layout.toast(j.message || `บันทึกปี ${year} แล้ว`);
+      this.loadSsoConfig();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async resetSsoConfig(year) {
+    if (!confirm(`ลบค่าที่กำหนดเองของปี ${year} แล้วกลับไปใช้ค่าตามกฎหมาย?`)) return;
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    try {
+      const res = await fetch(`/api/companies/${cid}/payroll/sso-config/${year}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.message || 'ลบไม่สำเร็จ');
+      Layout.toast(j.message || 'กลับไปใช้ค่าตามกฎหมายแล้ว');
+      this.loadSsoConfig();
+    } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   // ===== Employees =====
