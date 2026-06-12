@@ -58,11 +58,16 @@ public class PayrollService : IPayrollService
     private const decimal PitPvdMaxDeductible = 500_000m;
 
     private readonly IWebhookService? _webhooks;
+    private readonly ITaxFilingExportService? _taxFilingExport;
+    private readonly IFileAttachmentService? _attachments;
+    private readonly ILogger<PayrollService>? _logger;
 
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
-        INotificationEngine? notify = null, IWebhookService? webhooks = null)
+        INotificationEngine? notify = null, IWebhookService? webhooks = null,
+        ITaxFilingExportService? taxFilingExport = null, IFileAttachmentService? attachments = null,
+        ILogger<PayrollService>? logger = null)
     {
         _db = db;
         _pdfService = pdfService;
@@ -72,6 +77,9 @@ public class PayrollService : IPayrollService
         _permissionService = permissionService;
         _notify = notify;
         _webhooks = webhooks;
+        _taxFilingExport = taxFilingExport;
+        _attachments = attachments;
+        _logger = logger;
     }
 
     private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
@@ -1329,6 +1337,12 @@ public class PayrollService : IPayrollService
             message: $"ดำเนินการโดย {processedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
             entityId: run.Id);
 
+        // ── Auto-generate the month's government filings + every payslip and
+        // attach them to the run so HR has a single download point instead of
+        // hunting through three export endpoints. Best-effort — a generation
+        // failure must NOT roll back the already-committed payment.
+        await AutoGenerateFilingsAsync(companyId, run, processedBy);
+
         // Notify each employee whose advance was fully repaid by this run.
         foreach (var adv in clearedAdvances)
         {
@@ -1349,12 +1363,140 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        if (run.Status == "Paid")
-            throw new InvalidOperationException("ไม่สามารถยกเลิกรอบที่จ่ายแล้วได้");
+        if (run.Status == "Voided")
+            throw new InvalidOperationException("รอบจ่ายเงินเดือนนี้ถูกยกเลิกแล้ว");
 
-        run.Status = "Voided";
-        run.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        // Paid runs CAN be voided — but the posted journal entry MUST be
+        // reversed in the same transaction so AP/cash/WHT/SSO payables don't
+        // sit on the books for an event that no longer counts. (Previously
+        // VoidPayrollAsync only flipped the status string, leaving the GL
+        // posted — every voided run silently corrupted the trial balance.)
+        // Salary advances paid down by this run are NOT auto-restored — HR
+        // should reverse those manually from the salary-advance UI, since the
+        // grain of the recovery isn't stored on PayrollDetail.
+        var reversedNote = "รอบยังไม่ถูกผูกบัญชี — ยกเลิกได้ทันที";
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            if (run.Status == "Paid" && run.JournalEntryId.HasValue && _accountingService != null)
+            {
+                await _accountingService.ReverseJournalEntryAsync(companyId, run.JournalEntryId.Value,
+                    reversalDate: DateTime.UtcNow.Date,
+                    description: $"ยกเลิกรอบจ่ายเงินเดือน {run.PayrollNumber} ({run.Month:D2}/{run.Year})",
+                    systemTriggered: true);
+                reversedNote = "ระบบกลับรายการบัญชีที่ผูกอยู่แล้ว — กรุณาตรวจสอบเงินทดรองที่หักไว้ในรอบนี้ในหน้าจัดการเงินทดรองด้วย";
+            }
+
+            run.Status = "Voided";
+            run.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+            title: $"ยกเลิกรอบจ่ายเงินเดือน {run.Month:D2}/{run.Year}",
+            message: reversedNote,
+            entityId: run.Id);
+    }
+
+    /// <summary>
+    /// Auto-generate every government filing + payslip for a paid run and
+    /// attach them to the PayrollRun so HR has ONE place to download from.
+    /// Files produced (each saved as FileAttachment with EntityType="PayrollRun"
+    /// + EntityId=run.Id so the existing attachment list endpoint surfaces
+    /// them):
+    ///   • ภ.ง.ด.1 (รายงานหัก ณ ที่จ่ายเงินเดือน) — submit to RD by the 7th
+    ///   • สปส.1-10 (เงินสมทบประกันสังคม) — submit to SSO by the 15th
+    ///   • Slip เงินเดือน — one PDF per employee
+    /// Every step is wrapped so a single broken payslip doesn't lose the others.
+    /// Idempotent on file name — re-running (e.g. after a retry) skips files
+    /// already attached.
+    /// </summary>
+    private async Task AutoGenerateFilingsAsync(Guid companyId, PayrollRun run, string actor)
+    {
+        if (_attachments == null) return;
+
+        // Resolve a real user for the FileAttachment FK (FileAttachmentService
+        // requires UploadedByUserId). Owner is the safe fallback — same pattern
+        // used by OcrController.ResolveUploaderUserIdAsync / WHT cert attach.
+        Guid uploaderId = Guid.Empty;
+        if (Guid.TryParse(actor, out var parsed)
+            && await _db.Users.AsNoTracking().AnyAsync(u => u.Id == parsed))
+            uploaderId = parsed;
+        if (uploaderId == Guid.Empty)
+            uploaderId = await _db.Set<CompanyUser>().AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+        if (uploaderId == Guid.Empty)
+            uploaderId = await _db.Set<CompanyUser>().AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+        if (uploaderId == Guid.Empty) return;  // no user → can't attribute
+
+        var existing = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted
+                && f.EntityType == "PayrollRun" && f.EntityId == run.Id)
+            .Select(f => f.OriginalFileName)
+            .ToListAsync();
+        var alreadyAttached = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+
+        async Task AttachAsync(string fileName, string contentType, byte[] bytes)
+        {
+            if (alreadyAttached.Contains(fileName) || bytes is null || bytes.Length == 0) return;
+            try { await _attachments.UploadBytesAsync(companyId, "PayrollRun", run.Id, fileName, contentType, bytes, uploaderId); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Attach filing {File} failed for run {Run}", fileName, run.Id); }
+        }
+
+        // ── 1. ภ.ง.ด.1 — monthly salary WHT remittance ──────────────────
+        if (_taxFilingExport != null && run.TotalWithholdingTax > 0)
+        {
+            try
+            {
+                var pnd1 = await _taxFilingExport.ExportPnd1Async(companyId, run.Year, run.Month);
+                await AttachAsync(pnd1.FileName, pnd1.ContentType, pnd1.FileData);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "ภ.ง.ด.1 generation failed for run {Run}", run.Id);
+            }
+        }
+
+        // ── 2. สปส.1-10 — monthly SSO contribution report ────────────────
+        if (_taxFilingExport != null
+            && (run.TotalSocialSecurityEmployee > 0 || run.TotalSocialSecurityEmployer > 0))
+        {
+            try
+            {
+                var sso = await _taxFilingExport.ExportSso110Async(companyId, run.Year, run.Month);
+                await AttachAsync(sso.FileName, sso.ContentType, sso.FileData);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "สปส.1-10 generation failed for run {Run}", run.Id);
+            }
+        }
+
+        // ── 3. Payslips — one PDF per employee ──────────────────────────
+        var employeeIds = await _db.Set<PayrollDetail>().AsNoTracking()
+            .Where(d => d.PayrollRunId == run.Id && d.CompanyId == companyId)
+            .Select(d => d.EmployeeId).ToListAsync();
+        foreach (var empId in employeeIds)
+        {
+            try
+            {
+                var slip = await GeneratePayslipAsync(companyId, run.Id, empId);
+                await AttachAsync(slip.FileName, "application/pdf", slip.PdfData);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Payslip generation failed (run {Run}, employee {Emp})", run.Id, empId);
+            }
+        }
     }
 
     public async Task<PayrollDetailResponse> GetPayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId)
