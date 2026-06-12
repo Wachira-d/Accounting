@@ -169,6 +169,23 @@ public record InboundExpenseRequest(
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null);
 
+/// <summary>ใบสำคัญจ่าย (การจ่ายเงินจริง) จากระบบภายนอก — สำหรับ voucher
+/// ที่จ่ายเงินไปแล้วในระบบต้นทาง: สร้างเอกสาร PV เดียวจบ (Dr ค่าใช้จ่าย /
+/// Cr เงินสด-ธนาคาร) ไม่ต้อง map เป็น expense + payment สองยก
+/// ซึ่งสร้างหนี้หลอกที่ถูกตัดทันที</summary>
+public record InboundPaymentVoucherRequest(
+    string? ExternalId, string? ExternalRef,
+    string? SupplierExternalId, string? SupplierName, string? SupplierTaxId,
+    DateTime DocumentDate,
+    DateTime? PaymentDate,
+    List<InboundInvoiceLineRequest> Lines,
+    decimal? VatRate,
+    string? Notes,
+    bool IncludeVat = true,
+    List<InboundAttachment>? Attachments = null,
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null);
+
 /// <summary>ใบรับรองแทนใบเสร็จจากระบบภายนอก</summary>
 public record InboundCertificateInLieuRequest(
     string? ExternalId, string? ExternalRef,
@@ -239,7 +256,8 @@ public record InboundBatchRequest(
     [property: MaxLength(500)] List<InboundExpenseRequest>? Expenses,
     [property: MaxLength(500)] List<InboundProductRequest>? Products,
     [property: MaxLength(500)] List<InboundJournalRequest>? Journals,
-    [property: MaxLength(500)] List<InboundCertificateInLieuRequest>? CertificatesInLieu = null);
+    [property: MaxLength(500)] List<InboundCertificateInLieuRequest>? CertificatesInLieu = null,
+    [property: MaxLength(500)] List<InboundPaymentVoucherRequest>? PaymentVouchers = null);
 
 public record InboundBatchResponse(
     int TotalProcessed, int SuccessCount, int ErrorCount,

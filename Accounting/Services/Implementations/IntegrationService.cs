@@ -1868,6 +1868,222 @@ public class IntegrationService : IIntegrationService
         }
     }
 
+    public async Task<InboundSyncResponse> ProcessPaymentVoucherAsync(Guid companyId, Guid integrationId, InboundPaymentVoucherRequest request)
+    {
+        var sw = Stopwatch.StartNew();
+        var log = CreateSyncLog(companyId, integrationId, "payment_voucher.created", request.ExternalId, request.ExternalRef);
+
+        try
+        {
+            // Resolve supplier contact — same cascade as the expense sync.
+            Contact? supplier = null;
+            if (!string.IsNullOrEmpty(request.SupplierTaxId))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
+            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
+
+            if (supplier == null)
+            {
+                supplier = new Contact
+                {
+                    CompanyId = companyId,
+                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
+                    TaxId = request.SupplierTaxId,
+                    IsCustomer = false,
+                    IsSupplier = true,
+                    IsActive = true
+                };
+                _db.Set<Contact>().Add(supplier);
+                await _db.SaveChangesAsync();
+            }
+
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher);
+            var vatRate = request.VatRate ?? 7m;
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+            var subTotal = lines.Sum(l => l.Amount);
+            var totalVat = lines.Sum(l => l.VatAmount);
+            var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
+            // Net cash out = gross − withholding (the supplier receives net).
+            var totalAmount = (request.IncludeVat ? subTotal : subTotal + totalVat) - totalWht;
+            var paymentDate = NormalizeDate(request.PaymentDate ?? request.DocumentDate);
+
+            // Role separation (หลักบัญชีไทย): a Payment Voucher IS the
+            // disbursement — created already-paid (Cash, no balance, no due
+            // date). The two-step "expense + payment" mapping is no longer
+            // needed for vouchers the partner has already paid.
+            var document = new Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = docNumber,
+                DocumentType = DocumentType.PaymentVoucher,
+                Status = DocumentStatus.Approved,
+                DocumentDate = NormalizeDate(request.DocumentDate),
+                PaymentDate = paymentDate,
+                ContactId = supplier.Id,
+                Reference = request.ExternalRef,
+                SubTotal = subTotal,
+                VatAmount = totalVat,
+                WithholdingTaxAmount = totalWht,
+                TotalAmount = totalAmount,
+                PaymentType = Models.Enums.PaymentType.Cash,
+                PaidAmount = totalAmount,
+                BalanceDue = 0,
+                Notes = request.Notes,
+                PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
+                PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
+                Lines = lines
+            };
+
+            _db.Documents.Add(document);
+            await _db.SaveChangesAsync();
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
+
+            var journalEntryId = await CreatePaymentVoucherJournalAsync(companyId, document);
+
+            // Auto-issue the WHT certificate — a paid voucher with withholding
+            // is exactly when the 50 ทวิ must be handed to the supplier.
+            var whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+
+            log.Status = "Success";
+            log.CreatedDocumentId = document.Id;
+            log.CreatedContactId = supplier.Id;
+            log.CreatedJournalEntryId = journalEntryId;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+
+            return new InboundSyncResponse(true, "Payment voucher created" + whtNote, document.Id, supplier.Id, journalEntryId, null, docNumber);
+        }
+        catch (Exception ex)
+        {
+            return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
+    /// <summary>GL for a partner-synced Payment Voucher (already paid):
+    ///   Dr ค่าใช้จ่ายตามบรรทัด (resolved AccountId, generic-expense fallback)
+    ///   Dr ภาษีซื้อ (1140x)
+    ///   Cr เงินสด (111 family — cash; partners pay from their own till)
+    ///   Cr ภาษีหัก ณ ที่จ่ายค้างจ่าย (21917 นิติบุคคล / 21916 บุคคลธรรมดา)
+    /// Balanced by construction: Dr(sub+vat) = Cr(net cash) + Cr(wht).</summary>
+    private async Task<Guid?> CreatePaymentVoucherJournalAsync(Guid companyId, Document document)
+    {
+        var expenseAccount = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive);
+        var cashAccount = await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.AccountCode.Length >= 5 && a.IsActive)
+                .OrderBy(a => a.AccountCode)
+                .FirstOrDefaultAsync()
+            ?? await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive);
+        if (expenseAccount == null || cashAccount == null)
+        {
+            _logger.LogWarning("ไม่พบผังบัญชีค่าใช้จ่าย/เงินสด สำหรับ company {CompanyId} — ไม่สร้าง journal", companyId);
+            return null;
+        }
+
+        var journalLines = new List<JournalEntryLine>();
+        int lineOrder = 1;
+
+        foreach (var dl in document.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder))
+            journalLines.Add(new JournalEntryLine
+            {
+                AccountId = dl.AccountId ?? expenseAccount.Id,
+                DebitAmount = dl.Amount,
+                Description = string.IsNullOrWhiteSpace(dl.Description)
+                    ? $"ค่าใช้จ่าย - {document.DocumentNumber}" : dl.Description,
+                LineOrder = lineOrder++
+            });
+
+        if (document.VatAmount > 0)
+        {
+            var vatAccount = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("1140") && a.IsActive);
+            if (vatAccount != null)
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = vatAccount.Id,
+                    DebitAmount = document.VatAmount,
+                    Description = $"ภาษีซื้อ - {document.DocumentNumber}",
+                    LineOrder = lineOrder++
+                });
+        }
+
+        journalLines.Add(new JournalEntryLine
+        {
+            AccountId = cashAccount.Id,
+            CreditAmount = document.TotalAmount,
+            Description = $"จ่ายเงิน - {document.DocumentNumber}",
+            LineOrder = lineOrder++
+        });
+
+        if (document.WithholdingTaxAmount > 0)
+        {
+            // 21917 = ภ.ง.ด.53 (นิติบุคคล), 21916 = ภ.ง.ด.3 (บุคคลธรรมดา) —
+            // pick by the supplier's juristic-vs-individual TaxId heuristic.
+            var supplier = await _db.Set<Contact>().AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == document.ContactId);
+            var juristic = supplier?.TaxId != null && supplier.TaxId.StartsWith("0");
+            var whtCode = juristic ? "21917" : "21916";
+            var whtAccount = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == whtCode && a.IsActive)
+                ?? await _db.ChartOfAccounts
+                    .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("2191")
+                        && a.AccountCode != "21911" && a.IsActive)
+                    .OrderBy(a => a.AccountCode)
+                    .FirstOrDefaultAsync();
+            if (whtAccount != null)
+                journalLines.Add(new JournalEntryLine
+                {
+                    AccountId = whtAccount.Id,
+                    CreditAmount = document.WithholdingTaxAmount,
+                    Description = $"ภาษีหัก ณ ที่จ่ายค้างจ่าย - {document.DocumentNumber}",
+                    LineOrder = lineOrder++
+                });
+            else
+                // No WHT-payable account — fold into cash so the entry still
+                // balances (logged for the admin to fix the chart).
+                _logger.LogWarning("ไม่พบบัญชีภาษีหัก ณ ที่จ่ายค้างจ่าย (2191x) สำหรับ company {CompanyId}", companyId);
+        }
+
+        var totalDebit = journalLines.Sum(l => l.DebitAmount);
+        var totalCredit = journalLines.Sum(l => l.CreditAmount);
+        if (totalDebit != totalCredit)
+        {
+            _logger.LogWarning("PV journal ไม่ balance (Dr {Dr} ≠ Cr {Cr}) สำหรับเอกสาร {Doc} — ไม่สร้าง journal",
+                totalDebit, totalCredit, document.DocumentNumber);
+            return null;
+        }
+
+        var journalNumber = await GetNextJournalNumberAsync(companyId, "PV");
+        var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId
+            && f.StartDate <= document.DocumentDate
+            && f.EndDate >= document.DocumentDate
+            && f.Status == FiscalPeriodStatus.Open);
+
+        var je = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = journalNumber,
+            EntryDate = document.DocumentDate,
+            JournalType = JournalType.CashPayments,
+            Description = $"ใบสำคัญจ่าย {document.DocumentNumber} (integration sync)",
+            Reference = document.Reference,
+            Status = JournalEntryStatus.Posted,
+            TotalDebit = totalDebit,
+            TotalCredit = totalCredit,
+            SourceDocumentId = document.Id,
+            FiscalPeriodId = fiscalPeriod?.Id,
+            IsAutoGenerated = true,
+            CreatedBy = "integration-sync"
+        };
+        foreach (var l in journalLines)
+            je.Lines.Add(l);   // EF wires JournalEntryId via the nav on save
+        _db.JournalEntries.Add(je);
+        await _db.SaveChangesAsync();
+        return je.Id;
+    }
+
     public async Task<InboundSyncResponse> ProcessCertificateInLieuAsync(Guid companyId, Guid integrationId, InboundCertificateInLieuRequest request)
     {
         var sw = Stopwatch.StartNew();
@@ -2315,6 +2531,17 @@ public class IntegrationService : IIntegrationService
             {
                 var r = await ProcessPaymentAsync(companyId, integrationId, p);
                 results.Add(new BatchResultItem("Payment", p.ExternalRef, r.Success, r.Message, r.PaymentId, r.DocumentNumber));
+                if (r.Success) success++; else errors++;
+            }
+        }
+
+        // Process payment vouchers (already-paid disbursements)
+        if (request.PaymentVouchers != null)
+        {
+            foreach (var pv in request.PaymentVouchers)
+            {
+                var r = await ProcessPaymentVoucherAsync(companyId, integrationId, pv);
+                results.Add(new BatchResultItem("PaymentVoucher", pv.ExternalRef, r.Success, r.Message, r.DocumentId, r.DocumentNumber));
                 if (r.Success) success++; else errors++;
             }
         }

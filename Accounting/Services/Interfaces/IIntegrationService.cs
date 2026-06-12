@@ -34,6 +34,9 @@ public interface IIntegrationService
     Task<InboundSyncResponse> ProcessDebitNoteAsync(Guid companyId, Guid integrationId, InboundDebitNoteRequest request);
     Task<InboundSyncResponse> ProcessDailySummaryAsync(Guid companyId, Guid integrationId, InboundDailySummaryRequest request);
     Task<InboundSyncResponse> ProcessExpenseAsync(Guid companyId, Guid integrationId, InboundExpenseRequest request);
+    /// <summary>สร้างใบสำคัญจ่าย (จ่ายเงินจริงแล้ว) จาก partner — เอกสารเดียวจบ:
+    /// Dr ค่าใช้จ่าย+ภาษีซื้อ / Cr เงินสด (+Cr WHT ค้างจ่าย) ไม่ผ่านการตั้งหนี้</summary>
+    Task<InboundSyncResponse> ProcessPaymentVoucherAsync(Guid companyId, Guid integrationId, InboundPaymentVoucherRequest request);
     Task<InboundSyncResponse> ProcessCertificateInLieuAsync(Guid companyId, Guid integrationId, InboundCertificateInLieuRequest request);
     Task<InboundSyncResponse> ProcessProductAsync(Guid companyId, Guid integrationId, InboundProductRequest request);
     Task<InboundSyncResponse> ProcessJournalAsync(Guid companyId, Guid integrationId, InboundJournalRequest request);
