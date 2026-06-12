@@ -631,6 +631,155 @@ public class PayrollService : IPayrollService
         return (400, true, "อายุงานเกิน 20 ปี → 400 วัน (Labor Code §118 หลังแก้ไข พ.ศ. 2562)");
     }
 
+    /// <summary>โพสต์ JE เงินชดเชยเลิกจ้าง (มาตรา 118 พรบ.คุ้มครองแรงงาน)
+    /// — เรียกตามหลังที่ใช้ PreviewSeverancePayAsync เพื่อยืนยันยอด.
+    /// Dr ค่าใช้จ่ายเงินชดเชย (5xxx หรือ default Expense) / Cr เงินสด-ธนาคาร.
+    /// บันทึก reference ใน description ผูกกับ employee + termination date.</summary>
+    public async Task<Guid?> PostSeveranceAsync(
+        Guid companyId, Guid employeeId, decimal amount, DateTime payDate, string postedBy)
+    {
+        if (amount <= 0)
+            throw new InvalidOperationException("จำนวนเงินชดเชยต้องมากกว่า 0");
+        if (_accountingService == null)
+            throw new InvalidOperationException("Accounting service ไม่พร้อมใช้งาน");
+
+        var emp = await _db.Set<Employee>().AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        // Fiscal-period guard (same as ProcessPaymentAsync).
+        var fp = await _db.FiscalPeriods.AsNoTracking()
+            .Where(p => p.CompanyId == companyId
+                && p.StartDate <= payDate && p.EndDate >= payDate)
+            .Select(p => new { p.Status, p.Name })
+            .FirstOrDefaultAsync();
+        if (fp != null && fp.Status == FiscalPeriodStatus.Closed)
+            throw new InvalidOperationException(
+                $"งวดบัญชี \"{fp.Name}\" ปิดแล้ว — ไม่สามารถโพสต์รายการเงินชดเชยเข้างวดนี้ได้");
+
+        var severanceAccount = await _db.ChartOfAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "54125" && a.IsActive)
+            ?? await _db.ChartOfAccounts.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountType == AccountType.Expense && a.IsActive)
+            ?? throw new InvalidOperationException("ไม่พบบัญชีค่าใช้จ่ายในผังบัญชี");
+
+        var cashAccount = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId
+                && a.AccountCode.StartsWith("111") && a.AccountCode.Length >= 5 && a.IsActive)
+            .OrderBy(a => a.AccountCode)
+            .FirstOrDefaultAsync()
+            ?? await _db.ChartOfAccounts.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountCode.StartsWith("111") && a.IsActive)
+            ?? throw new InvalidOperationException("ไม่พบบัญชีเงินสดในผังบัญชี");
+
+        var jeReq = new Models.DTOs.Accounting.CreateJournalEntryRequest(
+            EntryDate: payDate,
+            Description: $"เงินชดเชยเลิกจ้าง (§118) — {emp.EmployeeCode} {emp.FirstNameTh} {emp.LastNameTh}",
+            Reference: $"SEV-{emp.EmployeeCode}-{payDate:yyyyMMdd}",
+            Lines: new List<Models.DTOs.Accounting.JournalLineRequest>
+            {
+                new(severanceAccount.Id, amount, 0, "เงินชดเชยเลิกจ้าง"),
+                new(cashAccount.Id, 0, amount, "จ่ายเงินชดเชย"),
+            },
+            JournalType: JournalType.CashPayments);
+
+        var je = await _accountingService.CreateJournalEntryAsync(companyId, jeReq, postedBy);
+        await _accountingService.PostJournalEntryAsync(companyId, je.Id);
+
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+            title: $"โพสต์เงินชดเชยเลิกจ้าง {emp.FirstNameTh} {emp.LastNameTh}",
+            message: $"จำนวน {amount:N2} บาท · JE {je.EntryNumber}",
+            entityId: emp.Id);
+
+        return je.Id;
+    }
+
+    /// <summary>Year-end carry-forward: สำหรับพนักงานที่ Active ทุกคน × ทุก
+    /// LeaveType ที่ AllowCarryForward=true, สร้าง EmployeeLeaveBalance ใน
+    /// targetYear (= year + 1) โดย CarriedForwardDays = unused days ใน year
+    /// (clamped to LeaveType.CarryForwardCap). Idempotent: upsert ตามคีย์
+    /// (Company, Employee, Year, LeaveType). คืนจำนวนแถวที่ upsert.</summary>
+    public async Task<int> RunYearEndLeaveCarryForwardAsync(
+        Guid companyId, int year, string performedBy)
+    {
+        var targetYear = year + 1;
+        var leaveTypes = await _db.Set<LeaveType>().AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted
+                && t.CarryForward && t.IsActive)
+            .ToListAsync();
+        if (leaveTypes.Count == 0) return 0;
+
+        var employees = await _db.Set<Employee>().AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted && e.IsActive)
+            .Select(e => new { e.Id, e.StartDate })
+            .ToListAsync();
+        if (employees.Count == 0) return 0;
+
+        // Days used + base balance ของปีต้นทาง — รวม base quota (จาก
+        // LeaveType) + carry-forward เดิม (ถ้ามี) + adjustment + ลบ
+        // จำนวนวันลาที่ Approved
+        var balances = await _db.Set<EmployeeLeaveBalance>()
+            .Where(b => b.CompanyId == companyId && b.Year == year && !b.IsDeleted)
+            .ToListAsync();
+        var leavesByEmpType = await _db.Set<EmployeeLeave>()
+            .Where(l => l.CompanyId == companyId && !l.IsDeleted
+                && l.Status == "Approved"
+                && l.StartDate.Year <= year && l.EndDate.Year >= year)
+            .GroupBy(l => new { l.EmployeeId, l.LeaveType })
+            .Select(g => new { g.Key.EmployeeId, g.Key.LeaveType, Total = g.Sum(x => x.TotalDays) })
+            .ToListAsync();
+
+        var existingTarget = await _db.Set<EmployeeLeaveBalance>()
+            .Where(b => b.CompanyId == companyId && b.Year == targetYear && !b.IsDeleted)
+            .ToListAsync();
+        var existingByKey = existingTarget.ToDictionary(
+            b => (b.EmployeeId, b.LeaveTypeCode), b => b);
+
+        int upserts = 0;
+        foreach (var emp in employees)
+        {
+            foreach (var lt in leaveTypes)
+            {
+                var srcBal = balances.FirstOrDefault(b => b.EmployeeId == emp.Id && b.LeaveTypeCode == lt.Code);
+                var carriedFrom = srcBal?.CarriedForwardDays ?? 0m;
+                var adj = srcBal?.AdjustmentDays ?? 0m;
+                var used = leavesByEmpType.FirstOrDefault(x => x.EmployeeId == emp.Id && x.LeaveType == lt.Code)?.Total ?? 0m;
+                var unused = Math.Max(0, lt.AnnualQuota + carriedFrom + adj - used);
+                // Cap by CarryForwardCap (0 = no cap, รักษาความเข้ากันได้)
+                var carried = lt.CarryForwardCap.HasValue && lt.CarryForwardCap.Value > 0
+                    ? Math.Min(unused, lt.CarryForwardCap.Value) : unused;
+                if (carried <= 0) continue;
+
+                if (existingByKey.TryGetValue((emp.Id, lt.Code), out var ex))
+                {
+                    ex.CarriedForwardDays = carried;
+                    ex.Phase = "YearEnd";
+                    ex.UpdatedBy = performedBy;
+                    ex.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _db.Set<EmployeeLeaveBalance>().Add(new EmployeeLeaveBalance
+                    {
+                        CompanyId = companyId,
+                        EmployeeId = emp.Id,
+                        Year = targetYear,
+                        LeaveTypeCode = lt.Code,
+                        CarriedForwardDays = carried,
+                        AdjustmentDays = 0,
+                        Phase = "YearEnd",
+                        CreatedBy = performedBy,
+                    });
+                }
+                upserts++;
+            }
+        }
+        await _db.SaveChangesAsync();
+        return upserts;
+    }
+
     public async Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate)
     {
         var employee = await _db.Set<Employee>()
@@ -1085,11 +1234,29 @@ public class PayrollService : IPayrollService
                 // (12 × monthly max — e.g. 10,500 from 2026, was 9,000).
                 var annualSso = Math.Min(ssoEmployee * 12m, sso.MaxContribution * 12m);
                 var annualPvd = Math.Min(pvdEmployee * 12m, PitPvdMaxDeductible);
-                var personalDeductions =
-                    PitPersonalAllowance
-                    + (PitPerDependantAllowance * Math.Max(0, emp.TaxAllowances))
-                    + annualSso
-                    + annualPvd;
+
+                // §47/47ทวิ — รวมค่าลดหย่อนรายตัว (ละเอียดกว่า count × 30K).
+                // ใช้ฟิลด์ใหม่ก่อน; ถ้าไม่ตั้ง fall back ไป legacy TaxAllowances
+                // (count × 30K) เพื่อความเข้ากันได้กับข้อมูลเก่า.
+                var detailedAllowance =
+                    (emp.HasSpouseAllowance ? 60_000m : 0m)
+                    + (emp.ChildAllowanceCount * 30_000m)
+                    + (emp.SecondAndLaterChildren * 30_000m)  // +30K เพิ่มจากปกติ (เป็น 60K รวม)
+                    + (Math.Min(4, emp.ParentAllowanceCount) * 30_000m)
+                    + Math.Min(100_000m, emp.LifeInsurancePremium)
+                    + Math.Min(500_000m, emp.RmfSsfContribution);
+                var hasDetailed = emp.HasSpouseAllowance
+                    || emp.ChildAllowanceCount > 0 || emp.SecondAndLaterChildren > 0
+                    || emp.ParentAllowanceCount > 0 || emp.LifeInsurancePremium > 0
+                    || emp.RmfSsfContribution > 0;
+                var dependantsAllowance = hasDetailed
+                    ? detailedAllowance
+                    : PitPerDependantAllowance * Math.Max(0, emp.TaxAllowances);
+                var baseDeductions = PitPersonalAllowance + dependantsAllowance + annualSso + annualPvd;
+                // เงินบริจาคหักได้ไม่เกิน 10% ของเงินได้สุทธิหลังลดหย่อนอื่น.
+                var afterBase = Math.Max(0, estimatedAnnualIncome - baseDeductions);
+                var donation = Math.Min(emp.DonationAmount, afterBase * 0.10m);
+                var personalDeductions = baseDeductions + donation;
                 var estimatedTaxableIncome = Math.Max(0m, estimatedAnnualIncome - personalDeductions);
 
                 var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome);
@@ -1216,6 +1383,21 @@ public class PayrollService : IPayrollService
 
         if (run.Status != "Approved")
             throw new InvalidOperationException("สามารถจ่ายได้เฉพาะรอบที่อนุมัติแล้วเท่านั้น");
+
+        // Fiscal-period guard: refuse to post into a period that's already
+        // closed by Accounting (DocumentService.cs:1041-1043 does the same
+        // for documents). Otherwise HR clicks Pay → run goes to Paid state,
+        // then AccountingService.CreateJournalEntryAsync throws because the
+        // period is closed → user is left with a stale "Paid" record + no JE.
+        var payDate = run.PayDate;
+        var fp = await _db.FiscalPeriods.AsNoTracking()
+            .Where(p => p.CompanyId == companyId
+                && p.StartDate <= payDate && p.EndDate >= payDate)
+            .Select(p => new { p.Status, p.Name })
+            .FirstOrDefaultAsync();
+        if (fp != null && fp.Status == FiscalPeriodStatus.Closed)
+            throw new InvalidOperationException(
+                $"งวดบัญชี \"{fp.Name}\" ปิดแล้ว — ไม่สามารถจ่ายเงินเดือนเข้างวดนี้ได้ กรุณาเปิดงวดก่อน หรือเปลี่ยน PayDate ให้อยู่ในงวดที่เปิด");
 
         // Prevent duplicate payments for same year/month
         var alreadyPaid = await _db.Set<PayrollRun>()
@@ -1573,8 +1755,30 @@ public class PayrollService : IPayrollService
                 }
 
                 var pdfBytes = await pdf.BuildEmployeeAnnualCertPdfAsync(companyId, cert);
+                // Audit trail: record every 50ทวิ generation so a dispute
+                // ("ผมไม่เคยได้ใบรับรอง") has an answer (when + who + which
+                // employee + amounts).
+                _db.AuditLogs.Add(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserId = Guid.TryParse(requestedBy, out var actorId) ? actorId : (Guid?)null,
+                    Action = AuditAction.Print,
+                    EntityType = "WhtCertAnnual",
+                    EntityId = emp.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        emp.EmployeeCode, emp.CitizenId,
+                        Year = year,
+                        TotalIncome = totalIncome, TotalTax = totalTax,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+
                 if (grouped.Count == 1)
+                {
+                    await _db.SaveChangesAsync();
                     return ($"WHT50tawi_{emp.EmployeeCode}_{year}.pdf", pdfBytes);
+                }
 
                 var fileName = $"WHT50tawi_{emp.EmployeeCode}_{year}.pdf";
                 var entry = archive.CreateEntry(fileName, System.IO.Compression.CompressionLevel.Fastest);
@@ -1582,6 +1786,7 @@ public class PayrollService : IPayrollService
                 await entryStream.WriteAsync(pdfBytes);
             }
         }
+        await _db.SaveChangesAsync();   // persist the per-employee audit rows
         return ($"WHT50tawi_{year}_employees.zip", zip.ToArray());
     }
 

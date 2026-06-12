@@ -69,7 +69,30 @@ public class Employee : TenantEntity
 
     // Tax
     public string? TaxId { get; set; }
-    public int TaxAllowances { get; set; } = 0;          // จำนวนค่าลดหย่อน
+    public int TaxAllowances { get; set; } = 0;          // จำนวนค่าลดหย่อน (legacy — count of 30K dependants)
+
+    // ── ค่าลดหย่อนภาษีตามมาตรา 47/47ทวิ (ละเอียดขึ้น) ──
+    // ใช้แทน TaxAllowances เก่าเมื่อต้องการความแม่นยำ — payroll calc รวม
+    // ทุกฟิลด์เป็นค่าลดหย่อนต่อปี เดิม TaxAllowances × 30,000 อาจเพี้ยน
+    // สำหรับครอบครัวที่มีคู่สมรสไม่มีเงินได้ + ลูกหลายคน + บิดามารดา.
+    /// <summary>คู่สมรสที่ไม่มีเงินได้ลดหย่อน 60,000/ปี (true = ใช่)</summary>
+    public bool HasSpouseAllowance { get; set; }
+    /// <summary>จำนวนบุตรที่ลดหย่อนได้ (30,000/คน — บุตรคนที่ 2 ขึ้นไป
+    /// ที่เกิดในหรือหลังปี 2561 ลดหย่อนคนละ 60,000 ตั้งค่าแยกใน
+    /// SecondAndLaterChildren)</summary>
+    public int ChildAllowanceCount { get; set; }
+    /// <summary>จำนวนบุตรที่เกิดในหรือหลังปี 2561 และเป็นคนที่ 2 ขึ้นไป
+    /// (ได้ +30,000/คน เพิ่มจาก ChildAllowanceCount ปกติ)</summary>
+    public int SecondAndLaterChildren { get; set; }
+    /// <summary>จำนวนบิดามารดาที่อายุ ≥60 ปี (30,000/คน — สูงสุด 4 คน
+    /// รวมพ่อแม่ตัวเอง + พ่อแม่คู่สมรส)</summary>
+    public int ParentAllowanceCount { get; set; }
+    /// <summary>เบี้ยประกันชีวิตที่ลดหย่อนได้ (ไม่เกิน 100,000/ปี ตาม §47(1)(ง))</summary>
+    public decimal LifeInsurancePremium { get; set; }
+    /// <summary>เงินสะสมกองทุน RMF/SSF/Thai ESG ที่ลดหย่อนได้ (รวมไม่เกิน 500,000)</summary>
+    public decimal RmfSsfContribution { get; set; }
+    /// <summary>เงินบริจาคที่ลดหย่อนได้ (สูงสุด 10% ของเงินได้สุทธิหลังหักลดหย่อนอื่น)</summary>
+    public decimal DonationAmount { get; set; }
     public bool HasProvidentFund { get; set; } = false;
     public decimal ProvidentFundEmployeePercent { get; set; }
     public decimal ProvidentFundEmployerPercent { get; set; }

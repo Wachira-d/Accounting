@@ -3897,6 +3897,15 @@ public static class DatabaseMigrationHelper
             // this, voiding a payroll silently zeroed each employee's
             // outstanding advance balance.
             """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "AdvanceRecovered" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // Employee tax allowances §47/47ทวิ — ละเอียดขึ้นจากที่เก่า
+            // เป็น count × 30K เฉย ๆ (ครอบครัวใหญ่ over-withhold).
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "HasSpouseAllowance" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ChildAllowanceCount" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "SecondAndLaterChildren" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ParentAllowanceCount" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "LifeInsurancePremium" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "RmfSsfContribution" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "DonationAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
 
             // PaymentAllocation — one Payment may settle many Documents.
             // Existing Payment rows stay valid (legacy 1:1 path); new

@@ -104,6 +104,32 @@ public class PayrollController : ControllerBase
         => Ok(new ApiResponse<SeverancePreviewResponse>(true,
             await _service.PreviewSeverancePayAsync(companyId, employeeId, request)));
 
+    /// <summary>ปิดปี: คำนวณวันลาคงเหลือทุกพนักงานของปี ที่ระบุ →
+    /// upsert EmployeeLeaveBalance ของปีถัดไป (carry-forward).</summary>
+    [HttpPost("leaves/carry-forward/{year:int}")]
+    public async Task<ActionResult<ApiResponse<object>>> RunLeaveCarryForward(Guid companyId, int year)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var count = await _service.RunYearEndLeaveCarryForwardAsync(companyId, year, actor);
+        return Ok(new ApiResponse<object>(true, new { upserts = count, targetYear = year + 1 },
+            $"ทำ carry-forward วันลาเข้าปี {year + 1} เรียบร้อย ({count} รายการ)"));
+    }
+
+    public sealed record PostSeveranceRequest(decimal Amount, DateTime PayDate);
+
+    /// <summary>โพสต์ JE เงินชดเชยเลิกจ้าง §118 — Dr Severance / Cr Cash.
+    /// ใช้คู่กับ severance-preview: HR กดยืนยันยอดที่คำนวณแล้วโพสต์เข้า GL.</summary>
+    [HttpPost("employees/{employeeId:guid}/severance/post")]
+    public async Task<ActionResult<ApiResponse<object>>> PostSeverance(
+        Guid companyId, Guid employeeId, [FromBody] PostSeveranceRequest req)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var jeId = await _service.PostSeveranceAsync(companyId, employeeId,
+            req.Amount, req.PayDate, JwtHelper.GetUserIdFromClaims(User).ToString());
+        return Ok(new ApiResponse<object>(true, new { journalEntryId = jeId }, "โพสต์เงินชดเชยเข้า GL เรียบร้อย"));
+    }
+
     // Payroll Items
     [HttpPost("items")]
     public async Task<ActionResult<ApiResponse<PayrollItemResponse>>> CreateItem(Guid companyId, [FromBody] CreatePayrollItemRequest request)
