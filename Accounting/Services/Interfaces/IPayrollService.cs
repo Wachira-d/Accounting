@@ -36,6 +36,11 @@ public interface IPayrollService
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);
     Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy);
     Task VoidPayrollAsync(Guid companyId, Guid payrollRunId);
+    /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1)) — รวบรวม WHT
+    /// ทั้งปีต่อพนักงาน 1 ใบ คืน PDF เดียวเมื่อระบุ employee, คืน Zip
+    /// เมื่อต้องการทุกคน.</summary>
+    Task<(string FileName, byte[] Bytes)> GenerateAnnualEmployeeWhtCertsAsync(
+        Guid companyId, int year, Guid? singleEmployeeId, string requestedBy);
     Task<PayrollDetailResponse> GetPayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
     Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
 

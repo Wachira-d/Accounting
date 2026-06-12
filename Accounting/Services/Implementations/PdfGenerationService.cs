@@ -124,6 +124,43 @@ public partial class PdfGenerationService : IPdfGenerationService
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
     }
 
+    /// <summary>Build a printable 50 ทวิ from an IN-MEMORY (un-saved) cert
+    /// entity — for employee annual certificates that aggregate PayrollDetail
+    /// rows for the year. Reuses the same QuestPDF layout as the supplier path
+    /// (BuildWhtCertPdf) so RD compliance stays identical.</summary>
+    public async Task<byte[]> BuildEmployeeAnnualCertPdfAsync(Guid companyId, WithholdingTaxCert inMemoryCert)
+    {
+        var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
+        var (sigBytes, sigName) = await ResolveCertSignatoryAsync(companyId, inMemoryCert.CreatedBy);
+        return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName);
+    }
+
+    /// <summary>Resolve the signer for a cert — exact same fallback chain
+    /// used by GenerateWithholdingTaxCertPdfAsync: CreatedBy user → company
+    /// Owner. Extracted so the annual-employee-cert path can reuse it.</summary>
+    private async Task<(byte[]? Bytes, string? Name)> ResolveCertSignatoryAsync(Guid companyId, string? createdBy)
+    {
+        if (Guid.TryParse(createdBy, out var uid))
+        {
+            var u = await _db.Users.AsNoTracking()
+                .Where(x => x.Id == uid)
+                .Select(x => new { x.SignatureImageBase64, x.SignatureName, x.FullName })
+                .FirstOrDefaultAsync();
+            if (u != null && !string.IsNullOrWhiteSpace(u.SignatureImageBase64))
+                return (TryDecodeBase64Image(u.SignatureImageBase64),
+                    !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName);
+        }
+        var owner = await (from cu in _db.Set<CompanyUser>().AsNoTracking()
+                           join u in _db.Users.AsNoTracking() on cu.UserId equals u.Id
+                           where cu.CompanyId == companyId && cu.Role == Models.Enums.UserRole.Owner
+                                 && u.SignatureImageBase64 != null && u.SignatureImageBase64 != ""
+                           select new { u.SignatureImageBase64, u.SignatureName, u.FullName }).FirstOrDefaultAsync();
+        if (owner != null)
+            return (TryDecodeBase64Image(owner.SignatureImageBase64!),
+                !string.IsNullOrWhiteSpace(owner.SignatureName) ? owner.SignatureName : owner.FullName);
+        return (null, null);
+    }
+
     public async Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId)
     {
         var cert = await _db.WithholdingTaxCerts

@@ -102,8 +102,10 @@ public record CompanyCompensationDefaultsRequest(
     decimal? PerDiemRate = null,
     decimal? AccommodationAllowance = null,
     decimal? OvertimeMealAllowance = null,
+    decimal? DailyMealAllowance = null,
     decimal? StandardWorkHoursPerDay = null,
-    decimal? StandardWorkDaysPerMonth = null);
+    decimal? StandardWorkDaysPerMonth = null,
+    List<CustomAllowanceItem>? CustomAllowances = null);
 
 public record CompanyCompensationDefaultsResponse(
     decimal OvertimeRateMultiplierWeekday,
@@ -111,8 +113,17 @@ public record CompanyCompensationDefaultsResponse(
     decimal PerDiemRate,
     decimal AccommodationAllowance,
     decimal OvertimeMealAllowance,
+    decimal DailyMealAllowance,
     decimal StandardWorkHoursPerDay,
-    decimal StandardWorkDaysPerMonth);
+    decimal StandardWorkDaysPerMonth,
+    List<CustomAllowanceItem> CustomAllowances);
+
+/// <summary>Allowance ที่บริษัทตั้งเอง — ค่าโทร ค่าน้ำมัน ค่าเดินทาง ฯลฯ.
+/// Code/Name ระบุชนิด, Type "Daily" (คูณวันทำงาน) vs "Monthly" (ก้อนเดียว
+/// ต่อรอบ), IsTaxable=true → รวมในฐาน WHT (ปกติ); false → สวัสดิการที่
+/// ยกเว้นภาษี (เช่น ค่ารักษาพยาบาล ตามมาตรา 42(17)).</summary>
+public record CustomAllowanceItem(
+    string Code, string Name, string Type, decimal Amount, bool IsTaxable = true);
 
 /// <summary>Preview the attendance-based pay extras (OT + per-diem +
 /// accommodation + OT-meal) for one employee over a date window —

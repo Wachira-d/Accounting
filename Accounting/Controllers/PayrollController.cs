@@ -220,6 +220,20 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> GetSso(Guid companyId, int year, int month)
         => Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month)));
 
+    /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1) เงินเดือน).
+    /// employeeId=null → คืน Zip รวมทุกคน, ระบุ → คืน PDF เดียวคน.
+    /// อิงเฉพาะ PayrollRun ที่ Status=Paid เท่านั้น.</summary>
+    [HttpGet("wht-cert/annual/{year:int}")]
+    public async Task<IActionResult> GetAnnualWhtCerts(Guid companyId, int year, [FromQuery] Guid? employeeId = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var requestedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var (fileName, bytes) = await _service.GenerateAnnualEmployeeWhtCertsAsync(companyId, year, employeeId, requestedBy);
+        var contentType = fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            ? "application/zip" : "application/pdf";
+        return File(bytes, contentType, fileName);
+    }
+
     // ===== SSO year-config (เพดานค่าจ้าง/อัตราสมทบ ปรับได้รายปี) =====
 
     public sealed record SsoYearConfigRequest(int Year, decimal WageCeiling,

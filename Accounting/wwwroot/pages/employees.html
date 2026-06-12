@@ -188,8 +188,23 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ค่าข้าว OT (฿/วันที่มี OT)</label>
-              <input type="number" step="1" class="form-input" id="cdOtMeal" placeholder="30"></div>
-            <div class="form-group"></div>
+              <input type="number" step="1" class="form-input" id="cdOtMeal" placeholder="0"></div>
+            <div class="form-group"><label class="form-label">ค่าข้าวรายวัน (฿/วันทำงานปกติ)</label>
+              <input type="number" step="1" class="form-input" id="cdDailyMeal" placeholder="0"></div>
+          </div>
+
+          <!-- Custom allowances — บริษัทเพิ่มเองได้ (ค่าโทร ค่าน้ำมัน
+               สวัสดิการรักษาพยาบาล ฯลฯ) — Code/Name/Type/Amount/IsTaxable -->
+          <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #cbd5e1">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <label class="form-label" style="margin:0">สวัสดิการ/ค่าใช้จ่ายอื่น (ตั้งเองได้)</label>
+              <button type="button" class="btn btn-sm btn-outline" onclick="Page.addCustomAllowance()">+ เพิ่ม</button>
+            </div>
+            <div id="cdCustomList" style="display:flex;flex-direction:column;gap:6px"></div>
+            <p style="font-size:11px;color:#94a3b8;margin:6px 0 0">
+              ชนิด <b>Daily</b> = คูณวันทำงานในรอบ · <b>Monthly</b> = ก้อนเดียวต่อรอบ ·
+              ไม่ติ๊กภาษี = ไม่รวมในฐาน WHT (สวัสดิการรักษาพยาบาล ฯลฯ)
+            </p>
           </div>
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-200)">
             <div class="text-xs text-gray-500" style="margin-bottom:8px;font-weight:600">การคำนวณค่าแรงต่อชั่วโมง (Monthly salary)</div>
@@ -480,34 +495,100 @@
       },
 
       // ===== Compensation defaults (company-wide) =====
+      _customAllowances: [],   // local edit buffer for the modal
+
+      _renderCustomList() {
+        const box = document.getElementById('cdCustomList'); if (!box) return;
+        if (this._customAllowances.length === 0) {
+          box.innerHTML = '<p style="color:#94a3b8;font-size:12px;text-align:center;padding:8px">ยังไม่มี — กด "+ เพิ่ม" เพื่อสร้าง</p>';
+          return;
+        }
+        box.innerHTML = this._customAllowances.map((a, i) => `
+          <div style="display:flex;gap:6px;align-items:center;background:#f8fafc;padding:6px;border-radius:6px">
+            <input type="text" class="form-input" style="flex:1" placeholder="ชื่อ (เช่น ค่าโทรศัพท์)"
+                   value="${(a.name || '').replace(/"/g,'&quot;')}" oninput="Page._customAllowances[${i}].name=this.value">
+            <select class="form-select" style="width:100px" onchange="Page._customAllowances[${i}].type=this.value">
+              <option value="Monthly" ${a.type==='Monthly'?'selected':''}>Monthly</option>
+              <option value="Daily" ${a.type==='Daily'?'selected':''}>Daily</option>
+            </select>
+            <input type="number" class="form-input" style="width:100px" step="1" placeholder="0"
+                   value="${a.amount ?? ''}" oninput="Page._customAllowances[${i}].amount=parseFloat(this.value)||0">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap">
+              <input type="checkbox" ${a.isTaxable!==false?'checked':''} onchange="Page._customAllowances[${i}].isTaxable=this.checked">
+              หัก ภงด.
+            </label>
+            <button type="button" class="btn btn-sm btn-danger-outline" onclick="Page.removeCustomAllowance(${i})">✕</button>
+          </div>`).join('');
+      },
+      addCustomAllowance() {
+        this._customAllowances.push({ code: 'A' + (this._customAllowances.length + 1), name: '', type: 'Monthly', amount: 0, isTaxable: true });
+        this._renderCustomList();
+      },
+      removeCustomAllowance(i) {
+        this._customAllowances.splice(i, 1);
+        this._renderCustomList();
+      },
+      // load company defaults into the modal — uses an explicit `value`
+      // assignment helper so 0 / null / undefined ทั้งหมดแสดงเป็น "" ใน
+      // input (เห็น placeholder) แทนที่จะเป็น "null" หรือ "undefined".
       async openCompDefaults() {
         try {
           const cid = Layout.getCompanyId();
           const r = await API.get(`/api/companies/${cid}/hr/compensation/defaults`);
-          const d = r.data;
-          document.getElementById('cdOtWd').value = d.overtimeRateMultiplierWeekday;
-          document.getElementById('cdOtHd').value = d.overtimeRateMultiplierHoliday;
-          document.getElementById('cdPerDiem').value = d.perDiemRate;
-          document.getElementById('cdAccom').value = d.accommodationAllowance;
-          document.getElementById('cdOtMeal').value = d.overtimeMealAllowance;
-          document.getElementById('cdHpd').value = d.standardWorkHoursPerDay;
-          document.getElementById('cdDpm').value = d.standardWorkDaysPerMonth;
+          const d = r.data || {};
+          const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v ?? '') === '' ? '' : v; };
+          setVal('cdOtWd', d.overtimeRateMultiplierWeekday);
+          setVal('cdOtHd', d.overtimeRateMultiplierHoliday);
+          setVal('cdPerDiem', d.perDiemRate);
+          setVal('cdAccom', d.accommodationAllowance);
+          setVal('cdOtMeal', d.overtimeMealAllowance);
+          setVal('cdDailyMeal', d.dailyMealAllowance);
+          setVal('cdHpd', d.standardWorkHoursPerDay);
+          setVal('cdDpm', d.standardWorkDaysPerMonth);
+          this._customAllowances = Array.isArray(d.customAllowances) ? JSON.parse(JSON.stringify(d.customAllowances)) : [];
+          this._renderCustomList();
           Layout.openModal('compDefaultsModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async saveCompDefaults() {
+        // Bug ก่อนหน้า: `parseFloat(...) || null` ทำให้ค่า 0 กลายเป็น null →
+        // service เห็น HasValue=false → ข้ามการอัปเดต (ผู้ใช้บันทึกแล้ว
+        // ค่าไม่เปลี่ยน). ตอนนี้แยก parse: เลขถูกต้อง (รวม 0) ส่งไปจริง;
+        // ช่องว่างเท่านั้นที่ส่ง null (= ใช้ค่าเดิม).
+        const num = (id) => {
+          const raw = document.getElementById(id)?.value;
+          if (raw === '' || raw == null) return null;
+          const v = parseFloat(raw);
+          return Number.isFinite(v) ? v : null;
+        };
         const body = {
-          overtimeRateMultiplierWeekday: parseFloat(document.getElementById('cdOtWd').value) || null,
-          overtimeRateMultiplierHoliday: parseFloat(document.getElementById('cdOtHd').value) || null,
-          perDiemRate: parseFloat(document.getElementById('cdPerDiem').value) || null,
-          accommodationAllowance: parseFloat(document.getElementById('cdAccom').value) || null,
-          overtimeMealAllowance: parseFloat(document.getElementById('cdOtMeal').value) || null,
-          standardWorkHoursPerDay: parseFloat(document.getElementById('cdHpd').value) || null,
-          standardWorkDaysPerMonth: parseFloat(document.getElementById('cdDpm').value) || null,
+          overtimeRateMultiplierWeekday: num('cdOtWd'),
+          overtimeRateMultiplierHoliday: num('cdOtHd'),
+          perDiemRate: num('cdPerDiem'),
+          accommodationAllowance: num('cdAccom'),
+          overtimeMealAllowance: num('cdOtMeal'),
+          dailyMealAllowance: num('cdDailyMeal'),
+          standardWorkHoursPerDay: num('cdHpd'),
+          standardWorkDaysPerMonth: num('cdDpm'),
+          // กรองรายการที่ชื่อ/จำนวนยังว่างออก
+          customAllowances: this._customAllowances
+            .filter(a => (a.name || '').trim() && (a.amount > 0))
+            .map(a => ({ code: a.code || a.name.slice(0,8), name: a.name.trim(), type: a.type || 'Monthly', amount: a.amount, isTaxable: a.isTaxable !== false })),
         };
         try {
           const cid = Layout.getCompanyId();
-          await API.put(`/api/companies/${cid}/hr/compensation/defaults`, body);
+          const r = await API.put(`/api/companies/${cid}/hr/compensation/defaults`, body);
+          // Re-hydrate the modal with the server's saved values so the user
+          // sees ผลทันที + ยืนยันว่าค่าเข้า DB จริงแล้ว (เดิม close ไปเลย
+          // ทำให้ดูเหมือน "ไม่เปลี่ยน" ถ้าผู้ใช้เปิดใหม่จาก cache).
+          const d = r.data || {};
+          if (d) {
+            const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v ?? '') === '' ? '' : v; };
+            setVal('cdOtMeal', d.overtimeMealAllowance);
+            setVal('cdDailyMeal', d.dailyMealAllowance);
+            this._customAllowances = Array.isArray(d.customAllowances) ? JSON.parse(JSON.stringify(d.customAllowances)) : [];
+            this._renderCustomList();
+          }
           Layout.closeModal('compDefaultsModal');
           Layout.toast('บันทึกค่ามาตรฐานแล้ว');
         } catch (e) { Layout.toast(e.message, 'error'); }

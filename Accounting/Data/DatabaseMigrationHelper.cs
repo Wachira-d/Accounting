@@ -3888,6 +3888,10 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyCompDefaults_Company" ON "CompanyCompensationDefaults" ("CompanyId") WHERE "IsDeleted" = false;""",
+            // Daily meal (คนละกรณีกับ OT meal) + custom allowances list
+            // ที่บริษัทตั้งเองได้ (โทรศัพท์ ค่าเดินทาง ค่าน้ำมัน ฯลฯ).
+            """ALTER TABLE "CompanyCompensationDefaults" ADD COLUMN IF NOT EXISTS "DailyMealAllowance" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CompanyCompensationDefaults" ADD COLUMN IF NOT EXISTS "CustomAllowancesJson" text NULL;""",
 
             // PaymentAllocation — one Payment may settle many Documents.
             // Existing Payment rows stay valid (legacy 1:1 path); new

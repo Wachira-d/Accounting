@@ -93,6 +93,22 @@
         <p class="text-gray-400 text-center">เลือกเดือนและประเภทรายงานเพื่อดูข้อมูล</p>
       </div>
 
+      <!-- ออกใบทวิ 50 รายปี (ภงด.1 §40(1) เงินเดือน) -->
+      <div class="card" style="padding:24px;margin-top:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div>
+            <h3 style="margin:0;font-size:16px">📜 ออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ รายปี (พนักงาน)</h3>
+            <p class="text-gray-400" style="font-size:12px;margin:4px 0 0">
+              รวบรวมเงินเดือน + ภาษีหัก ณ ที่จ่ายทั้งปีของพนักงานแต่ละคน (เฉพาะรอบที่จ่ายแล้ว) เป็นใบ 50 ทวิ ตามแบบ ภงด.1
+            </p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select class="filter-select" id="whtCertYear"></select>
+            <button class="btn btn-primary" onclick="Page.downloadAnnualWhtCerts()">📥 ดาวน์โหลด (Zip ทุกคน)</button>
+          </div>
+        </div>
+      </div>
+
       <!-- SSO year-config: เพดานค่าจ้าง + อัตราสมทบ ปรับได้รายปี
            (พรฎ. ขั้นบันได: 15,000 → 17,500 ปี 2569 → 20,000 ปี 2572 →
            23,000 ปี 2575) — แถว override บันทึกลง SsoYearConfigs -->
@@ -251,7 +267,7 @@ const Page = {
     if (!Layout.init('payroll')) return;
     Layout.setTitle('ระบบเงินเดือน');
     const y = new Date().getFullYear();
-    ['leaveYear','reportYear'].forEach(id => {
+    ['leaveYear','reportYear','whtCertYear'].forEach(id => {
       const sel = document.getElementById(id);
       if (!sel) return;
       for (let i = y; i >= y-3; i--) sel.innerHTML += `<option value="${i}">${i+543}</option>`;
@@ -343,6 +359,33 @@ const Page = {
       Layout.toast(j.message || `บันทึกปี ${year} แล้ว`);
       this.loadSsoConfig();
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async downloadAnnualWhtCerts() {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const year = document.getElementById('whtCertYear')?.value;
+    if (!year) { Layout.toast('เลือกปีก่อน', 'error'); return; }
+    try {
+      const res = await fetch(`/api/companies/${cid}/payroll/wht-cert/annual/${year}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (!res.ok) {
+        let msg = 'ดาวน์โหลดไม่สำเร็จ';
+        try { const j = await res.json(); msg = j?.message || j?.data?.message || msg; } catch {}
+        Layout.toast(msg, 'error'); return;
+      }
+      // กรณีที่ server บอกชื่อไฟล์มาจาก Content-Disposition จะใช้
+      // ชื่อนั้น; ถ้าไม่ ค่อยตั้งให้
+      const blob = await res.blob();
+      const dispo = res.headers.get('content-disposition') || '';
+      const m = dispo.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      const filename = m ? decodeURIComponent(m[1]) : `WHT50tawi_${year}.zip`;
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+      a.click();
+      URL.revokeObjectURL(url);
+      Layout.toast('ดาวน์โหลดสำเร็จ');
+    } catch (e) { Layout.toast(e.message, 'error'); }
   },
 
   async resetSsoConfig(year) {

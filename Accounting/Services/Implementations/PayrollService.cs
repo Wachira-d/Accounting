@@ -873,6 +873,10 @@ public class PayrollService : IPayrollService
                 var commission = 0m;
                 var bonus = 0m;
                 var otherIncome = 0m;
+                // Tax-exempt income (สวัสดิการรักษาพยาบาล ฯลฯ ที่ติ๊ก
+                // "ไม่หัก WHT") — รวมใน net pay จ่ายให้พนักงาน แต่ไม่รวม
+                // ฐานคำนวณภาษี (estimatedAnnualIncome below subtracts it).
+                var nonTaxableExtra = 0m;
 
                 foreach (var item in earningItems)
                 {
@@ -918,19 +922,52 @@ public class PayrollService : IPayrollService
                     };
 
                     decimal otPayWeekday = 0, otPayHoliday = 0;
-                    decimal perDiemSum = 0, accomSum = 0, otMealSum = 0;
+                    decimal perDiemSum = 0, accomSum = 0, otMealSum = 0, dailyMealSum = 0;
+                    int workDays = 0;   // for daily-meal + Daily-type custom allowances
                     foreach (var grp in empTimeRows.GroupBy(t => t.WorkDate.Date))
                     {
                         var dayOt = grp.Sum(t => t.OvertimeHours ?? 0);
+                        var dayRegular = grp.Sum(t => t.Hours) - dayOt;
                         var dayIsHoliday = grp.Any(t => t.IsHoliday);
                         if (dayIsHoliday) otPayHoliday += dayOt * hourly * otMultHoliday;
                         else otPayWeekday += dayOt * hourly * otMultWeekday;
                         if (grp.Any(t => t.HasPerDiem)) perDiemSum += perDiemRate;
                         if (grp.Any(t => t.HasAccommodation)) accomSum += accomRate;
                         if (grp.Any(t => t.HasOvertimeMeal)) otMealSum += otMealRate;
+                        // Daily meal: นับวันที่มีชั่วโมงทำงานปกติ (ไม่ใช่
+                        // เฉพาะ OT) — แยกจาก OvertimeMealAllowance ที่แจ้ง
+                        // เฉพาะวัน OT.
+                        if (!dayIsHoliday && dayRegular > 0)
+                        {
+                            workDays++;
+                            dailyMealSum += compDefaults.DailyMealAllowance;
+                        }
                     }
                     overtimePay += Math.Round(otPayWeekday + otPayHoliday, 2, MidpointRounding.AwayFromZero);
-                    allowances += Math.Round(perDiemSum + accomSum + otMealSum, 2, MidpointRounding.AwayFromZero);
+                    allowances += Math.Round(perDiemSum + accomSum + otMealSum + dailyMealSum, 2, MidpointRounding.AwayFromZero);
+
+                    // Custom allowances ที่บริษัทตั้งเองในตาราง — Monthly =
+                    // จ่ายเต็มจำนวนต่อรอบ, Daily = คูณวันทำงานจริง. isTaxable
+                    // = false เก็บไว้ใน otherIncome แยกแล้ว NOT รวมในฐาน WHT
+                    // (skipped from estimatedAnnualIncome below).
+                    if (!string.IsNullOrWhiteSpace(compDefaults.CustomAllowancesJson))
+                    {
+                        try
+                        {
+                            var customs = System.Text.Json.JsonSerializer
+                                .Deserialize<List<CustomAllowanceItem>>(compDefaults.CustomAllowancesJson) ?? new();
+                            foreach (var c in customs)
+                            {
+                                if (c.Amount <= 0) continue;
+                                var amt = string.Equals(c.Type, "Daily", StringComparison.OrdinalIgnoreCase)
+                                    ? c.Amount * workDays
+                                    : c.Amount;
+                                if (c.IsTaxable) allowances += Math.Round(amt, 2, MidpointRounding.AwayFromZero);
+                                else nonTaxableExtra += Math.Round(amt, 2, MidpointRounding.AwayFromZero);
+                            }
+                        }
+                        catch { /* malformed JSON — skip silently */ }
+                    }
                 }
 
                 // Calculate leave deductions — sourced from the batched lookup.
@@ -986,7 +1023,10 @@ public class PayrollService : IPayrollService
                     ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2, MidpointRounding.AwayFromZero)
                     : 0m;
 
-                var grossIncome = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+                // taxableGross = ส่วนที่นำไปคำนวณ WHT (ตามประมวลรัษฎากร §40(1)).
+                // grossIncome (จ่ายให้พนักงาน) = taxableGross + สวัสดิการยกเว้นภาษี.
+                var taxableGross = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+                var grossIncome = taxableGross + nonTaxableExtra;
 
                 // Social security: base on BaseSalary (not gross), capped at the
                 // year's statutory wage ceiling (resolved above — 17,500 from
@@ -1009,8 +1049,11 @@ public class PayrollService : IPayrollService
                     pvdEmployer = emp.BaseSalary * emp.ProvidentFundEmployerPercent / 100m;
                 }
 
-                // Thai withholding tax: TRD-standard annualization = (YTD including this month) * 12 / elapsed months
-                var ytdIncome = cumulativeIncome + grossIncome;
+                // Thai withholding tax: TRD-standard annualization = (YTD
+                // including this month) * 12 / elapsed months. Annualise the
+                // TAXABLE portion only — สวัสดิการยกเว้นภาษีถูกแยกไว้แล้วใน
+                // nonTaxableExtra → ไม่กระทบฐาน WHT.
+                var ytdIncome = cumulativeIncome + taxableGross;
                 var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
 
                 // Apply Revenue Code §47 allowances before bracket lookup. Skipping
@@ -1392,6 +1435,112 @@ public class PayrollService : IPayrollService
 
         return MapToPayrollRunResponse(run);
     }
+
+    /// <summary>
+    /// ออกใบ 50 ทวิรายปีให้พนักงาน — รวบรวม PayrollDetail ของทุกรอบใน
+    /// ปี ค.ศ. ที่ระบุ จัดเป็นใบรับรองหัก ณ ที่จ่ายต่อพนักงาน 1 ใบ
+    /// (TaxType.WithholdingTax1 = ภงด.1 §40(1) เงินเดือน) แล้ว generate
+    /// PDF ตามเทมเพลตที่ใช้กับ supplier เดิม. ใบรับรองสร้างใน-memory
+    /// ไม่บันทึก WithholdingTaxCert entity (พนักงานเก็บตามรอบ payroll
+    /// อยู่แล้ว — ไม่ต้องซ้ำ).
+    /// คืน Zip ที่รวมทุกใบเป็นไฟล์เดียว (Filename / Bytes).
+    /// </summary>
+    public async Task<(string FileName, byte[] Bytes)> GenerateAnnualEmployeeWhtCertsAsync(
+        Guid companyId, int year, Guid? singleEmployeeId, string requestedBy)
+    {
+        if (_pdfService is not Implementations.PdfGenerationService pdf)
+            throw new InvalidOperationException("PDF service is not available");
+
+        var details = await _db.Set<PayrollDetail>()
+            .Include(d => d.Employee)
+            .Include(d => d.PayrollRun)
+            .Where(d => d.CompanyId == companyId
+                && d.PayrollRun.Year == year
+                && d.PayrollRun.Status == "Paid"
+                && d.WithholdingTax > 0
+                && (singleEmployeeId == null || d.EmployeeId == singleEmployeeId.Value))
+            .OrderBy(d => d.EmployeeId).ThenBy(d => d.PayrollRun.Month)
+            .ToListAsync();
+
+        if (details.Count == 0)
+            throw new InvalidOperationException(
+                singleEmployeeId.HasValue
+                    ? "ไม่พบรายการหัก ณ ที่จ่ายของพนักงานนี้ในปีที่เลือก"
+                    : "ไม่พบรายการหัก ณ ที่จ่ายของพนักงานในปีที่เลือก");
+
+        var grouped = details.GroupBy(d => d.EmployeeId).ToList();
+
+        // Single employee → return the PDF directly. Multiple → zip them.
+        using var zip = new MemoryStream();
+        using (var archive = new System.IO.Compression.ZipArchive(zip, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var g in grouped)
+            {
+                var emp = g.First().Employee;
+                var totalIncome = g.Sum(d => d.GrossIncome);
+                var totalTax = g.Sum(d => d.WithholdingTax);
+                // Effective rate (display): tax / income × 100. แสดงเป็น
+                // อัตราเฉลี่ยรายปี (RD ยอมรับ).
+                var effRate = totalIncome > 0 ? Math.Round(totalTax * 100m / totalIncome, 2) : 0m;
+
+                var cert = new WithholdingTaxCert
+                {
+                    CompanyId = companyId,
+                    CertificateNumber = $"PAYROLL-{year}-{emp.EmployeeCode}",
+                    PayeeContact = BuildEmployeeAsContact(emp),
+                    PayeeContactId = Guid.Empty,
+                    TaxFormType = TaxType.WithholdingTax1,   // ภงด.1 — §40(1) เงินเดือน
+                    TaxYear = year,
+                    TaxMonth = 12,                            // annual summary
+                    CertificateType = WithholdingTaxCertType.Withhold,
+                    Status = WithholdingTaxCertStatus.Issued,
+                    IssuedDate = DateTime.UtcNow,
+                    TotalIncomeAmount = totalIncome,
+                    TotalTaxAmount = totalTax,
+                    CreatedBy = requestedBy,
+                };
+                // หนึ่งบรรทัดต่อเดือนที่จ่ายจริง — โปร่งใสกว่ารวมยอดเดียว
+                var order = 1;
+                foreach (var d in g.OrderBy(x => x.PayrollRun.Month))
+                {
+                    cert.Lines.Add(new WithholdingTaxCertLine
+                    {
+                        LineOrder = order++,
+                        IncomeTypeCode = "1",   // §40(1) เงินเดือน
+                        IncomeDescription = $"เงินเดือน เดือน {d.PayrollRun.Month:D2}/{year}",
+                        PaymentDate = d.PayrollRun.PayDate,
+                        IncomeAmount = d.GrossIncome,
+                        TaxRate = d.GrossIncome > 0 ? Math.Round(d.WithholdingTax * 100m / d.GrossIncome, 2) : 0m,
+                        TaxAmount = d.WithholdingTax,
+                    });
+                }
+
+                var pdfBytes = await pdf.BuildEmployeeAnnualCertPdfAsync(companyId, cert);
+                if (grouped.Count == 1)
+                    return ($"WHT50tawi_{emp.EmployeeCode}_{year}.pdf", pdfBytes);
+
+                var fileName = $"WHT50tawi_{emp.EmployeeCode}_{year}.pdf";
+                var entry = archive.CreateEntry(fileName, System.IO.Compression.CompressionLevel.Fastest);
+                await using var entryStream = entry.Open();
+                await entryStream.WriteAsync(pdfBytes);
+            }
+        }
+        return ($"WHT50tawi_{year}_employees.zip", zip.ToArray());
+    }
+
+    /// <summary>Build a Contact-shaped object holding the employee's identity
+    /// + address — the cert renderer expects PayeeContact. Not saved to DB —
+    /// purely a transport for the PDF builder.</summary>
+    private static Contact BuildEmployeeAsContact(Employee e) => new()
+    {
+        Name = $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
+        TaxId = e.CitizenId,
+        // ContactType heuristic mirrors what BuildContactInfo does elsewhere —
+        // CitizenId เริ่มต้นด้วย 0 = นิติบุคคล (rare for an employee), else บุคคล.
+        ContactType = !string.IsNullOrEmpty(e.CitizenId) && e.CitizenId.StartsWith("0")
+            ? ContactType.JuristicPerson : ContactType.Individual,
+        Address = e.Address,
+    };
 
     public async Task VoidPayrollAsync(Guid companyId, Guid payrollRunId)
     {
