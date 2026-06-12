@@ -628,8 +628,14 @@ public partial class PdfGenerationService : IPdfGenerationService
             void Box(string roleLabel, DocumentSigner? s)
             {
                 sb.Append("<div class='sig-box'>");
+                // Always emit a fixed-height image area (even when empty) so
+                // the signature line sits at the same height in every column —
+                // otherwise a signed box (image present) pushed its line lower
+                // than the unsigned boxes beside it.
+                sb.Append("<div class='sig-img-area'>");
                 if (s?.SignatureImageDataUri != null)
                     sb.Append($"<img class='sig-img' src='{s.SignatureImageDataUri}' alt='signature'/>");
+                sb.Append("</div>");
                 sb.Append("<div class='sig-line'></div>");
                 sb.Append($"<div class='sig-role'>{WebUtility.HtmlEncode(roleLabel)}</div>");
                 if (s != null && !string.IsNullOrWhiteSpace(s.Name))
@@ -1163,7 +1169,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                appears to be written ON the line. */
             .signatures {{ display: flex; justify-content: space-around; gap: 24px; margin-top: 48px; }}
             .sig-box {{ text-align: center; flex: 1 1 0; max-width: 32%; position: relative; }}
-            .sig-img {{ display: block; max-height: 48px; max-width: 80%; margin: 0 auto -12px; object-fit: contain; }}
+            /* Fixed-height area reserved in EVERY box so the signature line
+               aligns across columns whether or not the slot is signed. The
+               image bottom-aligns to sit just above the line. */
+            .sig-img-area {{ height: 44px; display: flex; align-items: flex-end; justify-content: center; }}
+            .sig-img {{ max-height: 44px; max-width: 80%; object-fit: contain; }}
             .sig-line {{ border-bottom: 1px solid #333; height: 28px; margin-bottom: 6px; }}
             .sig-role {{ font-size: 12px; color: #555; }}
             .sig-name {{ font-size: 13px; font-weight: 600; margin-top: 2px; }}
