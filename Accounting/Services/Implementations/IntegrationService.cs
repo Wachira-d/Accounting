@@ -1353,7 +1353,7 @@ public class IntegrationService : IIntegrationService
         var isRevenue = revenueTypes.Contains(document.DocumentType);
 
         // AR for revenue (113); AP for expense (211 → 212 fallback).
-        ChartOfAccount? counterpart;
+        ChartOfAccount? counterpart = null;
         if (isRevenue)
         {
             counterpart = await _db.ChartOfAccounts

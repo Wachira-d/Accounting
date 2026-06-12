@@ -4548,7 +4548,7 @@ public class OcrService : IOcrService
     /// <summary>Engine-agnostic raw-text enrichment — fields no structured
     /// extractor returns today. Fail-safe: any regex/date mishap simply leaves
     /// the field null (the user can still key it in the review UI).</summary>
-    private void EnrichFromRawText(OcrExtractedData data, string rawText)
+    private void EnrichFromRawText(OcrExtractedData data, string? rawText)
     {
         if (string.IsNullOrEmpty(rawText)) return;
         var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
