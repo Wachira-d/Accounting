@@ -386,6 +386,21 @@ public class ExternalIntegrationController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    /// <summary>สร้างใบสำคัญจ่าย (จ่ายเงินจริงแล้ว) — เอกสารเดียวจบ:
+    /// Dr ค่าใช้จ่าย+ภาษีซื้อ / Cr เงินสด (+Cr WHT ค้างจ่าย พร้อมออกใบ 50 ทวิ
+    /// อัตโนมัติ) สำหรับ voucher ที่จ่ายไปแล้วในระบบต้นทาง — ไม่ต้อง map เป็น
+    /// expense + payment สองยกอีกต่อไป (expense ใช้กับกรณีตั้งหนี้รอจ่ายเท่านั้น)</summary>
+    [HttpPost("payment-vouchers")]
+    public async Task<ActionResult<InboundSyncResponse>> CreatePaymentVoucher([FromBody] InboundPaymentVoucherRequest request)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
+
+        var result = await _service.ProcessPaymentVoucherAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
+        result = await AttachFilesAsync(auth.Value.CompanyId, result, request.Attachments);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("certificates-in-lieu")]
     public async Task<ActionResult<InboundSyncResponse>> CreateCertificateInLieu([FromBody] InboundCertificateInLieuRequest request)
     {
