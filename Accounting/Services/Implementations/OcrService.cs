@@ -3384,7 +3384,11 @@ public class OcrService : IOcrService
             // convention (DocumentService edit/approve paths) keeps such docs
             // at BalanceDue=0 / PaidAmount=Total so they never appear in the
             // aging / ค้างชำระ reports. Credit types carry the full balance.
-            PaymentType = isPaidType ? Models.Enums.PaymentType.Cash : null,
+            // Expense is explicitly Credit per the role separation: it is the
+            // request/accrual document (ตั้งหนี้) — cash only moves on a PV.
+            PaymentType = isPaidType ? Models.Enums.PaymentType.Cash
+                : docType == DocumentType.Expense ? Models.Enums.PaymentType.Credit
+                : null,
             PaidAmount = isPaidType ? headerTotal : 0,
             BalanceDue = isPaidType ? 0 : headerTotal,
             Reference = result.ExtractedDocumentNumber,
@@ -3951,6 +3955,10 @@ public class OcrService : IOcrService
             ? autoDocDate.AddDays(scan.PaymentTermsDays.Value)
             : null;
         DateTime? autoPaymentDate = docType == DocumentType.PaymentVoucher ? autoDocDate : null;
+        // Role separation: a PV is real disbursement (cash-settled, no
+        // balance); an Expense is the request/accrual (Credit, full balance
+        // until a PV / payment clears it).
+        var autoIsPaid = docType == DocumentType.PaymentVoucher;
 
         await using var txn = await _db.Database.BeginTransactionAsync();
         var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
@@ -3961,13 +3969,17 @@ public class OcrService : IOcrService
             DocumentType = docType,
             Status = DocumentStatus.Draft,
             DocumentDate = autoDocDate,
-            DueDate = autoDueDate,
+            DueDate = autoIsPaid ? null : autoDueDate,
             PaymentDate = autoPaymentDate,
             ContactId = scan.MatchedContactId!.Value,
             SubTotal = scan.ExtractedSubTotal ?? 0,
             VatAmount = scan.ExtractedVatAmount ?? 0,
             TotalAmount = scan.ExtractedTotalAmount ?? 0,
-            BalanceDue = scan.ExtractedTotalAmount ?? 0,
+            PaymentType = autoIsPaid ? Models.Enums.PaymentType.Cash
+                : docType == DocumentType.Expense ? Models.Enums.PaymentType.Credit
+                : null,
+            PaidAmount = autoIsPaid ? scan.ExtractedTotalAmount ?? 0 : 0,
+            BalanceDue = autoIsPaid ? 0 : scan.ExtractedTotalAmount ?? 0,
             Reference = scan.ExtractedDocumentNumber,
             Notes = $"Auto-created from OCR scan (confidence: {scan.Confidence:P0}): {scan.OriginalFileName}",
             CreatedBy = await ResolveOcrCreatorAsync(companyId, scan.CreatedBy, "OCR-AutoCreate")

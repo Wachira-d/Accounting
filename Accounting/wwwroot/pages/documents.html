@@ -119,9 +119,9 @@
                 <optgroup label="📤 ฝั่งรายจ่าย" id="fDocTypeExpense">
                   <option value="PurchaseRequisition" title="ใบขอซื้อภายใน (PR) — แผนกขออนุมัติซื้อ ก่อนสั่งจริง, ไม่ลง GL">ใบขอซื้อ (PR)</option>
                   <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) ส่งให้ vendor — Commitment, ยังไม่ลง GL, ใช้ track ยอดสั่งซื้อ">ใบสั่งซื้อ (PO)</option>
-                  <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ที่ vendor ออกใบกำกับให้ — Dr Inventory/Asset + VAT / Cr AP, กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
-                  <option value="Expense" title="ค่าใช้จ่ายทั่วไป (ค่าน้ำ ค่าไฟ ค่าเช่า) — บริษัทจ่ายเอง — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
-                  <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ใช้ตอนชำระ PI / Expense ทีหลัง — Dr AP / Cr Cash — ตัดยอดเจ้าหนี้">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                  <option value="PurchaseInvoice" title="การค้า: มีใบแจ้งหนี้/ใบกำกับจากผู้ขาย — Dr สินค้า/ค่าใช้จ่าย + ภาษีซื้อ / Cr เจ้าหนี้การค้า (21210), กระทบสต๊อก, อยู่ในสาย PO→GRN→PI">ใบแจ้งหนี้ซื้อ (มีใบแจ้งหนี้ผู้ขาย — เจ้าหนี้การค้า)</option>
+                  <option value="Expense" title="คำขอ/ตั้งหนี้ค่าใช้จ่าย: ค่าใช้จ่ายภายใน-เบิกจ่าย ไม่มีใบแจ้งหนี้การค้า — Dr ค่าใช้จ่าย / Cr เจ้าหนี้อื่น (21220) — ยังไม่จ่ายเงิน จ่ายผ่านใบสำคัญจ่าย — ไม่กระทบสต๊อก">ใบบันทึกค่าใช้จ่าย (คำขอ/ตั้งหนี้ — เจ้าหนี้อื่น)</option>
+                  <option value="PaymentVoucher" title="การจ่ายเงินจริง: เงินออกทันที — Dr เจ้าหนี้ (ถ้าอ้างอิงเอกสารตั้งหนี้) หรือ Dr ค่าใช้จ่าย / Cr เงินสด-ธนาคาร — ตัดยอดเจ้าหนี้">ใบสำคัญจ่าย (จ่ายเงินจริง/ตัดหนี้)</option>
                   <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — ใช้เมื่อ vendor ออกใบเสร็จไม่ได้ (ตลาดสด, taxi, ผู้ขายไม่จด VAT) — บริษัทออกใบรับรองให้ตัวเอง">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
                 </optgroup>
               </select>
@@ -156,10 +156,10 @@
                .payment-voucher-only based on docType. -->
           <div class="form-row payment-voucher-only" style="display:none">
             <div class="form-group">
-              <label class="form-label" data-help="จ่ายทันที = เงินออกเลย ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้ | เครดิต = ตั้งเป็นเจ้าหนี้ มีวันครบกำหนด รอจ่ายภายหลัง">ประเภทการจ่าย</label>
+              <label class="form-label" data-help="ใบสำคัญจ่าย = การจ่ายเงินจริง (เงินออกทันที ลงเงินสด/ธนาคาร) | เครดิตใช้เฉพาะใบที่แปลงมาจากเอกสารตั้งหนี้ (ใบแจ้งหนี้ซื้อ/ใบบันทึกค่าใช้จ่าย) — ถ้ายังไม่จ่ายให้ตั้งหนี้ด้วยใบบันทึกค่าใช้จ่ายแทน">ประเภทการจ่าย</label>
               <select class="form-select" id="fPaymentType" onchange="Page.onPaymentTypeChange(true)">
                 <option value="Cash">จ่ายทันที (เงินสด/โอน)</option>
-                <option value="Credit">เครดิต (ตั้งเจ้าหนี้)</option>
+                <option value="Credit">เครดิต (เฉพาะใบที่อ้างอิงเอกสารตั้งหนี้)</option>
               </select>
             </div>
             <div class="form-group" id="paymentTypeHint" style="display:flex;align-items:flex-end">
@@ -459,9 +459,9 @@
               </optgroup>
               <optgroup label="📤 ฝั่งรายจ่าย">
                 <option value="PurchaseOrder" title="ใบสั่งซื้อ (PO) — commitment, ยังไม่ลง GL">ใบสั่งซื้อ (PO)</option>
-                <option value="PurchaseInvoice" title="ซื้อสินค้า/สินทรัพย์ — Dr Inventory/Asset+VAT / Cr AP — กระทบสต๊อก">ใบแจ้งหนี้ซื้อ / ซื้อสินค้า (กระทบสต๊อก)</option>
-                <option value="Expense" title="ค่าใช้จ่ายทั่วไป (บริษัทจ่ายเอง) — Dr Expense / Cr Cash หรือ AP — ไม่กระทบสต๊อก">ค่าใช้จ่าย (ไม่กระทบสต๊อก)</option>
-                <option value="PaymentVoucher" title="ใบสำคัญจ่าย — ชำระ PI/Expense ทีหลัง — Dr AP / Cr Cash">ใบสำคัญจ่าย (ตัดยอด AP)</option>
+                <option value="PurchaseInvoice" title="การค้า: มีใบแจ้งหนี้ผู้ขาย — Dr สินค้า/ค่าใช้จ่าย+ภาษีซื้อ / Cr เจ้าหนี้การค้า (21210) — กระทบสต๊อก">ใบแจ้งหนี้ซื้อ (มีใบแจ้งหนี้ผู้ขาย — เจ้าหนี้การค้า)</option>
+                <option value="Expense" title="คำขอ/ตั้งหนี้: ค่าใช้จ่ายภายใน ไม่มีใบแจ้งหนี้การค้า — Dr ค่าใช้จ่าย / Cr เจ้าหนี้อื่น (21220) — จ่ายผ่านใบสำคัญจ่าย">ใบบันทึกค่าใช้จ่าย (คำขอ/ตั้งหนี้ — เจ้าหนี้อื่น)</option>
+                <option value="PaymentVoucher" title="การจ่ายเงินจริง — Dr เจ้าหนี้ / Cr เงินสด-ธนาคาร — ตัดหนี้ที่ตั้งไว้">ใบสำคัญจ่าย (จ่ายเงินจริง/ตัดหนี้)</option>
                 <option value="CertificateInLieu" title="ใบรับรองแทนใบเสร็จ (§65 ทวิ) — กรณี vendor ออกใบเสร็จไม่ได้">ใบรับรองแทนใบเสร็จ (vendor ไม่ออกใบเสร็จได้)</option>
               </optgroup>
             </select>
@@ -1073,9 +1073,18 @@
         if (dueGroup) dueGroup.style.display = isCash ? 'none' : '';
         if (isCash && due) due.value = '';
         const hint = document.querySelector('#paymentTypeHint span');
-        if (hint) hint.textContent = isCash
-          ? 'เงินออกทันที — ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้'
-          : 'ตั้งเป็นเจ้าหนี้ — มีวันครบกำหนด รอจ่ายภายหลัง';
+        if (hint) {
+          if (isCash) {
+            hint.style.color = '#64748b';
+            hint.textContent = 'เงินออกทันที — ลงเงินสด/ธนาคาร ไม่ขึ้นค้างชำระ ไม่ลงเจ้าหนี้';
+          } else {
+            // Role separation (หลักบัญชีไทย): a standalone PV must be real
+            // disbursement — the "ตั้งหนี้" job belongs to ใบบันทึกค่าใช้จ่าย.
+            // Server rejects Credit on a PV that doesn't settle a source doc.
+            hint.style.color = '#b45309';
+            hint.textContent = '⚠ ใบสำคัญจ่าย = จ่ายเงินจริง — ถ้าต้องการตั้งหนี้รอจ่าย ให้ใช้ "ใบบันทึกค่าใช้จ่าย" แล้วแปลงเป็นใบสำคัญจ่ายเมื่อจ่าย (เครดิตใช้ได้เฉพาะใบที่อ้างอิงเอกสารตั้งหนี้)';
+          }
+        }
       },
 
       /**

@@ -1184,12 +1184,34 @@ public class IntegrationService : IIntegrationService
             }
             else if (isExpense)
             {
-                // Expense:
+                // Expense (role separation — หลักบัญชีไทย):
                 // Dr: ค่าใช้จ่าย (5xxxx) = SubTotal
                 // Dr: ภาษีซื้อ (1140x) = VatAmount (ถ้ามี)
-                // Cr: เจ้าหนี้การค้า (211xx) = TotalAmount
-                var apAccount = await _db.ChartOfAccounts
-                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
+                // Cr (priority):
+                //   1. contact.DefaultApAccountId — pinned per-supplier override
+                //      (matches DocumentService.ResolvePayableAccountAsync so
+                //      web + partner sync land on the SAME account; e.g. a
+                //      director contact pinned to 21230 เจ้าหนี้กรรมการ posts
+                //      consistently from both surfaces).
+                //   2. 21220 เจ้าหนี้อื่น — the canonical non-trade AP for the
+                //      Expense doc (NOT a supplier trade invoice).
+                //   3. 212 family / legacy 211 — keeps custom charts posting.
+                Contact? expenseContact = null;
+                if (document.ContactId != Guid.Empty)
+                    expenseContact = await _db.Contacts.AsNoTracking()
+                        .FirstOrDefaultAsync(c => c.Id == document.ContactId && c.CompanyId == companyId);
+                ChartOfAccount? apAccount = null;
+                if (expenseContact?.DefaultApAccountId is Guid pinnedApId)
+                    apAccount = await _db.ChartOfAccounts
+                        .FirstOrDefaultAsync(a => a.Id == pinnedApId && a.CompanyId == companyId && a.IsActive);
+                apAccount ??= await _db.ChartOfAccounts
+                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive)
+                    ?? await _db.ChartOfAccounts
+                        .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
+                        .OrderBy(a => a.AccountCode)
+                        .FirstOrDefaultAsync()
+                    ?? await _db.ChartOfAccounts
+                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
                 var expenseAccount = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive);
                 var vatAccount = document.VatAmount > 0
@@ -1339,10 +1361,26 @@ public class IntegrationService : IIntegrationService
         }
         else
         {
-            counterpart = await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive)
+            // Clear the SAME payable account the document's journal credited:
+            // contact-pinned override > Expense → 21220 > trade 212 family >
+            // legacy 211. Keeps web + partner postings reconcilable on the
+            // identical liability account.
+            Contact? settleContact = null;
+            if (document.ContactId != Guid.Empty)
+                settleContact = await _db.Contacts.AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == document.ContactId && c.CompanyId == companyId);
+            if (settleContact?.DefaultApAccountId is Guid pinnedClearId)
+                counterpart = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.Id == pinnedClearId && a.CompanyId == companyId && a.IsActive);
+            if (counterpart == null && document.DocumentType == DocumentType.Expense)
+                counterpart = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive);
+            counterpart ??= await _db.ChartOfAccounts
+                    .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
+                    .OrderBy(a => a.AccountCode)
+                    .FirstOrDefaultAsync()
                 ?? await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive);
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
         }
         if (counterpart == null) return null;
 
@@ -1789,6 +1827,11 @@ public class IntegrationService : IIntegrationService
                 WithholdingTaxAmount = totalWht,
                 TotalAmount = totalAmount,
                 BalanceDue = totalAmount,
+                // Role separation: an Expense from the partner sync is the
+                // request/accrual side (ตั้งหนี้) — its GL credits AP; cash
+                // moves later via /payments or a PV. Mark Credit so the doc
+                // ages correctly instead of sitting type-less.
+                PaymentType = Models.Enums.PaymentType.Credit,
                 Notes = request.Notes,
                 // Preparer identity from the source system. Stamped into the
                 // "ผู้จัดทำ" signature slot since the real preparer is a user of
