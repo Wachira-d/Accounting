@@ -462,17 +462,21 @@ public partial class PdfGenerationService
                 var s = signerAt(i);
                 r.RelativeItem().PaddingHorizontal(8).Column(c =>
                 {
-                    // Signature image, then rule, then role + name + title.
-                    // Image rendered at fixed height so a tall signature can't
-                    // throw the column off; defensive try/catch on bad bytes.
+                    // Reserve the SAME fixed-height signature area in EVERY
+                    // column so the rule line sits at an identical height
+                    // whether or not the slot is signed. Previously a signed
+                    // slot reserved a 14mm image while an unsigned slot padded
+                    // only 20pt → the unsigned lines floated higher (the
+                    // misalignment reported). Image (when present) renders at
+                    // that fixed height; defensive try/catch on bad bytes.
                     if (s?.SignatureImageBytes is { Length: > 0 })
                     {
-                        try { c.Item().AlignCenter().Height(14, Unit.Millimetre).Image(s.SignatureImageBytes); }
-                        catch { c.Item().PaddingTop(16); }
+                        try { c.Item().Height(14, Unit.Millimetre).AlignCenter().Image(s.SignatureImageBytes); }
+                        catch { c.Item().Height(14, Unit.Millimetre); }
                     }
                     else
                     {
-                        c.Item().PaddingTop(20);
+                        c.Item().Height(14, Unit.Millimetre);
                     }
                     c.Item().LineHorizontal(0.5f).LineColor("#333");
                     c.Item().PaddingTop(4).AlignCenter().Text(label).FontSize(10).FontColor("#555");
