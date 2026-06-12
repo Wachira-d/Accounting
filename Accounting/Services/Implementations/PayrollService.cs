@@ -767,17 +767,38 @@ public class PayrollService : IPayrollService
 
     public async Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId)
     {
-        var run = await _db.Set<PayrollRun>()
-            .Include(r => r.Details)
-            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
-
-        if (run.Status != "Draft")
-            throw new InvalidOperationException("สามารถคำนวณได้เฉพาะรอบที่เป็น Draft เท่านั้น");
+        // First read just enough to confirm the run exists + belongs to the
+        // tenant (cheap check, no FOR UPDATE). The serialised re-read happens
+        // INSIDE the transaction below — necessary to avoid the race where two
+        // HR clicks pass the Draft check then both recompute, the second
+        // overwriting totals or hitting a duplicate-detail insert.
+        _ = await _db.Set<PayrollRun>()
+            .AsNoTracking()
+            .Where(r => r.Id == payrollRunId && r.CompanyId == companyId)
+            .Select(r => r.Id)
+            .FirstOrDefaultAsync()
+            != Guid.Empty ? true : throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // Row-level lock on the payroll run for the rest of this
+            // transaction. Mirrors DocumentService.ApproveDocumentAsync's
+            // FOR UPDATE pattern. A concurrent Calculate will wait here and
+            // either see the run already Calculated (and reject below) or
+            // proceed serially.
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                payrollRunId, companyId);
+
+            var run = await _db.Set<PayrollRun>()
+                .Include(r => r.Details)
+                .FirstAsync(r => r.Id == payrollRunId && r.CompanyId == companyId);
+
+            if (run.Status != "Draft")
+                throw new InvalidOperationException(
+                    "สามารถคำนวณได้เฉพาะรอบที่เป็น Draft เท่านั้น — รอบนี้ถูกคำนวณ/อนุมัติไปแล้วโดยผู้ใช้งานคนอื่น");
+
             // Remove existing details
             _db.Set<PayrollDetail>().RemoveRange(run.Details);
 
@@ -1152,17 +1173,26 @@ public class PayrollService : IPayrollService
 
     public async Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy)
     {
+        // Row lock on the run for the duration of the approval — pair-protect
+        // against a second concurrent click sliding through the status guard.
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+            payrollRunId, companyId);
+
         var run = await _db.Set<PayrollRun>()
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
         if (run.Status != "Calculated")
-            throw new InvalidOperationException("สามารถอนุมัติได้เฉพาะรอบที่คำนวณแล้วเท่านั้น");
+            throw new InvalidOperationException(
+                "สามารถอนุมัติได้เฉพาะรอบที่คำนวณแล้วเท่านั้น — รอบนี้อาจถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น");
 
         run.Status = "Approved";
         run.ApprovedBy = approvedBy;
         run.ApprovedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         await NotifyRunAsync(companyId, NotificationEvents.PayrollApproved, actorUserId: null,
             title: $"อนุมัติรอบเงินเดือน {run.Month:D2}/{run.Year}",
@@ -1174,10 +1204,15 @@ public class PayrollService : IPayrollService
 
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
+        // Quick existence check before the long-running pay transaction. The
+        // FOR UPDATE lock is taken inside payTransaction below so a concurrent
+        // Pay click waits and re-reads under the lock.
+        if (!await _db.Set<PayrollRun>().AnyAsync(r => r.Id == payrollRunId && r.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
         var run = await _db.Set<PayrollRun>()
             .Include(r => r.Details).ThenInclude(d => d.Employee).ThenInclude(e => e.DepartmentRef)
-            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+            .FirstAsync(r => r.Id == payrollRunId && r.CompanyId == companyId);
 
         if (run.Status != "Approved")
             throw new InvalidOperationException("สามารถจ่ายได้เฉพาะรอบที่อนุมัติแล้วเท่านั้น");
@@ -1193,6 +1228,19 @@ public class PayrollService : IPayrollService
         await using var payTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // Row lock + re-read under the lock — a concurrent /pay click
+            // would otherwise pass the "Approved" check and double-post.
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                payrollRunId, companyId);
+            var lockedStatus = await _db.Set<PayrollRun>()
+                .Where(r => r.Id == payrollRunId && r.CompanyId == companyId)
+                .Select(r => r.Status)
+                .FirstAsync();
+            if (lockedStatus != "Approved")
+                throw new InvalidOperationException(
+                    "รอบนี้ถูกประมวลผลไปแล้วโดยผู้ใช้งานคนอื่น — กรุณารีเฟรชหน้านี้");
+
             run.Status = "Paid";
             run.UpdatedBy = processedBy;
             run.UpdatedAt = DateTime.UtcNow;
@@ -1318,6 +1366,7 @@ public class PayrollService : IPayrollService
                     foreach (var detail in run.Details)
                     {
                         var employeeRecoverable = detail.NetPay;
+                        decimal detailRecovered = 0m;
                         var outstanding = await _salaryAdvanceService
                             .GetOutstandingForEmployeeAsync(companyId, detail.EmployeeId);
                         foreach (var adv in outstanding)
@@ -1330,8 +1379,12 @@ public class PayrollService : IPayrollService
                             if (recover <= 0) continue;
                             advanceRepayments.Add((adv, recover));
                             totalAdvanceRecovered += recover;
+                            detailRecovered += recover;
                             employeeRecoverable -= recover;
                         }
+                        // Stash the per-employee recovery so VoidPayrollAsync
+                        // can restore SalaryAdvance.OutstandingAmount exactly.
+                        detail.AdvanceRecovered = detailRecovered;
                     }
                 }
                 if (totalAdvanceRecovered > 0)
@@ -1454,10 +1507,14 @@ public class PayrollService : IPayrollService
         var details = await _db.Set<PayrollDetail>()
             .Include(d => d.Employee)
             .Include(d => d.PayrollRun)
+            // §50ทวิ requires a cert for every employee that received income
+            // in the year, even when WithholdingTax is ฿0 (low earner). Also
+            // include runs that finalised after year-end (Approved → late
+            // adjustments), not just Paid.
             .Where(d => d.CompanyId == companyId
                 && d.PayrollRun.Year == year
-                && d.PayrollRun.Status == "Paid"
-                && d.WithholdingTax > 0
+                && (d.PayrollRun.Status == "Paid" || d.PayrollRun.Status == "Approved")
+                && d.GrossIncome > 0
                 && (singleEmployeeId == null || d.EmployeeId == singleEmployeeId.Value))
             .OrderBy(d => d.EmployeeId).ThenBy(d => d.PayrollRun.Month)
             .ToListAsync();
@@ -1465,8 +1522,8 @@ public class PayrollService : IPayrollService
         if (details.Count == 0)
             throw new InvalidOperationException(
                 singleEmployeeId.HasValue
-                    ? "ไม่พบรายการหัก ณ ที่จ่ายของพนักงานนี้ในปีที่เลือก"
-                    : "ไม่พบรายการหัก ณ ที่จ่ายของพนักงานในปีที่เลือก");
+                    ? "ไม่พบเงินได้ของพนักงานนี้ในปีที่เลือก"
+                    : "ไม่พบเงินได้ของพนักงานในปีที่เลือก");
 
         var grouped = details.GroupBy(d => d.EmployeeId).ToList();
 
@@ -1556,9 +1613,9 @@ public class PayrollService : IPayrollService
         // sit on the books for an event that no longer counts. (Previously
         // VoidPayrollAsync only flipped the status string, leaving the GL
         // posted — every voided run silently corrupted the trial balance.)
-        // Salary advances paid down by this run are NOT auto-restored — HR
-        // should reverse those manually from the salary-advance UI, since the
-        // grain of the recovery isn't stored on PayrollDetail.
+        // Salary advances paid down by this run ARE NOW restored from each
+        // PayrollDetail.AdvanceRecovered (recorded at Pay time) — without this,
+        // voiding silently zeroed each employee's outstanding advance.
         var reversedNote = "รอบยังไม่ถูกผูกบัญชี — ยกเลิกได้ทันที";
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
@@ -1569,7 +1626,41 @@ public class PayrollService : IPayrollService
                     reversalDate: DateTime.UtcNow.Date,
                     description: $"ยกเลิกรอบจ่ายเงินเดือน {run.PayrollNumber} ({run.Month:D2}/{run.Year})",
                     systemTriggered: true);
-                reversedNote = "ระบบกลับรายการบัญชีที่ผูกอยู่แล้ว — กรุณาตรวจสอบเงินทดรองที่หักไว้ในรอบนี้ในหน้าจัดการเงินทดรองด้วย";
+                reversedNote = "ระบบกลับรายการบัญชี + คืนยอดเงินทดรองที่หักในรอบนี้ให้พนักงานเรียบร้อย";
+            }
+
+            // Restore salary advances per the recorded per-detail recovery.
+            // Apply oldest-first (FIFO) so the same advances we paid DOWN
+            // become outstanding again in the same order they were cleared.
+            if (run.Status == "Paid")
+            {
+                var details = await _db.Set<PayrollDetail>()
+                    .Where(d => d.PayrollRunId == payrollRunId && d.CompanyId == companyId
+                        && d.AdvanceRecovered > 0)
+                    .Select(d => new { d.EmployeeId, d.AdvanceRecovered })
+                    .ToListAsync();
+                foreach (var d in details)
+                {
+                    var remaining = d.AdvanceRecovered;
+                    // Pull advances that this run could have touched — any
+                    // that still has ClearedAmount > 0 (we'll undo from those).
+                    var advances = await _db.Set<SalaryAdvance>()
+                        .Where(a => a.CompanyId == companyId && a.EmployeeId == d.EmployeeId
+                            && a.ClearedAmount > 0 && !a.IsDeleted)
+                        .OrderBy(a => a.RequestDate).ThenBy(a => a.Id)
+                        .ToListAsync();
+                    foreach (var adv in advances)
+                    {
+                        if (remaining <= 0) break;
+                        var refund = Math.Min(remaining, adv.ClearedAmount);
+                        adv.ClearedAmount -= refund;
+                        adv.OutstandingAmount += refund;
+                        // Re-open if it was fully cleared by this run.
+                        if (adv.Status == "Cleared" && adv.OutstandingAmount > 0)
+                            adv.Status = "Disbursed";
+                        remaining -= refund;
+                    }
+                }
             }
 
             run.Status = "Voided";

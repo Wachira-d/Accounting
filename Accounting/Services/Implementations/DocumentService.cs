@@ -1352,6 +1352,24 @@ public class DocumentService : IDocumentService
                 if (doc.Status != DocumentStatus.Draft)
                     await ReverseProjectCostEntriesAsync(companyId, doc);
 
+                // 6d) Void any auto-issued WHT certificates that point at this
+                //     document. WHT certs are created at payment time (cash
+                //     basis) and feed PND.3/53 monthly exports — without this
+                //     cascade, voiding a PV/PI/Expense leaves the cert "Issued"
+                //     and the company silently remits + pays tax for a payment
+                //     that no longer exists. Best-effort + bounded: only
+                //     not-already-voided certs linked to THIS doc.
+                var linkedCerts = await _db.WithholdingTaxCerts
+                    .Where(w => w.CompanyId == companyId && w.DocumentId == documentId
+                                && w.Status != WithholdingTaxCertStatus.Voided && !w.IsDeleted)
+                    .Select(w => w.Id)
+                    .ToListAsync();
+                foreach (var certId in linkedCerts)
+                {
+                    try { await _whtService.VoidAsync(companyId, certId); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "WHT cert {Cert} void failed during doc void {Doc}", certId, documentId); }
+                }
+
                 // 7) Finally void the document itself + clear the stale
                 //    aging value. The list-row gate already suppresses the
                 //    badge visually for Voided status, but cleaning the

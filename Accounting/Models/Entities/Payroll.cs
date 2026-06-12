@@ -165,6 +165,10 @@ public class PayrollDetail : TenantEntity
     public decimal ProvidentFundEmployee { get; set; }   // กองทุนสำรองเลี้ยงชีพ (ลูกจ้าง)
     public decimal ProvidentFundEmployer { get; set; }   // กองทุนสำรองเลี้ยงชีพ (นายจ้าง)
     public decimal LoanDeduction { get; set; }           // หักเงินกู้
+    /// <summary>ยอดเงินทดรองที่หักคืนในรอบนี้ — บันทึกตอน Pay เพื่อให้
+    /// Void สามารถ restore ยอด OutstandingAmount ของ SalaryAdvance กลับ
+    /// ได้ถูกต้อง (เดิมไม่มี → void แล้วยอดเงินทดรองหาย).</summary>
+    public decimal AdvanceRecovered { get; set; }
     public decimal OtherDeductions { get; set; }
     public decimal TotalDeductions { get; set; }
 

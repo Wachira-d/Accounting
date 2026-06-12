@@ -3892,6 +3892,11 @@ public static class DatabaseMigrationHelper
             // ที่บริษัทตั้งเองได้ (โทรศัพท์ ค่าเดินทาง ค่าน้ำมัน ฯลฯ).
             """ALTER TABLE "CompanyCompensationDefaults" ADD COLUMN IF NOT EXISTS "DailyMealAllowance" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "CompanyCompensationDefaults" ADD COLUMN IF NOT EXISTS "CustomAllowancesJson" text NULL;""",
+            // PayrollDetail.AdvanceRecovered — per-employee advance repayment
+            // recorded at Pay time so Void can restore it precisely. Without
+            // this, voiding a payroll silently zeroed each employee's
+            // outstanding advance balance.
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "AdvanceRecovered" numeric(18,2) NOT NULL DEFAULT 0;""",
 
             // PaymentAllocation — one Payment may settle many Documents.
             // Existing Payment rows stay valid (legacy 1:1 path); new
