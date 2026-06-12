@@ -233,6 +233,7 @@ public class AccountingDbContext : DbContext
     public DbSet<PublicHoliday> PublicHolidays => Set<PublicHoliday>();
     public DbSet<EmployeeLeaveBalance> EmployeeLeaveBalances => Set<EmployeeLeaveBalance>();
     public DbSet<PayrollItem> PayrollItems => Set<PayrollItem>();
+    public DbSet<SsoYearConfig> SsoYearConfigs => Set<SsoYearConfig>();
     public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Position> Positions => Set<Position>();

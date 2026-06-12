@@ -36,10 +36,11 @@ public class PayrollService : IPayrollService
         (decimal.MaxValue, 0.35m)
     };
 
-    // Social security constants
-    private const decimal SsoRate = 0.05m;          // 5% employee contribution
-    private const decimal SsoMaxBase = 15_000m;     // max salary base per month
-    private const decimal SsoMaxContribution = 750m; // max monthly contribution
+    // Social security parameters are YEAR-DEPENDENT (เพดานปรับขึ้นเป็นขั้น
+    // ตามพระราชกฤษฎีกา: 15,000 → 17,500 ปี 2026 → 20,000 ปี 2029 → 23,000
+    // ปี 2032) — resolved per payroll-run year via GetSsoParamsAsync below:
+    // company override row (SsoYearConfigs) first, then the statutory default
+    // schedule in Helpers.SsoRateSchedule. No more hard-coded 15,000/750.
 
     // Thai personal income tax allowances (Revenue Code §47).
     // Simplified model — covers the deductions most SMEs configure:
@@ -49,7 +50,7 @@ public class PayrollService : IPayrollService
     //     TaxAllowances as a count of 30K-equivalent dependants which is the
     //     pragmatic UI choice)
     //   • SSO contributions are deductible up to the annual contribution cap
-    //     (฿9,000 = 12 × ฿750)
+    //     (12 × monthly max ของปีนั้น — 10,500 ตั้งแต่ปี 2026, เดิม 9,000)
     //   • Provident-fund employee contribution is deductible up to 15 % of
     //     salary capped at ฿500,000 / yr; we use the actual annual contribution
     //     subject to that cap.
@@ -87,6 +88,32 @@ public class PayrollService : IPayrollService
         if (_webhooks == null) return;
         try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
         catch { /* fire-and-forget */ }
+    }
+
+    /// <summary>Resolve the SSO parameters effective for a year: the
+    /// company's SsoYearConfigs override row wins; otherwise the statutory
+    /// schedule (SsoRateSchedule). Returns employee/employer monthly caps
+    /// pre-computed (= ceiling × rate). Buddhist-era years normalised.</summary>
+    internal async Task<(decimal MaxBase, decimal Rate, decimal EmployerRate, decimal MaxContribution, decimal EmployerMaxContribution)>
+        GetSsoParamsAsync(Guid companyId, int year)
+    {
+        var y = year > 2400 ? year - 543 : year;
+        var cfg = await _db.Set<SsoYearConfig>().AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted);
+        decimal ceiling, rate, erRate;
+        if (cfg != null)
+        {
+            ceiling = cfg.WageCeiling;
+            rate = cfg.RatePercent / 100m;
+            erRate = cfg.EmployerRatePercent / 100m;
+        }
+        else
+        {
+            (ceiling, rate) = Accounting.Helpers.SsoRateSchedule.GetDefault(y);
+            erRate = rate;
+        }
+        return (ceiling, rate, erRate,
+            Math.Round(ceiling * rate, 2), Math.Round(ceiling * erRate, 2));
     }
 
     /// <summary>Fire-and-forget — swallowed inside the engine itself.</summary>
@@ -825,6 +852,11 @@ public class PayrollService : IPayrollService
             decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
             decimal totalPvdEmp = 0, totalPvdEr = 0;
 
+            // SSO parameters effective for THIS run's year — the wage ceiling
+            // steps up by royal decree (15,000 → 17,500 in 2026 → 20,000 in
+            // 2029 → 23,000 in 2032) and a company can override per year.
+            var sso = await GetSsoParamsAsync(companyId, run.Year);
+
             foreach (var emp in employees)
             {
                 // Get cumulative income for this year (prior months) — sourced
@@ -956,14 +988,16 @@ public class PayrollService : IPayrollService
 
                 var grossIncome = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
 
-                // Social security: base on BaseSalary (not gross), capped at 15,000 THB/month per Thai SSO law
+                // Social security: base on BaseSalary (not gross), capped at the
+                // year's statutory wage ceiling (resolved above — 17,500 from
+                // 2026, stepping up per the royal decree; override-able per year).
                 var ssoEmployee = 0m;
                 var ssoEmployer = 0m;
                 if (emp.IsSubjectToSocialSecurity)
                 {
-                    var ssoBase = Math.Min(emp.BaseSalary, SsoMaxBase);
-                    ssoEmployee = Math.Min(ssoBase * SsoRate, SsoMaxContribution);
-                    ssoEmployer = ssoEmployee;
+                    var ssoBase = Math.Min(emp.BaseSalary, sso.MaxBase);
+                    ssoEmployee = Math.Min(Math.Round(ssoBase * sso.Rate, 2), sso.MaxContribution);
+                    ssoEmployer = Math.Min(Math.Round(ssoBase * sso.EmployerRate, 2), sso.EmployerMaxContribution);
                 }
 
                 // Provident fund calculation
@@ -983,7 +1017,9 @@ public class PayrollService : IPayrollService
                 // these used to over-withhold by 5–15 % depending on income tier —
                 // employees ended up subsidising the company's cash flow until the
                 // year-end true-up that this system doesn't yet automate.
-                var annualSso = Math.Min(ssoEmployee * 12m, SsoMaxContribution * 12m);
+                // Annual SSO deduction cap follows the year's ceiling too
+                // (12 × monthly max — e.g. 10,500 from 2026, was 9,000).
+                var annualSso = Math.Min(ssoEmployee * 12m, sso.MaxContribution * 12m);
                 var annualPvd = Math.Min(pvdEmployee * 12m, PitPvdMaxDeductible);
                 var personalDeductions =
                     PitPersonalAllowance
@@ -1923,12 +1959,14 @@ public class PayrollService : IPayrollService
                 && d.Employee.IsSubjectToSocialSecurity)
             .ToListAsync();
 
+        // Wage base cap follows the YEAR being reported, not a fixed 15,000.
+        var ssoParams = await GetSsoParamsAsync(companyId, year);
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
             SocialSecurityNumber = d.Employee.SocialSecurityNumber,
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
-            SalaryBase = Math.Min(d.BaseSalary, SsoMaxBase),
+            SalaryBase = Math.Min(d.BaseSalary, ssoParams.MaxBase),
             EmployeeContribution = d.SocialSecurityEmployee,
             EmployerContribution = d.SocialSecurityEmployer
         }).ToList();

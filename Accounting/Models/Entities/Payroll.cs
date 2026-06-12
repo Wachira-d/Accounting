@@ -348,3 +348,27 @@ public class PayrollItem : TenantEntity
     public ChartOfAccount? Account { get; set; }
     public int SortOrder { get; set; }
 }
+
+/// <summary>
+/// ค่าตั้งประกันสังคมรายปี (override) — เพดานค่าจ้าง + อัตราสมทบ ของปีนั้น
+/// ของบริษัทนั้น เมื่อไม่มีแถว ระบบใช้ตารางตามกฎหมายใน
+/// Helpers.SsoRateSchedule (15,000 → 17,500 ปี 2026 → 20,000 ปี 2029 →
+/// 23,000 ปี 2032). มีไว้เพราะเพดาน/อัตราปรับได้อีกตามประกาศแต่ละปี
+/// (รวมประกาศลดอัตราชั่วคราว) — ผู้ใช้ปรับเองได้ทันทีไม่ต้องรออัปเดตระบบ
+/// </summary>
+public class SsoYearConfig : TenantEntity
+{
+    /// <summary>ปี ค.ศ. (ระบบ normalize พ.ศ. ให้ตอนบันทึก)</summary>
+    public int Year { get; set; }
+
+    /// <summary>เพดานค่าจ้ายรายเดือนที่ใช้คำนวณสมทบ (เช่น 17,500)</summary>
+    public decimal WageCeiling { get; set; }
+
+    /// <summary>อัตราสมทบลูกจ้าง เป็นเปอร์เซ็นต์ (เช่น 5 = 5%)</summary>
+    public decimal RatePercent { get; set; } = 5m;
+
+    /// <summary>อัตราสมทบนายจ้าง เป็นเปอร์เซ็นต์ — ปกติเท่าลูกจ้าง</summary>
+    public decimal EmployerRatePercent { get; set; } = 5m;
+
+    public string? Notes { get; set; }
+}

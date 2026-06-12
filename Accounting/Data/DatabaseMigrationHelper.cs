@@ -1683,6 +1683,31 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExtractedDiscountAmount" numeric(18,2) NULL;
             """,
 
+            // ===== SsoYearConfigs: per-company-per-year SSO ceiling/rate
+            // override (default schedule lives in Helpers.SsoRateSchedule:
+            // 15,000 → 17,500 (2026) → 20,000 (2029) → 23,000 (2032)) =====
+            """
+            CREATE TABLE IF NOT EXISTS "SsoYearConfigs" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Year" integer NOT NULL,
+                "WageCeiling" numeric(18,2) NOT NULL,
+                "RatePercent" numeric(5,2) NOT NULL DEFAULT 5,
+                "EmployerRatePercent" numeric(5,2) NOT NULL DEFAULT 5,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SsoYearConfigs" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_SsoYearConfigs_Company_Year"
+            ON "SsoYearConfigs" ("CompanyId", "Year") WHERE "IsDeleted" = false;
+            """,
+
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """
             CREATE TABLE IF NOT EXISTS "OcrLearnedPatterns" (

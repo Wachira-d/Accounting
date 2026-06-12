@@ -293,8 +293,16 @@ public class TaxFilingExportService : ITaxFilingExportService
             .OrderBy(d => d.Employee.EmployeeCode)
             .ToList();
 
+        // Wage-base ceiling follows the reported YEAR (พรฎ. ปรับเป็นขั้น:
+        // 15,000 → 17,500 ปี 2026 → 20,000 ปี 2029 → 23,000 ปี 2032) +
+        // honours the company's per-year override (SsoYearConfigs).
+        var ssoCfg = await _db.SsoYearConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        var wageCeiling = ssoCfg?.WageCeiling
+            ?? Accounting.Helpers.SsoRateSchedule.GetDefault(year).WageCeiling;
+
         var sb = new StringBuilder();
-        var totalWages = allDetails.Sum(d => Math.Min(d.GrossIncome, 15000)); // SSO max wage base
+        var totalWages = allDetails.Sum(d => Math.Min(d.GrossIncome, wageCeiling));
         var totalEmpContrib = allDetails.Sum(d => d.SocialSecurityEmployee);
         var totalErContrib = allDetails.Sum(d => d.SocialSecurityEmployer);
 
@@ -305,7 +313,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var detail in allDetails)
         {
             var emp = detail.Employee;
-            var wageBase = Math.Min(detail.GrossIncome, 15000m); // SSO max 15,000 baht wage base
+            var wageBase = Math.Min(detail.GrossIncome, wageCeiling);
             // D|Seq|CitizenId|SSNumber|Title|FirstName|LastName|WageBase|EmployeeContrib|EmployerContrib
             sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{emp.SocialSecurityNumber}|{emp.TitleTh}|{emp.FirstNameTh}|{emp.LastNameTh}|{wageBase:F2}|{detail.SocialSecurityEmployee:F2}|{detail.SocialSecurityEmployer:F2}");
         }
