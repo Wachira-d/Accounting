@@ -357,16 +357,35 @@ public class EmailScheduleService : IEmailScheduleService
     public async Task<int> ProcessPendingQueueAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+
+        // Atomic claim with SKIP LOCKED — required for multi-instance correctness.
+        // Without this, two pods read the same top-50 "Pending" rows, both flip to
+        // "Sending", and the customer receives the invoice/statement twice. The
+        // CTE locks the chosen rows, updates them to "Sending" in one statement,
+        // and returns the locked ids. Subsequent workers SKIP those rows.
+        var claimedIds = await _db.Database.SqlQuery<Guid>(
+            $@"WITH claimed AS (
+                SELECT ""Id""
+                FROM ""EmailQueues""
+                WHERE NOT ""IsDeleted"" AND ""Status"" = 'Pending' AND ""ScheduledFor"" <= {now}
+                ORDER BY ""ScheduledFor""
+                LIMIT 50
+                FOR UPDATE SKIP LOCKED
+              )
+              UPDATE ""EmailQueues"" q
+              SET ""Status"" = 'Sending', ""UpdatedAt"" = {now}
+              FROM claimed
+              WHERE q.""Id"" = claimed.""Id""
+              RETURNING q.""Id""").ToListAsync(ct);
+        if (claimedIds.Count == 0) return 0;
+
         var batch = await _db.EmailQueues
-            .Where(q => !q.IsDeleted && q.Status == "Pending" && q.ScheduledFor <= now)
-            .OrderBy(q => q.ScheduledFor).Take(50).ToListAsync(ct);
+            .Where(q => claimedIds.Contains(q.Id))
+            .ToListAsync(ct);
 
         int sent = 0;
         foreach (var item in batch)
         {
-            item.Status = "Sending";
-            await _db.SaveChangesAsync(ct);
-
             try
             {
                 var sender = await _senderFactory.GetSenderAsync(item.CompanyId, ct);

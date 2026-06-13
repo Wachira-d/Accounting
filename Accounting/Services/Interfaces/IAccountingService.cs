@@ -51,6 +51,11 @@ public interface IAccountingService
 
     // Reports
     Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
+    /// <summary>คืน Dictionary&lt;AccountId, signed net balance&gt; ตามวันที่
+    /// ใช้ OpeningBalance baseline เดียวกับ TrialBalance — Dashboard /
+    /// CashFlow / ExecutiveReports เรียกตัวนี้แทนการ sum JE จาก inception
+    /// เพื่อให้ทุกหน้าตรงกันสำหรับบริษัทที่ migrate มา.</summary>
+    Task<Dictionary<Guid, decimal>> GetAccountBalanceAsOfAsync(Guid companyId, DateTime asOfDate);
     Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
     Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
 

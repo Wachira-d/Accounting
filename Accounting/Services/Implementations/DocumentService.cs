@@ -29,6 +29,7 @@ public class DocumentService : IDocumentService
     private readonly ISensitivityService? _sensitivity;
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
     private readonly IEmailScheduleService? _emailSchedule;
+    private readonly IAdvancedArApService? _advancedArAp;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -43,9 +44,11 @@ public class DocumentService : IDocumentService
         ISensitivityService? sensitivity = null,
         Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null,
         IWebhookService? webhooks = null,
-        IEmailScheduleService? emailSchedule = null)
+        IEmailScheduleService? emailSchedule = null,
+        IAdvancedArApService? advancedArAp = null)
     {
         _emailSchedule = emailSchedule;
+        _advancedArAp = advancedArAp;
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
@@ -1073,6 +1076,38 @@ public class DocumentService : IDocumentService
                     j.SourceDocumentId == documentId
                     && j.CompanyId == companyId
                     && j.Status == JournalEntryStatus.Posted);
+
+                // Credit-limit enforcement on sales-side credit documents —
+                // blocks approval if customer is over their ContactCreditSetting
+                // limit OR on hold. acknowledgeWarnings=true lets the operator
+                // override (recorded in ProcessingNotes). Cash-settled sales
+                // never consume credit (money came in immediately).
+                var creditCheckTypes = new[] {
+                    DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote
+                };
+                if (_advancedArAp != null
+                    && creditCheckTypes.Contains(doc.DocumentType)
+                    && doc.PaymentType != Models.Enums.PaymentType.Cash
+                    && doc.ContactId != Guid.Empty)
+                {
+                    try
+                    {
+                        var credit = await _advancedArAp.CheckCreditAsync(companyId, doc.ContactId, doc.TotalAmount);
+                        if (!credit.IsApproved)
+                        {
+                            if (!acknowledgeWarnings)
+                                throw new InvalidOperationException(
+                                    $"ปฏิเสธอนุมัติ: {credit.Reason}. กรุณาตรวจ ContactCreditSetting หรือกด \"อนุมัติพร้อม override\"");
+                            doc.Notes = (doc.Notes ?? "")
+                                + $"\n[Credit override] {credit.Reason} — อนุมัติโดย {approvedBy}";
+                        }
+                    }
+                    catch (InvalidOperationException) { throw; }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Credit check failed Doc={Doc} — proceeding without block", documentId);
+                    }
+                }
 
                 // A cash-settled document (จ่ายทันที) is already fully paid the
                 // moment it's approved — the JE moves real cash, not a payable.

@@ -13,6 +13,14 @@ public class User : BaseEntity
     public DateTime? LastLoginAt { get; set; }
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiry { get; set; }
+    /// <summary>The refresh token JUST replaced — kept for a brief window so
+    /// the client can be told "you've been hijacked" when the OLD token is
+    /// re-presented. Re-use of this value → revoke every session.</summary>
+    public string? PreviousRefreshToken { get; set; }
+    /// <summary>Set when re-use of PreviousRefreshToken is detected. All
+    /// future refresh attempts on this user are rejected until the user
+    /// logs in fresh.</summary>
+    public DateTime? RefreshTokenRevokedAt { get; set; }
 
     // SSO / External Auth
     public string? AuthProvider { get; set; }      // "Google", "Facebook", or null for local

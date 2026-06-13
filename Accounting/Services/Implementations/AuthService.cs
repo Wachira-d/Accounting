@@ -232,8 +232,27 @@ public class AuthService : IAuthService
 
     public async Task<LoginResponse> RefreshTokenAsync(string refreshToken)
     {
+        // Re-use detection — if the caller is presenting the PREVIOUS token
+        // (which we issued and then rotated), it means either (a) replay by a
+        // client that didn't see the previous response, or (b) a stolen old
+        // cookie. Safe assumption is (b): kill all sessions for the user.
+        var reuseHit = await _db.Users.FirstOrDefaultAsync(u =>
+            u.PreviousRefreshToken == refreshToken);
+        if (reuseHit != null)
+        {
+            reuseHit.RefreshToken = null;
+            reuseHit.PreviousRefreshToken = null;
+            reuseHit.RefreshTokenExpiry = null;
+            reuseHit.RefreshTokenRevokedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            throw new UnauthorizedAccessException(
+                "ตรวจพบการใช้ token ซ้ำ — เซสชันทั้งหมดถูกยกเลิก กรุณาเข้าสู่ระบบใหม่");
+        }
+
         var user = await _db.Users.FirstOrDefaultAsync(u =>
-            u.RefreshToken == refreshToken && u.RefreshTokenExpiry > DateTime.UtcNow)
+            u.RefreshToken == refreshToken
+            && u.RefreshTokenExpiry > DateTime.UtcNow
+            && u.RefreshTokenRevokedAt == null)
             ?? throw new UnauthorizedAccessException("Refresh token ไม่ถูกต้องหรือหมดอายุ");
 
         return await GenerateLoginResponse(user);
@@ -560,8 +579,12 @@ public class AuthService : IAuthService
         var refreshToken = JwtHelper.GenerateRefreshToken();
         var refreshDays = int.TryParse(_config["Jwt:RefreshTokenDays"], out var rd) ? rd : 7;
 
+        // Rotate: keep the PREVIOUS token for re-use detection in the next
+        // refresh. Re-presenting it triggers a session kill.
+        user.PreviousRefreshToken = user.RefreshToken;
         user.RefreshToken = refreshToken;
         user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshDays);
+        user.RefreshTokenRevokedAt = null;
         await _db.SaveChangesAsync();
 
         var expireMinutes = int.TryParse(_config["Jwt:ExpireMinutes"], out var em) ? em : 60;
