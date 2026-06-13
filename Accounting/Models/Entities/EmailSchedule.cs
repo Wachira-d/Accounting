@@ -5,17 +5,23 @@ namespace Accounting.Models.Entities;
 /// ระบบจะ enqueue งานส่งตามกฎทุกครั้งที่เกิด event.
 ///
 /// Trigger ที่รองรับ:
-///   DocumentApproved   = อนุมัติเอกสาร (ขายฝั่ง: Invoice/TaxInvoice/QT)
-///   DocumentDueSoon    = ครบกำหนดใน N วัน (ถ้ายังไม่ชำระ)
-///   DocumentOverdue    = เกินกำหนด N วัน (ยังไม่ชำระ)
-///   PayrollPaid        = จ่ายเงินเดือนเสร็จ → ส่งสลิป
-///   WhtCertIssued      = ออกใบ 50 ทวิแล้ว → ส่งให้ผู้รับ
-///   AnnualWhtCert      = ใบ 50 ทวิรายปีพนักงาน (cron วันแรกของปี)
+///   DocumentApproved        = อนุมัติเอกสาร (ขายฝั่ง: Invoice/TaxInvoice/QT)
+///   DocumentDueSoon         = ครบกำหนดใน N วัน (ถ้ายังไม่ชำระ)
+///   DocumentOverdue         = เกินกำหนด N วัน (ยังไม่ชำระ)
+///   PayrollPaid             = จ่ายเงินเดือนเสร็จ → ส่งสลิป
+///   WhtCertIssued           = ออกใบ 50 ทวิแล้ว → ส่งให้ผู้รับ
+///   RecurringInvoiceCreated = recurring สร้าง doc ใหม่ (ไม่ว่า auto-approve
+///                             หรือไม่ ก็ส่ง draft/approved ออกได้ทันที)
+///   MonthlyStatement        = สรุปรายการลูกค้าเดือนที่แล้ว
+///                             (DayOfMonth + SendAtHour กำหนดเวลาส่ง)
 /// OffsetDays:
-///   - Approved/Issued: 0 = ส่งทันที, +N = หลังอนุมัติ N วัน
+///   - Approved/Issued/RecurringCreated: 0 = ส่งทันที, +N = หลัง event N วัน
 ///   - DueSoon: -N = ก่อนครบกำหนด N วัน
 ///   - Overdue: +N = หลังเกินกำหนด N วัน (เตือนซ้ำทุก N วันได้)
+///   - MonthlyStatement: ใช้ DayOfMonth (1-31) แทน
 /// SendAtHour (0-23 UTC+7): เวลาในวันที่จะส่ง (default 09:00).
+/// DayOfMonth (1-31, 0 = ไม่ใช้): เฉพาะ MonthlyStatement — ส่งวันที่กี่
+/// ของเดือน (default 5 = ส่งวันที่ 5 ของเดือนถัดไป สำหรับยอดเดือนก่อน).
 /// </summary>
 public class EmailScheduleRule : TenantEntity
 {
@@ -48,6 +54,15 @@ public class EmailScheduleRule : TenantEntity
 
     /// <summary>คนรับเพิ่มเติม (BCC) คั่นด้วย comma — สำหรับ HR/Owner archive.</summary>
     public string? BccEmails { get; set; }
+
+    /// <summary>วันที่กี่ของเดือนสำหรับ MonthlyStatement (default 5 =
+    /// ส่งวันที่ 5 ของเดือน รวมยอดเดือนก่อน). อื่น ๆ ไม่ใช้.</summary>
+    public int DayOfMonth { get; set; } = 5;
+
+    /// <summary>เฉพาะ MonthlyStatement: กรองเฉพาะ contact ที่ใช้ filter นี้
+    /// — "ทุกคน" (null/empty), "เฉพาะ contact ที่มีรายการในเดือน" (default),
+    /// หรือ tag/group ID เฉพาะ.</summary>
+    public string? AudienceFilter { get; set; }
 
     /// <summary>ผู้ใช้ที่สร้างกฎ (audit).</summary>
     public string? CreatedByName { get; set; }

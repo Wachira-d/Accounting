@@ -3931,6 +3931,8 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE INDEX IF NOT EXISTS "IX_EmailRules_Company_Trigger" ON "EmailScheduleRules" ("CompanyId", "Trigger") WHERE "IsDeleted" = false;""",
+            """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "DayOfMonth" integer NOT NULL DEFAULT 5;""",
+            """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "AudienceFilter" varchar(100) NULL;""",
 
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (

@@ -159,6 +159,156 @@ public class EmailScheduleService : IEmailScheduleService
         catch (Exception ex) { _logger.LogWarning(ex, "OnWhtCertIssued enqueue failed Cert={Cert}", certId); }
     }
 
+    public async Task OnRecurringDocumentCreatedAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct = default)
+    {
+        try
+        {
+            var doc = await _db.Documents.AsNoTracking()
+                .Include(d => d.Contact)
+                .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
+            if (doc == null) return;
+
+            var rules = await _db.EmailScheduleRules.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.IsActive && !r.IsDeleted
+                    && r.Trigger == "RecurringInvoiceCreated"
+                    && (r.DocumentType == null || r.DocumentType == doc.DocumentType.ToString()))
+                .ToListAsync(ct);
+            // recurringId เข้า suffix → idempotency: ทุก recurring run ไม่ทับกัน
+            foreach (var rule in rules)
+                await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays,
+                    suffix: $"recurring-{recurringId}", ct);
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "OnRecurringDocumentCreated enqueue failed Doc={Doc}", documentId); }
+    }
+
+    /// <summary>สรุปรายการที่เกิดขึ้นกับลูกค้าในเดือนที่แล้ว — invoice ที่
+    /// ออก/ที่ชำระ/ที่ยังค้าง. ส่งวันที่ DayOfMonth ของเดือนปัจจุบัน
+    /// (default 5 = ส่งวันที่ 5 รวมยอดเดือนก่อน). Idempotency: ป้องกัน
+    /// ส่งซ้ำต่อ contact ต่อ rule ต่อรอบ year+month ที่เป็น "ของเดือนที่แล้ว".</summary>
+    public async Task<int> ScanMonthlyStatementsAsync(CancellationToken ct = default)
+    {
+        var todayBkk = BangkokNow().Date;
+        var rules = await _db.EmailScheduleRules.AsNoTracking()
+            .Where(r => r.IsActive && !r.IsDeleted && r.Trigger == "MonthlyStatement")
+            .ToListAsync(ct);
+        if (rules.Count == 0) return 0;
+
+        int enqueued = 0;
+        foreach (var rule in rules)
+        {
+            // ส่งเฉพาะวันที่ DayOfMonth ของเดือนปัจจุบัน
+            var sendDay = Math.Clamp(rule.DayOfMonth <= 0 ? 5 : rule.DayOfMonth, 1, 28);
+            if (todayBkk.Day != sendDay) continue;
+
+            // ยอดเดือนที่แล้ว
+            var prevMonthStart = new DateTime(todayBkk.Year, todayBkk.Month, 1).AddMonths(-1);
+            var prevMonthEnd = prevMonthStart.AddMonths(1).AddDays(-1);
+            var period = $"{prevMonthStart:yyyy-MM}";
+            var sendUtc = ScheduledUtc(todayBkk, rule.SendAtHour);
+
+            // หา contact ที่มีรายการในเดือนที่แล้ว (ฝั่งขายเท่านั้น — AR statement)
+            var arTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice,
+                DocumentType.Receipt, DocumentType.BillingNote, DocumentType.CreditNote, DocumentType.DebitNote };
+            var contactRows = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == rule.CompanyId && !d.IsDeleted
+                    && arTypes.Contains(d.DocumentType)
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                    && d.DocumentDate >= prevMonthStart && d.DocumentDate <= prevMonthEnd
+                    && d.ContactId != Guid.Empty)
+                .GroupBy(d => d.ContactId)
+                .Select(g => new { ContactId = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+            if (contactRows.Count == 0) continue;
+
+            var contactIds = contactRows.Select(x => x.ContactId).ToList();
+            var contacts = await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == rule.CompanyId && contactIds.Contains(c.Id) && !c.IsDeleted)
+                .ToListAsync(ct);
+
+            // company name สำหรับ template
+            var companyName = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == rule.CompanyId)
+                .Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
+
+            foreach (var contact in contacts)
+            {
+                if (string.IsNullOrWhiteSpace(contact.Email)) continue;
+                var idem = $"statement:{contact.Id}:{period}:{rule.Id}";
+                if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == rule.CompanyId
+                    && q.IdempotencyKey == idem && !q.IsDeleted, ct)) continue;
+
+                // รวมยอดของ contact นี้ในเดือน
+                var monthDocs = await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == rule.CompanyId && !d.IsDeleted
+                        && d.ContactId == contact.Id
+                        && arTypes.Contains(d.DocumentType)
+                        && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                        && d.DocumentDate >= prevMonthStart && d.DocumentDate <= prevMonthEnd)
+                    .Select(d => new { d.DocumentNumber, d.DocumentDate, d.DocumentType,
+                        d.TotalAmount, d.BalanceDue, d.DueDate })
+                    .OrderBy(d => d.DocumentDate).ToListAsync(ct);
+                if (monthDocs.Count == 0) continue;
+
+                var totalAmount = monthDocs.Sum(d => d.TotalAmount);
+                var totalOutstanding = monthDocs.Sum(d => d.BalanceDue);
+                var ctx = new Dictionary<string, string?>
+                {
+                    ["ContactName"] = contact.Name,
+                    ["Period"] = period,
+                    ["Amount"] = totalAmount.ToString("N2"),
+                    ["BalanceDue"] = totalOutstanding.ToString("N2"),
+                    ["CompanyName"] = companyName,
+                    ["DocCount"] = monthDocs.Count.ToString(),
+                };
+
+                // ตาราง HTML สำหรับ default body
+                var rowsHtml = string.Concat(monthDocs.Select(d =>
+                    $"<tr><td style='padding:6px 10px;border-bottom:1px solid #e5e7eb'>{d.DocumentDate:dd/MM/yyyy}</td>"
+                  + $"<td style='padding:6px 10px;border-bottom:1px solid #e5e7eb;font-family:monospace'>{System.Net.WebUtility.HtmlEncode(d.DocumentNumber)}</td>"
+                  + $"<td style='padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right'>{d.TotalAmount:N2}</td>"
+                  + $"<td style='padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;color:{(d.BalanceDue > 0 ? "#dc2626" : "#10b981")}'>{d.BalanceDue:N2}</td></tr>"));
+
+                var subject = Render(rule.SubjectTemplate ?? "สรุปรายการเดือน {Period} — {CompanyName}", ctx);
+                var body = !string.IsNullOrEmpty(rule.BodyTemplate)
+                    ? Render(rule.BodyTemplate, ctx)
+                    : $@"<div style='font-family:sans-serif;max-width:680px'>
+                        <p>เรียน คุณ{System.Net.WebUtility.HtmlEncode(contact.Name)}</p>
+                        <p>สรุปรายการของเดือน <strong>{period}</strong> จำนวน {monthDocs.Count} รายการ ยอดรวม <strong>{totalAmount:N2} บาท</strong>
+                        ค้างชำระ <strong style='color:#dc2626'>{totalOutstanding:N2} บาท</strong></p>
+                        <table style='width:100%;border-collapse:collapse;font-size:13px;margin-top:10px'>
+                          <thead><tr style='background:#f8fafc'>
+                            <th style='padding:8px;text-align:left'>วันที่</th>
+                            <th style='padding:8px;text-align:left'>เลขที่</th>
+                            <th style='padding:8px;text-align:right'>ยอดรวม</th>
+                            <th style='padding:8px;text-align:right'>ค้างชำระ</th>
+                          </tr></thead>
+                          <tbody>{rowsHtml}</tbody>
+                        </table>
+                        <p style='color:#64748b;font-size:13px;margin-top:14px'>ส่งโดย {System.Net.WebUtility.HtmlEncode(companyName)} โดยอัตโนมัติ</p>
+                      </div>";
+
+                _db.EmailQueues.Add(new EmailQueue
+                {
+                    CompanyId = rule.CompanyId,
+                    RuleId = rule.Id,
+                    EntityType = "MonthlyStatement",
+                    EntityId = contact.Id,
+                    ToEmail = contact.Email,
+                    BccEmail = rule.BccEmails,
+                    Subject = subject,
+                    Body = body,
+                    AttachPdf = false,    // statement render inline ใน body ไม่มี PDF
+                    ScheduledFor = sendUtc,
+                    IdempotencyKey = idem,
+                });
+                enqueued++;
+            }
+        }
+        if (enqueued > 0) await _db.SaveChangesAsync(ct);
+        return enqueued;
+    }
+
     public async Task<int> ScanDueSoonAndOverdueAsync(CancellationToken ct = default)
     {
         var today = BangkokNow().Date;
@@ -404,6 +554,8 @@ public class EmailScheduleService : IEmailScheduleService
             existing.SubjectTemplate = rule.SubjectTemplate;
             existing.BodyTemplate = rule.BodyTemplate;
             existing.BccEmails = rule.BccEmails;
+            existing.DayOfMonth = rule.DayOfMonth;
+            existing.AudienceFilter = rule.AudienceFilter;
             existing.UpdatedAt = DateTime.UtcNow;
         }
         await _db.SaveChangesAsync();

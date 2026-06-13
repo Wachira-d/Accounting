@@ -18,7 +18,8 @@ public class EmailScheduleController : ControllerBase
     public sealed record RuleRequest(
         Guid Id, string Trigger, bool IsActive, string? DocumentType,
         int OffsetDays, int SendAtHour, int RepeatEveryDays,
-        string? SubjectTemplate, string? BodyTemplate, string? BccEmails);
+        string? SubjectTemplate, string? BodyTemplate, string? BccEmails,
+        int DayOfMonth = 5);
 
     [HttpGet("rules")]
     public async Task<ActionResult<ApiResponse<List<EmailScheduleRule>>>> GetRules(Guid companyId)
@@ -41,6 +42,7 @@ public class EmailScheduleController : ControllerBase
             SubjectTemplate = req.SubjectTemplate,
             BodyTemplate = req.BodyTemplate,
             BccEmails = req.BccEmails,
+            DayOfMonth = Math.Clamp(req.DayOfMonth, 1, 28),
         };
         var saved = await _svc.UpsertRuleAsync(companyId, rule,
             User.Identity?.Name ?? JwtHelper.GetUserIdFromClaims(User).ToString());

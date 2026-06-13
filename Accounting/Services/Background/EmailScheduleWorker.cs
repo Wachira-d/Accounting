@@ -44,6 +44,11 @@ public class EmailScheduleWorker : BackgroundService
                     var enq = await svc.ScanDueSoonAndOverdueAsync(stoppingToken);
                     if (enq > 0)
                         _logger.LogInformation("EmailScheduleWorker: enqueue {Count} แจ้งเตือนใกล้/เกินกำหนด", enq);
+
+                    var stmt = await svc.ScanMonthlyStatementsAsync(stoppingToken);
+                    if (stmt > 0)
+                        _logger.LogInformation("EmailScheduleWorker: enqueue {Count} statement รายเดือน", stmt);
+
                     lastScan = DateTime.UtcNow;
                 }
             }

@@ -18,6 +18,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     private readonly IWithholdingTaxCertService _whtService;
     private readonly ILogger<RecurringTransactionService> _logger;
     private readonly IErrorLogService _errorLogService;
+    private readonly IEmailScheduleService? _emailSchedule;
 
     public RecurringTransactionService(
         AccountingDbContext db,
@@ -25,7 +26,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         IAccountingService accountingService,
         IWithholdingTaxCertService whtService,
         ILogger<RecurringTransactionService> logger,
-        IErrorLogService errorLogService)
+        IErrorLogService errorLogService,
+        IEmailScheduleService? emailSchedule = null)
     {
         _db = db;
         _documentService = documentService;
@@ -33,6 +35,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         _whtService = whtService;
         _logger = logger;
         _errorLogService = errorLogService;
+        _emailSchedule = emailSchedule;
     }
 
     public async Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy)
@@ -360,6 +363,16 @@ public class RecurringTransactionService : IRecurringTransactionService
             }
 
             _logger.LogInformation("Created document {DocNumber} from recurring {RecurringId}", result?.DocumentNumber, recurring.Id);
+
+            // Auto-email hook: enqueue ตามกฎ RecurringInvoiceCreated.
+            // ใช้ trigger แยกจาก DocumentApproved เพราะ recurring อาจไม่
+            // approve (AutoApprove=false) แต่ user ยังอยากส่ง draft ออกได้
+            // หรือ approve แล้วก็ส่งได้ — กฎต่างกัน. fail-safe.
+            if (result != null && _emailSchedule != null)
+            {
+                try { await _emailSchedule.OnRecurringDocumentCreatedAsync(recurring.CompanyId, result.Id, recurring.Id); }
+                catch (Exception ex2) { _logger.LogWarning(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id); }
+            }
         }
         catch (Exception ex)
         {

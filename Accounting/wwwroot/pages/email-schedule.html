@@ -36,6 +36,8 @@
           <li><b>DocumentApproved</b> — อนุมัติเอกสาร (Invoice/TaxInvoice/Quotation) → ส่งทันที</li>
           <li><b>DocumentDueSoon</b> — ครบกำหนดอีก N วัน (ใส่ OffsetDays ติดลบ เช่น -3)</li>
           <li><b>DocumentOverdue</b> — เกินกำหนด N วัน (OffsetDays บวก, RepeatEveryDays = ส่งซ้ำ)</li>
+          <li><b>RecurringInvoiceCreated</b> — ใช้คู่กับหน้า "รายการที่เกิดซ้ำ" — เมื่อ recurring สร้าง invoice ใหม่ → ส่งให้ลูกค้าอัตโนมัติ (ไม่ต้องรอ approve)</li>
+          <li><b>MonthlyStatement</b> — ส่งสรุปรายการของเดือนที่แล้วให้ลูกค้าทุกคนที่มี email + รายการเดือนนั้น (ตั้ง DayOfMonth)</li>
           <li><b>PayrollPaid</b> — จ่ายเงินเดือนเสร็จ → ส่งสลิปแต่ละคน</li>
           <li><b>WhtCertIssued</b> — ออกใบ 50 ทวิ → ส่งให้ผู้รับเงิน</li>
         </ul>
@@ -83,10 +85,12 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Trigger *</label>
-              <select class="form-select" id="rTrigger">
+              <select class="form-select" id="rTrigger" onchange="Page._toggleTriggerFields()">
                 <option value="DocumentApproved">อนุมัติเอกสาร → ส่งทันที</option>
                 <option value="DocumentDueSoon">ใกล้ครบกำหนดชำระ</option>
                 <option value="DocumentOverdue">เกินกำหนดชำระ</option>
+                <option value="RecurringInvoiceCreated">รายการที่เกิดซ้ำ (Recurring) สร้าง doc</option>
+                <option value="MonthlyStatement">สรุปรายการลูกค้ารายเดือน</option>
                 <option value="PayrollPaid">จ่ายเงินเดือน → ส่งสลิป</option>
                 <option value="WhtCertIssued">ออกใบ 50 ทวิ</option>
               </select>
@@ -125,10 +129,15 @@
               <label class="form-label">ส่งซ้ำทุก N วัน (0 = ส่งครั้งเดียว)</label>
               <input type="number" class="form-input" id="rRepeat" value="0" min="0">
             </div>
-            <div class="form-group">
-              <label class="form-label">BCC archive (คั่นด้วย comma)</label>
-              <input type="text" class="form-input" id="rBcc" placeholder="archive@bank.co,owner@example.com">
+            <div class="form-group" id="rDayOfMonthGroup" style="display:none">
+              <label class="form-label">วันที่กี่ของเดือน (1-28) สำหรับ Statement</label>
+              <input type="number" class="form-input" id="rDayOfMonth" value="5" min="1" max="28">
+              <p class="form-help">เช่น 5 = ส่งวันที่ 5 ของเดือน รวมยอดเดือนก่อน</p>
             </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">BCC archive (คั่นด้วย comma)</label>
+            <input type="text" class="form-input" id="rBcc" placeholder="archive@bank.co,owner@example.com">
           </div>
           <div class="form-group">
             <label class="form-label">หัวเรื่อง (เทมเพลต)</label>
@@ -195,7 +204,10 @@
         }
         const labelTrigger = (t) => ({
           DocumentApproved: '✅ อนุมัติเอกสาร', DocumentDueSoon: '⏰ ใกล้ครบกำหนด',
-          DocumentOverdue: '⚠️ เกินกำหนด', PayrollPaid: '💰 จ่ายเงินเดือน → สลิป',
+          DocumentOverdue: '⚠️ เกินกำหนด',
+          RecurringInvoiceCreated: '🔁 Recurring สร้าง doc',
+          MonthlyStatement: '📅 สรุปรายเดือนให้ลูกค้า',
+          PayrollPaid: '💰 จ่ายเงินเดือน → สลิป',
           WhtCertIssued: '📜 ออกใบ 50 ทวิ',
         }[t] || t);
         box.innerHTML = this._rules.map(r => `
@@ -224,12 +236,19 @@
         document.getElementById('rOffset').value = r?.offsetDays ?? 0;
         document.getElementById('rHour').value = r?.sendAtHour ?? 9;
         document.getElementById('rRepeat').value = r?.repeatEveryDays ?? 0;
+        document.getElementById('rDayOfMonth').value = r?.dayOfMonth ?? 5;
         document.getElementById('rBcc').value = r?.bccEmails ?? '';
         document.getElementById('rSubject').value = r?.subjectTemplate ?? '';
         document.getElementById('rBody').value = r?.bodyTemplate ?? '';
         document.getElementById('rActive').checked = r?.isActive ?? true;
         document.getElementById('ruleTitle').textContent = id ? 'แก้ไขกฎ' : 'เพิ่มกฎใหม่';
+        this._toggleTriggerFields();
         Layout.openModal('ruleModal');
+      },
+
+      _toggleTriggerFields() {
+        const t = document.getElementById('rTrigger').value;
+        document.getElementById('rDayOfMonthGroup').style.display = t === 'MonthlyStatement' ? '' : 'none';
       },
 
       async saveRule() {
@@ -241,6 +260,7 @@
           offsetDays: parseInt(document.getElementById('rOffset').value, 10) || 0,
           sendAtHour: parseInt(document.getElementById('rHour').value, 10) || 9,
           repeatEveryDays: parseInt(document.getElementById('rRepeat').value, 10) || 0,
+          dayOfMonth: parseInt(document.getElementById('rDayOfMonth').value, 10) || 5,
           subjectTemplate: document.getElementById('rSubject').value || null,
           bodyTemplate: document.getElementById('rBody').value || null,
           bccEmails: document.getElementById('rBcc').value || null,
