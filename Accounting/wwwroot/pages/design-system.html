@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คู่มือ Design System & UX — NextAcc</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/i18n.js" defer></script>
+  <style>
+    .doc-body {
+      max-width: 920px; margin: 0 auto; padding: 32px 20px 80px;
+      font-size: 15px; line-height: 1.7; color: var(--gray-800);
+    }
+    .doc-body h1 { font-size: 2rem; margin: 28px 0 8px; line-height:1.2; }
+    .doc-body h2 { font-size: 1.4rem; margin: 32px 0 10px; padding-top: 12px;
+                   border-top: 1px solid var(--gray-200); color: var(--gray-900); }
+    .doc-body h3 { font-size: 1.1rem; margin: 22px 0 8px; color: var(--gray-900); }
+    .doc-body p, .doc-body li { color: var(--gray-700); }
+    .doc-body a { color: var(--primary); text-decoration: none; }
+    .doc-body a:hover { text-decoration: underline; }
+    .doc-body code {
+      background: var(--gray-100); padding: 2px 6px; border-radius: 4px;
+      font-size: .92em; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    }
+    .doc-body pre {
+      background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px;
+      overflow-x: auto; font-size: 13px; line-height: 1.5;
+    }
+    .doc-body pre code { background: transparent; color: inherit; padding: 0; }
+    .doc-body table {
+      width: 100%; border-collapse: collapse; margin: 12px 0;
+      font-size: 14px;
+    }
+    .doc-body th, .doc-body td {
+      padding: 8px 12px; border-bottom: 1px solid var(--gray-200);
+      text-align: left; vertical-align: top;
+    }
+    .doc-body th { background: var(--gray-50); font-weight: 600; color: var(--gray-700); }
+    .doc-body blockquote {
+      border-left: 4px solid var(--primary); background: var(--gray-50);
+      padding: 12px 16px; margin: 16px 0; border-radius: 6px;
+    }
+    .doc-toc {
+      position: sticky; top: var(--header-height); float: right;
+      width: 230px; margin: 20px 0 20px 24px; padding: 12px 16px;
+      background: var(--gray-50); border-radius: 8px; font-size: 13px;
+      max-height: calc(100vh - var(--header-height) - 40px); overflow: auto;
+    }
+    .doc-toc h4 { margin: 0 0 8px; font-size: 13px; color: var(--gray-500); text-transform: uppercase; }
+    .doc-toc a { display: block; padding: 3px 0; color: var(--gray-700); border-radius: 4px; }
+    .doc-toc a:hover { color: var(--primary); }
+    @media (max-width: 1100px) { .doc-toc { display: none; } }
+    .doc-body .checkbox-list li {
+      list-style: none; padding-left: 28px; position: relative;
+    }
+    .doc-body .checkbox-list li::before {
+      content: '☐'; position: absolute; left: 0; top: 0;
+      color: var(--gray-400); font-size: 16px;
+    }
+    .doc-toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      max-width: 920px; margin: 0 auto; padding: 16px 20px 0; gap: 12px;
+    }
+    .doc-toolbar h1 { margin: 0; font-size: 1.5rem; color: var(--gray-900); }
+    .doc-loading {
+      padding: 40px; text-align: center; color: var(--gray-400);
+    }
+  </style>
+</head>
+<body>
+  <div class="doc-toolbar">
+    <h1>📐 คู่มือ Design System & UX</h1>
+    <a href="/spec/ux.md" download class="btn btn-sm btn-outline">⬇ ดาวน์โหลด .md</a>
+  </div>
+  <div class="doc-body">
+    <aside class="doc-toc" id="docToc">
+      <h4>หัวข้อ</h4>
+      <div id="docTocList"></div>
+    </aside>
+    <article id="docContent" class="doc-loading">กำลังโหลด...</article>
+  </div>
+
+  <script>
+    // Lightweight Markdown → HTML for headings, paragraphs, lists,
+    // tables, code blocks, blockquotes and inline (link/bold/italic/code).
+    // ไม่ต้องโหลด lib ใหญ่ — รองรับโครงสร้างของ ux.md ครบ.
+    function renderMarkdown(md) {
+      const lines = md.split(/\r?\n/);
+      let html = '', i = 0;
+      const inline = (s) => s
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      while (i < lines.length) {
+        const ln = lines[i];
+        // headings
+        const h = ln.match(/^(#{1,4})\s+(.+)$/);
+        if (h) {
+          const lvl = h[1].length;
+          const text = inline(h[2]);
+          const slug = h[2].toLowerCase().replace(/[^a-z0-9ก-๙]+/g, '-').replace(/(^-|-$)/g, '');
+          html += `<h${lvl} id="${slug}">${text}</h${lvl}>`;
+          i++; continue;
+        }
+        // code fence
+        if (ln.startsWith('```')) {
+          let code = '';
+          i++;
+          while (i < lines.length && !lines[i].startsWith('```')) {
+            code += lines[i] + '\n'; i++;
+          }
+          i++; // closing fence
+          html += `<pre><code>${code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>`;
+          continue;
+        }
+        // blockquote
+        if (ln.startsWith('> ')) {
+          let block = inline(ln.slice(2));
+          i++;
+          while (i < lines.length && lines[i].startsWith('> ')) {
+            block += '<br>' + inline(lines[i].slice(2)); i++;
+          }
+          html += `<blockquote>${block}</blockquote>`;
+          continue;
+        }
+        // table
+        if (ln.startsWith('| ') && i + 1 < lines.length && /^\|\s*[-:]/.test(lines[i+1])) {
+          const headers = ln.slice(1, -1).split('|').map(s => s.trim());
+          i += 2;
+          const rows = [];
+          while (i < lines.length && lines[i].startsWith('|')) {
+            rows.push(lines[i].slice(1, -1).split('|').map(s => s.trim()));
+            i++;
+          }
+          html += '<table><thead><tr>' + headers.map(h => `<th>${inline(h)}</th>`).join('') + '</tr></thead><tbody>'
+                + rows.map(r => '<tr>' + r.map(c => `<td>${inline(c)}</td>`).join('') + '</tr>').join('')
+                + '</tbody></table>';
+          continue;
+        }
+        // unordered list
+        if (/^[-*+]\s+/.test(ln)) {
+          let isChecklist = false;
+          let listHtml = '<ul>';
+          while (i < lines.length && /^[-*+]\s+/.test(lines[i])) {
+            const itemRaw = lines[i].replace(/^[-*+]\s+/, '');
+            const checkMatch = itemRaw.match(/^\[([ x])\]\s+(.+)$/);
+            if (checkMatch) {
+              isChecklist = true;
+              const checked = checkMatch[1] === 'x';
+              listHtml += `<li>${checked ? '✓' : '☐'} ${inline(checkMatch[2])}</li>`;
+            } else {
+              listHtml += `<li>${inline(itemRaw)}</li>`;
+            }
+            i++;
+          }
+          listHtml += '</ul>';
+          if (isChecklist) listHtml = listHtml.replace('<ul>', '<ul class="checkbox-list">');
+          html += listHtml;
+          continue;
+        }
+        // ordered list
+        if (/^\d+\.\s+/.test(ln)) {
+          html += '<ol>';
+          while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+            html += `<li>${inline(lines[i].replace(/^\d+\.\s+/, ''))}</li>`;
+            i++;
+          }
+          html += '</ol>';
+          continue;
+        }
+        // hr
+        if (/^-{3,}$/.test(ln.trim())) {
+          html += '<hr>'; i++; continue;
+        }
+        // paragraph (collect until blank)
+        if (ln.trim() === '') { i++; continue; }
+        let p = inline(ln);
+        i++;
+        while (i < lines.length && lines[i].trim() !== ''
+            && !/^(#{1,4}|>\s|[-*+]\s|\d+\.\s|\|\s|```|-{3,}\s*$)/.test(lines[i])) {
+          p += ' ' + inline(lines[i]); i++;
+        }
+        html += `<p>${p}</p>`;
+      }
+      return html;
+    }
+
+    function buildToc(html) {
+      const container = document.createElement('div');
+      container.innerHTML = html;
+      const tocItems = [];
+      container.querySelectorAll('h2, h3').forEach(h => {
+        const level = h.tagName === 'H2' ? 0 : 1;
+        const id = h.id;
+        tocItems.push(`<a href="#${id}" style="padding-left:${level * 12}px">${h.textContent}</a>`);
+      });
+      return tocItems.join('');
+    }
+
+    (async () => {
+      try {
+        const res = await fetch('/spec/ux.md', { cache: 'no-cache' });
+        if (!res.ok) throw new Error('โหลด ux.md ไม่สำเร็จ (' + res.status + ')');
+        const md = await res.text();
+        const html = renderMarkdown(md);
+        document.getElementById('docContent').classList.remove('doc-loading');
+        document.getElementById('docContent').innerHTML = html;
+        document.getElementById('docTocList').innerHTML = buildToc(html);
+      } catch (err) {
+        document.getElementById('docContent').innerHTML =
+          `<p style="color:var(--danger)">โหลดเอกสารไม่สำเร็จ: ${err.message}</p>
+           <p>เปิดไฟล์ดิบที่ <a href="/spec/ux.md">/spec/ux.md</a></p>`;
+      }
+    })();
+  </script>
+</body>
+</html>

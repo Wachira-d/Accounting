@@ -824,6 +824,8 @@ const Layout = {
     { section: 'ตั้งค่า & ผู้ใช้', icon: '⚙️', description: 'ผู้ใช้ · role · ตั้งค่าบริษัท · workflow อนุมัติ · ลายเซ็น' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings',
       description: 'ข้อมูลบริษัท · logo · เลขผู้เสียภาษี · default บัญชี · เลขเอกสาร · SMTP' },
+    { id: 'design-system', label: 'คู่มือ Design System & UX', icon: '📐', href: '/pages/design-system.html',
+      description: 'คู่มือ design token · flow · responsive · accessibility · ใช้กำกับการพัฒนาทุกหน้า' },
     { id: 'settings-features', label: 'ฟีเจอร์ & เมนู (Owner)', icon: '🧩', href: '/pages/settings-features.html', adminOnly: true,
       description: 'เจ้าของกิจการเลือกเปิด/ปิดฟีเจอร์ + ซ่อนเมนูที่ไม่ใช้ ใช้ได้ทุกคนในบริษัท' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team',
