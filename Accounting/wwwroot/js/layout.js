@@ -826,6 +826,8 @@ const Layout = {
       description: 'ข้อมูลบริษัท · logo · เลขผู้เสียภาษี · default บัญชี · เลขเอกสาร · SMTP' },
     { id: 'design-system', label: 'คู่มือ Design System & UX', icon: '📐', href: '/pages/design-system.html',
       description: 'คู่มือ design token · flow · responsive · accessibility · ใช้กำกับการพัฒนาทุกหน้า' },
+    { id: 'email-schedule', label: 'ส่งอีเมลอัตโนมัติ', icon: '📧', href: '/pages/email-schedule.html',
+      description: 'ตั้งกฎส่งใบกำกับ/สลิป/ใบ 50ทวิ ตามวันที่กำหนด · เตือนใกล้/เกินกำหนดชำระ · ดูคิว' },
     { id: 'settings-features', label: 'ฟีเจอร์ & เมนู (Owner)', icon: '🧩', href: '/pages/settings-features.html', adminOnly: true,
       description: 'เจ้าของกิจการเลือกเปิด/ปิดฟีเจอร์ + ซ่อนเมนูที่ไม่ใช้ ใช้ได้ทุกคนในบริษัท' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team',

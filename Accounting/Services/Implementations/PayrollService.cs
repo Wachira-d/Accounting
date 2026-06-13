@@ -63,12 +63,14 @@ public class PayrollService : IPayrollService
     private readonly IFileAttachmentService? _attachments;
     private readonly ILogger<PayrollService>? _logger;
 
+    private readonly IEmailScheduleService? _emailSchedule;
+
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
         INotificationEngine? notify = null, IWebhookService? webhooks = null,
         ITaxFilingExportService? taxFilingExport = null, IFileAttachmentService? attachments = null,
-        ILogger<PayrollService>? logger = null)
+        ILogger<PayrollService>? logger = null, IEmailScheduleService? emailSchedule = null)
     {
         _db = db;
         _pdfService = pdfService;
@@ -78,6 +80,7 @@ public class PayrollService : IPayrollService
         _permissionService = permissionService;
         _notify = notify;
         _webhooks = webhooks;
+        _emailSchedule = emailSchedule;
         _taxFilingExport = taxFilingExport;
         _attachments = attachments;
         _logger = logger;
@@ -1656,6 +1659,14 @@ public class PayrollService : IPayrollService
         // hunting through three export endpoints. Best-effort — a generation
         // failure must NOT roll back the already-committed payment.
         await AutoGenerateFilingsAsync(companyId, run, processedBy);
+
+        // Auto-email schedule hook — เช็คกฎ PayrollPaid + enqueue payslip
+        // ส่งให้พนักงานแต่ละคน (ตามอีเมล Employee.Email/PersonalEmail).
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnPayrollPaidAsync(companyId, run.Id); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Payslip email enqueue failed Run={Run}", run.Id); }
+        }
 
         // Notify each employee whose advance was fully repaid by this run.
         foreach (var adv in clearedAdvances)

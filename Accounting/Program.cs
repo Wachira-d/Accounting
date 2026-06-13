@@ -434,6 +434,8 @@ builder.Services.AddHostedService<AbandonedCartService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
+builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
+builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

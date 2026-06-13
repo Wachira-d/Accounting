@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าส่งอีเมลอัตโนมัติ — NextAcc</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/api.js" defer></script>
+  <script src="/js/i18n.js" defer></script>
+</head>
+<body>
+  <div id="app">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">📧 ตั้งค่าส่งอีเมลอัตโนมัติ</h1>
+        <p class="page-subtitle">ตั้งกฎให้ระบบส่งเอกสาร/สลิป/ใบหัก ณ ที่จ่ายให้ลูกค้าหรือพนักงานตามเวลาที่กำหนด</p>
+      </div>
+      <button class="btn btn-primary" onclick="Page.openRule()">+ เพิ่มกฎใหม่</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs" style="margin-bottom:14px">
+      <button class="tab active" onclick="Page.switchTab('rules')">📋 กฎที่ตั้งไว้</button>
+      <button class="tab" onclick="Page.switchTab('queue')">📤 คิว/ประวัติส่ง</button>
+    </div>
+
+    <!-- Rules tab -->
+    <div id="tab-rules">
+      <div class="card" style="padding:16px">
+        <div id="rulesList"><div class="empty-state">กำลังโหลด...</div></div>
+      </div>
+      <div class="card" style="padding:16px;margin-top:14px;background:#f8fafc">
+        <strong>📌 Trigger ที่ใช้ได้:</strong>
+        <ul style="font-size:13px;color:#475569;margin:8px 0 0 18px">
+          <li><b>DocumentApproved</b> — อนุมัติเอกสาร (Invoice/TaxInvoice/Quotation) → ส่งทันที</li>
+          <li><b>DocumentDueSoon</b> — ครบกำหนดอีก N วัน (ใส่ OffsetDays ติดลบ เช่น -3)</li>
+          <li><b>DocumentOverdue</b> — เกินกำหนด N วัน (OffsetDays บวก, RepeatEveryDays = ส่งซ้ำ)</li>
+          <li><b>PayrollPaid</b> — จ่ายเงินเดือนเสร็จ → ส่งสลิปแต่ละคน</li>
+          <li><b>WhtCertIssued</b> — ออกใบ 50 ทวิ → ส่งให้ผู้รับเงิน</li>
+        </ul>
+        <p style="font-size:12px;color:#64748b;margin-top:8px">
+          ตัวแปรในเทมเพลต: <code>{DocNumber}</code> <code>{ContactName}</code> <code>{DueDate}</code>
+          <code>{Amount}</code> <code>{BalanceDue}</code> <code>{CompanyName}</code>
+          <code>{EmployeeName}</code> <code>{Period}</code> <code>{NetPay}</code>
+        </p>
+      </div>
+    </div>
+
+    <!-- Queue tab -->
+    <div id="tab-queue" style="display:none">
+      <div class="card" style="padding:14px;margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px"><div style="font-size:11px;color:#64748b">รอส่ง</div><div style="font-size:22px;font-weight:700;color:#0ea5e9" id="statPending">-</div></div>
+        <div style="flex:1;min-width:140px"><div style="font-size:11px;color:#64748b">ส่งสำเร็จ (30 วัน)</div><div style="font-size:22px;font-weight:700;color:#10b981" id="statSent">-</div></div>
+        <div style="flex:1;min-width:140px"><div style="font-size:11px;color:#64748b">ล้มเหลว</div><div style="font-size:22px;font-weight:700;color:#ef4444" id="statFailed">-</div></div>
+        <button class="btn btn-outline" onclick="Page.loadQueue()">↻ โหลดใหม่</button>
+      </div>
+      <div class="card" style="padding:0;overflow:auto">
+        <table class="table-responsive" style="width:100%">
+          <thead>
+            <tr style="background:#f8fafc;font-size:12px;color:#64748b">
+              <th style="text-align:left;padding:10px">สถานะ</th>
+              <th style="text-align:left;padding:10px">ผู้รับ</th>
+              <th style="text-align:left;padding:10px">เรื่อง</th>
+              <th style="text-align:left;padding:10px">นัดส่ง</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="queueBody"><tr><td colspan="5" class="empty-state">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Rule modal -->
+    <div class="modal-overlay" id="ruleModal" style="display:none">
+      <div class="modal" style="max-width:680px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="ruleTitle">เพิ่มกฎใหม่</h3>
+          <button class="modal-close" onclick="Layout.closeModal('ruleModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="rId">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Trigger *</label>
+              <select class="form-select" id="rTrigger">
+                <option value="DocumentApproved">อนุมัติเอกสาร → ส่งทันที</option>
+                <option value="DocumentDueSoon">ใกล้ครบกำหนดชำระ</option>
+                <option value="DocumentOverdue">เกินกำหนดชำระ</option>
+                <option value="PayrollPaid">จ่ายเงินเดือน → ส่งสลิป</option>
+                <option value="WhtCertIssued">ออกใบ 50 ทวิ</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">ประเภทเอกสาร (เฉพาะ Document*)</label>
+              <select class="form-select" id="rDocType">
+                <option value="">— ทุกประเภท —</option>
+                <option value="Invoice">ใบแจ้งหนี้ขาย</option>
+                <option value="TaxInvoice">ใบกำกับภาษีขาย</option>
+                <option value="Receipt">ใบเสร็จขาย</option>
+                <option value="Quotation">ใบเสนอราคา</option>
+                <option value="BillingNote">ใบวางบิล</option>
+                <option value="PurchaseInvoice">ใบแจ้งหนี้ซื้อ</option>
+                <option value="Expense">ใบบันทึกค่าใช้จ่าย</option>
+                <option value="PaymentVoucher">ใบสำคัญจ่าย</option>
+                <option value="CertificateInLieu">ใบรับรองแทนใบเสร็จ</option>
+                <option value="CreditNote">ใบลดหนี้</option>
+                <option value="DebitNote">ใบเพิ่มหนี้</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">วันชดเชย (OffsetDays)</label>
+              <input type="number" class="form-input" id="rOffset" value="0" step="1">
+              <p class="form-help">DueSoon: ติดลบ (เช่น -3 = ก่อน 3 วัน) · Overdue: บวก · อื่น ๆ: 0 = ทันที</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label">เวลาส่ง (ชั่วโมง 0-23)</label>
+              <input type="number" class="form-input" id="rHour" value="9" min="0" max="23">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ส่งซ้ำทุก N วัน (0 = ส่งครั้งเดียว)</label>
+              <input type="number" class="form-input" id="rRepeat" value="0" min="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">BCC archive (คั่นด้วย comma)</label>
+              <input type="text" class="form-input" id="rBcc" placeholder="archive@bank.co,owner@example.com">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">หัวเรื่อง (เทมเพลต)</label>
+            <input type="text" class="form-input" id="rSubject" placeholder="ครบกำหนดชำระเร็ว ๆ นี้: {DocNumber}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">เนื้อหา HTML (เทมเพลต)</label>
+            <textarea class="form-input" id="rBody" rows="6" placeholder="เรียน คุณ{ContactName}..."></textarea>
+            <p class="form-help">เว้นว่าง = ใช้เทมเพลตเริ่มต้นของระบบ</p>
+          </div>
+          <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+            <input type="checkbox" id="rActive" checked> เปิดใช้กฎ
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="Layout.closeModal('ruleModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveRule()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const Page = {
+      _tab: 'rules',
+      _rules: [],
+      _stats: { pending: 0, sent: 0, failed: 0 },
+
+      async init() {
+        Layout.setTitle('ส่งอีเมลอัตโนมัติ');
+        await this.loadRules();
+      },
+
+      switchTab(t) {
+        this._tab = t;
+        document.querySelectorAll('.tabs .tab').forEach(b => b.classList.toggle('active', b.textContent.includes(
+          t === 'rules' ? 'กฎ' : 'คิว')));
+        document.getElementById('tab-rules').style.display = t === 'rules' ? '' : 'none';
+        document.getElementById('tab-queue').style.display = t === 'queue' ? '' : 'none';
+        if (t === 'queue') this.loadQueue();
+      },
+
+      async loadRules() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/email-schedule/rules`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          const j = await r.json();
+          this._rules = j.data || [];
+          this.renderRules();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderRules() {
+        const box = document.getElementById('rulesList');
+        if (this._rules.length === 0) {
+          box.innerHTML = `<div class="empty-state">
+            <div class="empty-icon">📧</div>
+            <h3>ยังไม่มีกฎ</h3>
+            <p>กดปุ่ม "+ เพิ่มกฎใหม่" เพื่อตั้งค่าครั้งแรก</p>
+          </div>`;
+          return;
+        }
+        const labelTrigger = (t) => ({
+          DocumentApproved: '✅ อนุมัติเอกสาร', DocumentDueSoon: '⏰ ใกล้ครบกำหนด',
+          DocumentOverdue: '⚠️ เกินกำหนด', PayrollPaid: '💰 จ่ายเงินเดือน → สลิป',
+          WhtCertIssued: '📜 ออกใบ 50 ทวิ',
+        }[t] || t);
+        box.innerHTML = this._rules.map(r => `
+          <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px;margin-bottom:8px;${r.isActive ? '' : 'opacity:.55'}">
+            <div style="flex:1">
+              <div style="font-weight:600">${labelTrigger(r.trigger)} ${r.documentType ? ` · ${r.documentType}` : ''}</div>
+              <div style="font-size:12px;color:#64748b;margin-top:2px">
+                ${r.offsetDays === 0 ? 'ทันที' : (r.offsetDays > 0 ? `+${r.offsetDays} วัน` : `${r.offsetDays} วัน`)}
+                · เวลา ${r.sendAtHour}:00
+                ${r.repeatEveryDays > 0 ? ` · ซ้ำทุก ${r.repeatEveryDays} วัน` : ''}
+              </div>
+              ${r.subjectTemplate ? `<div style="font-size:12px;color:#475569;margin-top:4px">หัวเรื่อง: ${Layout.esc(r.subjectTemplate)}</div>` : ''}
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm btn-outline" onclick="Page.openRule('${r.id}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${r.id}')">ลบ</button>
+            </div>
+          </div>`).join('');
+      },
+
+      openRule(id) {
+        const r = id ? this._rules.find(x => x.id === id) : null;
+        document.getElementById('rId').value = r?.id || '';
+        document.getElementById('rTrigger').value = r?.trigger || 'DocumentApproved';
+        document.getElementById('rDocType').value = r?.documentType || '';
+        document.getElementById('rOffset').value = r?.offsetDays ?? 0;
+        document.getElementById('rHour').value = r?.sendAtHour ?? 9;
+        document.getElementById('rRepeat').value = r?.repeatEveryDays ?? 0;
+        document.getElementById('rBcc').value = r?.bccEmails ?? '';
+        document.getElementById('rSubject').value = r?.subjectTemplate ?? '';
+        document.getElementById('rBody').value = r?.bodyTemplate ?? '';
+        document.getElementById('rActive').checked = r?.isActive ?? true;
+        document.getElementById('ruleTitle').textContent = id ? 'แก้ไขกฎ' : 'เพิ่มกฎใหม่';
+        Layout.openModal('ruleModal');
+      },
+
+      async saveRule() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const body = {
+          id: document.getElementById('rId').value || '00000000-0000-0000-0000-000000000000',
+          trigger: document.getElementById('rTrigger').value,
+          documentType: document.getElementById('rDocType').value || null,
+          offsetDays: parseInt(document.getElementById('rOffset').value, 10) || 0,
+          sendAtHour: parseInt(document.getElementById('rHour').value, 10) || 9,
+          repeatEveryDays: parseInt(document.getElementById('rRepeat').value, 10) || 0,
+          subjectTemplate: document.getElementById('rSubject').value || null,
+          bodyTemplate: document.getElementById('rBody').value || null,
+          bccEmails: document.getElementById('rBcc').value || null,
+          isActive: document.getElementById('rActive').checked,
+        };
+        try {
+          const r = await fetch(`/api/companies/${cid}/email-schedule/rules`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+            body: JSON.stringify(body),
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.closeModal('ruleModal');
+          Layout.toast(j.message || 'บันทึกแล้ว');
+          this.loadRules();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async deleteRule(id) {
+        if (!confirm('ลบกฎนี้?')) return;
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/email-schedule/rules/${id}`, {
+            method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message || 'ลบแล้ว');
+          this.loadRules();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async loadQueue() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/email-schedule/queue?take=100`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          const j = await r.json();
+          const data = j.data || { stats: {}, items: [] };
+          document.getElementById('statPending').textContent = data.stats.pending ?? 0;
+          document.getElementById('statSent').textContent = data.stats.sent ?? 0;
+          document.getElementById('statFailed').textContent = data.stats.failed ?? 0;
+          const tb = document.getElementById('queueBody');
+          if (!data.items.length) {
+            tb.innerHTML = '<tr><td colspan="5" class="empty-state">ยังไม่มีคิว</td></tr>'; return;
+          }
+          tb.innerHTML = data.items.map(q => {
+            const pill = q.status === 'Sent' ? 'pill-success' : q.status === 'Failed' ? 'pill-danger'
+              : q.status === 'Pending' ? 'pill-info' : 'pill-gray';
+            const actions = q.status === 'Failed'
+              ? `<button class="btn btn-sm btn-outline" onclick="Page.retry('${q.id}')">↻ ลองใหม่</button>`
+              : q.status === 'Pending'
+              ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancel('${q.id}')">ยกเลิก</button>` : '';
+            return `<tr>
+              <td data-label="สถานะ"><span class="pill ${pill}">${q.status}</span></td>
+              <td data-label="ผู้รับ" style="font-family:monospace;font-size:12px">${Layout.esc(q.toEmail)}</td>
+              <td data-label="เรื่อง">${Layout.esc(q.subject)}${q.errorMessage ? `<div style="font-size:11px;color:#ef4444;margin-top:4px">⚠ ${Layout.esc(q.errorMessage)}</div>` : ''}</td>
+              <td data-label="นัดส่ง" style="font-size:12px">${new Date(q.scheduledFor).toLocaleString('th-TH')}</td>
+              <td>${actions}</td>
+            </tr>`;
+          }).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async retry(id) {
+        const cid = Layout.getCompanyId();
+        try {
+          await fetch(`/api/companies/${cid}/email-schedule/queue/${id}/retry`, {
+            method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          Layout.toast('พักในคิวรอบใหม่แล้ว'); this.loadQueue();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async cancel(id) {
+        if (!confirm('ยกเลิกคิวนี้?')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          await fetch(`/api/companies/${cid}/email-schedule/queue/${id}/cancel`, {
+            method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          Layout.toast('ยกเลิกแล้ว'); this.loadQueue();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

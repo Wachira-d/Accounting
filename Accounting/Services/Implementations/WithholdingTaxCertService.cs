@@ -14,14 +14,17 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     private readonly IPdfGenerationService _pdf;
     private readonly IFileAttachmentService _attachments;
     private readonly ILogger<WithholdingTaxCertService> _logger;
+    private readonly IEmailScheduleService? _emailSchedule;
 
     public WithholdingTaxCertService(AccountingDbContext db, IPdfGenerationService pdf,
-        IFileAttachmentService attachments, ILogger<WithholdingTaxCertService> logger)
+        IFileAttachmentService attachments, ILogger<WithholdingTaxCertService> logger,
+        IEmailScheduleService? emailSchedule = null)
     {
         _db = db;
         _pdf = pdf;
         _attachments = attachments;
         _logger = logger;
+        _emailSchedule = emailSchedule;
     }
 
     /// <summary>Generate the issued WHT certificate's PDF and attach it to the
@@ -206,6 +209,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         // Save the issued cert PDF as an attachment on its source document.
         await AttachCertPdfToDocumentAsync(companyId, cert.Id);
+
+        // Auto-email hook: enqueue ส่งใบ 50ทวิให้ PayeeContact ถ้ามีกฎ + email
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnWhtCertIssuedAsync(companyId, cert.Id); }
+            catch (Exception ex) { _logger.LogWarning(ex, "WHT cert email enqueue failed Cert={Id}", cert.Id); }
+        }
 
         return await GetByIdAsync(companyId, cert.Id);
     }
@@ -395,6 +405,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // save its PDF onto the source document automatically.
         if (autoIssue)
             await AttachCertPdfToDocumentAsync(companyId, cert.Id);
+
+        // Auto-email hook: enqueue ส่งใบ 50ทวิให้ PayeeContact ถ้ามีกฎ + email
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnWhtCertIssuedAsync(companyId, cert.Id); }
+            catch (Exception ex) { _logger.LogWarning(ex, "WHT cert email enqueue failed Cert={Id}", cert.Id); }
+        }
 
         return await GetByIdAsync(companyId, cert.Id);
     }

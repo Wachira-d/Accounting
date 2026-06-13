@@ -3907,6 +3907,64 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "RmfSsfContribution" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "DonationAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
 
+            // ===== Auto-email scheduling =====
+            """
+            CREATE TABLE IF NOT EXISTS "EmailScheduleRules" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Trigger" varchar(40) NOT NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "DocumentType" varchar(40) NULL,
+                "OffsetDays" integer NOT NULL DEFAULT 0,
+                "SendAtHour" integer NOT NULL DEFAULT 9,
+                "RepeatEveryDays" integer NOT NULL DEFAULT 0,
+                "SubjectTemplate" text NULL,
+                "BodyTemplate" text NULL,
+                "BccEmails" text NULL,
+                "CreatedByName" varchar(200) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_EmailScheduleRules" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_EmailRules_Company_Trigger" ON "EmailScheduleRules" ("CompanyId", "Trigger") WHERE "IsDeleted" = false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "EmailQueues" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "RuleId" uuid NULL,
+                "EntityType" varchar(40) NOT NULL,
+                "EntityId" uuid NOT NULL,
+                "ToEmail" varchar(500) NOT NULL,
+                "CcEmail" varchar(500) NULL,
+                "BccEmail" varchar(500) NULL,
+                "Subject" text NOT NULL,
+                "Body" text NOT NULL,
+                "AttachPdf" boolean NOT NULL DEFAULT true,
+                "AttachXml" boolean NOT NULL DEFAULT false,
+                "ScheduledFor" timestamp NOT NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'Pending',
+                "RetryCount" integer NOT NULL DEFAULT 0,
+                "SentAt" timestamp NULL,
+                "ErrorMessage" text NULL,
+                "IdempotencyKey" varchar(200) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_EmailQueues" PRIMARY KEY ("Id")
+            );
+            """,
+            // Worker scan index: Pending + due soon.
+            """CREATE INDEX IF NOT EXISTS "IX_EmailQueue_Status_Schedule" ON "EmailQueues" ("Status", "ScheduledFor") WHERE "IsDeleted" = false;""",
+            // Idempotency — กัน enqueue ซ้ำสำหรับ event เดียวกัน.
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmailQueue_Idempotency" ON "EmailQueues" ("CompanyId", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL AND "IsDeleted" = false;""",
+
             // PaymentAllocation — one Payment may settle many Documents.
             // Existing Payment rows stay valid (legacy 1:1 path); new
             // multi-doc payments insert one row per target document.

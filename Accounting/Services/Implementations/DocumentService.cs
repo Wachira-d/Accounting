@@ -28,6 +28,7 @@ public class DocumentService : IDocumentService
     private readonly IBotExchangeRateService? _fxRates;
     private readonly ISensitivityService? _sensitivity;
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
+    private readonly IEmailScheduleService? _emailSchedule;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -41,8 +42,10 @@ public class DocumentService : IDocumentService
         IBotExchangeRateService? fxRates = null,
         ISensitivityService? sensitivity = null,
         Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null,
-        IWebhookService? webhooks = null)
+        IWebhookService? webhooks = null,
+        IEmailScheduleService? emailSchedule = null)
     {
+        _emailSchedule = emailSchedule;
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
@@ -1186,6 +1189,16 @@ public class DocumentService : IDocumentService
 
         await FireWebhookAsync(companyId, "document.status_changed",
             new { document = approved, from = "Draft", to = approved.Status });
+
+        // Auto-email schedule hook — เช็คกฎใน EmailScheduleRules ที่ตรง
+        // กับ DocumentApproved + DocumentType แล้ว enqueue. Fail-safe:
+        // ส่งอีเมลไม่สำเร็จต้องไม่ทำให้ approve ล้ม.
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnDocumentApprovedAsync(companyId, documentId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Email schedule enqueue failed Doc={Doc}", documentId); }
+        }
+
         return approved;
     }
 
