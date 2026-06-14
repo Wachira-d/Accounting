@@ -165,7 +165,7 @@ public partial class PdfGenerationService
                 col.Item().Background(accent).Padding(14).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
                 });
                 col.Item().PaddingTop(14).AlignCenter()
@@ -183,7 +183,7 @@ public partial class PdfGenerationService
                 col.Item().PaddingTop(10).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Grey.Lighten1);
@@ -195,7 +195,7 @@ public partial class PdfGenerationService
                 col.Item().AlignCenter().Column(c =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { c.Item().AlignCenter().Height(b.LogoHeightMm, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { c.Item().AlignCenter().Height(b.LogoHeightMm, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     RenderCompanyLines(c, company, template, "#222", center: true);
                 });
                 col.Item().PaddingVertical(4).LineHorizontal(2.5f).LineColor(accent);
@@ -208,7 +208,7 @@ public partial class PdfGenerationService
                 col.Item().AlignCenter().Column(c =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { c.Item().AlignCenter().Height(b.LogoHeightMm, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { c.Item().AlignCenter().Height(b.LogoHeightMm, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     RenderCompanyLines(c, company, template, "#222", center: true);
                 });
                 col.Item().PaddingTop(10).AlignCenter().BorderTop(2.5f).BorderBottom(2.5f).BorderColor(accent)
@@ -222,7 +222,7 @@ public partial class PdfGenerationService
                 col.Item().PaddingBottom(8).BorderBottom(2).BorderColor(accent).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(12).BorderLeft(6).BorderColor(accent).PaddingLeft(10)
@@ -234,7 +234,7 @@ public partial class PdfGenerationService
                 col.Item().Background(accent).Padding(14).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, headerText));
                 });
                 col.Item().PaddingTop(10).Background("#F1F5F9").BorderLeft(6).BorderColor(accent)
@@ -247,7 +247,7 @@ public partial class PdfGenerationService
                 col.Item().PaddingBottom(8).BorderBottom(3).BorderColor(accent).Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(10).Row(r =>
@@ -271,7 +271,7 @@ public partial class PdfGenerationService
                 col.Item().Row(r =>
                 {
                     if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        try { r.ConstantItem(b.LogoHeightMm + 8, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                     r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                 });
                 col.Item().PaddingTop(layout == "Compact" ? 6 : 14)
@@ -291,7 +291,7 @@ public partial class PdfGenerationService
                     r.RelativeItem().Row(rr =>
                     {
                         if (b.LogoBytes is { Length: > 0 })
-                            try { rr.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                            try { rr.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes).FitArea(); } catch { }
                         rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                     });
                     r.ConstantItem(220).Column(rc =>
@@ -613,7 +613,7 @@ public partial class PdfGenerationService
 
         // Stamp above signatures (optional, defensive).
         if (b.StampBytes is { Length: > 0 })
-            try { col.Item().PaddingTop(20).AlignRight().Height(22, Unit.Millimetre).Image(b.StampBytes); } catch { }
+            try { col.Item().PaddingTop(20).AlignRight().Height(22, Unit.Millimetre).Image(b.StampBytes).FitArea(); } catch { }
 
         col.Item().PaddingTop(b.StampBytes != null ? 6 : 40).Row(r =>
         {
@@ -631,12 +631,14 @@ public partial class PdfGenerationService
                     // misalignment reported). Image (when present) renders at
                     // that fixed height; defensive try/catch on bad bytes.
                     // เก็บ Height(14mm) ทุก slot เพื่อเส้นใต้ลายเซ็นอยู่
-                    // แนวเดียวกัน — Item ต้องจบด้วย content method (Text("")
-                    // หรือ Image) ไม่งั้น QuestPDF 2024.12 throw "container
-                    // has no content" → fallback ลง HTML→Blocks.
+                    // แนวเดียวกัน + .FitArea() บน Image บังคับ scale ให้
+                    // พอดี container ทั้ง W+H (ป้องกัน
+                    // DocumentLayoutException: "element requires more
+                    // space than available" เมื่อ signature image ยาว
+                    // เกินกว่าความกว้างของ column).
                     if (s?.SignatureImageBytes is { Length: > 0 })
                     {
-                        try { c.Item().Height(14, Unit.Millimetre).AlignCenter().Image(s.SignatureImageBytes); }
+                        try { c.Item().Height(14, Unit.Millimetre).AlignCenter().Image(s.SignatureImageBytes).FitArea(); }
                         catch { c.Item().Height(14, Unit.Millimetre).Text(""); }
                     }
                     else
