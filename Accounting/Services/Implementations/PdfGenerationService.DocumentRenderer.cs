@@ -79,13 +79,19 @@ public partial class PdfGenerationService
 
                     page.Content().Column(col =>
                     {
-                        ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText);
-                        ComposeContact(col, doc, template, accent);
-                        ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent);
-                        ComposeSummary(col, doc, template, accent, layout);
-                        ComposeFooter(col, doc, template, accent);
-                        ComposeSignatures(col, template, b, signers);
-                        ComposeGlPosting(col, gl, lang);
+                        // Defense-in-depth: ห่อแต่ละ section ด้วย try/catch
+                        // ถ้าตัวใดตัวหนึ่ง throw (เช่น QuestPDF API mismatch
+                        // ใน edge case) section นั้นจะหายเฉย ๆ — แต่ section
+                        // อื่นจะ render ต่อ ไม่ทำให้ทั้ง PDF ตกไป fallback
+                        // ConvertHtmlToPdf (HTML→Blocks ที่หน้าตาเรียบเกินไป).
+                        void Safe(Action a) { try { a(); } catch { /* skip failed section */ } }
+                        Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText));
+                        Safe(() => ComposeContact(col, doc, template, accent));
+                        Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent));
+                        Safe(() => ComposeSummary(col, doc, template, accent, layout));
+                        Safe(() => ComposeFooter(col, doc, template, accent));
+                        Safe(() => ComposeSignatures(col, template, b, signers));
+                        Safe(() => ComposeGlPosting(col, gl, lang));
                     });
 
                     page.Footer().AlignRight().Text(t =>
@@ -245,43 +251,37 @@ public partial class PdfGenerationService
                 break;
 
             default: // Classic
-                // Logo + company info ฝั่งซ้าย, Big title + doc number ฝั่งขวา
+                // Header: logo + company info ซ้าย / title + doc number ขวา
                 // (เลียนแบบ HTML view ที่ผู้ใช้เห็นจาก "กดดู" — title +
                 // เลขที่ติดกัน เด่นชัด เป็นกลุ่มเดียว ไม่กระจัดกระจาย).
-                // HeaderBackgroundColor ถ้า template ตั้งค่าจะใส่ bg
-                // ครอบทั้ง section (เทียบ HTML BuildCss line 1163).
-                var headerBgColor = SanitizeHex(template.HeaderBackgroundColor);
-                var headerOuter = col.Item();
-                if (headerBgColor != null) headerOuter = headerOuter.Background(headerBgColor).Padding(12);
-                var companyTextColor = headerBgColor != null ? "#FFFFFF" : "#222";
-                headerOuter.Row(r =>
+                col.Item().Row(r =>
                 {
                     r.RelativeItem().Row(rr =>
                     {
                         if (b.LogoBytes is { Length: > 0 })
                             try { rr.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, companyTextColor));
+                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
                     });
-                    r.ConstantItem(260).AlignRight().Column(rc =>
+                    r.ConstantItem(220).Column(rc =>
                     {
-                        var titleColor = headerBgColor != null ? "#FFFFFF" : accent;
-                        // Thai titles ยาวสุด "ใบรับรองแทนใบเสร็จรับเงิน" ~22
-                        // ตัวอักษร — 260pt @ 22pt ลึก wrap ได้ 2 บรรทัด.
-                        // English "Certificate in Lieu of Receipt" ก็ wrap ได้.
-                        rc.Item().AlignRight().Text(titleText).FontSize(titleFontSize).Bold().FontColor(titleColor);
+                        rc.Item().AlignRight().Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
                         if (template.ShowDocumentNumber)
-                            rc.Item().AlignRight().Text(doc.DocumentNumber).FontSize(13).SemiBold().FontColor(titleColor);
+                            rc.Item().AlignRight().Text(doc.DocumentNumber).FontSize(13).Bold().FontColor(accent);
                     });
                 });
-                col.Item().PaddingTop(6).PaddingBottom(4).BorderBottom(2).BorderColor(accent);
-                // doc info (วันที่ / ครบกำหนด / อ้างอิง) เป็น row ด้านขวา
-                // ใต้เส้น accent — รก document number ตัด รก ออก
-                col.Item().PaddingTop(8).AlignRight().Row(r =>
+                col.Item().PaddingTop(6).LineHorizontal(2).LineColor(accent);
+                // doc info: วันที่ / ครบกำหนด / อ้างอิง — เลขที่ขึ้นไปอยู่กับ
+                // title แล้ว ไม่ซ้ำซ้อน. ใช้ ComposeDocInfo เดิม (proven path).
+                col.Item().PaddingTop(8).Row(r =>
                 {
-                    void Span(string s) => r.AutoItem().PaddingHorizontal(8).Text(s).FontSize(10).FontColor("#374151");
-                    if (template.ShowDocumentDate) Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}");
-                    if (template.ShowDueDate && doc.DueDate.HasValue) Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}");
-                    if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference)) Span($"อ้างอิง: {doc.Reference}");
+                    r.RelativeItem(); // pusher
+                    r.AutoItem().Row(rr =>
+                    {
+                        void Span(string s) => rr.AutoItem().PaddingHorizontal(8).Text(s).FontSize(10).FontColor("#374151");
+                        if (template.ShowDocumentDate) Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}");
+                        if (template.ShowDueDate && doc.DueDate.HasValue) Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}");
+                        if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference)) Span($"อ้างอิง: {doc.Reference}");
+                    });
                 });
                 break;
         }
@@ -540,9 +540,11 @@ public partial class PdfGenerationService
         if (!string.IsNullOrWhiteSpace(footerNotes))
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");
 
-        // T&C override per-document (HTML BuildDocumentHtml บรรทัด 653)
+        // T&C override per-document (HTML BuildDocumentHtml บรรทัด 653) —
+        // section "เงื่อนไข" คั่นด้วย border-top + padding ปกติ (ไม่ stack
+        // PaddingTop ซ้ำ เพื่อตัดความเสี่ยง QuestPDF API edge case).
         if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
-            col.Item().PaddingTop(8).BorderTop(0.5f).BorderColor("#EEE").PaddingTop(6).Column(cc =>
+            col.Item().PaddingTop(14).BorderTop(0.5f).BorderColor("#EEE").Padding(6).Column(cc =>
             {
                 cc.Item().Text("เงื่อนไข").Bold().FontSize(10).FontColor("#555");
                 cc.Item().Text(doc.CustomTermsAndConditions!).FontSize(10).FontColor("#555");
