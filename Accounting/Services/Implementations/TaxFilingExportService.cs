@@ -54,7 +54,11 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         var allDetails = payrollRuns.SelectMany(p => p.Details)
             .Where(d => d.WithholdingTax > 0).ToList();
-        var totalIncome = allDetails.Sum(d => d.GrossIncome);
+        // ใช้ TaxableGross ถ้ามี (รายได้ที่นำมาคำนวณ WHT — Gross −
+        // สวัสดิการยกเว้นภาษี). Fallback GrossIncome สำหรับข้อมูลเก่า
+        // ที่ยังไม่ migrate.
+        decimal IncomeForTax(PayrollDetail d) => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
+        var totalIncome = allDetails.Sum(IncomeForTax);
         var totalTax = allDetails.Sum(d => d.WithholdingTax);
 
         // Header: H|TaxId|BranchCode|FormCode|Period(YYYYMM)|TotalRecords|TotalIncome|TotalTax
@@ -67,7 +71,8 @@ public class TaxFilingExportService : ITaxFilingExportService
             var payDate = payrollRuns.First(p => p.Details.Contains(detail)).PayDate;
             var payDateThai = $"{payDate.Day:D2}/{payDate.Month:D2}/{payDate.Year + 543}";
             // D|Seq|TitleCode|FirstName|LastName|CitizenId|PaymentDate|IncomeType(1=§40(1))|Income|Tax|Condition(1=หักภาษี ณ ที่จ่าย)
-            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.CitizenId ?? emp.TaxId}|{payDateThai}|1|{detail.GrossIncome:F2}|{detail.WithholdingTax:F2}|1");
+            var income = IncomeForTax(detail);
+            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.CitizenId ?? emp.TaxId}|{payDateThai}|1|{income:F2}|{detail.WithholdingTax:F2}|1");
         }
 
         // Trailer: T|TotalRecords|TotalIncome|TotalTax — required by RD parser
@@ -186,12 +191,14 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && d.PayrollRun.Status != "Draft" && d.PayrollRun.Status != "Voided")
             .ToListAsync();
 
+        // ใช้ TaxableGross ถ้ามี (รายได้ที่ใช้คำนวณ WHT จริง — Gross
+        // หัก สวัสดิการยกเว้นภาษี). Fallback GrossIncome สำหรับข้อมูลเก่า.
         var empGroups = payrollDetails
             .GroupBy(d => d.EmployeeId)
             .Select(g => new
             {
                 Employee = g.First().Employee,
-                TotalIncome = g.Sum(d => d.GrossIncome),
+                TotalIncome = g.Sum(d => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome),
                 TotalTax = g.Sum(d => d.WithholdingTax),
                 TotalSSO = g.Sum(d => d.SocialSecurityEmployee),
                 TotalPVD = g.Sum(d => d.ProvidentFundEmployee),

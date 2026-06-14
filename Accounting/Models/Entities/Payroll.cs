@@ -181,6 +181,13 @@ public class PayrollDetail : TenantEntity
     public decimal OtherIncome { get; set; }
     public decimal GrossIncome { get; set; }
 
+    /// <summary>รายได้ที่นำมาคำนวณ WHT — ปกติ = GrossIncome แต่
+    /// ถ้ามีสวัสดิการที่ได้รับยกเว้นภาษี (เช่นค่ารักษาพยาบาล / เงินค่าทำงาน
+    /// ในเขตพัฒนาพิเศษ §50(1)(ข)) ให้หักออกก่อน. ใช้ใน ภ.ง.ด.1 export +
+    /// 50 ทวิ rendering. Default 0 = engine ใช้ GrossIncome แทน
+    /// (backward compat กับ data เก่า).</summary>
+    public decimal TaxableGross { get; set; }
+
     // Deductions
     public decimal SocialSecurityEmployee { get; set; }  // สมทบประกันสังคม (ลูกจ้าง)
     public decimal SocialSecurityEmployer { get; set; }  // สมทบประกันสังคม (นายจ้าง)
@@ -398,4 +405,66 @@ public class SsoYearConfig : TenantEntity
     public decimal EmployerRatePercent { get; set; } = 5m;
 
     public string? Notes { get; set; }
+}
+
+/// <summary>
+/// กฎภาษีเงินได้บุคคลธรรมดา (PIT) per company × per year — รองรับ
+/// ภ.ง.ด.1 monthly + annual 50 ทวิ. เก็บ progressive brackets +
+/// ค่าลดหย่อนหลัก + caps ทั้งหมดในที่เดียว เพื่อให้:
+///   • สรรพากรปรับเกณฑ์ → admin แก้ในระบบได้ทันที (ไม่ต้อง deploy)
+///   • บริษัทคิดต่างจาก default ได้ (เช่นกองทุน PVD พิเศษ)
+///   • Engine fallback ถ้าไม่มี config ปีนั้น → ใช้ค่า default จาก
+///     กฎหมายปัจจุบัน (PayrollService.Pit* constants)
+/// </summary>
+public class TaxRuleConfig : TenantEntity
+{
+    /// <summary>ปี ค.ศ. ของรายได้ (ระบบ normalize พ.ศ. ตอนบันทึก)</summary>
+    public int FiscalYear { get; set; }
+
+    /// <summary>Brackets JSON array — `[{"upperBound":150000,"rate":0},
+    /// {"upperBound":300000,"rate":0.05}, ...]`. Engine sort by upperBound
+    /// + walk เหมือน ThaiTaxBrackets เดิม. Rate เก็บเป็นทศนิยม (0.05 = 5%).
+    /// Last bracket ใช้ decimal.MaxValue เป็น upperBound (catch-all).</summary>
+    public string BracketsJson { get; set; } = "";
+
+    /// <summary>ค่าลดหย่อนส่วนตัว §47(1)(ก) — default 60,000.</summary>
+    public decimal PersonalAllowance { get; set; } = 60_000m;
+
+    /// <summary>ค่าลดหย่อนคู่สมรส §47(1)(ข) — default 60,000.</summary>
+    public decimal SpouseAllowance { get; set; } = 60_000m;
+
+    /// <summary>ค่าลดหย่อนบุตรคนละ §47(1)(ค) — default 30,000.</summary>
+    public decimal ChildAllowance { get; set; } = 30_000m;
+
+    /// <summary>ค่าลดหย่อนบุตรคนที่ 2 ขึ้นไป (เกิดหลัง 2561)
+    /// §47(1)(ค) วรรค 2 — default 60,000.</summary>
+    public decimal ChildAllowancePost2561 { get; set; } = 60_000m;
+
+    /// <summary>ค่าลดหย่อนบิดามารดาคนละ §47(1)(ง) — default 30,000
+    /// (อายุ 60+, รายได้ไม่เกิน 30,000/ปี).</summary>
+    public decimal ParentAllowance { get; set; } = 30_000m;
+
+    /// <summary>เพดาน §42 ทวิ ค่าใช้จ่าย 50% — default 100,000 (ตาม
+    /// ประกาศ คทอ. 2560 — เงินเดือนหักได้ 50% ไม่เกิน 100K).</summary>
+    public decimal Section42TwiCap { get; set; } = 100_000m;
+
+    /// <summary>เพดานเบี้ยประกันชีวิต — default 100,000.</summary>
+    public decimal LifeInsuranceCap { get; set; } = 100_000m;
+
+    /// <summary>เพดานเบี้ยประกันสุขภาพ — default 25,000 (รวม + ประกันชีวิต ≤ 100K).</summary>
+    public decimal HealthInsuranceCap { get; set; } = 25_000m;
+
+    /// <summary>เพดานรวม PVD + RMF + SSF + กบข. — default 500,000.</summary>
+    public decimal PvdCap { get; set; } = 500_000m;
+
+    /// <summary>เพดานดอกเบี้ยที่อยู่อาศัย — default 100,000.</summary>
+    public decimal MortgageInterestCap { get; set; } = 100_000m;
+
+    /// <summary>เพดานบริจาคทั่วไป — เป็น % ของ net income post-allowances.
+    /// Default 10. (บริจาคพิเศษ เช่น การศึกษา หัก 2 เท่า → คนเงินเดือน
+    /// คงไม่ใช้ — ทำเฉพาะเคสที่ HR ระบุพิเศษ.)</summary>
+    public decimal DonationCapPercent { get; set; } = 10m;
+
+    public string? Notes { get; set; }
+    public bool IsActive { get; set; } = true;
 }

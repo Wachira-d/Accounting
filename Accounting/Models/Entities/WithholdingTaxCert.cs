@@ -25,6 +25,13 @@ public class WithholdingTaxCert : TenantEntity
     public Guid? DocumentId { get; set; }
     public Document? Document { get; set; }
 
+    /// <summary>Link to source PayrollRun สำหรับ monthly ภ.ง.ด.1 ที่ออก
+    /// อัตโนมัติเมื่อ post payroll. ใช้ใน:
+    ///   • Idempotency check — re-post payroll → void cert เก่า + ออกใหม่
+    ///   • Trace gone-back: ภ.ง.ด.1 ของเดือนนี้มาจาก run ไหน
+    ///   • Annual summary aggregation (group by SourcePayrollRunId.Year)</summary>
+    public Guid? SourcePayrollRunId { get; set; }
+
     public ICollection<WithholdingTaxCertLine> Lines { get; set; } = new List<WithholdingTaxCertLine>();
 }
 

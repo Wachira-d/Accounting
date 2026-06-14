@@ -4102,11 +4102,52 @@ public static class DatabaseMigrationHelper
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeProjectTimes_ExternalSync" ON "EmployeeProjectTimes" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
 
             // ===== DocumentLines: ภาษีซื้อต้องห้าม (Non-claimable Input VAT) =====
-            // IsVatClaimable = false → VAT รวมเข้า cost ตอน post JE + ไม่นับ
-            // ในยอด Input VAT ของ ภพ.30. Default true เพื่อ backward compat.
-            // VatNonClaimableReason เก็บเหตุผล (§82/5(3) / §82/5(6) / free text).
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IsVatClaimable" boolean NOT NULL DEFAULT true;""",
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "VatNonClaimableReason" text NULL;""",
+
+            // ===== TaxRuleConfig: configurable PIT brackets + allowances ต่อปี =====
+            // Per company × per year. Engine fallback ถ้าไม่มี config → ใช้
+            // hard-coded constants (PayrollService.Pit*) เพื่อ backward compat
+            // กับบริษัทที่ยังไม่เคยตั้งค่า.
+            """
+            CREATE TABLE IF NOT EXISTS "TaxRuleConfigs" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "FiscalYear" integer NOT NULL,
+                "BracketsJson" text NOT NULL DEFAULT '',
+                "PersonalAllowance" numeric(18,2) NOT NULL DEFAULT 60000,
+                "SpouseAllowance" numeric(18,2) NOT NULL DEFAULT 60000,
+                "ChildAllowance" numeric(18,2) NOT NULL DEFAULT 30000,
+                "ChildAllowancePost2561" numeric(18,2) NOT NULL DEFAULT 60000,
+                "ParentAllowance" numeric(18,2) NOT NULL DEFAULT 30000,
+                "Section42TwiCap" numeric(18,2) NOT NULL DEFAULT 100000,
+                "LifeInsuranceCap" numeric(18,2) NOT NULL DEFAULT 100000,
+                "HealthInsuranceCap" numeric(18,2) NOT NULL DEFAULT 25000,
+                "PvdCap" numeric(18,2) NOT NULL DEFAULT 500000,
+                "MortgageInterestCap" numeric(18,2) NOT NULL DEFAULT 100000,
+                "DonationCapPercent" numeric(8,4) NOT NULL DEFAULT 10,
+                "Notes" text NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0,
+                CONSTRAINT "UX_TaxRuleConfigs_CompanyYear" UNIQUE ("CompanyId", "FiscalYear")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_TaxRuleConfigs_CompanyId" ON "TaxRuleConfigs" ("CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== WithholdingTaxCerts: link to source PayrollRun สำหรับ
+            // monthly auto-issue + idempotency check (re-post payroll = re-issue cert).
+            """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "SourcePayrollRunId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_WithholdingTaxCerts_SourcePayrollRunId" ON "WithholdingTaxCerts" ("SourcePayrollRunId") WHERE "SourcePayrollRunId" IS NOT NULL;""",
+
+            // ===== PayrollDetails: TaxableGross — รายได้ที่ใช้คำนวณ WHT
+            // (Gross − exempt benefits เช่นค่ารักษาพยาบาล). ภ.ง.ด.1 export
+            // ใช้ค่านี้ ไม่ใช่ GrossIncome.
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "TaxableGross" numeric(18,2) NOT NULL DEFAULT 0;""",
         };
 
         foreach (var sql in statements)

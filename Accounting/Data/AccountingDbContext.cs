@@ -234,6 +234,7 @@ public class AccountingDbContext : DbContext
     public DbSet<EmployeeLeaveBalance> EmployeeLeaveBalances => Set<EmployeeLeaveBalance>();
     public DbSet<PayrollItem> PayrollItems => Set<PayrollItem>();
     public DbSet<SsoYearConfig> SsoYearConfigs => Set<SsoYearConfig>();
+    public DbSet<TaxRuleConfig> TaxRuleConfigs => Set<TaxRuleConfig>();
     public DbSet<EmailScheduleRule> EmailScheduleRules => Set<EmailScheduleRule>();
     public DbSet<EmailQueue> EmailQueues => Set<EmailQueue>();
     public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();

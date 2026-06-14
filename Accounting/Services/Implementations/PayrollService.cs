@@ -1240,31 +1240,43 @@ public class PayrollService : IPayrollService
                 var annualSso = Math.Min(ssoEmployee * 12m, sso.MaxContribution * 12m);
                 var annualPvd = Math.Min(pvdEmployee * 12m, PitPvdMaxDeductible);
 
-                // §47/47ทวิ — รวมค่าลดหย่อนรายตัว (ละเอียดกว่า count × 30K).
-                // ใช้ฟิลด์ใหม่ก่อน; ถ้าไม่ตั้ง fall back ไป legacy TaxAllowances
-                // (count × 30K) เพื่อความเข้ากันได้กับข้อมูลเก่า.
+                // §47/47ทวิ — รวมค่าลดหย่อนรายตัว. โหลด TaxRuleConfig
+                // ของบริษัท × ปี (fallback เป็นค่า default ถ้าไม่มี config) —
+                // ทำให้ admin ปรับเกณฑ์ได้เมื่อสรรพากรเปลี่ยน ไม่ต้อง deploy.
+                var taxCfg = await GetTaxRuleAsync(companyId, run.Year);
+                var personalAllow = taxCfg?.PersonalAllowance ?? PitPersonalAllowance;
+                var spouseAllow = taxCfg?.SpouseAllowance ?? 60_000m;
+                var childAllow = taxCfg?.ChildAllowance ?? 30_000m;
+                var childPost2561Bonus = (taxCfg?.ChildAllowancePost2561 ?? 60_000m) - childAllow;
+                var parentAllow = taxCfg?.ParentAllowance ?? 30_000m;
+                var lifeInsCap = taxCfg?.LifeInsuranceCap ?? 100_000m;
+                var pvdCap = taxCfg?.PvdCap ?? PitPvdMaxDeductible;
+                var donationCapPct = (taxCfg?.DonationCapPercent ?? 10m) / 100m;
+                var perDependantLegacy = PitPerDependantAllowance;
+
                 var detailedAllowance =
-                    (emp.HasSpouseAllowance ? 60_000m : 0m)
-                    + (emp.ChildAllowanceCount * 30_000m)
-                    + (emp.SecondAndLaterChildren * 30_000m)  // +30K เพิ่มจากปกติ (เป็น 60K รวม)
-                    + (Math.Min(4, emp.ParentAllowanceCount) * 30_000m)
-                    + Math.Min(100_000m, emp.LifeInsurancePremium)
-                    + Math.Min(500_000m, emp.RmfSsfContribution);
+                    (emp.HasSpouseAllowance ? spouseAllow : 0m)
+                    + (emp.ChildAllowanceCount * childAllow)
+                    + (emp.SecondAndLaterChildren * childPost2561Bonus)
+                    + (Math.Min(4, emp.ParentAllowanceCount) * parentAllow)
+                    + Math.Min(lifeInsCap, emp.LifeInsurancePremium)
+                    + Math.Min(pvdCap, emp.RmfSsfContribution);
                 var hasDetailed = emp.HasSpouseAllowance
                     || emp.ChildAllowanceCount > 0 || emp.SecondAndLaterChildren > 0
                     || emp.ParentAllowanceCount > 0 || emp.LifeInsurancePremium > 0
                     || emp.RmfSsfContribution > 0;
                 var dependantsAllowance = hasDetailed
                     ? detailedAllowance
-                    : PitPerDependantAllowance * Math.Max(0, emp.TaxAllowances);
-                var baseDeductions = PitPersonalAllowance + dependantsAllowance + annualSso + annualPvd;
-                // เงินบริจาคหักได้ไม่เกิน 10% ของเงินได้สุทธิหลังลดหย่อนอื่น.
+                    : perDependantLegacy * Math.Max(0, emp.TaxAllowances);
+                var baseDeductions = personalAllow + dependantsAllowance + annualSso + annualPvd;
+                // บริจาคหักได้ตาม donationCapPct ของเงินได้สุทธิหลังลดหย่อน
                 var afterBase = Math.Max(0, estimatedAnnualIncome - baseDeductions);
-                var donation = Math.Min(emp.DonationAmount, afterBase * 0.10m);
+                var donation = Math.Min(emp.DonationAmount, afterBase * donationCapPct);
                 var personalDeductions = baseDeductions + donation;
                 var estimatedTaxableIncome = Math.Max(0m, estimatedAnnualIncome - personalDeductions);
 
-                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome);
+                var brackets = ParseBrackets(taxCfg);
+                var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome, brackets);
                 var remainingMonths = 13 - run.Month;
                 var monthlyTax = remainingMonths > 0
                     ? (estimatedAnnualTax - cumulativeTax) / remainingMonths
@@ -1286,6 +1298,11 @@ public class PayrollService : IPayrollService
                     Bonus = bonus,
                     OtherIncome = otherIncome,
                     GrossIncome = grossIncome,
+                    // TaxableGross = ฐานรายได้ที่ใช้คำนวณ WHT (Gross −
+                    // สวัสดิการยกเว้นภาษีเช่น ค่ารักษาพยาบาล). ใช้ใน
+                    // ภ.ง.ด.1 e-Filing export + 50 ทวิ. ปัจจุบัน engine
+                    // เดิมแยก nonTaxableExtra ไว้แล้ว — ใช้ค่านี้.
+                    TaxableGross = taxableGross,
                     SocialSecurityEmployee = ssoEmployee,
                     SocialSecurityEmployer = ssoEmployer,
                     WithholdingTax = monthlyTax,
@@ -1656,6 +1673,11 @@ public class PayrollService : IPayrollService
             message: $"ดำเนินการโดย {processedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
             entityId: run.Id);
 
+        // ออก ภ.ง.ด.1 cert ต่อพนักงาน (idempotent) — ก่อน auto-generate
+        // filings เพื่อให้ ภ.ง.ด.1 txt export อ่านค่า cert ที่เพิ่งออก
+        // ได้ถ้าต้องการในอนาคต.
+        await IssueMonthlyPnd1CertsAsync(companyId, run);
+
         // ── Auto-generate the month's government filings + every payslip and
         // attach them to the run so HR has a single download point instead of
         // hunting through three export endpoints. Best-effort — a generation
@@ -1911,6 +1933,109 @@ public class PayrollService : IPayrollService
     /// Idempotent on file name — re-running (e.g. after a retry) skips files
     /// already attached.
     /// </summary>
+    /// <summary>ออก WithholdingTaxCert (ภ.ง.ด.1) ต่อพนักงาน per month
+    /// เมื่อ payroll status=Paid. Idempotent: ถ้า cert เดิมมีอยู่แล้ว
+    /// (same Year+Month+Employee+TaxForm) → void เก่า + ออกใหม่ (re-post
+    /// payroll = re-issue). Audit trail เก็บผ่าน SourcePayrollRunId.
+    /// Best-effort — generation failure ไม่ rollback การ pay.</summary>
+    private async Task IssueMonthlyPnd1CertsAsync(Guid companyId, PayrollRun run)
+    {
+        try
+        {
+            var details = run.Details.Where(d => d.WithholdingTax > 0).ToList();
+            if (details.Count == 0) return;
+
+            // Void existing certs ที่ออกจาก run นี้ (re-post scenario)
+            var existingFromThisRun = await _db.Set<WithholdingTaxCert>()
+                .Where(c => c.CompanyId == companyId && c.SourcePayrollRunId == run.Id
+                    && c.Status != WithholdingTaxCertStatus.Voided)
+                .ToListAsync();
+            foreach (var ex in existingFromThisRun) ex.Status = WithholdingTaxCertStatus.Voided;
+
+            // Map employee → contact (auto-create contact stub ถ้าไม่มี).
+            // WhtCert link ผ่าน PayeeContactId — พนักงานต้องมี Contact record
+            // ปกติระบบ payroll ออก Contact ให้แล้ว แต่ guard ไว้.
+            var empIds = details.Select(d => d.EmployeeId).Distinct().ToList();
+            var employees = await _db.Set<Employee>().AsNoTracking()
+                .Where(e => empIds.Contains(e.Id))
+                .ToListAsync();
+            var empById = employees.ToDictionary(e => e.Id);
+
+            foreach (var d in details)
+            {
+                if (!empById.TryGetValue(d.EmployeeId, out var emp)) continue;
+                if (string.IsNullOrWhiteSpace(emp.TaxId)) continue; // ไม่มี tax id ออก cert ไม่ได้
+
+                // Skip ถ้ามี cert เดือนนี้อยู่แล้วและไม่ใช่จาก run นี้
+                // (กรณี HR ออกเองด้วยมือก่อน) — ไม่ override manual cert
+                var manualExists = await _db.Set<WithholdingTaxCert>().AsNoTracking()
+                    .AnyAsync(c => c.CompanyId == companyId
+                        && c.TaxYear == run.Year && c.TaxMonth == run.Month
+                        && c.TaxFormType == TaxType.WithholdingTax1
+                        && c.SourcePayrollRunId == null
+                        && c.Status != WithholdingTaxCertStatus.Voided
+                        && c.PayeeContact.TaxId == emp.TaxId);
+                if (manualExists) continue;
+
+                // ค้น/สร้าง contact ของพนักงาน (employee-as-contact)
+                var contact = await _db.Set<Contact>()
+                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == emp.TaxId);
+                if (contact == null)
+                {
+                    contact = new Contact
+                    {
+                        CompanyId = companyId,
+                        Name = $"{emp.TitleTh} {emp.FirstNameTh} {emp.LastNameTh}".Trim(),
+                        TaxId = emp.TaxId,
+                        ContactType = ContactType.Individual,
+                        IsSupplier = true
+                    };
+                    _db.Set<Contact>().Add(contact);
+                    await _db.SaveChangesAsync();
+                }
+
+                var certNumber = $"PND1-{run.Year}{run.Month:D2}-{emp.EmployeeCode}";
+                var taxableIncome = d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
+
+                var cert = new WithholdingTaxCert
+                {
+                    CompanyId = companyId,
+                    CertificateNumber = certNumber,
+                    PayeeContactId = contact.Id,
+                    TaxFormType = TaxType.WithholdingTax1,
+                    TaxYear = run.Year,
+                    TaxMonth = run.Month,
+                    CertificateType = Models.DTOs.Tax.WithholdingTaxCertType.Withhold,
+                    Status = WithholdingTaxCertStatus.Issued,
+                    TotalIncomeAmount = taxableIncome,
+                    TotalTaxAmount = d.WithholdingTax,
+                    IssuedDate = DateTime.UtcNow,
+                    SourcePayrollRunId = run.Id
+                };
+                _db.Set<WithholdingTaxCert>().Add(cert);
+                await _db.SaveChangesAsync();
+
+                _db.Set<WithholdingTaxCertLine>().Add(new WithholdingTaxCertLine
+                {
+                    WithholdingTaxCertId = cert.Id,
+                    LineOrder = 1,
+                    IncomeTypeCode = "1",   // §40(1) เงินเดือน
+                    IncomeDescription = $"เงินเดือนประจำเดือน {run.Month:D2}/{run.Year}",
+                    PaymentDate = run.PayDate,
+                    IncomeAmount = taxableIncome,
+                    TaxRate = taxableIncome > 0 ? Math.Round(d.WithholdingTax / taxableIncome * 100, 4) : 0,
+                    TaxAmount = d.WithholdingTax
+                });
+            }
+            await _db.SaveChangesAsync();
+            _logger?.LogInformation("ออก ภ.ง.ด.1 cert {Count} ฉบับสำหรับ run {Run}", details.Count, run.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "IssueMonthlyPnd1CertsAsync failed run={Run}", run.Id);
+        }
+    }
+
     private async Task AutoGenerateFilingsAsync(Guid companyId, PayrollRun run, string actor)
     {
         if (_attachments == null) return;
@@ -2506,14 +2631,19 @@ public class PayrollService : IPayrollService
     /// Brackets: 0-150K=0%, 150K-300K=5%, 300K-500K=10%, 500K-750K=15%,
     /// 750K-1M=20%, 1M-2M=25%, 2M-5M=30%, 5M+=35%
     /// </summary>
-    private static decimal CalculateThaiIncomeTax(decimal annualTaxableIncome)
+    /// <summary>คิดภาษีโดย walk progressive brackets — รับ override
+    /// brackets จาก TaxRuleConfig (ถ้ามี) ไม่งั้น fallback ใช้
+    /// hardcoded ThaiTaxBrackets ปัจจุบัน.</summary>
+    private static decimal CalculateThaiIncomeTax(decimal annualTaxableIncome,
+        (decimal UpperBound, decimal Rate)[]? brackets = null)
     {
         if (annualTaxableIncome <= 0) return 0;
+        var b = brackets ?? ThaiTaxBrackets;
 
         decimal totalTax = 0;
         decimal previousBound = 0;
 
-        foreach (var (upperBound, rate) in ThaiTaxBrackets)
+        foreach (var (upperBound, rate) in b)
         {
             if (annualTaxableIncome <= previousBound)
                 break;
@@ -2528,6 +2658,42 @@ public class PayrollService : IPayrollService
         }
 
         return Math.Round(totalTax, 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>โหลด TaxRuleConfig ของ company × fiscal year. คืน null
+    /// ถ้าไม่มี → caller ใช้ค่า default (Pit* constants + ThaiTaxBrackets).
+    /// Cache ใน-memory ของ instance นี้ — Year ของ payroll ไม่เปลี่ยนระหว่าง run.</summary>
+    private readonly Dictionary<(Guid CompanyId, int Year), TaxRuleConfig?> _taxRuleCache = new();
+    private async Task<TaxRuleConfig?> GetTaxRuleAsync(Guid companyId, int fiscalYear)
+    {
+        var key = (companyId, fiscalYear);
+        if (_taxRuleCache.TryGetValue(key, out var cached)) return cached;
+        var cfg = await _db.TaxRuleConfigs.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.FiscalYear == fiscalYear && c.IsActive && !c.IsDeleted)
+            .FirstOrDefaultAsync();
+        _taxRuleCache[key] = cfg;
+        return cfg;
+    }
+
+    /// <summary>Parse BracketsJson → array สำหรับ CalculateThaiIncomeTax.
+    /// คืน null ถ้า config ไม่มี / json ว่าง / parse fail → caller fallback.</summary>
+    private static (decimal UpperBound, decimal Rate)[]? ParseBrackets(TaxRuleConfig? cfg)
+    {
+        if (cfg == null || string.IsNullOrWhiteSpace(cfg.BracketsJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(cfg.BracketsJson);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return null;
+            var list = new List<(decimal UpperBound, decimal Rate)>();
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                if (!el.TryGetProperty("upperBound", out var ub) || !ub.TryGetDecimal(out var u)) continue;
+                if (!el.TryGetProperty("rate", out var rt) || !rt.TryGetDecimal(out var r)) continue;
+                list.Add((u <= 0 ? decimal.MaxValue : u, r));
+            }
+            return list.Count > 0 ? list.OrderBy(b => b.UpperBound).ToArray() : null;
+        }
+        catch { return null; }
     }
 
     // ===== Mapping Helpers =====
