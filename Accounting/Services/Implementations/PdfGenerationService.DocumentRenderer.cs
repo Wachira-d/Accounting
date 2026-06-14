@@ -240,15 +240,34 @@ public partial class PdfGenerationService
                 break;
 
             default: // Classic
+                // Logo + company info ฝั่งซ้าย, Big title + doc number ฝั่งขวา
+                // (เลียนแบบ HTML view ที่ผู้ใช้เห็นจาก "กดดู" — title +
+                // เลขที่ติดกัน เด่นชัด เป็นกลุ่มเดียว ไม่กระจัดกระจาย).
                 col.Item().Row(r =>
                 {
-                    if (b.LogoBytes is { Length: > 0 })
-                        try { r.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                    r.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    r.RelativeItem().Row(rr =>
+                    {
+                        if (b.LogoBytes is { Length: > 0 })
+                            try { rr.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
+                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                    });
+                    r.ConstantItem(220).AlignRight().Column(rc =>
+                    {
+                        rc.Item().AlignRight().Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
+                        if (template.ShowDocumentNumber)
+                            rc.Item().AlignRight().Text(doc.DocumentNumber).FontSize(13).SemiBold().FontColor(accent);
+                    });
                 });
-                col.Item().PaddingTop(12).AlignCenter().Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
-                col.Item().PaddingBottom(4).BorderBottom(2).BorderColor(accent);
-                ComposeDocInfo(col, doc, template, accent, alignRight: true);
+                col.Item().PaddingTop(6).PaddingBottom(4).BorderBottom(2).BorderColor(accent);
+                // doc info (วันที่ / ครบกำหนด / อ้างอิง) เป็น row ด้านขวา
+                // ใต้เส้น accent — รก document number ตัด รก ออก
+                col.Item().PaddingTop(8).AlignRight().Row(r =>
+                {
+                    void Span(string s) => r.AutoItem().PaddingHorizontal(8).Text(s).FontSize(10).FontColor("#374151");
+                    if (template.ShowDocumentDate) Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}");
+                    if (template.ShowDueDate && doc.DueDate.HasValue) Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}");
+                    if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference)) Span($"อ้างอิง: {doc.Reference}");
+                });
                 break;
         }
     }
@@ -303,22 +322,26 @@ public partial class PdfGenerationService
     {
         var c = doc.Contact;
         if (c == null) return;
-        col.Item().PaddingTop(12).Border(1).BorderColor("#E5E7EB").Padding(10).Column(cc =>
+        // Boxed contact section: left accent stripe (เลียนแบบ HTML view
+        // "ลูกค้า" box) + section title สี accent ตัวหนา → ดูเด่นชัดขึ้น
+        // กว่าเดิมที่เป็นเส้นกรอบบางๆ
+        col.Item().PaddingTop(12).BorderLeft(4).BorderColor(accent).Background("#F8FAFC")
+            .Padding(10).Column(cc =>
         {
-            cc.Item().Text(t.ContactSectionTitle ?? "ผู้ติดต่อ").FontSize(11).Bold().FontColor(accent);
-            cc.Item().Text(c.Name ?? "").FontSize(13).Bold();
+            cc.Item().Text(t.ContactSectionTitle ?? "ลูกค้า").FontSize(11).Bold().FontColor(accent);
+            cc.Item().PaddingTop(2).Text(c.Name ?? "").FontSize(13).Bold().FontColor("#111827");
             if (t.ShowContactTaxId && !string.IsNullOrWhiteSpace(c.TaxId))
-                cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}").FontSize(10);
+                cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}").FontSize(10).FontColor("#374151");
             if (t.ShowContactAddress)
             {
                 var addr = FormatThaiAddress(c.Address, c.BuildingNumber, c.Moo, c.StreetName,
                     c.SubDistrict, c.District, c.Province, c.PostalCode);
-                if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(10);
+                if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(10).FontColor("#374151");
             }
             if (t.ShowContactPhone && !string.IsNullOrWhiteSpace(c.Phone))
-                cc.Item().Text($"โทร: {c.Phone}").FontSize(10);
+                cc.Item().Text($"โทร: {c.Phone}").FontSize(10).FontColor("#374151");
             if (t.ShowContactEmail && !string.IsNullOrWhiteSpace(c.Email))
-                cc.Item().Text($"Email: {c.Email}").FontSize(10);
+                cc.Item().Text($"Email: {c.Email}").FontSize(10).FontColor("#374151");
         });
     }
 
@@ -347,9 +370,9 @@ public partial class PdfGenerationService
                 void Th(string text, string align = "left")
                 {
                     var cell = flatHeader
-                        ? h.Cell().BorderBottom(2).BorderColor(accent).Padding(6)
-                        : h.Cell().Background(headerBg).Padding(6);
-                    var tx = cell.Text(text).FontSize(10).Bold().FontColor(flatHeader ? accent : headerText);
+                        ? h.Cell().BorderBottom(2).BorderColor(accent).PaddingVertical(8).PaddingHorizontal(6)
+                        : h.Cell().Background(headerBg).PaddingVertical(8).PaddingHorizontal(6);
+                    var tx = cell.Text(text).FontSize(10.5f).Bold().FontColor(flatHeader ? accent : headerText);
                     if (align == "right") tx.AlignRight();
                     else if (align == "center") tx.AlignCenter();
                 }
@@ -387,26 +410,31 @@ public partial class PdfGenerationService
 
     private static void ComposeSummary(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, string layout)
     {
-        col.Item().PaddingTop(8).AlignRight().Width(260).Column(sc =>
+        // Layouts ที่ไม่ใช่ Minimal / Letterhead จะใช้ filled accent bar
+        // สำหรับ Grand Total — match HTML view ที่มี orange bar เด่นชัด
+        // (เดิม native render เป็นแค่ border 2 เส้น ผู้ใช้บอกว่า
+        // "หน้าตาไม่เหมือนกับกดดู" → ยอดรวมสุทธิดูไม่เด่น).
+        var filledTotal = layout is not ("Minimal" or "Letterhead");
+
+        col.Item().PaddingTop(8).AlignRight().Width(280).Column(sc =>
         {
             void Row(string label, string value, bool total = false)
             {
                 var item = sc.Item().PaddingVertical(3);
                 if (total)
                 {
-                    // SidebarAccent layout: filled bar for the grand total.
-                    if (layout == "SidebarAccent")
-                        item = item.Background(accent).Padding(6);
+                    if (filledTotal)
+                        item = item.Background(accent).Padding(8);
                     else
                         item = item.BorderTop(2).BorderBottom(2).BorderColor(accent).PaddingVertical(5);
                 }
                 else item = item.BorderBottom(0.5f).BorderColor("#EEE");
                 item.Row(r =>
                 {
-                    var lblTxt = r.RelativeItem().Text(label).FontSize(total ? 12 : 10);
-                    if (total) { lblTxt.Bold().FontColor(layout == "SidebarAccent" ? "#FFF" : accent); }
-                    var valTxt = r.ConstantItem(110).AlignRight().Text(value).FontSize(total ? 12 : 10);
-                    if (total) { valTxt.Bold().FontColor(layout == "SidebarAccent" ? "#FFF" : accent); }
+                    var lblTxt = r.RelativeItem().Text(label).FontSize(total ? 13 : 10);
+                    if (total) { lblTxt.Bold().FontColor(filledTotal ? "#FFFFFF" : accent); }
+                    var valTxt = r.ConstantItem(120).AlignRight().Text(value).FontSize(total ? 14 : 10);
+                    if (total) { valTxt.Bold().FontColor(filledTotal ? "#FFFFFF" : accent); }
                 });
             }
             if (t.ShowSubTotal) Row("ยอดรวมก่อน VAT", doc.SubTotal.ToString("N2"));
@@ -447,6 +475,10 @@ public partial class PdfGenerationService
         if (t.SignatureCount >= 2 && !string.IsNullOrWhiteSpace(t.SignatureLabel2)) labels.Add(t.SignatureLabel2!);
         if (t.SignatureCount >= 3 && !string.IsNullOrWhiteSpace(t.SignatureLabel3)) labels.Add(t.SignatureLabel3!);
         if (labels.Count == 0) return;
+
+        // เส้นบางๆ แบ่ง summary จาก signature area — HTML view มี
+        // margin-top:48px กับเส้นใต้ total → PDF เคยกระชับติดกันจนอ่านยาก
+        col.Item().PaddingTop(18).LineHorizontal(0.4f).LineColor("#E5E7EB");
 
         DocumentSigner? signerAt(int i) => signers != null && i < signers.Count ? signers[i] : null;
 
