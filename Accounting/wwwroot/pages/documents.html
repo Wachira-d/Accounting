@@ -427,14 +427,13 @@
           <h3 class="modal-title" id="pdfTitle">ดูตัวอย่างเอกสาร</h3>
           <div class="flex gap-2" id="pdfModalActions" style="flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
-            <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF (สร้างจาก server — ไฟล์เดียวกันทุกเครื่อง รองรับ PDF/A-3 + ฝัง XML สำหรับ e-Tax)">📥 ดาวน์โหลด PDF</button>
+            <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — เอกสารที่ผ่าน e-Tax flow แล้วจะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที), เอกสารอื่นได้ PDF ปกติ">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
-            <button id="pdfDownloadEtaxBtn" class="btn btn-sm btn-success" style="display:none" onclick="Page.downloadEtaxPdf()" title="PDF/A-3 ที่ฝัง XML ตามข้อกำหนดสรรพากร — ใช้สำหรับส่งทางอีเมลและยื่นภาษี">📥 ดาวน์โหลด PDF/A-3 (ฝัง XML)</button>
             <button class="modal-close" onclick="Layout.closeModal('pdfModal')">&times;</button>
           </div>
         </div>
         <div id="pdfEtaxBanner" style="display:none;flex-shrink:0;padding:8px 16px;background:#ecfdf5;border-bottom:1px solid #a7f3d0;font-size:12px;color:#065f46">
-          ✓ <strong>เอกสาร e-Tax</strong> — กดปุ่ม "ดาวน์โหลด PDF/A-3 (ฝัง XML)" เพื่อได้ไฟล์ที่มี XML ฝังตามข้อกำหนดกรมสรรพากร <span style="color:#dc2626">การพิมพ์จะตัด XML ออก</span>
+          ✓ <strong>เอกสาร e-Tax</strong> — กด "ดาวน์โหลด PDF" จะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที)
         </div>
         <div class="modal-body" id="pdfContent" style="padding:0;flex:1;min-height:0;overflow-y:auto"></div>
       </div>
@@ -2209,9 +2208,10 @@
               && !hasEtaxId) {
             actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
           }
-          if (hasEtaxId) {
-            actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
-          }
+          // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
+          // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
+          // ด้านบนแล้วเลือก "ดาวน์โหลด PDF" → ได้ PDF/A-3 อัตโนมัติ
+          // ไม่ต้องมีปุ่มแยก.
           // Payment recording: for approved+ docs with balance due
           const payableStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
           if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
@@ -3269,13 +3269,11 @@
           } catch (_) { /* fall through to client render */ }
           document.getElementById('pdfContent').innerHTML = renderedHtml
             || this.generatePdfHtml(d, companyInfo, signature, glEntry);
-          // Toggle etax-only UI: download button + green banner appear only when this
-          // document has an associated EtaxInvoice (i.e. its XML has been generated).
-          // Guard against empty-Guid sentinel which would otherwise pass !! truthy check.
-          const etaxBtn = document.getElementById('pdfDownloadEtaxBtn');
+          // Toggle etax banner — แจ้งผู้ใช้ว่ากด "ดาวน์โหลด PDF"
+          // จะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติสำหรับเอกสาร e-Tax.
+          // ปุ่มดาวน์โหลด PDF/A-3 แยกถูกถอดออกแล้ว — รวมเป็นปุ่มเดียว.
           const etaxBanner = document.getElementById('pdfEtaxBanner');
           const hasEtax = !!d.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
-          if (etaxBtn) etaxBtn.style.display = hasEtax ? 'inline-block' : 'none';
           if (etaxBanner) etaxBanner.style.display = hasEtax ? 'block' : 'none';
           Layout.openModal('pdfModal');
         } catch (e) { Layout.toast(e.message, 'error'); }

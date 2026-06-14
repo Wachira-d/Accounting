@@ -47,6 +47,37 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
+        // PDF/A-3 with embedded e-Tax XML — เป็น default ของทุกเอกสาร
+        // ที่ผ่าน e-Tax flow แล้ว (มี EtaxInvoice + XmlContent). ผู้ใช้
+        // กดดาวน์โหลด PDF ครั้งเดียวได้ไฟล์เดียวที่ใช้:
+        //   - แสดงเอกสารปกติให้ลูกค้าดู (PDF view)
+        //   - ส่งให้สรรพากร / ยื่นภาษีได้ (XML ฝังในไฟล์ตามมาตรฐาน ETDA)
+        // เอกสารที่ยังไม่ได้สร้าง e-Tax XML (Quotation / PO / PV / ฯลฯ
+        // หรือ TaxInvoice ที่ยังไม่ generate XML) → fall ไปใช้ render
+        // ปกติ (QuestPDF native).
+        var etax = await _db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.DocumentId == document.Id && e.CompanyId == companyId
+                        && e.Status != EtaxStatus.Voided
+                        && e.XmlContent != null && e.XmlContent != "")
+            .OrderByDescending(e => e.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (etax != null)
+        {
+            try
+            {
+                var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
+                var pdfA3Bytes = BuildEtaxPdfA3WithEmbeddedXml(etax.XmlContent, metadata);
+                var pdfA3FileName = $"{etax.EtaxRefNumber}.pdf";
+                return new GeneratePdfResponse(document.Id, document.DocumentNumber, pdfA3FileName,
+                    "application/pdf", pdfA3Bytes.Length, pdfA3Bytes, DateTime.UtcNow);
+            }
+            catch
+            {
+                // ถ้าสร้าง PDF/A-3 ไม่ผ่าน (XML format / metadata edge case) —
+                // fall ไป render ปกติ ดีกว่าค้าง.
+            }
+        }
+
         // Get template
         DocumentTemplate template;
         if (request.TemplateId.HasValue)
