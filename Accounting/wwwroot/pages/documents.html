@@ -426,7 +426,7 @@
         <div class="modal-header" style="flex-shrink:0">
           <h3 class="modal-title" id="pdfTitle">ดูตัวอย่างเอกสาร</h3>
           <div class="flex gap-2" id="pdfModalActions" style="flex-wrap:wrap">
-            <button class="btn btn-sm btn-primary" onclick="Page.printPdf()">🖨️ พิมพ์</button>
+            <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
             <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF (สร้างจาก server — ไฟล์เดียวกันทุกเครื่อง รองรับ PDF/A-3 + ฝัง XML สำหรับ e-Tax)">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
             <button id="pdfDownloadEtaxBtn" class="btn btn-sm btn-success" style="display:none" onclick="Page.downloadEtaxPdf()" title="PDF/A-3 ที่ฝัง XML ตามข้อกำหนดสรรพากร — ใช้สำหรับส่งทางอีเมลและยื่นภาษี">📥 ดาวน์โหลด PDF/A-3 (ฝัง XML)</button>
@@ -3503,15 +3503,46 @@
           </table>
         </div>`;
       },
-      printPdf() {
-        const content = document.getElementById('pdfPrintArea');
-        if (!content) return;
-        const d = this._currentPdfDoc || {};
-        const fileTitle = `${Layout.docTypeLabel(d.documentType) || 'เอกสาร'} ${d.documentNumber || ''}`.trim();
-        const win = window.open('', '_blank');
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${fileTitle}</title><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet"><style>@media print{body{margin:0}@page{size:A4;margin:15mm}}</style></head><body>${content.outerHTML}</body></html>`);
-        win.document.close();
-        setTimeout(() => { win.print(); }, 500);
+      // ปุ่ม "พิมพ์" ดึง PDF ตัวเดียวกับปุ่ม "ดาวน์โหลด PDF" (จาก
+      // /generate-pdf → QuestPDF native renderer) แล้วเปิดใน browser
+      // PDF viewer + trigger print อัตโนมัติ. ทั้ง 2 ปุ่มจึงออกมาเป็น
+      // ไฟล์เดียวกันเป๊ะ — print ที่กระดาษ = download ที่ save = ผลลัพธ์
+      // PDF ตัวเดียวกัน, ครอบทุกประเภทเอกสาร (Invoice / TaxInvoice / PO /
+      // Quotation / Receipt / Expense / PaymentVoucher / CN / DN /
+      // BillingNote / DeliveryNote / CertificateInLieu / GoodsReceiptNote
+      // / ReceiptVoucher / PurchaseRequisition / PurchaseInvoice).
+      async printPdf() {
+        const d = this._currentPdfDoc;
+        if (!d) { Layout.toast('ยังไม่มีเอกสาร', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังเตรียมพิมพ์ ...', 'info');
+          const url = api.generateDocPdfUrl();
+          const token = localStorage.getItem('token');
+          const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+          });
+          if (!resp.ok) {
+            let msg = '';
+            try { const j = await resp.json(); msg = j?.message || ''; } catch (_) {}
+            throw new Error(msg || `โหลดไม่สำเร็จ (${resp.status})`);
+          }
+          const blob = await resp.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const win = window.open(blobUrl, '_blank');
+          if (!win) {
+            Layout.toast('Browser block popup — โปรดอนุญาต popup สำหรับเว็บไซต์นี้แล้วลองใหม่', 'error');
+            URL.revokeObjectURL(blobUrl);
+            return;
+          }
+          // PDF viewer ของ browser load เสร็จแล้ว trigger print —
+          // ผู้ใช้กด "พิมพ์" / "Save as PDF" ใน dialog ของ browser ได้
+          win.onload = () => { try { win.focus(); win.print(); } catch (_) {} };
+          // เก็บ blobUrl ไว้สักครู่ให้ PDF viewer load ทัน แล้วค่อย revoke
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        } catch (e) { Layout.toast(e.message || 'พิมพ์ไม่สำเร็จ', 'error'); }
       },
       /**
        * Server-side PDF download — calls the native QuestPDF renderer
