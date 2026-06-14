@@ -26,6 +26,7 @@
       <label class="text-sm font-medium">โครงการ:</label>
       <select class="form-input" id="filterProject" style="width:240px"><option value="">— ทุกโครงการ —</option></select>
       <button class="btn btn-primary" onclick="Page.load()">แสดงรายงาน</button>
+      <button class="btn btn-secondary" onclick="Page.exportCsv()">Export CSV</button>
     </div>
 
     <!-- Buckets -->
@@ -80,6 +81,7 @@
             ? await api.getAgingReceivables(q)
             : await api.getAgingPayables(q);
           const d = res.data;
+          this._lastData = d;
 
           // Buckets
           const buckets = d.buckets || [];
@@ -102,15 +104,32 @@
             <div class="table-container" style="border:none">
               <table class="table">
                 <thead><tr><th>ผู้ติดต่อ</th><th class="text-right">ปัจจุบัน</th><th class="text-right">1-30 วัน</th><th class="text-right">31-60 วัน</th><th class="text-right">61-90 วัน</th><th class="text-right">>90 วัน</th><th class="text-right font-bold" data-i18n="common.total">รวม</th></tr></thead>
-                <tbody>${details.map(c => `<tr>
-                  <td class="font-medium">${c.contactName}</td>
+                <tbody>${details.map((c,i) => `
+                <tr onclick="Page.toggleDocs(${i})" style="cursor:pointer">
+                  <td class="font-medium"><span id="caret_${i}" style="display:inline-block;width:14px;color:var(--gray-400)">▸</span> ${Layout.esc(c.contactName)}</td>
                   <td class="text-right">${Layout.money(c.current)}</td>
                   <td class="text-right">${Layout.money(c.days1To30)}</td>
                   <td class="text-right">${Layout.money(c.days31To60)}</td>
                   <td class="text-right ${c.days61To90 > 0 ? 'text-warning' : ''}">${Layout.money(c.days61To90)}</td>
                   <td class="text-right ${c.over90Days > 0 ? 'text-danger font-semibold' : ''}">${Layout.money(c.over90Days)}</td>
                   <td class="text-right font-bold">${Layout.money(c.totalBalance)}</td>
-                </tr>`).join('')}</tbody>
+                </tr>
+                <tr id="docs_${i}" style="display:none;background:var(--gray-50)"><td colspan="7" style="padding:0">
+                  <table class="table" style="margin:0;font-size:12.5px">
+                    <thead><tr style="color:var(--gray-500)"><th style="padding-left:34px">เลขที่</th><th>ประเภท</th><th>วันที่</th><th>ครบกำหนด</th><th class="text-right">ยอดรวม</th><th class="text-right">คงค้าง</th><th class="text-right">อายุ (วัน)</th><th>กลุ่ม</th></tr></thead>
+                    <tbody>${(c.documents||[]).map(d => `<tr>
+                      <td style="padding-left:34px"><a href="/pages/documents.html?id=${d.documentId}" style="color:var(--primary)">${Layout.esc(d.documentNumber)}</a></td>
+                      <td>${Layout.esc(d.documentType||'')}</td>
+                      <td>${new Date(d.documentDate).toLocaleDateString('th-TH')}</td>
+                      <td>${d.dueDate ? new Date(d.dueDate).toLocaleDateString('th-TH') : '-'}</td>
+                      <td class="text-right">${Layout.money(d.totalAmount)}</td>
+                      <td class="text-right ${d.balanceDue < 0 ? 'text-success' : ''}">${Layout.money(d.balanceDue)}</td>
+                      <td class="text-right ${d.agingDays > 90 ? 'text-danger' : d.agingDays > 60 ? 'text-warning' : ''}">${d.agingDays}</td>
+                      <td><span class="pill pill-${d.balanceDue < 0 ? 'success' : d.agingDays > 90 ? 'danger' : d.agingDays > 30 ? 'warning' : 'info'}">${d.bucket}</span></td>
+                    </tr>`).join('')}</tbody>
+                  </table>
+                </td></tr>
+                `).join('')}</tbody>
                 <tfoot><tr style="background:var(--gray-100)">
                   <td class="font-bold">รวมทั้งสิ้น</td>
                   <td class="text-right font-bold">${Layout.money(t.current)}</td>
@@ -125,7 +144,38 @@
         } catch (e) {
           document.getElementById('reportContent').innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message)}</div>`;
         }
-      }
+      },
+
+      // Drill-down: expand/collapse the per-document breakdown for one contact.
+      toggleDocs(i) {
+        const row = document.getElementById(`docs_${i}`);
+        const caret = document.getElementById(`caret_${i}`);
+        if (!row) return;
+        const open = row.style.display === '';
+        row.style.display = open ? 'none' : '';
+        if (caret) { caret.textContent = open ? '▸' : '▾'; caret.style.color = open ? 'var(--gray-400)' : 'var(--primary)'; }
+      },
+
+      // Quick CSV export of the rendered aging snapshot. Excel opens .csv
+      // with UTF-8 BOM correctly — Thai column names + names stay intact.
+      exportCsv() {
+        if (!this._lastData) { Layout.toast('โหลดรายงานก่อนแล้วค่อย export', 'error'); return; }
+        const d = this._lastData;
+        const title = (this.reportType === 'AccountsReceivable' ? 'ลูกหนี้' : 'เจ้าหนี้') + '-aging';
+        const esc = s => `"${String(s ?? '').replace(/"/g, '""')}"`;
+        const head = ['ผู้ติดต่อ','TaxId','Current','1-30','31-60','61-90','>90','รวม'];
+        const lines = [head.join(',')];
+        (d.details||[]).forEach(c => lines.push([
+          esc(c.contactName), esc(c.taxId || ''),
+          c.current, c.days1To30, c.days31To60, c.days61To90, c.over90Days, c.totalBalance
+        ].join(',')));
+        const t = d.totals || {};
+        lines.push(['"รวมทั้งสิ้น"','""', t.current, t.days1To30, t.days31To60, t.days61To90, t.over90Days, t.grandTotal].join(','));
+        const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = Object.assign(document.createElement('a'), { href: url, download: `${title}_${new Date().toISOString().slice(0,10)}.csv` });
+        a.click(); URL.revokeObjectURL(url);
+      },
     };
     Page.init();
     Layout.enableTour('aging');

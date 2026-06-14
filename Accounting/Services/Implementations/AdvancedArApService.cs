@@ -63,20 +63,42 @@ public class AdvancedArApService : IAdvancedArApService
             .FirstOrDefaultAsync(s => s.ContactId == contactId && s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบการตั้งค่าเครดิต");
 
-        // Recalculate current balance from outstanding invoices
-        var outstandingBalance = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                && d.ContactId == contactId
-                && d.DocumentType == DocumentType.Invoice
-                && d.Status != DocumentStatus.Voided
-                && d.BalanceDue > 0)
-            .SumAsync(d => d.BalanceDue);
-
+        // Recalculate outstanding from all AR docs (handles CN net).
+        var outstandingBalance = await ComputeContactOutstandingArAsync(companyId, contactId);
         setting.CurrentBalance = outstandingBalance;
         setting.AvailableCredit = setting.CreditLimit - outstandingBalance;
         await _db.SaveChangesAsync();
 
         return MapToCreditResponse(setting, setting.Contact.Name);
+    }
+
+    /// <summary>Computes net AR for a contact — sum of open (Invoice +
+    /// TaxInvoice + BillingNote + DebitNote) BalanceDue minus CreditNote
+    /// BalanceDue. States that don't represent debt (Draft/Waiting/Rejected/
+    /// Voided/Paid) are excluded. Used by credit setting + credit check.</summary>
+    private async Task<decimal> ComputeContactOutstandingArAsync(Guid companyId, Guid contactId)
+    {
+        var positiveTypes = new[] {
+            DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.BillingNote, DocumentType.DebitNote };
+        var openStates = new[] {
+            DocumentStatus.Approved, DocumentStatus.Sent,
+            DocumentStatus.PartiallyPaid, DocumentStatus.Overdue };
+        var positive = await _db.Documents
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId
+                && !d.IsDeleted
+                && positiveTypes.Contains(d.DocumentType)
+                && openStates.Contains(d.Status)
+                && d.BalanceDue > 0)
+            .SumAsync(d => d.BalanceDue);
+        var negative = await _db.Documents
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId
+                && !d.IsDeleted
+                && d.DocumentType == DocumentType.CreditNote
+                && openStates.Contains(d.Status)
+                && d.BalanceDue > 0)
+            .SumAsync(d => d.BalanceDue);
+        return Math.Max(0, positive - negative);
     }
 
     public async Task<List<CreditSettingResponse>> GetAllCreditSettingsAsync(Guid companyId)
@@ -86,7 +108,39 @@ public class AdvancedArApService : IAdvancedArApService
             .Where(s => s.CompanyId == companyId && !s.IsDeleted)
             .OrderBy(s => s.Contact.Name)
             .ToListAsync();
+        if (settings.Count == 0) return new();
 
+        // Compute outstanding balances for all contacts in ONE batched query
+        // (instead of one query per setting) — replaces the previously stale
+        // CurrentBalance / AvailableCredit returned from raw entity rows.
+        var contactIds = settings.Select(s => s.ContactId).ToList();
+        var positiveTypes = new[] {
+            DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.BillingNote, DocumentType.DebitNote };
+        var openStates = new[] {
+            DocumentStatus.Approved, DocumentStatus.Sent,
+            DocumentStatus.PartiallyPaid, DocumentStatus.Overdue };
+        var openDocs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && contactIds.Contains(d.ContactId)
+                && openStates.Contains(d.Status)
+                && d.BalanceDue > 0
+                && (positiveTypes.Contains(d.DocumentType)
+                    || d.DocumentType == DocumentType.CreditNote))
+            .Select(d => new { d.ContactId, d.DocumentType, d.BalanceDue })
+            .ToListAsync();
+        var outstandingByContact = openDocs
+            .GroupBy(d => d.ContactId)
+            .ToDictionary(g => g.Key, g => Math.Max(0,
+                g.Where(x => x.DocumentType != DocumentType.CreditNote).Sum(x => x.BalanceDue)
+                - g.Where(x => x.DocumentType == DocumentType.CreditNote).Sum(x => x.BalanceDue)));
+
+        foreach (var s in settings)
+        {
+            var bal = outstandingByContact.GetValueOrDefault(s.ContactId, 0m);
+            s.CurrentBalance = bal;
+            s.AvailableCredit = s.CreditLimit - bal;
+        }
         return settings.Select(s => MapToCreditResponse(s, s.Contact.Name)).ToList();
     }
 
@@ -108,14 +162,7 @@ public class AdvancedArApService : IAdvancedArApService
                 $"ผู้ติดต่อถูกระงับ: {setting.HoldReason}");
         }
 
-        // Recalculate current balance
-        var outstandingBalance = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                && d.ContactId == contactId
-                && d.DocumentType == DocumentType.Invoice
-                && d.Status != DocumentStatus.Voided
-                && d.BalanceDue > 0)
-            .SumAsync(d => d.BalanceDue);
+        var outstandingBalance = await ComputeContactOutstandingArAsync(companyId, contactId);
 
         var available = setting.CreditLimit - outstandingBalance;
         var isApproved = amount <= available;

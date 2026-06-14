@@ -36,18 +36,33 @@ public class AgingReportService : IAgingReportService
     {
         var asOfDate = request.AsOfDate ?? DateTime.UtcNow.Date;
 
-        // Determine document types based on report type. AR adds DebitNote
-        // (ใบเพิ่มหนี้ raises a receivable); AP adds Expense + PaymentVoucher
-        // so a voucher-based shop's CREDIT payables actually age (cash ones
-        // have BalanceDue 0 and are filtered out below, so no false aging).
-        var documentTypes = reportType == AgingReportType.AccountsReceivable
+        // Document types per side (หลักบัญชีไทย):
+        //   AR (ลูกหนี้):  Invoice/TaxInvoice/BillingNote/DebitNote เพิ่มยอด
+        //                  CreditNote ลดยอด → รวมแยกต่างหากด้านล่าง.
+        //   AP (เจ้าหนี้): PurchaseInvoice เพิ่มหนี้การค้า (21210),
+        //                  Expense เพิ่มเจ้าหนี้อื่น (21220),
+        //                  DebitNote (ผู้ขายออก) เพิ่มหนี้,
+        //                  CreditNote (ผู้ขายออก) ลดหนี้.
+        //   PaymentVoucher/CertificateInLieu = หลักฐานการจ่ายเงินสด ตัด
+        //   หนี้/จ่ายตรงเสมอ — ห้ามอยู่ใน aging (เคยมีบั๊ก voucher BalanceDue>0
+        //   จาก data ไม่ครบ → ขึ้น aging หลอกว่าค้างจ่าย).
+        var positiveTypes = reportType == AgingReportType.AccountsReceivable
             ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote, DocumentType.DebitNote }
-            : new[] { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+            : new[] { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.DebitNote };
+        var negativeType = DocumentType.CreditNote;
 
+        var allTypes = positiveTypes.Concat(new[] { negativeType }).ToArray();
         var query = _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
-                && documentTypes.Contains(d.DocumentType)
+                && !d.IsDeleted
+                && allTypes.Contains(d.DocumentType)
+                // Exclude every state ที่ยังไม่ใช่ "หนี้จริง":
+                //   Draft/WaitingApproval = ยังไม่ใช่หนี้  · Rejected = ถูกปฏิเสธ
+                //   Voided                = ยกเลิก         · Paid = ชำระครบแล้ว
+                && d.Status != DocumentStatus.Draft
+                && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Rejected
                 && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Paid
                 && d.BalanceDue > 0
@@ -75,18 +90,21 @@ public class AgingReportService : IAgingReportService
                 var dueDate = doc.DueDate ?? doc.DocumentDate;
                 var agingDays = Math.Max(0, (int)(asOfDate - dueDate).TotalDays);
                 var bucket = GetAgingBucket(agingDays);
+                // CreditNote ลดยอดลูกหนี้/เจ้าหนี้ → เก็บเป็นลบใน bucket
+                var sign = doc.DocumentType == negativeType ? -1m : 1m;
+                var amount = sign * doc.BalanceDue;
 
                 switch (bucket)
                 {
-                    case "Current": current += doc.BalanceDue; break;
-                    case "1-30 วัน": d1to30 += doc.BalanceDue; break;
-                    case "31-60 วัน": d31to60 += doc.BalanceDue; break;
-                    case "61-90 วัน": d61to90 += doc.BalanceDue; break;
-                    default: over90 += doc.BalanceDue; break;
+                    case "Current": current += amount; break;
+                    case "1-30 วัน": d1to30 += amount; break;
+                    case "31-60 วัน": d31to60 += amount; break;
+                    case "61-90 วัน": d61to90 += amount; break;
+                    default: over90 += amount; break;
                 }
 
                 docs.Add(new AgingDocumentDetail(doc.Id, doc.DocumentNumber, doc.DocumentType,
-                    doc.DocumentDate, doc.DueDate, doc.TotalAmount, doc.BalanceDue, agingDays, bucket));
+                    doc.DocumentDate, doc.DueDate, doc.TotalAmount, amount, agingDays, bucket));
             }
 
             details.Add(new AgingContactDetail(group.Key.ContactId, group.Key.Name, group.Key.TaxId,
@@ -111,7 +129,12 @@ public class AgingReportService : IAgingReportService
             new("มากกว่า 90 วัน", 91, null, totals.Over90Days, documents.Count(d => GetAgingDays(d, asOfDate) > 90))
         };
 
-        return new AgingReportResponse(reportType, asOfDate, buckets, details.OrderByDescending(d => d.TotalBalance).ToList(), totals);
+        // Filter out contacts whose net balance nets to zero (e.g. CN
+        // perfectly offset by an invoice) — they shouldn't clutter aging.
+        var meaningful = details.Where(d => Math.Abs(d.TotalBalance) >= 0.01m)
+            .OrderByDescending(d => d.TotalBalance).ToList();
+
+        return new AgingReportResponse(reportType, asOfDate, buckets, meaningful, totals);
     }
 
     private static int GetAgingDays(Models.Entities.Document doc, DateTime asOfDate)
