@@ -4159,6 +4159,104 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "PrevHash" text NULL;""",
             """ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "RowHash" text NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_AuditLogs_Company_Id" ON "AuditLogs" ("CompanyId", "Id");""",
+
+            // ===== Advanced Thai SME entities =====
+            // PostDatedCheck (เช็คล่วงหน้า) — B2B Thai norm. Inbound / Outbound
+            // + lifecycle Held → Deposited → Cleared / Dishonored / Returned.
+            """
+            CREATE TABLE IF NOT EXISTS "PostDatedChecks" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "Direction" smallint NOT NULL,
+                "CheckNumber" text NOT NULL DEFAULT '',
+                "BankName" text NOT NULL DEFAULT '',
+                "BankBranch" text NULL,
+                "Amount" numeric(18,2) NOT NULL DEFAULT 0,
+                "CheckDate" timestamp with time zone NOT NULL,
+                "IssueDate" timestamp with time zone NOT NULL,
+                "ScheduledDepositDate" timestamp with time zone NOT NULL,
+                "DepositedAt" timestamp with time zone NULL,
+                "ClearedAt" timestamp with time zone NULL,
+                "DishonoredAt" timestamp with time zone NULL,
+                "DishonorReason" text NULL,
+                "Status" smallint NOT NULL DEFAULT 1,
+                "ContactId" uuid NULL,
+                "SourceDocumentId" uuid NULL,
+                "BankAccountId" uuid NULL,
+                "RelatedVoucherId" uuid NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PostDatedChecks_Company_Status" ON "PostDatedChecks" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_PostDatedChecks_ScheduledDeposit" ON "PostDatedChecks" ("CompanyId", "ScheduledDepositDate") WHERE "IsDeleted" = false AND "Status" IN (1,2);""",
+            """CREATE INDEX IF NOT EXISTS "IX_PostDatedChecks_Source" ON "PostDatedChecks" ("SourceDocumentId") WHERE "SourceDocumentId" IS NOT NULL;""",
+
+            // CashAdvanceRequest (เบิก-เคลียร์เงินสดล่วงหน้า)
+            """
+            CREATE TABLE IF NOT EXISTS "CashAdvanceRequests" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "RequestNumber" text NOT NULL DEFAULT '',
+                "EmployeeId" uuid NOT NULL,
+                "RequestedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "ApprovedAmount" numeric(18,2) NULL,
+                "DisbursedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "ClearedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "RefundAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "RequestDate" timestamp with time zone NOT NULL,
+                "ApprovedAt" timestamp with time zone NULL,
+                "DisbursedAt" timestamp with time zone NULL,
+                "ClearanceDueDate" timestamp with time zone NULL,
+                "ClearedAt" timestamp with time zone NULL,
+                "Status" smallint NOT NULL DEFAULT 1,
+                "Purpose" text NOT NULL DEFAULT '',
+                "ApproverNote" text NULL,
+                "RejectionReason" text NULL,
+                "ApproverUserId" uuid NULL,
+                "DisbursementVoucherId" uuid NULL,
+                "ClearanceDocumentIdsJson" text NOT NULL DEFAULT '[]',
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_CashAdvanceRequests_Company_Status" ON "CashAdvanceRequests" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_CashAdvanceRequests_Employee" ON "CashAdvanceRequests" ("EmployeeId");""",
+            """CREATE INDEX IF NOT EXISTS "IX_CashAdvanceRequests_ClearanceDue" ON "CashAdvanceRequests" ("CompanyId", "ClearanceDueDate") WHERE "Status" IN (3,4);""",
+
+            // EarlyPaymentDiscountTerm (ส่วนลดเงินสด 2/10 net 30)
+            """
+            CREATE TABLE IF NOT EXISTS "EarlyPaymentDiscountTerms" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "Code" text NOT NULL DEFAULT '',
+                "DisplayName" text NOT NULL DEFAULT '',
+                "DiscountWindowDays" integer NOT NULL DEFAULT 0,
+                "DiscountPercent" numeric(8,4) NOT NULL DEFAULT 0,
+                "NetTermDays" integer NOT NULL DEFAULT 0,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_EarlyPaymentDiscountTerms_Company" ON "EarlyPaymentDiscountTerms" ("CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== Document: EarlyPaymentDiscountTermId — link เอกสารกับ
+            // discount term ที่ใช้ (auto-apply ตอน receipt มาถึงในช่วงเวลา).
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EarlyPaymentDiscountTermId" uuid NULL;""",
         };
 
         foreach (var sql in statements)

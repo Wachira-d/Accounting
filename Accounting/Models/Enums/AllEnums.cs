@@ -139,6 +139,37 @@ public enum JournalEntryStatus
     Reversed = 3
 }
 
+/// <summary>Post-Dated Check direction.</summary>
+public enum PdcDirection
+{
+    Inbound = 1,    // ลูกค้าจ่ายเช็คให้เรา (receivable)
+    Outbound = 2    // เราจ่ายเช็คให้ vendor (payable)
+}
+
+/// <summary>Post-Dated Check lifecycle.</summary>
+public enum PdcStatus
+{
+    Held = 1,           // เก็บไว้ ยังไม่ถึงวัน — Inbound: เก็บในตู้เซฟ; Outbound: ออกแล้วแต่ผู้รับยังไม่ขึ้นเงิน
+    Deposited = 2,      // ฝากธนาคารแล้ว รอ clearing
+    Cleared = 3,        // ธนาคารหักเงินสำเร็จ — final
+    Dishonored = 4,     // เด้ง (เงินไม่พอ / บัญชีปิด / สั่งห้ามจ่าย) — ต้องตามจริง
+    Cancelled = 5,      // ยกเลิกก่อนฝาก (ลูกค้าขอเปลี่ยนเป็นโอน, etc.)
+    Returned = 6        // ส่งคืน Inbound: คืนเช็คให้ลูกค้า; Outbound: vendor คืนเช็คเรา
+}
+
+/// <summary>Cash advance request lifecycle.</summary>
+public enum CashAdvanceStatus
+{
+    Requested = 1,        // พนง.ขอเบิก รอ manager อนุมัติ
+    Approved = 2,         // อนุมัติแล้ว รอ finance จ่ายเงิน
+    Disbursed = 3,        // จ่ายเงินสด/โอนแล้ว รอ clearance
+    PendingClearance = 4, // เลยกำหนด clear แล้วยังไม่ส่งใบเสร็จครบ
+    Cleared = 5,          // ส่งใบเสร็จครบ + ค่าใช้จ่ายลงบัญชีแล้ว
+    Refunded = 6,         // เคลียร์เกิน → พนง.คืนเงิน
+    Rejected = 7,         // ปฏิเสธคำขอ
+    Cancelled = 8         // พนง.ยกเลิกเอง
+}
+
 /// <summary>
 /// ประเภทสมุดรายวัน ตามมาตรฐานบัญชีไทย (พ.ร.บ.การบัญชี 2543)
 /// </summary>
