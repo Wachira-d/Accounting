@@ -46,6 +46,13 @@ const Layout = {
     if (!document.querySelector('script[src="/js/command-palette.js"]')) {
       const s1 = document.createElement('script'); s1.src = '/js/command-palette.js'; s1.defer = true; document.head.appendChild(s1);
       const s2 = document.createElement('script'); s2.src = '/js/ux-helpers.js'; s2.defer = true; document.head.appendChild(s2);
+      const s3 = document.createElement('script'); s3.src = '/js/notification-bell.js'; s3.defer = true;
+      s3.onload = () => setTimeout(() => {
+        // Mount bell ใน header เมื่อ DOM พร้อม
+        const target = document.querySelector('.header-right, .sidebar-header, header');
+        if (target && window.NotificationBell) window.NotificationBell.mount(target);
+      }, 500);
+      document.head.appendChild(s3);
     }
     // Reflect ui-mode on <body> so pages can hide advanced-only sections via CSS.
     const uiMode = localStorage.getItem('uiMode') || 'simple';

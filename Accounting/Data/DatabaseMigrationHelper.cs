@@ -4307,6 +4307,55 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_StockTransfers_Company" ON "StockTransfers" ("CompanyId") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_StockTransferLines_Transfer" ON "StockTransferLines" ("StockTransferId");""",
 
+            // ===== DocumentComments — collaboration on documents (#23)
+            """
+            CREATE TABLE IF NOT EXISTS "DocumentComments" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "EntityType" text NOT NULL DEFAULT 'Document',
+                "EntityId" uuid NOT NULL,
+                "AuthorUserId" uuid NOT NULL,
+                "Body" text NOT NULL DEFAULT '',
+                "MentionedUserIdsJson" text NOT NULL DEFAULT '[]',
+                "ParentCommentId" uuid NULL,
+                "EditedAt" timestamp with time zone NULL,
+                "AttachmentUrl" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentComments_Entity" ON "DocumentComments" ("CompanyId", "EntityType", "EntityId") WHERE "IsDeleted" = false;""",
+
+            // ===== ScheduledReports — email digest schedule (#15)
+            """
+            CREATE TABLE IF NOT EXISTS "ScheduledReports" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "Name" text NOT NULL DEFAULT '',
+                "ReportCode" text NOT NULL DEFAULT '',
+                "Frequency" text NOT NULL DEFAULT 'Weekly',
+                "DayOfWeek" integer NULL,
+                "DayOfMonth" integer NULL,
+                "HourBangkok" integer NOT NULL DEFAULT 8,
+                "RecipientsJson" text NOT NULL DEFAULT '[]',
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "LastSentAt" timestamp with time zone NULL,
+                "LastResult" text NULL,
+                "Format" text NOT NULL DEFAULT 'PDF',
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ScheduledReports_Company" ON "ScheduledReports" ("CompanyId") WHERE "IsDeleted" = false AND "IsActive" = true;""",
+
             // ===== ProductLot — FIFO/FEFO tracking
             """
             CREATE TABLE IF NOT EXISTS "ProductLots" (

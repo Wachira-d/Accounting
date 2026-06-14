@@ -239,6 +239,8 @@ public class AccountingDbContext : DbContext
     public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
     public DbSet<StockTransferLine> StockTransferLines => Set<StockTransferLine>();
     public DbSet<ProductLot> ProductLots => Set<ProductLot>();
+    public DbSet<DocumentComment> DocumentComments => Set<DocumentComment>();
+    public DbSet<ScheduledReport> ScheduledReports => Set<ScheduledReport>();
     public DbSet<CashAdvanceRequest> CashAdvanceRequests => Set<CashAdvanceRequest>();
     public DbSet<EarlyPaymentDiscountTerm> EarlyPaymentDiscountTerms => Set<EarlyPaymentDiscountTerm>();
     public DbSet<EmailScheduleRule> EmailScheduleRules => Set<EmailScheduleRule>();
