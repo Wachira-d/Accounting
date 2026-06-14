@@ -27,6 +27,12 @@ public class AuditTrailController : ControllerBase
         [FromQuery] string? entityType, [FromQuery] string? entityId,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
+        // Clamp pageSize เพื่อกัน DoS หรือ accidental large pull —
+        // audit logs ปริมาณมหาศาล query ใหญ่ ๆ จะกิน DB CPU/memory.
+        // 200 พอสำหรับ UI ที่ใช้จริง ส่วน export ใช้ stream endpoint แยก.
+        if (pageSize < 1) pageSize = 50;
+        else if (pageSize > 200) pageSize = 200;
+        if (page < 1) page = 1;
         var request = new AuditLogQueryRequest(fromDate, toDate, userId, action, entityType, entityId, page, pageSize);
         var result = await _auditService.GetLogsAsync(companyId, request);
         return Ok(new ApiResponse<PagedResponse<AuditLogResponse>>(true, result));
