@@ -77,7 +77,12 @@ public record DocumentLineRequest(
     // Traceability link for flexible/partial conversion — set by the
     // conversion engine, and round-tripped by the edit form so editing a
     // converted document never loses its link to the source line.
-    Guid? SourceLineId = null);
+    Guid? SourceLineId = null,
+    // ภาษีซื้อต้องห้าม (Non-claimable Input VAT) per ประมวลรัษฎากร §82/5.
+    // Default true (เคลมได้). UI ติ๊กออก / AI suggest false สำหรับค่ารับรอง
+    // / น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์.
+    bool IsVatClaimable = true,
+    string? VatNonClaimableReason = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,
@@ -269,7 +274,10 @@ public record DocumentLineResponse(
     // approval (via SyncProjectCostEntriesAsync). UI flags the line
     // "🏗️ ลงโครงการแล้ว" so the user knows the cost has been booked.
     Guid? ProjectCostEntryId = null,
-    bool HasProjectCostEntry = false);
+    bool HasProjectCostEntry = false,
+    // ภาษีซื้อต้องห้าม flag + เหตุผล — UI แสดง checkbox + tooltip
+    bool IsVatClaimable = true,
+    string? VatNonClaimableReason = null);
 
 // ===== Flexible / partial document conversion =====
 

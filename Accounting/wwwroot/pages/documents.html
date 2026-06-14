@@ -362,7 +362,7 @@
             </div>
             <div class="table-container">
               <table class="table" id="linesTable" data-doc-side="revenue">
-                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th style="min-width:140px" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติ ระบบจะลงค่าใช้จ่ายเข้าโครงการนั้นๆ ให้อัตโนมัติ">โครงการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th style="min-width:140px" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติ ระบบจะลงค่าใช้จ่ายเข้าโครงการนั้นๆ ให้อัตโนมัติ">โครงการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th title="VAT เคลม ภพ.30 ได้หรือไม่ — คลิกไอคอนเพื่อสลับ. กฎ §82/5: ค่ารับรอง / น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์ → เคลมไม่ได้">เคลม</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
               <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:4px">
@@ -1457,6 +1457,7 @@
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></td>
           <td><select class="form-select" data-f="vat" onchange="Page.calcSum()" style="font-size:13px"><option value="7">7%</option><option value="0">0%</option></select></td>
+          <td style="text-align:center"><span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;font-size:18px;user-select:none">✓</span></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="wht" oninput="Page.calcSum()"></td>
           <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcSum()">✕</button></td>`;
         document.getElementById('linesBody').appendChild(row);
@@ -1464,6 +1465,12 @@
         // user already typed (overwriteQty:false) — picking a product mid-edit
         // shouldn't reset the count they just entered.
         const descInput = row.querySelector('[data-f="desc"]');
+        // VAT-claimability heuristic: ตรวจจากคำในรายการ → ติ๊ก
+        // 🚫 อัตโนมัติเมื่อมีคำที่บ่งบอกค่าใช้จ่ายต้องห้าม
+        // §82/5 (น้ำมัน / รถยนต์ / รับรอง / ฯลฯ). ใช้กับ doc ฝั่งซื้อ
+        // เท่านั้น (PurchaseInvoice / Expense / PaymentVoucher) — ฝั่งขาย
+        // ไม่มี input VAT ให้เคลม ค่าจะถูก ignore โดย server.
+        descInput.addEventListener('input', () => this.suggestVatClaim(row));
         if (window.ProductLookup) {
           ProductLookup.attach(descInput, (r, p) => ProductLookup.fillRow(r, p, { overwriteQty: false }));
         } else {
@@ -1508,6 +1515,89 @@
         // Keep email template's amount in sync — only when email is enabled to
         // avoid wasted DOM work on every keystroke during line editing.
         if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();
+        // Refresh non-claimable VAT banner เมื่อ totals เปลี่ยน
+        this.refreshVatProhibitedBanner();
+      },
+
+      // ภาษีซื้อต้องห้าม (§82/5 ประมวลรัษฎากร) — toggle + AI heuristic
+      // ─────────────────────────────────────────────────────────────
+      // Click ไอคอนสลับ ✓ ↔ 🚫 ต่อบรรทัด. 🚫 = VAT ไม่ขึ้น ภพ.30
+      // (รวมเป็น cost แทน). User override จะ "ล็อค" ไม่ให้ heuristic
+      // เปลี่ยนตามคำในรายการ.
+      toggleVatClaim(el) {
+        const cur = el.dataset.claim === 'true';
+        const nxt = !cur;
+        el.dataset.claim = nxt ? 'true' : 'false';
+        el.dataset.userOverride = '1';
+        if (nxt) {
+          el.textContent = '✓';
+          el.style.color = '';
+          el.dataset.reason = '';
+          el.title = 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ';
+        } else {
+          el.textContent = '🚫';
+          el.style.color = '#dc2626';
+          el.dataset.reason = el.dataset.reason || 'ผู้ใช้กำหนดเอง';
+          el.title = `VAT ต้องห้าม — ไม่นำเข้า ภพ.30 (${el.dataset.reason})`;
+        }
+        this.refreshVatProhibitedBanner();
+      },
+
+      // Heuristic regex: คำที่บ่งบอกค่าใช้จ่ายต้องห้าม §82/5(3)(6) —
+      // ตรวจอัตโนมัติเมื่อ user พิมพ์รายการ. ถ้ามี match + user ยังไม่
+      // override → set 🚫 + reason. User override = ล็อค.
+      suggestVatClaim(row) {
+        const indicator = row.querySelector('[data-f="vatClaim"]');
+        if (!indicator || indicator.dataset.userOverride) return;
+        const desc = (row.querySelector('[data-f="desc"]').value || '').toLowerCase();
+        const rules = [
+          { re: /รับรอง|เลี้ยง(?:ลูกค้า|รับรอง)?|กระเช้า|ของขวัญลูกค้า|กอล์ฟ|พาลูกค้า/i, code: '§82/5(3)', label: 'ค่ารับรอง' },
+          { re: /น้ำมัน(?:รถ|เชื้อเพลิง)?|เติมน้ำมัน|ปั๊มน้ำมัน|ปตท|บางจาก|เชลล์|ค่าน้ำมัน/i, code: '§82/5(6)', label: 'น้ำมันรถยนต์นั่ง' },
+          { re: /ซ่อมรถ|อะไหล่รถ|ประกันรถยนต์|พรบ\.?รถยนต์|ค่าทางด่วน|ค่าทางพิเศษ/i, code: '§82/5(6)', label: 'รถยนต์นั่ง' },
+          { re: /ใบเสร็จเงินสด|บิลเงินสด/i, code: '§82/5(1)', label: 'ใบกำกับฯ ไม่สมบูรณ์' }
+        ];
+        let matched = null;
+        for (const r of rules) { if (r.re.test(desc)) { matched = r; break; } }
+        if (matched && indicator.dataset.claim === 'true') {
+          indicator.dataset.claim = 'false';
+          indicator.dataset.reason = `${matched.code} ${matched.label}`;
+          indicator.textContent = '🚫';
+          indicator.style.color = '#dc2626';
+          indicator.title = `AI ตรวจพบ: ${matched.code} ${matched.label} — เคลมไม่ได้ (คลิกเพื่อสลับกลับ)`;
+          this.refreshVatProhibitedBanner();
+        }
+      },
+
+      // Banner เตือนเหนือสรุปยอด: รวม VAT ต้องห้ามทุก row + แสดง
+      // ผลกระทบงบ (ค่าใช้จ่ายเพิ่ม VAT เป็น cost).
+      refreshVatProhibitedBanner() {
+        let prohibitedTotal = 0;
+        const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
+        const inclVat = document.getElementById('fPricesIncludeVat')?.checked || false;
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          const claim = row.querySelector('[data-f="vatClaim"]');
+          if (!claim || claim.dataset.claim === 'true') return;
+          const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
+          const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
+          const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
+          const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
+          const entered = qty * price * (1 - disc / 100);
+          const lineVat = inclVat && vatR > 0 ? r2(entered - entered / (1 + vatR / 100)) : r2(entered * vatR / 100);
+          prohibitedTotal += lineVat;
+        });
+        let banner = document.getElementById('vatProhibitedBanner');
+        const sumBox = document.getElementById('sumVat')?.closest('div');
+        if (prohibitedTotal > 0.01) {
+          if (!banner && sumBox && sumBox.parentElement) {
+            banner = document.createElement('div');
+            banner.id = 'vatProhibitedBanner';
+            banner.style.cssText = 'margin:8px 0;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12.5px;color:#991b1b';
+            sumBox.parentElement.insertBefore(banner, sumBox);
+          }
+          if (banner) banner.innerHTML = `🚫 <strong>VAT ต้องห้าม ${Layout.money(prohibitedTotal)} บาท</strong> — จะไม่นำเข้า ภพ.30 (รวมเป็น cost ของค่าใช้จ่ายแทน). กดไอคอน ✓/🚫 ที่บรรทัดเพื่อสลับ`;
+        } else if (banner) {
+          banner.remove();
+        }
       },
       editingId: null,
       /**
@@ -1701,6 +1791,19 @@
             row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
             row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
+            // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
+            // เพื่อไม่ให้ heuristic regex เปลี่ยนค่าทับ user/AI choice
+            // ที่บันทึกไว้แล้ว.
+            const claimEl = row.querySelector('[data-f="vatClaim"]');
+            if (claimEl) {
+              const claim = l.isVatClaimable !== false;
+              claimEl.dataset.claim = claim ? 'true' : 'false';
+              claimEl.dataset.reason = l.vatNonClaimableReason || '';
+              claimEl.dataset.userOverride = '1';
+              claimEl.textContent = claim ? '✓' : '🚫';
+              claimEl.style.color = claim ? '' : '#dc2626';
+              claimEl.title = claim ? 'VAT เคลมได้' : `VAT ต้องห้าม — ${l.vatNonClaimableReason || 'ไม่นำเข้า ภพ.30'}`;
+            }
             if (l.productCode) {
               row.dataset.productCode = l.productCode;
               if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
@@ -1804,6 +1907,15 @@
           // DocumentLine.ProjectId and feeds SyncProjectCostEntriesAsync.
           const lineProj = row.querySelector('[data-f="project"]')?.value;
           if (lineProj) line.projectId = lineProj;
+          // ภาษีซื้อต้องห้าม flag + เหตุผล — server บังคับ false ถ้า
+          // account ที่ผังบัญชี InputVatClaimable=false ไม่ว่า client
+          // จะส่งอะไร (กัน user override บัญชีต้องห้าม).
+          const claim = row.querySelector('[data-f="vatClaim"]');
+          if (claim) {
+            line.isVatClaimable = claim.dataset.claim !== 'false';
+            if (!line.isVatClaimable && claim.dataset.reason)
+              line.vatNonClaimableReason = claim.dataset.reason;
+          }
           lines.push(line);
         });
         if (strict && strictViolators.length) {

@@ -4100,6 +4100,13 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Employee_Date" ON "EmployeeProjectTimes" ("CompanyId", "EmployeeId", "WorkDate") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Project_Date" ON "EmployeeProjectTimes" ("CompanyId", "ProjectId", "WorkDate") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeProjectTimes_ExternalSync" ON "EmployeeProjectTimes" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ===== DocumentLines: ภาษีซื้อต้องห้าม (Non-claimable Input VAT) =====
+            // IsVatClaimable = false → VAT รวมเข้า cost ตอน post JE + ไม่นับ
+            // ในยอด Input VAT ของ ภพ.30. Default true เพื่อ backward compat.
+            // VatNonClaimableReason เก็บเหตุผล (§82/5(3) / §82/5(6) / free text).
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IsVatClaimable" boolean NOT NULL DEFAULT true;""",
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "VatNonClaimableReason" text NULL;""",
         };
 
         foreach (var sql in statements)

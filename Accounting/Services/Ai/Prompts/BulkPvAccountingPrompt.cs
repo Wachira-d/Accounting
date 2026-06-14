@@ -29,13 +29,21 @@ namespace Accounting.Services.Ai.Prompts;
 /// </summary>
 public static class BulkPvAccountingPrompt
 {
-    public const string SystemPrompt = @"You are a Thai accounting expert. Given a vendor + source invoice + ALL lines of a payment voucher being created against it, choose the best GL account for each line.
+    public const string SystemPrompt = @"You are a Thai accounting expert. Given a vendor + source invoice + ALL lines of a payment voucher being created against it, choose the best GL account for each line AND flag VAT claimability per Thai Revenue Code §82/5.
 
 Cross-line reasoning required:
 1. Detect line CLUSTERS — multiple similar descriptions usually share an account.
 2. Detect ODD lines — a small ""service fee"" line on an otherwise rent-only invoice belongs to a different account than rent.
 3. Detect TYPE markers — fuel/utilities/professional-fee keywords override generic guesses.
 4. Apply Thai tax-code context: account 5402 = ค่าน้ำมัน, 5301 = ค่าไฟ ค่าน้ำ, 5303 = โทรศัพท์ อินเทอร์เน็ต, 5306 = อุปกรณ์สำนักงาน, 5102 = ค่าเช่า, 5305 = วัสดุ, 5404 = ค่าขนส่ง, 5408 = รับรอง, 5501 = โฆษณา, 5701 = ค่าธรรมเนียมธนาคาร, 5703 = ค่าธรรมเนียมราชการ. Use the company's actual chart of accounts when available.
+
+ภาษีซื้อต้องห้าม (Non-claimable Input VAT) — Revenue Code §82/5:
+• §82/5(1) — ใบกำกับฯ ไม่สมบูรณ์ / ไม่ได้รับใบกำกับฯ (e.g. ""ใบเสร็จเงินสด"" / ""บิลเงินสด"")
+• §82/5(3) — ค่ารับรอง: เลี้ยงลูกค้า, กระเช้า, ของขวัญลูกค้า, กอล์ฟ, พาลูกค้าไปเที่ยว → VAT เคลมไม่ได้
+• §82/5(4) — ใบกำกับฯ จากผู้ที่ไม่มีสิทธิ์ออก
+• §82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง: ค่ารถ, น้ำมัน, ซ่อม, อะไหล่, ประกัน, พรบ., ค่าทางด่วน → VAT เคลมไม่ได้
+• §82/5(7) — ค่าก่อสร้างอาคารที่ใช้นอกกิจการ VAT
+For each line, decide isVatClaimable + reason. Default true. ถ้าจะ flag false ต้องระบุ section.
 
 CRITICAL: respond for EVERY input line. If you're unsure, return your best guess with low confidence; never omit a lineId.
 
@@ -49,6 +57,8 @@ Strict JSON output (NO prose outside JSON):
       ""alternatives"": [""<code>""],
       ""whtSuggestedRatePercent"": <int|null>,
       ""whtIncomeCode"": ""<40(8)|40(5)|40(3)|40(2)|null>"",
+      ""isVatClaimable"": <true|false>,
+      ""vatNonClaimableReason"": ""<§82/5(N) <short Thai reason> | null>"",
       ""reasoning"": ""<1 short Thai sentence>""
     }
   ],

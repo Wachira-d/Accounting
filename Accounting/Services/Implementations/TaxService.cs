@@ -282,15 +282,17 @@ public partial class TaxService : ITaxService
                   || doc.DocumentType == DocumentType.CertificateInLieu)
             {
                 // ----- Rule B: detect prohibited input VAT (ภาษีซื้อต้องห้าม) -----
-                // Sum VAT on lines posting to a non-claimable account
-                // (falling back to the document's expense category). This is
-                // surfaced as a WARNING only — the amount stays in the claimed
-                // total; whether to exclude it is the accountant's call (the
-                // ภ.พ.30 line is editable).
+                // Prohibited VAT = ผลรวมจาก (a) บรรทัดที่ user/AI ติ๊ก
+                // IsVatClaimable=false (explicit) + (b) บรรทัดที่ AccountId
+                // (หรือ doc.ExpenseCategoryId) ชี้ไปบัญชี nonClaimable.
+                // Auto-exclude: ลบออกจาก inputVat total + แยกแสดงเป็น line
+                // ที่ IsExcluded=true เพื่อ audit trail. ผู้ใช้กา IsExcluded
+                // เพิ่มเองได้ทีหลังถ้าเจอเคสที่ระบบไม่ detect.
                 decimal lineVatTotal = doc.Lines.Sum(l => l.VatAmount);
                 decimal prohibitedVat = 0m;
                 if (Math.Abs(lineVatTotal) < 0.01m && doc.VatAmount != 0)
                 {
+                    // Doc-level fallback (legacy data ที่ไม่มี VAT บน line)
                     if (doc.ExpenseCategoryId.HasValue && nonClaimableAccountIds.Contains(doc.ExpenseCategoryId.Value))
                         prohibitedVat = doc.VatAmount;
                 }
@@ -298,45 +300,73 @@ public partial class TaxService : ITaxService
                 {
                     foreach (var l in doc.Lines)
                     {
+                        // (a) explicit user/AI flag — เคารพเหนือทุก rule
+                        if (!l.IsVatClaimable)
+                        {
+                            prohibitedVat += l.VatAmount;
+                            continue;
+                        }
+                        // (b) account-level fallback
                         var acct = l.AccountId ?? doc.ExpenseCategoryId;
                         if (acct.HasValue && nonClaimableAccountIds.Contains(acct.Value))
                             prohibitedVat += l.VatAmount;
                     }
                 }
+                var claimableVat = doc.VatAmount - prohibitedVat;
 
                 // ----- Rule A: tax-invoice 6-month age check -----
                 var windowEnd = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1)
                     .AddMonths(7).AddDays(-1);
                 var pastWindow = DateTime.UtcNow.Date > windowEnd;
 
-                // Both rules are advisory — the full VAT stays in the total;
-                // the accountant decides whether to keep or remove it.
-                inputVat += doc.VatAmount;
+                // Claimable เข้า inputVat total (อัตโนมัติหักส่วนต้องห้าม)
+                inputVat += claimableVat;
 
-                var warnings = new List<string>();
-                if (prohibitedVat > 0)
-                    warnings.Add($"มีภาษีซื้อต้องห้าม (ค่ารับรอง) {prohibitedVat:N2} โดยปกติเคลมไม่ได้");
-                if (pastWindow)
-                    warnings.Add("ใบกำกับเกิน 6 เดือน อาจเครดิตภาษีซื้อไม่ได้");
+                var ageWarning = pastWindow ? " ⚠️ใบกำกับเกิน 6 เดือน" : "";
 
-                var desc = $"[ภาษีซื้อ] {doc.DocumentNumber}";
-                if (warnings.Count > 0)
-                    desc = $"⚠️ {desc} — {string.Join("; ", warnings)} (โปรดตรวจสอบ)";
-
-                report.Lines.Add(new TaxReportLine
+                // เพิ่ม line ส่วนเคลมได้ (ถ้ามี) — IsExcluded=false → นับใน
+                // ภพ.30 total. ถ้า doc ทั้งใบ prohibited (claimable=0) ก็
+                // ข้าม line นี้ — แค่แสดง line "ต้องห้าม" ด้านล่างพอ.
+                if (claimableVat > 0 || prohibitedVat == 0)
                 {
-                    TaxReportId = report.Id,
-                    LineOrder = lineOrder++,
-                    TaxPayerId = doc.Contact?.TaxId,
-                    TaxPayerName = doc.Contact?.Name ?? "",
-                    TransactionDate = doc.DocumentDate,
-                    Description = desc,
-                    IncomeAmount = doc.SubTotal,
-                    TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                    TaxAmount = doc.VatAmount,
-                    DocumentId = doc.Id,
-                    IncomeTypeCode = "INPUT"
-                });
+                    var desc = $"[ภาษีซื้อ] {doc.DocumentNumber}{ageWarning}";
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id,
+                        LineOrder = lineOrder++,
+                        TaxPayerId = doc.Contact?.TaxId,
+                        TaxPayerName = doc.Contact?.Name ?? "",
+                        TransactionDate = doc.DocumentDate,
+                        Description = desc,
+                        IncomeAmount = doc.SubTotal,
+                        TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        TaxAmount = claimableVat,
+                        DocumentId = doc.Id,
+                        IncomeTypeCode = "INPUT"
+                    });
+                }
+
+                // เพิ่ม line ส่วนที่เป็นภาษีต้องห้าม — IsExcluded=true →
+                // ไม่นับใน ภพ.30 total แต่ปรากฏใน รายงาน + Excel export
+                // เพื่อ audit trail (สรรพากรเห็นชัด เราตัดยอดไหนออก).
+                if (prohibitedVat > 0)
+                {
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id,
+                        LineOrder = lineOrder++,
+                        TaxPayerId = doc.Contact?.TaxId,
+                        TaxPayerName = doc.Contact?.Name ?? "",
+                        TransactionDate = doc.DocumentDate,
+                        Description = $"🚫 [ภาษีซื้อต้องห้าม §82/5] {doc.DocumentNumber} — ไม่นำมาคำนวณ ภพ.30",
+                        IncomeAmount = 0,
+                        TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        TaxAmount = prohibitedVat,
+                        DocumentId = doc.Id,
+                        IncomeTypeCode = "INPUT",
+                        IsExcluded = true
+                    });
+                }
             }
         }
 

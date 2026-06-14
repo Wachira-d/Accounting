@@ -243,6 +243,23 @@ public class DocumentLine : BaseEntity
     /// DocumentService.ComputeConsumptionAsync.
     /// </summary>
     public Guid? SourceLineId { get; set; }
+
+    /// <summary>
+    /// Input VAT claimability per ประมวลรัษฎากร §82/5.
+    /// <para>true (default) = VAT บนบรรทัดนี้ไปเข้าบัญชี "ภาษีซื้อ 116"
+    /// ตอน post JE และจะปรากฏใน ภพ.30 ฝั่ง Input VAT.</para>
+    /// <para>false = VAT ต้องห้าม (§82/5(1)(3)(4)(6)(7) — เช่น ค่ารับรอง /
+    /// น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์). JE จะรวม VAT เข้ากับ
+    /// ค่าใช้จ่ายเลย (Dr expense = ราคา + VAT) ไม่เข้า ภาษีซื้อ. ภพ.30
+    /// จะไม่นับเป็น Input VAT.</para>
+    /// </summary>
+    public bool IsVatClaimable { get; set; } = true;
+
+    /// <summary>เหตุผลที่ VAT บรรทัดนี้เคลมไม่ได้ — ใช้แสดงในรายงานสรรพากร
+    /// + audit trail. ค่าที่ใช้บ่อย: "§82/5(3) ค่ารับรอง" / "§82/5(6)
+    /// รถยนต์นั่ง" / "§82/5(1) ใบกำกับฯ ไม่สมบูรณ์" / free text. Null เมื่อ
+    /// IsVatClaimable = true.</summary>
+    public string? VatNonClaimableReason { get; set; }
 }
 
 /// <summary>

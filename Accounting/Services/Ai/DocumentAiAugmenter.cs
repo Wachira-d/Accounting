@@ -476,10 +476,20 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                         if (el.TryGetProperty("alternatives", out var altEl) && altEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var a in altEl.EnumerateArray()) if (a.GetString() is { } s) alts.Add(s);
                         var reasoning = el.TryGetProperty("reasoning", out var rEl) ? rEl.GetString() : null;
+                        // ภาษีซื้อต้องห้าม §82/5: pack เป็น ComplianceFlags
+                        // "VAT_NON_CLAIMABLE:<reason>" → UI parse แล้ว set
+                        // checkbox + reason field. ทำผ่าน flag ไม่ต้องเปลี่ยน
+                        // record schema กระทบ feature อื่น.
+                        var flags = new List<string>();
+                        if (el.TryGetProperty("isVatClaimable", out var vEl) && vEl.ValueKind == System.Text.Json.JsonValueKind.False)
+                        {
+                            var reason = el.TryGetProperty("vatNonClaimableReason", out var vrEl) ? vrEl.GetString() : null;
+                            flags.Add($"VAT_NON_CLAIMABLE:{reason ?? "§82/5 ภาษีต้องห้าม"}");
+                        }
                         byId[lid] = new DocumentAiSuggestion(
                             Answer: acc, Confidence: conf, Alternatives: alts,
                             Risks: Array.Empty<string>(),
-                            ComplianceFlags: Array.Empty<string>(),
+                            ComplianceFlags: flags,
                             Reasoning: reasoning,
                             SuggestedActions: Array.Empty<string>(),
                             UsedAi: resp.UsedAi, FeedbackId: resp.FeedbackId);
