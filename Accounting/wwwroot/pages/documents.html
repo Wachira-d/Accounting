@@ -427,7 +427,7 @@
           <h3 class="modal-title" id="pdfTitle">ดูตัวอย่างเอกสาร</h3>
           <div class="flex gap-2" id="pdfModalActions" style="flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()">🖨️ พิมพ์</button>
-            <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF (สร้างจาก server — ไฟล์เดียวกันทุกเครื่อง รองรับ PDF/A-3 + ฝัง XML สำหรับ e-Tax)">📥 ดาวน์โหลด PDF</button>
+            <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — หน้าตาเหมือนตัวอย่างเป๊ะๆ (Save as PDF ผ่าน browser)">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
             <button id="pdfDownloadEtaxBtn" class="btn btn-sm btn-success" style="display:none" onclick="Page.downloadEtaxPdf()" title="PDF/A-3 ที่ฝัง XML ตามข้อกำหนดสรรพากร — ใช้สำหรับส่งทางอีเมลและยื่นภาษี">📥 ดาวน์โหลด PDF/A-3 (ฝัง XML)</button>
             <button class="modal-close" onclick="Layout.closeModal('pdfModal')">&times;</button>
@@ -3513,43 +3513,55 @@
         win.document.close();
         setTimeout(() => { win.print(); }, 500);
       },
-      /**
-       * Server-side PDF download — calls the native QuestPDF renderer
-       * (PdfGenerationService.RenderDocumentPdfNative). One unified toolchain
-       * for every PDF in the system (regular + e-Tax PDF/A-3 with embedded
-       * XML), works for mobile / in-app browsers / batch + email senders, and
-       * gives identical output on every machine. The renderer composes the
-       * document from entities and honours the chosen layout (Banner /
-       * Letterhead / Sidebar / etc.) + colours + logo + signatures.
-       */
+      // Browser print-to-PDF จาก HTML preview เดียวกับ "กดดู" —
+      // โหลดผ่าน /generate-html (server-rendered, ใช้ template +
+      // ลายเซ็น + GL + watermark ครบเหมือน preview เป๊ะๆ) แล้วเปิด
+      // ใน popup ที่ window.print() อัตโนมัติ. ผู้ใช้กด "Save as PDF"
+      // → ได้ไฟล์ pixel-perfect สำหรับเอกสารทุกประเภท (Invoice /
+      // TaxInvoice / PO / Quotation / Receipt / Expense / CN / DN / …).
+      // วิธีนี้ไม่พึ่ง Chromium ฝั่ง server (Pdf:UseHtmlRenderer = false
+      // โดย default) แต่ก็ไม่ตกเป็น native QuestPDF fallback
+      // ที่ Thai font shaping แตก + drop CSS.
       async downloadServerPdf() {
         const d = this._currentPdfDoc;
         if (!d) { Layout.toast('ยังไม่มีเอกสาร', 'error'); return; }
-        const api = Layout.api(); if (!api) return;
         try {
-          Layout.toast('กำลังสร้าง PDF ...', 'info');
-          const url = api.generateDocPdfUrl();
+          Layout.toast('กำลังเตรียม PDF ...', 'info');
+          const cid = Layout.getCompanyId();
           const token = localStorage.getItem('token');
-          const resp = await fetch(url, {
+          const res = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+            body: JSON.stringify({ documentId: d.id, templateId: null,
+              watermarkOverride: null, copyNumber: null, language: null })
           });
-          if (!resp.ok) {
+          if (!res.ok) {
             let msg = '';
-            try { const j = await resp.json(); msg = j?.message || ''; } catch (_) {}
-            throw new Error(msg || `โหลดไม่สำเร็จ (${resp.status})`);
+            try { const j = await res.json(); msg = j?.message || ''; } catch (_) {}
+            throw new Error(msg || `โหลดไม่สำเร็จ (${res.status})`);
           }
-          const blob = await resp.blob();
+          const html = await res.text();
           const safeNum = (d.documentNumber || d.id).replace(/[\\/:*?"<>|]/g, '_');
-          const filename = `${Layout.docTypeLabel(d.documentType) || 'เอกสาร'}_${safeNum}.pdf`;
-          const a = document.createElement('a');
-          const u = URL.createObjectURL(blob);
-          a.href = u; a.download = filename;
-          document.body.appendChild(a); a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(u), 1000);
-          Layout.toast('ดาวน์โหลด PDF สำเร็จ', 'success');
+          const title = `${Layout.docTypeLabel(d.documentType) || 'เอกสาร'}_${safeNum}`;
+          const w = window.open('', '_blank');
+          if (!w) {
+            Layout.toast('Browser block popup — โปรดอนุญาต popup สำหรับเว็บไซต์นี้แล้วลองใหม่', 'error');
+            return;
+          }
+          // Inject title (browser ใช้เป็นชื่อ default file ตอน Save as
+          // PDF) + auto-print + auto-close หลังพิมพ์เสร็จ. document.title
+          // override ครอบทั้ง HEAD <title> ของ template อีกชั้นเผื่อ
+          // template ไม่ได้ set.
+          const injected = html.replace(/<\/head>/i,
+            `<title>${title}</title>` +
+            `<style>@media print{body{margin:0}}</style>` +
+            `<script>window.onload=function(){document.title=${JSON.stringify(title)};` +
+            `setTimeout(function(){window.print();},300);};` +
+            `window.onafterprint=function(){window.close();};<\/script></head>`);
+          w.document.open();
+          w.document.write(injected);
+          w.document.close();
+          Layout.toast('เปิดหน้าต่างพิมพ์แล้ว — เลือก "Save as PDF" เพื่อบันทึก', 'success');
         } catch (e) { Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error'); }
       }
     };
