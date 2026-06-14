@@ -270,18 +270,18 @@ public partial class PdfGenerationService
                     });
                 });
                 col.Item().PaddingTop(6).LineHorizontal(2).LineColor(accent);
-                // doc info: วันที่ / ครบกำหนด / อ้างอิง — เลขที่ขึ้นไปอยู่กับ
-                // title แล้ว ไม่ซ้ำซ้อน. ใช้ ComposeDocInfo เดิม (proven path).
-                col.Item().PaddingTop(8).Row(r =>
+                // doc info row — ใช้ Text(...) inline spans + AlignRight
+                // บน outer container แทน Row+RelativeItem pusher (pusher
+                // ไม่มี content method → QuestPDF 2024.12 throw
+                // "container has no content" → fallback ลง HTML→Blocks).
+                col.Item().PaddingTop(8).AlignRight().Text(tt =>
                 {
-                    r.RelativeItem(); // pusher
-                    r.AutoItem().Row(rr =>
-                    {
-                        void Span(string s) => rr.AutoItem().PaddingHorizontal(8).Text(s).FontSize(10).FontColor("#374151");
-                        if (template.ShowDocumentDate) Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}");
-                        if (template.ShowDueDate && doc.DueDate.HasValue) Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}");
-                        if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference)) Span($"อ้างอิง: {doc.Reference}");
-                    });
+                    if (template.ShowDocumentDate)
+                        tt.Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}   ").FontSize(10).FontColor("#374151");
+                    if (template.ShowDueDate && doc.DueDate.HasValue)
+                        tt.Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}   ").FontSize(10).FontColor("#374151");
+                    if (template.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference))
+                        tt.Span($"อ้างอิง: {doc.Reference}").FontSize(10).FontColor("#374151");
                 });
                 break;
         }
@@ -314,10 +314,22 @@ public partial class PdfGenerationService
 
     private static void ComposeDocInfo(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, bool alignRight)
     {
-        col.Item().PaddingTop(10).Row(r =>
+        // ใช้ Text(...) inline spans ปลายทาง content method ชัดเจน +
+        // AlignRight ที่ outer container — แทน Row + RelativeItem pusher
+        // (QuestPDF 2024.12 ไม่ accept Item ที่ไม่มี content method
+        // → throw → outer catch fallback ลง HTML→Blocks ที่หน้าตาแย่).
+        var item = col.Item().PaddingTop(10);
+        if (alignRight) item = item.AlignRight();
+        item.Text(tt =>
         {
-            if (alignRight) r.RelativeItem();   // pusher
-            r.AutoItem().Row(rr => RenderDocInfoSpans(rr, doc, t, accent));
+            if (t.ShowDocumentNumber)
+                tt.Span($"เลขที่: {doc.DocumentNumber}   ").FontSize(10);
+            if (t.ShowDocumentDate)
+                tt.Span($"วันที่: {doc.DocumentDate:dd/MM/yyyy}   ").FontSize(10);
+            if (t.ShowDueDate && doc.DueDate.HasValue)
+                tt.Span($"ครบกำหนด: {doc.DueDate:dd/MM/yyyy}   ").FontSize(10);
+            if (t.ShowReference && !string.IsNullOrWhiteSpace(doc.Reference))
+                tt.Span($"อ้างอิง: {doc.Reference}").FontSize(10);
         });
     }
 
@@ -586,14 +598,18 @@ public partial class PdfGenerationService
                     // only 20pt → the unsigned lines floated higher (the
                     // misalignment reported). Image (when present) renders at
                     // that fixed height; defensive try/catch on bad bytes.
+                    // เก็บ Height(14mm) ทุก slot เพื่อเส้นใต้ลายเซ็นอยู่
+                    // แนวเดียวกัน — Item ต้องจบด้วย content method (Text("")
+                    // หรือ Image) ไม่งั้น QuestPDF 2024.12 throw "container
+                    // has no content" → fallback ลง HTML→Blocks.
                     if (s?.SignatureImageBytes is { Length: > 0 })
                     {
                         try { c.Item().Height(14, Unit.Millimetre).AlignCenter().Image(s.SignatureImageBytes); }
-                        catch { c.Item().Height(14, Unit.Millimetre); }
+                        catch { c.Item().Height(14, Unit.Millimetre).Text(""); }
                     }
                     else
                     {
-                        c.Item().Height(14, Unit.Millimetre);
+                        c.Item().Height(14, Unit.Millimetre).Text("");
                     }
                     c.Item().LineHorizontal(0.5f).LineColor("#333");
                     c.Item().PaddingTop(4).AlignCenter().Text(label).FontSize(10).FontColor("#555");
