@@ -3539,33 +3539,43 @@ public class DocumentService : IDocumentService
         return await FindAccountAsync(companyId, "212", contact);
     }
 
+    /// <summary>Per-instance cache สำหรับ FindAccountAsync — ApproveDocument
+    /// / Post payroll หา default account ซ้ำๆ (113, 212, 116, 21914...
+    /// ราว 8-15 ครั้งต่อ post). DocumentService เป็น scoped ต่อ request →
+    /// cache ตามอายุ request เท่านั้น ไม่มี stale-data risk ข้าม request.
+    /// Key เป็น (codePrefix, contactDefaultId) — pinned contact overrides
+    /// ใช้ key ต่าง ให้ cache แยก hit.</summary>
+    private readonly Dictionary<(string CodePrefix, Guid? ContactDefault), ChartOfAccount?> _findAccountCache = new();
+
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
-        if (contactOverride != null)
+        Guid? overrideId = contactOverride == null ? null : codePrefix switch
         {
-            Guid? overrideId = codePrefix switch
-            {
-                "113" => contactOverride.DefaultArAccountId,
-                "212" => contactOverride.DefaultApAccountId,
-                "212305" => contactOverride.DefaultIrGrAccountId,
-                _ => null,
-            };
-            if (overrideId.HasValue)
-            {
-                var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
-                if (pinned != null) return pinned;
-                // The override points at a deleted/inactive account —
-                // fall through to the system default rather than throw.
-            }
+            "113" => contactOverride.DefaultArAccountId,
+            "212" => contactOverride.DefaultApAccountId,
+            "212305" => contactOverride.DefaultIrGrAccountId,
+            _ => null,
+        };
+        var cacheKey = (codePrefix, overrideId);
+        if (_findAccountCache.TryGetValue(cacheKey, out var cached)) return cached;
+
+        if (overrideId.HasValue)
+        {
+            var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
+            if (pinned != null) { _findAccountCache[cacheKey] = pinned; return pinned; }
+            // The override points at a deleted/inactive account —
+            // fall through to the system default rather than throw.
         }
-        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+        var found = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4 && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
+        _findAccountCache[cacheKey] = found;
+        return found;
     }
 
     /// <summary>
