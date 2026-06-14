@@ -571,5 +571,52 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"ภ.พ.36 เดือน {month}/{year} ซื้อบริการต่างประเทศ {docs.Count} รายการ VAT self-assess {totalSelfVat:N2} บาท");
     }
 
+    /// <summary>ภ.ง.ด.54 — Foreign-vendor WHT. รวม PI/Expense ที่
+    /// IsForeignService=true + WithholdingTaxAmount > 0 ในเดือน → text format
+    /// ตาม RD spec. Income type 6 = §40(3)(4) ค่าสิทธิ์/ดอกเบี้ย/ปันผล.</summary>
+    public async Task<TaxFilingExportResult> ExportPnd54Async(Guid companyId, int year, int month)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var thaiYear = year + 543;
+        var period = $"{thaiYear:D4}{month:D2}";
+        var monthStart = new DateTime(year, month, 1);
+        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
+        var docs = await _db.Documents.AsNoTracking()
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.IsForeignService
+                && d.WithholdingTaxAmount > 0
+                && d.DocumentDate >= monthStart && d.DocumentDate <= monthEnd
+                && (d.DocumentType == Models.Enums.DocumentType.PurchaseInvoice
+                    || d.DocumentType == Models.Enums.DocumentType.Expense
+                    || d.DocumentType == Models.Enums.DocumentType.PaymentVoucher)
+                && d.Status != Models.Enums.DocumentStatus.Voided
+                && d.Status != Models.Enums.DocumentStatus.Draft)
+            .OrderBy(d => d.DocumentDate)
+            .ToListAsync();
+
+        var sb = new System.Text.StringBuilder();
+        var totalIncome = docs.Sum(d => d.SubTotal);
+        var totalWht = docs.Sum(d => d.WithholdingTaxAmount);
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.54|{period}|{docs.Count}|{totalIncome:F2}|{totalWht:F2}");
+        int seq = 1;
+        foreach (var d in docs)
+        {
+            var docDate = $"{d.DocumentDate.Day:D2}/{d.DocumentDate.Month:D2}/{d.DocumentDate.Year + 543}";
+            var supplierName = d.Contact?.Name ?? "—";
+            var country = d.Contact?.Province ?? "Foreign";
+            var taxId = d.Contact?.TaxId ?? "—";
+            var rate = d.SubTotal > 0 ? Math.Round(d.WithholdingTaxAmount / d.SubTotal * 100, 2) : 0;
+            sb.AppendLine($"D|{seq++}|{Esc(supplierName)}|{Esc(taxId)}|{Esc(country)}|{docDate}|6|{d.SubTotal:F2}|{rate:F2}|{d.WithholdingTaxAmount:F2}");
+        }
+        sb.AppendLine($"T|{docs.Count}|{totalIncome:F2}|{totalWht:F2}");
+
+        return new TaxFilingExportResult(
+            "PND54", "ภ.ง.ด.54", $"PND54_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            docs.Count, totalIncome, totalWht,
+            $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {docs.Count} รายการ WHT {totalWht:N2} บาท");
+    }
+
     private static string Esc(string? s) => s == null ? "" : s.Replace("|", "/").Replace("\n", " ").Trim();
 }

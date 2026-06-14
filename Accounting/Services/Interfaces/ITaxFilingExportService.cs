@@ -34,9 +34,12 @@ public interface ITaxFilingExportService
     /// "เงินปันผลค้างจ่าย" / "ภาษีหัก ณ ที่จ่าย" สำหรับ §40(4)(ข).</summary>
     Task<TaxFilingExportResult> ExportPnd2Async(Guid companyId, int year, int month);
 
-    /// <summary>ภ.พ.36 — Foreign Service VAT self-assessment. ซื้อบริการจาก
-    /// supplier ต่างประเทศที่ไม่ได้จด VAT ในไทย — ผู้รับบริการในไทยต้อง
-    /// self-assess 7% และนำส่งภายในวันที่ 7 ของเดือนถัดไป. รวมจาก
-    /// PurchaseInvoice/Expense ที่มี flag IsForeignService=true.</summary>
+    /// <summary>ภ.พ.36 — Foreign Service VAT self-assessment.</summary>
     Task<TaxFilingExportResult> ExportPp36Async(Guid companyId, int year, int month);
+
+    /// <summary>ภ.ง.ด.54 — WHT จาก foreign vendor (จ่ายค่าบริการ ดอกเบี้ย
+    /// ค่าสิทธิ์ ฯลฯ ไปต่างประเทศ) ผู้จ่ายในไทยต้องหัก ณ ที่จ่าย ตาม DTA
+    /// (15% สำหรับประเทศไม่มีอนุสัญญา / 5-15% มี DTA). ยื่นภายในวันที่ 7
+    /// ของเดือนถัดไป. รวมจาก PI/Expense ที่ IsForeignService=true + มี WHT.</summary>
+    Task<TaxFilingExportResult> ExportPnd54Async(Guid companyId, int year, int month);
 }
