@@ -4152,10 +4152,13 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "PaidUpCapital" numeric(18,2) NOT NULL DEFAULT 0;""",
 
             // ===== ChartOfAccounts.CashFlowSection — per-account override
-            // ของหมวด Cash Flow (Operating / Investing / Financing). ถ้า
-            // null/0 → engine fall back ใช้ code-prefix heuristics เดิม.
-            // For F23 — ผังบัญชี custom ที่ไม่ตามรหัส default จะ map ผิด.
+            // ของหมวด Cash Flow (Operating / Investing / Financing).
             """ALTER TABLE "ChartOfAccounts" ADD COLUMN IF NOT EXISTS "CashFlowSection" smallint NOT NULL DEFAULT 0;""",
+
+            // ===== AuditLogs: F14 hash chain (forensic tamper-evident)
+            """ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "PrevHash" text NULL;""",
+            """ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "RowHash" text NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AuditLogs_Company_Id" ON "AuditLogs" ("CompanyId", "Id");""",
         };
 
         foreach (var sql in statements)

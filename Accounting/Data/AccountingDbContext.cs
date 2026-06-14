@@ -3100,6 +3100,7 @@ public class AccountingDbContext : DbContext
         var result = base.SaveChanges();
         if (auditEntries.Count > 0)
         {
+            ApplyAuditHashChain(auditEntries);
             AuditLogs.AddRange(auditEntries);
             base.SaveChanges();
         }
@@ -3113,10 +3114,46 @@ public class AccountingDbContext : DbContext
         var result = await base.SaveChangesAsync(cancellationToken);
         if (auditEntries.Count > 0)
         {
+            ApplyAuditHashChain(auditEntries);
             AuditLogs.AddRange(auditEntries);
             await base.SaveChangesAsync(cancellationToken);
         }
         return result;
+    }
+
+    /// <summary>F14 — append-only hash chain สำหรับ audit logs. ทุก row ใหม่
+    /// link ไปยัง RowHash ของ row ก่อนหน้า (ภายใน CompanyId เดียวกัน) →
+    /// แก้/ลบ row กลางทาง = chain แตก ตรวจ detect ได้.
+    /// Canonical form (deterministic — เรียงตามชื่อ field) → SHA-256:
+    ///   Timestamp|UserId|UserEmail|Action|EntityType|EntityId|NewValues|PrevHash
+    /// Forensic-grade: SOC2 compliance + protection against insider tamper
+    /// of audit trail.</summary>
+    private void ApplyAuditHashChain(List<Models.Entities.AuditLog> newEntries)
+    {
+        if (newEntries.Count == 0) return;
+        // เรียง entries ใหม่ตาม CompanyId + Timestamp + position
+        var byCompany = newEntries
+            .Select((e, i) => new { Entry = e, Order = i })
+            .GroupBy(x => x.Entry.CompanyId ?? Guid.Empty);
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        foreach (var grp in byCompany)
+        {
+            // โหลด PrevHash ล่าสุดของบริษัทนี้จาก DB — chain ต่อจากเดิม
+            var lastHash = AuditLogs
+                .Where(a => a.CompanyId == grp.Key && a.RowHash != null)
+                .OrderByDescending(a => a.Id)
+                .Select(a => a.RowHash)
+                .FirstOrDefault();
+            foreach (var x in grp.OrderBy(x => x.Order))
+            {
+                var e = x.Entry;
+                e.PrevHash = lastHash;
+                var canonical = $"{e.Timestamp:O}|{e.UserId}|{e.UserEmail}|{(int)e.Action}|{e.EntityType}|{e.EntityId}|{e.NewValues}|{e.OldValues}|{lastHash}";
+                var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(canonical));
+                e.RowHash = Convert.ToHexString(bytes);
+                lastHash = e.RowHash;
+            }
+        }
     }
 
     private void UpdateTimestamps()
