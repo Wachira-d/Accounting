@@ -135,6 +135,13 @@ public class Document : TenantEntity
     public string? WitnessPosition { get; set; }          // ตำแหน่งพยาน
     public DateTime? PaymentDate { get; set; }            // วันที่จ่ายเงินจริง
 
+    /// <summary>ซื้อบริการจาก supplier ต่างประเทศที่ไม่ได้จด VAT ในไทย
+    /// (ตามมาตรา 83/6 ผู้รับบริการต้อง self-assess VAT 7% ผ่าน ภ.พ.36 ภายใน
+    /// วันที่ 7 ของเดือนถัดไป). Default false. ตั้ง true สำหรับ PI/Expense
+    /// ที่เป็น cross-border services (Google Ads / AWS / Software license
+    /// จาก US, etc.).</summary>
+    public bool IsForeignService { get; set; }
+
     // ===== External preparer signature override =====
     // When a document is created by an integrating system (e.g. TakeTime
     // syncing a payment voucher), the real preparer is a user of THAT system,

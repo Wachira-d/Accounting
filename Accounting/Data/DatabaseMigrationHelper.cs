@@ -4257,6 +4257,9 @@ public static class DatabaseMigrationHelper
             // ===== Document: EarlyPaymentDiscountTermId — link เอกสารกับ
             // discount term ที่ใช้ (auto-apply ตอน receipt มาถึงในช่วงเวลา).
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EarlyPaymentDiscountTermId" uuid NULL;""",
+
+            // ===== Document: IsForeignService — ภ.พ.36 self-assess VAT flag
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsForeignService" boolean NOT NULL DEFAULT false;""",
         };
 
         foreach (var sql in statements)

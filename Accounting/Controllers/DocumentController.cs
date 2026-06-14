@@ -444,4 +444,45 @@ public class DocumentController : ControllerBase
         await _documentService.VoidPaymentAsync(companyId, paymentId);
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกการชำระเงินสำเร็จ"));
     }
+
+    public sealed record BulkApproveRequest(List<Guid> DocumentIds, bool AcknowledgeWarnings);
+    public sealed record BulkApproveResult(int Total, int Approved, int Failed, List<string> Errors);
+
+    /// <summary>Bulk approval — Finance อนุมัติเอกสารหลายใบในคลิกเดียว
+    /// (เช่นเงินเดือนเดือนนี้มี Expense 50 ใบ). ทำทีละใบใน try/catch —
+    /// ใบที่ throw รวมใน Errors แต่ไม่ stop การประมวลผลใบอื่น.</summary>
+    [HttpPost("bulk-approve")]
+    public async Task<ActionResult<ApiResponse<BulkApproveResult>>> BulkApprove(
+        Guid companyId, [FromBody] BulkApproveRequest req)
+    {
+        if (req.DocumentIds == null || req.DocumentIds.Count == 0)
+            return BadRequest(new ApiResponse<BulkApproveResult>(false, null!, "เลือกเอกสารอย่างน้อย 1 ใบ"));
+        if (req.DocumentIds.Count > 200)
+            return BadRequest(new ApiResponse<BulkApproveResult>(false, null!, "จำกัด bulk ครั้งละ 200 ใบ"));
+
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var userId = userIdGuid.ToString();
+        var errors = new List<string>();
+        int approved = 0, failed = 0;
+        foreach (var docId in req.DocumentIds)
+        {
+            try
+            {
+                var docType = await GetDocumentTypeAsync(companyId, docId);
+                if (docType == null) { errors.Add($"{docId}: ไม่พบเอกสาร"); failed++; continue; }
+                if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+                { errors.Add($"{docId}: ไม่มีสิทธิ์อนุมัติ {docType}"); failed++; continue; }
+                await _documentService.ApproveDocumentAsync(companyId, docId, userId, req.AcknowledgeWarnings);
+                approved++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{docId}: {ex.Message}");
+                failed++;
+            }
+        }
+        return Ok(new ApiResponse<BulkApproveResult>(true,
+            new BulkApproveResult(req.DocumentIds.Count, approved, failed, errors),
+            $"อนุมัติ {approved}/{req.DocumentIds.Count} ใบ" + (failed > 0 ? $" — ล้มเหลว {failed} ใบ" : "")));
+    }
 }

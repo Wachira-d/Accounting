@@ -118,6 +118,26 @@ public class TaxFilingExportController : ControllerBase
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
+    /// <summary>Export ภ.ง.ด.2 (Monthly dividend WHT). บริษัทจ่ายเงินปันผล
+    /// 10% หัก ณ ที่จ่าย — นำส่งภายในวันที่ 7 ของเดือนถัดไป.</summary>
+    [HttpGet("pnd2")]
+    public async Task<IActionResult> ExportPnd2(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
+        var result = await _exportService.ExportPnd2Async(companyId, year, month);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Export ภ.พ.36 (Foreign service VAT self-assessment per
+    /// §83/6). ซื้อบริการต่างประเทศ → self-assess 7% VAT.</summary>
+    [HttpGet("pp36")]
+    public async Task<IActionResult> ExportPp36(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
+        var result = await _exportService.ExportPp36Async(companyId, year, month);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
     /// <summary>Export สปส.1-10 (SSO monthly contribution) — sensitive (payroll).</summary>
     [HttpGet("sso110")]
     public async Task<IActionResult> ExportSso110(Guid companyId, [FromQuery] int year, [FromQuery] int month)
@@ -144,10 +164,13 @@ public class TaxFilingExportController : ControllerBase
         var result = code switch
         {
             "PND1" => await _exportService.ExportPnd1Async(companyId, year, month),
+            "PND2" => await _exportService.ExportPnd2Async(companyId, year, month),
             "PND3" => await _exportService.ExportPnd3Async(companyId, year, month),
             "PND53" => await _exportService.ExportPnd53Async(companyId, year, month),
             "PND1K" => await _exportService.ExportPnd1kAsync(companyId, year),
+            "PND91" => await _exportService.ExportPnd91Async(companyId, year),
             "PP30" => await _exportService.ExportPp30Async(companyId, year, month),
+            "PP36" => await _exportService.ExportPp36Async(companyId, year, month),
             "SSO110" => await _exportService.ExportSso110Async(companyId, year, month),
             _ => throw new ArgumentException($"ไม่รู้จักรหัสแบบฟอร์ม: {formCode}")
         };
