@@ -104,12 +104,44 @@ public partial class PdfGenerationService
             });
             return pdf.GeneratePdf();
         }
-        catch
+        catch (Exception ex)
         {
-            // Outermost safety net: fall back to the old HTML-parser path so a
-            // composition bug can never break PDF generation entirely.
-            var html = BuildDocumentHtml(doc, company, settings, template, watermarkOverride, langOverride);
-            return ConvertHtmlToPdf(html, template, b);
+            System.Diagnostics.Trace.TraceError($"RenderDocumentPdfNative throw: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+            // Render minimal PDF ที่แสดง exception message — ให้ผู้ใช้/dev
+            // เห็น error จริงๆ (แทนที่จะ fallback ลง HTML→Blocks ที่หน้าตา
+            // เรียบและกินทุกอย่างไป). ถ้าตัว diagnostic นี้ก็ throw ต่อ —
+            // ค่อย fallback ลง HTML→Blocks เป็น last resort.
+            try
+            {
+                return QuestPDF.Fluent.Document.Create(container =>
+                {
+                    container.Page(page =>
+                    {
+                        page.Size(PageSizes.A4);
+                        page.Margin(20, Unit.Millimetre);
+                        page.PageColor(Colors.White);
+                        page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(10));
+                        page.Content().Column(col =>
+                        {
+                            col.Item().Text("PDF Render Error (native QuestPDF path)")
+                                .FontSize(16).Bold().FontColor(Colors.Red.Darken1);
+                            col.Item().PaddingTop(8).Text($"Type: {ex.GetType().FullName}")
+                                .FontSize(10).FontColor(Colors.Black);
+                            col.Item().PaddingTop(4).Text($"Message: {ex.Message}")
+                                .FontSize(10).FontColor(Colors.Black);
+                            col.Item().PaddingTop(10).Text("Stack Trace:")
+                                .FontSize(10).Bold().FontColor(Colors.Black);
+                            col.Item().PaddingTop(4).Text(ex.StackTrace ?? "(no stack)")
+                                .FontSize(8).FontColor(Colors.Grey.Darken2);
+                        });
+                    });
+                }).GeneratePdf();
+            }
+            catch
+            {
+                var html = BuildDocumentHtml(doc, company, settings, template, watermarkOverride, langOverride);
+                return ConvertHtmlToPdf(html, template, b);
+            }
         }
     }
 
