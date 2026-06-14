@@ -241,6 +241,15 @@ public class CompanyCompensationDefaults : TenantEntity
     public decimal PerDiemRate { get; set; } = 500m;
     public decimal AccommodationAllowance { get; set; } = 800m;
     public decimal OvertimeMealAllowance { get; set; } = 30m;
+    /// <summary>ค่าอาหารกลางวันรายวันที่บริษัทจ่ายให้ — คนละกรณีกับ
+    /// OvertimeMealAllowance ที่จ่ายเฉพาะวันมี OT. นับทุกวันที่มี
+    /// บันทึกชั่วโมงทำงานปกติ ไม่ใช่ลา/วันหยุดของบริษัท.</summary>
+    public decimal DailyMealAllowance { get; set; } = 0m;
+    /// <summary>JSON list ของ allowance เพิ่มเติมที่ตั้งเองได้ —
+    /// [{code,name,type:"Daily|Monthly",amount,isTaxable}].
+    /// type=Daily คูณวันทำงาน, Monthly รวมก้อนเดียวต่อรอบ.
+    /// isTaxable=false → ไม่รวมฐานคำนวณ WHT (เช่น สวัสดิการรักษาพยาบาล).</summary>
+    public string? CustomAllowancesJson { get; set; }
     /// <summary>Standard work hours per day used to convert monthly
     /// salary → hourly rate for OT calc. Default 8.</summary>
     public decimal StandardWorkHoursPerDay { get; set; } = 8m;

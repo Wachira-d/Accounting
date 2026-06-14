@@ -14,14 +14,17 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     private readonly IPdfGenerationService _pdf;
     private readonly IFileAttachmentService _attachments;
     private readonly ILogger<WithholdingTaxCertService> _logger;
+    private readonly IEmailScheduleService? _emailSchedule;
 
     public WithholdingTaxCertService(AccountingDbContext db, IPdfGenerationService pdf,
-        IFileAttachmentService attachments, ILogger<WithholdingTaxCertService> logger)
+        IFileAttachmentService attachments, ILogger<WithholdingTaxCertService> logger,
+        IEmailScheduleService? emailSchedule = null)
     {
         _db = db;
         _pdf = pdf;
         _attachments = attachments;
         _logger = logger;
+        _emailSchedule = emailSchedule;
     }
 
     /// <summary>Generate the issued WHT certificate's PDF and attach it to the
@@ -100,17 +103,19 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // year segment matches what's printed on the form. RD's e-Filing doesn't
         // mandate a format, but it does require uniqueness within company × tax year.
         var whtPrefix = $"WHT-{request.TaxYear}-";
-        var maxWht = await _db.WithholdingTaxCerts
+        // Numeric MAX on the parsed suffix avoids the lexicographic bug that
+        // returned "9999" once a tenant crossed 10,000 certs in a year
+        // (same fix DocumentNumberGenerator uses). Cap padding at 5 digits
+        // — well above any realistic SME annual volume.
+        var existingNumbers = await _db.WithholdingTaxCerts
             .IgnoreQueryFilters()
             .Where(w => w.CompanyId == companyId && w.CertificateNumber.StartsWith(whtPrefix))
             .Select(w => w.CertificateNumber)
-            .MaxAsync() as string;
-        var whtSeq = 1;
-        if (maxWht != null)
-        {
-            var lastPart = maxWht.Substring(whtPrefix.Length);
-            if (int.TryParse(lastPart, out var parsed)) whtSeq = parsed + 1;
-        }
+            .ToListAsync();
+        var whtSeq = existingNumbers
+            .Select(n => int.TryParse(n.Substring(whtPrefix.Length), out var p) ? p : 0)
+            .DefaultIfEmpty(0)
+            .Max() + 1;
         var certNumber = $"{whtPrefix}{whtSeq:D4}";
 
         var cert = new WithholdingTaxCert
@@ -204,6 +209,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         // Save the issued cert PDF as an attachment on its source document.
         await AttachCertPdfToDocumentAsync(companyId, cert.Id);
+
+        // Auto-email hook: enqueue ส่งใบ 50ทวิให้ PayeeContact ถ้ามีกฎ + email
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnWhtCertIssuedAsync(companyId, cert.Id); }
+            catch (Exception ex) { _logger.LogWarning(ex, "WHT cert email enqueue failed Cert={Id}", cert.Id); }
+        }
 
         return await GetByIdAsync(companyId, cert.Id);
     }
@@ -318,17 +330,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         var autoYm = DateTime.UtcNow.ToString("yyyyMM");
         var autoPrefix = $"WHT-{autoYm}-";
-        var maxAutoWht = await _db.WithholdingTaxCerts
+        // Numeric max (same fix as CreateAsync above).
+        var autoExisting = await _db.WithholdingTaxCerts
             .IgnoreQueryFilters()
             .Where(w => w.CompanyId == companyId && w.CertificateNumber.StartsWith(autoPrefix))
             .Select(w => w.CertificateNumber)
-            .MaxAsync() as string;
-        var autoSeq = 1;
-        if (maxAutoWht != null)
-        {
-            var lastPart = maxAutoWht.Substring(autoPrefix.Length);
-            if (int.TryParse(lastPart, out var parsed)) autoSeq = parsed + 1;
-        }
+            .ToListAsync();
+        var autoSeq = autoExisting
+            .Select(n => int.TryParse(n.Substring(autoPrefix.Length), out var p) ? p : 0)
+            .DefaultIfEmpty(0)
+            .Max() + 1;
         var certNumber = $"{autoPrefix}{autoSeq:D4}";
 
         var cert = new WithholdingTaxCert
@@ -394,6 +405,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // save its PDF onto the source document automatically.
         if (autoIssue)
             await AttachCertPdfToDocumentAsync(companyId, cert.Id);
+
+        // Auto-email hook: enqueue ส่งใบ 50ทวิให้ PayeeContact ถ้ามีกฎ + email
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnWhtCertIssuedAsync(companyId, cert.Id); }
+            catch (Exception ex) { _logger.LogWarning(ex, "WHT cert email enqueue failed Cert={Id}", cert.Id); }
+        }
 
         return await GetByIdAsync(companyId, cert.Id);
     }

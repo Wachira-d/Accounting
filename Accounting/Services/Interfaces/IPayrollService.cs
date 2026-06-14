@@ -36,6 +36,19 @@ public interface IPayrollService
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);
     Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy);
     Task VoidPayrollAsync(Guid companyId, Guid payrollRunId);
+    /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1)) — รวบรวม WHT
+    /// ทั้งปีต่อพนักงาน 1 ใบ คืน PDF เดียวเมื่อระบุ employee, คืน Zip
+    /// เมื่อต้องการทุกคน.</summary>
+    Task<(string FileName, byte[] Bytes)> GenerateAnnualEmployeeWhtCertsAsync(
+        Guid companyId, int year, Guid? singleEmployeeId, string requestedBy);
+    /// <summary>โพสต์ JE เงินชดเชยเลิกจ้าง §118 (Dr Severance / Cr Cash)
+    /// — เรียกหลังยืนยันยอดจาก PreviewSeverancePayAsync.</summary>
+    Task<Guid?> PostSeveranceAsync(Guid companyId, Guid employeeId,
+        decimal amount, DateTime payDate, string postedBy);
+    /// <summary>ปิดปี: คำนวณวันลาคงเหลือของพนักงาน × LeaveType ที่ carry-forward
+    /// → upsert EmployeeLeaveBalance ของปีถัดไป (cap ด้วย CarryForwardCap).
+    /// คืนจำนวนแถวที่ upsert.</summary>
+    Task<int> RunYearEndLeaveCarryForwardAsync(Guid companyId, int year, string performedBy);
     Task<PayrollDetailResponse> GetPayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
     Task<PayslipResponse> GeneratePayslipAsync(Guid companyId, Guid payrollRunId, Guid employeeId);
 

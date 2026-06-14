@@ -36,10 +36,11 @@ public class PayrollService : IPayrollService
         (decimal.MaxValue, 0.35m)
     };
 
-    // Social security constants
-    private const decimal SsoRate = 0.05m;          // 5% employee contribution
-    private const decimal SsoMaxBase = 15_000m;     // max salary base per month
-    private const decimal SsoMaxContribution = 750m; // max monthly contribution
+    // Social security parameters are YEAR-DEPENDENT (เพดานปรับขึ้นเป็นขั้น
+    // ตามพระราชกฤษฎีกา: 15,000 → 17,500 ปี 2026 → 20,000 ปี 2029 → 23,000
+    // ปี 2032) — resolved per payroll-run year via GetSsoParamsAsync below:
+    // company override row (SsoYearConfigs) first, then the statutory default
+    // schedule in Helpers.SsoRateSchedule. No more hard-coded 15,000/750.
 
     // Thai personal income tax allowances (Revenue Code §47).
     // Simplified model — covers the deductions most SMEs configure:
@@ -49,7 +50,7 @@ public class PayrollService : IPayrollService
     //     TaxAllowances as a count of 30K-equivalent dependants which is the
     //     pragmatic UI choice)
     //   • SSO contributions are deductible up to the annual contribution cap
-    //     (฿9,000 = 12 × ฿750)
+    //     (12 × monthly max ของปีนั้น — 10,500 ตั้งแต่ปี 2026, เดิม 9,000)
     //   • Provident-fund employee contribution is deductible up to 15 % of
     //     salary capped at ฿500,000 / yr; we use the actual annual contribution
     //     subject to that cap.
@@ -58,11 +59,18 @@ public class PayrollService : IPayrollService
     private const decimal PitPvdMaxDeductible = 500_000m;
 
     private readonly IWebhookService? _webhooks;
+    private readonly ITaxFilingExportService? _taxFilingExport;
+    private readonly IFileAttachmentService? _attachments;
+    private readonly ILogger<PayrollService>? _logger;
+
+    private readonly IEmailScheduleService? _emailSchedule;
 
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
-        INotificationEngine? notify = null, IWebhookService? webhooks = null)
+        INotificationEngine? notify = null, IWebhookService? webhooks = null,
+        ITaxFilingExportService? taxFilingExport = null, IFileAttachmentService? attachments = null,
+        ILogger<PayrollService>? logger = null, IEmailScheduleService? emailSchedule = null)
     {
         _db = db;
         _pdfService = pdfService;
@@ -72,6 +80,10 @@ public class PayrollService : IPayrollService
         _permissionService = permissionService;
         _notify = notify;
         _webhooks = webhooks;
+        _emailSchedule = emailSchedule;
+        _taxFilingExport = taxFilingExport;
+        _attachments = attachments;
+        _logger = logger;
     }
 
     private async Task FireWebhookAsync(Guid companyId, string eventType, object payload)
@@ -79,6 +91,32 @@ public class PayrollService : IPayrollService
         if (_webhooks == null) return;
         try { await _webhooks.TriggerAsync(companyId, eventType, payload); }
         catch { /* fire-and-forget */ }
+    }
+
+    /// <summary>Resolve the SSO parameters effective for a year: the
+    /// company's SsoYearConfigs override row wins; otherwise the statutory
+    /// schedule (SsoRateSchedule). Returns employee/employer monthly caps
+    /// pre-computed (= ceiling × rate). Buddhist-era years normalised.</summary>
+    internal async Task<(decimal MaxBase, decimal Rate, decimal EmployerRate, decimal MaxContribution, decimal EmployerMaxContribution)>
+        GetSsoParamsAsync(Guid companyId, int year)
+    {
+        var y = year > 2400 ? year - 543 : year;
+        var cfg = await _db.Set<SsoYearConfig>().AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted);
+        decimal ceiling, rate, erRate;
+        if (cfg != null)
+        {
+            ceiling = cfg.WageCeiling;
+            rate = cfg.RatePercent / 100m;
+            erRate = cfg.EmployerRatePercent / 100m;
+        }
+        else
+        {
+            (ceiling, rate) = Accounting.Helpers.SsoRateSchedule.GetDefault(y);
+            erRate = rate;
+        }
+        return (ceiling, rate, erRate,
+            Math.Round(ceiling * rate, 2), Math.Round(ceiling * erRate, 2));
     }
 
     /// <summary>Fire-and-forget — swallowed inside the engine itself.</summary>
@@ -596,6 +634,155 @@ public class PayrollService : IPayrollService
         return (400, true, "อายุงานเกิน 20 ปี → 400 วัน (Labor Code §118 หลังแก้ไข พ.ศ. 2562)");
     }
 
+    /// <summary>โพสต์ JE เงินชดเชยเลิกจ้าง (มาตรา 118 พรบ.คุ้มครองแรงงาน)
+    /// — เรียกตามหลังที่ใช้ PreviewSeverancePayAsync เพื่อยืนยันยอด.
+    /// Dr ค่าใช้จ่ายเงินชดเชย (5xxx หรือ default Expense) / Cr เงินสด-ธนาคาร.
+    /// บันทึก reference ใน description ผูกกับ employee + termination date.</summary>
+    public async Task<Guid?> PostSeveranceAsync(
+        Guid companyId, Guid employeeId, decimal amount, DateTime payDate, string postedBy)
+    {
+        if (amount <= 0)
+            throw new InvalidOperationException("จำนวนเงินชดเชยต้องมากกว่า 0");
+        if (_accountingService == null)
+            throw new InvalidOperationException("Accounting service ไม่พร้อมใช้งาน");
+
+        var emp = await _db.Set<Employee>().AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
+
+        // Fiscal-period guard (same as ProcessPaymentAsync).
+        var fp = await _db.FiscalPeriods.AsNoTracking()
+            .Where(p => p.CompanyId == companyId
+                && p.StartDate <= payDate && p.EndDate >= payDate)
+            .Select(p => new { p.Status, p.Name })
+            .FirstOrDefaultAsync();
+        if (fp != null && fp.Status == FiscalPeriodStatus.Closed)
+            throw new InvalidOperationException(
+                $"งวดบัญชี \"{fp.Name}\" ปิดแล้ว — ไม่สามารถโพสต์รายการเงินชดเชยเข้างวดนี้ได้");
+
+        var severanceAccount = await _db.ChartOfAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "54125" && a.IsActive)
+            ?? await _db.ChartOfAccounts.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountType == AccountType.Expense && a.IsActive)
+            ?? throw new InvalidOperationException("ไม่พบบัญชีค่าใช้จ่ายในผังบัญชี");
+
+        var cashAccount = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId
+                && a.AccountCode.StartsWith("111") && a.AccountCode.Length >= 5 && a.IsActive)
+            .OrderBy(a => a.AccountCode)
+            .FirstOrDefaultAsync()
+            ?? await _db.ChartOfAccounts.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountCode.StartsWith("111") && a.IsActive)
+            ?? throw new InvalidOperationException("ไม่พบบัญชีเงินสดในผังบัญชี");
+
+        var jeReq = new Models.DTOs.Accounting.CreateJournalEntryRequest(
+            EntryDate: payDate,
+            Description: $"เงินชดเชยเลิกจ้าง (§118) — {emp.EmployeeCode} {emp.FirstNameTh} {emp.LastNameTh}",
+            Reference: $"SEV-{emp.EmployeeCode}-{payDate:yyyyMMdd}",
+            Lines: new List<Models.DTOs.Accounting.JournalLineRequest>
+            {
+                new(severanceAccount.Id, amount, 0, "เงินชดเชยเลิกจ้าง"),
+                new(cashAccount.Id, 0, amount, "จ่ายเงินชดเชย"),
+            },
+            JournalType: JournalType.CashPayments);
+
+        var je = await _accountingService.CreateJournalEntryAsync(companyId, jeReq, postedBy);
+        await _accountingService.PostJournalEntryAsync(companyId, je.Id);
+
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+            title: $"โพสต์เงินชดเชยเลิกจ้าง {emp.FirstNameTh} {emp.LastNameTh}",
+            message: $"จำนวน {amount:N2} บาท · JE {je.EntryNumber}",
+            entityId: emp.Id);
+
+        return je.Id;
+    }
+
+    /// <summary>Year-end carry-forward: สำหรับพนักงานที่ Active ทุกคน × ทุก
+    /// LeaveType ที่ AllowCarryForward=true, สร้าง EmployeeLeaveBalance ใน
+    /// targetYear (= year + 1) โดย CarriedForwardDays = unused days ใน year
+    /// (clamped to LeaveType.CarryForwardCap). Idempotent: upsert ตามคีย์
+    /// (Company, Employee, Year, LeaveType). คืนจำนวนแถวที่ upsert.</summary>
+    public async Task<int> RunYearEndLeaveCarryForwardAsync(
+        Guid companyId, int year, string performedBy)
+    {
+        var targetYear = year + 1;
+        var leaveTypes = await _db.Set<LeaveType>().AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted
+                && t.CarryForward && t.IsActive)
+            .ToListAsync();
+        if (leaveTypes.Count == 0) return 0;
+
+        var employees = await _db.Set<Employee>().AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted && e.IsActive)
+            .Select(e => new { e.Id, e.StartDate })
+            .ToListAsync();
+        if (employees.Count == 0) return 0;
+
+        // Days used + base balance ของปีต้นทาง — รวม base quota (จาก
+        // LeaveType) + carry-forward เดิม (ถ้ามี) + adjustment + ลบ
+        // จำนวนวันลาที่ Approved
+        var balances = await _db.Set<EmployeeLeaveBalance>()
+            .Where(b => b.CompanyId == companyId && b.Year == year && !b.IsDeleted)
+            .ToListAsync();
+        var leavesByEmpType = await _db.Set<EmployeeLeave>()
+            .Where(l => l.CompanyId == companyId && !l.IsDeleted
+                && l.Status == "Approved"
+                && l.StartDate.Year <= year && l.EndDate.Year >= year)
+            .GroupBy(l => new { l.EmployeeId, l.LeaveType })
+            .Select(g => new { g.Key.EmployeeId, g.Key.LeaveType, Total = g.Sum(x => x.TotalDays) })
+            .ToListAsync();
+
+        var existingTarget = await _db.Set<EmployeeLeaveBalance>()
+            .Where(b => b.CompanyId == companyId && b.Year == targetYear && !b.IsDeleted)
+            .ToListAsync();
+        var existingByKey = existingTarget.ToDictionary(
+            b => (b.EmployeeId, b.LeaveTypeCode), b => b);
+
+        int upserts = 0;
+        foreach (var emp in employees)
+        {
+            foreach (var lt in leaveTypes)
+            {
+                var srcBal = balances.FirstOrDefault(b => b.EmployeeId == emp.Id && b.LeaveTypeCode == lt.Code);
+                var carriedFrom = srcBal?.CarriedForwardDays ?? 0m;
+                var adj = srcBal?.AdjustmentDays ?? 0m;
+                var used = leavesByEmpType.FirstOrDefault(x => x.EmployeeId == emp.Id && x.LeaveType == lt.Code)?.Total ?? 0m;
+                var unused = Math.Max(0, lt.AnnualQuota + carriedFrom + adj - used);
+                // Cap by CarryForwardCap (0 = no cap, รักษาความเข้ากันได้)
+                var carried = lt.CarryForwardCap.HasValue && lt.CarryForwardCap.Value > 0
+                    ? Math.Min(unused, lt.CarryForwardCap.Value) : unused;
+                if (carried <= 0) continue;
+
+                if (existingByKey.TryGetValue((emp.Id, lt.Code), out var ex))
+                {
+                    ex.CarriedForwardDays = carried;
+                    ex.Phase = "YearEnd";
+                    ex.UpdatedBy = performedBy;
+                    ex.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _db.Set<EmployeeLeaveBalance>().Add(new EmployeeLeaveBalance
+                    {
+                        CompanyId = companyId,
+                        EmployeeId = emp.Id,
+                        Year = targetYear,
+                        LeaveTypeCode = lt.Code,
+                        CarriedForwardDays = carried,
+                        AdjustmentDays = 0,
+                        Phase = "YearEnd",
+                        CreatedBy = performedBy,
+                    });
+                }
+                upserts++;
+            }
+        }
+        await _db.SaveChangesAsync();
+        return upserts;
+    }
+
     public async Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate)
     {
         var employee = await _db.Set<Employee>()
@@ -732,17 +919,38 @@ public class PayrollService : IPayrollService
 
     public async Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId)
     {
-        var run = await _db.Set<PayrollRun>()
-            .Include(r => r.Details)
-            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
-
-        if (run.Status != "Draft")
-            throw new InvalidOperationException("สามารถคำนวณได้เฉพาะรอบที่เป็น Draft เท่านั้น");
+        // First read just enough to confirm the run exists + belongs to the
+        // tenant (cheap check, no FOR UPDATE). The serialised re-read happens
+        // INSIDE the transaction below — necessary to avoid the race where two
+        // HR clicks pass the Draft check then both recompute, the second
+        // overwriting totals or hitting a duplicate-detail insert.
+        _ = await _db.Set<PayrollRun>()
+            .AsNoTracking()
+            .Where(r => r.Id == payrollRunId && r.CompanyId == companyId)
+            .Select(r => r.Id)
+            .FirstOrDefaultAsync()
+            != Guid.Empty ? true : throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // Row-level lock on the payroll run for the rest of this
+            // transaction. Mirrors DocumentService.ApproveDocumentAsync's
+            // FOR UPDATE pattern. A concurrent Calculate will wait here and
+            // either see the run already Calculated (and reject below) or
+            // proceed serially.
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                payrollRunId, companyId);
+
+            var run = await _db.Set<PayrollRun>()
+                .Include(r => r.Details)
+                .FirstAsync(r => r.Id == payrollRunId && r.CompanyId == companyId);
+
+            if (run.Status != "Draft")
+                throw new InvalidOperationException(
+                    "สามารถคำนวณได้เฉพาะรอบที่เป็น Draft เท่านั้น — รอบนี้ถูกคำนวณ/อนุมัติไปแล้วโดยผู้ใช้งานคนอื่น");
+
             // Remove existing details
             _db.Set<PayrollDetail>().RemoveRange(run.Details);
 
@@ -817,6 +1025,11 @@ public class PayrollService : IPayrollService
             decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
             decimal totalPvdEmp = 0, totalPvdEr = 0;
 
+            // SSO parameters effective for THIS run's year — the wage ceiling
+            // steps up by royal decree (15,000 → 17,500 in 2026 → 20,000 in
+            // 2029 → 23,000 in 2032) and a company can override per year.
+            var sso = await GetSsoParamsAsync(companyId, run.Year);
+
             foreach (var emp in employees)
             {
                 // Get cumulative income for this year (prior months) — sourced
@@ -833,6 +1046,10 @@ public class PayrollService : IPayrollService
                 var commission = 0m;
                 var bonus = 0m;
                 var otherIncome = 0m;
+                // Tax-exempt income (สวัสดิการรักษาพยาบาล ฯลฯ ที่ติ๊ก
+                // "ไม่หัก WHT") — รวมใน net pay จ่ายให้พนักงาน แต่ไม่รวม
+                // ฐานคำนวณภาษี (estimatedAnnualIncome below subtracts it).
+                var nonTaxableExtra = 0m;
 
                 foreach (var item in earningItems)
                 {
@@ -878,19 +1095,52 @@ public class PayrollService : IPayrollService
                     };
 
                     decimal otPayWeekday = 0, otPayHoliday = 0;
-                    decimal perDiemSum = 0, accomSum = 0, otMealSum = 0;
+                    decimal perDiemSum = 0, accomSum = 0, otMealSum = 0, dailyMealSum = 0;
+                    int workDays = 0;   // for daily-meal + Daily-type custom allowances
                     foreach (var grp in empTimeRows.GroupBy(t => t.WorkDate.Date))
                     {
                         var dayOt = grp.Sum(t => t.OvertimeHours ?? 0);
+                        var dayRegular = grp.Sum(t => t.Hours) - dayOt;
                         var dayIsHoliday = grp.Any(t => t.IsHoliday);
                         if (dayIsHoliday) otPayHoliday += dayOt * hourly * otMultHoliday;
                         else otPayWeekday += dayOt * hourly * otMultWeekday;
                         if (grp.Any(t => t.HasPerDiem)) perDiemSum += perDiemRate;
                         if (grp.Any(t => t.HasAccommodation)) accomSum += accomRate;
                         if (grp.Any(t => t.HasOvertimeMeal)) otMealSum += otMealRate;
+                        // Daily meal: นับวันที่มีชั่วโมงทำงานปกติ (ไม่ใช่
+                        // เฉพาะ OT) — แยกจาก OvertimeMealAllowance ที่แจ้ง
+                        // เฉพาะวัน OT.
+                        if (!dayIsHoliday && dayRegular > 0)
+                        {
+                            workDays++;
+                            dailyMealSum += compDefaults.DailyMealAllowance;
+                        }
                     }
                     overtimePay += Math.Round(otPayWeekday + otPayHoliday, 2, MidpointRounding.AwayFromZero);
-                    allowances += Math.Round(perDiemSum + accomSum + otMealSum, 2, MidpointRounding.AwayFromZero);
+                    allowances += Math.Round(perDiemSum + accomSum + otMealSum + dailyMealSum, 2, MidpointRounding.AwayFromZero);
+
+                    // Custom allowances ที่บริษัทตั้งเองในตาราง — Monthly =
+                    // จ่ายเต็มจำนวนต่อรอบ, Daily = คูณวันทำงานจริง. isTaxable
+                    // = false เก็บไว้ใน otherIncome แยกแล้ว NOT รวมในฐาน WHT
+                    // (skipped from estimatedAnnualIncome below).
+                    if (!string.IsNullOrWhiteSpace(compDefaults.CustomAllowancesJson))
+                    {
+                        try
+                        {
+                            var customs = System.Text.Json.JsonSerializer
+                                .Deserialize<List<CustomAllowanceItem>>(compDefaults.CustomAllowancesJson) ?? new();
+                            foreach (var c in customs)
+                            {
+                                if (c.Amount <= 0) continue;
+                                var amt = string.Equals(c.Type, "Daily", StringComparison.OrdinalIgnoreCase)
+                                    ? c.Amount * workDays
+                                    : c.Amount;
+                                if (c.IsTaxable) allowances += Math.Round(amt, 2, MidpointRounding.AwayFromZero);
+                                else nonTaxableExtra += Math.Round(amt, 2, MidpointRounding.AwayFromZero);
+                            }
+                        }
+                        catch { /* malformed JSON — skip silently */ }
+                    }
                 }
 
                 // Calculate leave deductions — sourced from the batched lookup.
@@ -946,16 +1196,21 @@ public class PayrollService : IPayrollService
                     ? Math.Round(emp.BaseSalary * unpaidLeaveDays / workDaysInMonth, 2, MidpointRounding.AwayFromZero)
                     : 0m;
 
-                var grossIncome = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+                // taxableGross = ส่วนที่นำไปคำนวณ WHT (ตามประมวลรัษฎากร §40(1)).
+                // grossIncome (จ่ายให้พนักงาน) = taxableGross + สวัสดิการยกเว้นภาษี.
+                var taxableGross = emp.BaseSalary - leaveDeduction + overtimePay + allowances + commission + bonus + otherIncome;
+                var grossIncome = taxableGross + nonTaxableExtra;
 
-                // Social security: base on BaseSalary (not gross), capped at 15,000 THB/month per Thai SSO law
+                // Social security: base on BaseSalary (not gross), capped at the
+                // year's statutory wage ceiling (resolved above — 17,500 from
+                // 2026, stepping up per the royal decree; override-able per year).
                 var ssoEmployee = 0m;
                 var ssoEmployer = 0m;
                 if (emp.IsSubjectToSocialSecurity)
                 {
-                    var ssoBase = Math.Min(emp.BaseSalary, SsoMaxBase);
-                    ssoEmployee = Math.Min(ssoBase * SsoRate, SsoMaxContribution);
-                    ssoEmployer = ssoEmployee;
+                    var ssoBase = Math.Min(emp.BaseSalary, sso.MaxBase);
+                    ssoEmployee = Math.Min(Math.Round(ssoBase * sso.Rate, 2), sso.MaxContribution);
+                    ssoEmployer = Math.Min(Math.Round(ssoBase * sso.EmployerRate, 2), sso.EmployerMaxContribution);
                 }
 
                 // Provident fund calculation
@@ -967,21 +1222,44 @@ public class PayrollService : IPayrollService
                     pvdEmployer = emp.BaseSalary * emp.ProvidentFundEmployerPercent / 100m;
                 }
 
-                // Thai withholding tax: TRD-standard annualization = (YTD including this month) * 12 / elapsed months
-                var ytdIncome = cumulativeIncome + grossIncome;
+                // Thai withholding tax: TRD-standard annualization = (YTD
+                // including this month) * 12 / elapsed months. Annualise the
+                // TAXABLE portion only — สวัสดิการยกเว้นภาษีถูกแยกไว้แล้วใน
+                // nonTaxableExtra → ไม่กระทบฐาน WHT.
+                var ytdIncome = cumulativeIncome + taxableGross;
                 var estimatedAnnualIncome = run.Month > 0 ? ytdIncome * 12 / run.Month : ytdIncome * 12;
 
                 // Apply Revenue Code §47 allowances before bracket lookup. Skipping
                 // these used to over-withhold by 5–15 % depending on income tier —
                 // employees ended up subsidising the company's cash flow until the
                 // year-end true-up that this system doesn't yet automate.
-                var annualSso = Math.Min(ssoEmployee * 12m, SsoMaxContribution * 12m);
+                // Annual SSO deduction cap follows the year's ceiling too
+                // (12 × monthly max — e.g. 10,500 from 2026, was 9,000).
+                var annualSso = Math.Min(ssoEmployee * 12m, sso.MaxContribution * 12m);
                 var annualPvd = Math.Min(pvdEmployee * 12m, PitPvdMaxDeductible);
-                var personalDeductions =
-                    PitPersonalAllowance
-                    + (PitPerDependantAllowance * Math.Max(0, emp.TaxAllowances))
-                    + annualSso
-                    + annualPvd;
+
+                // §47/47ทวิ — รวมค่าลดหย่อนรายตัว (ละเอียดกว่า count × 30K).
+                // ใช้ฟิลด์ใหม่ก่อน; ถ้าไม่ตั้ง fall back ไป legacy TaxAllowances
+                // (count × 30K) เพื่อความเข้ากันได้กับข้อมูลเก่า.
+                var detailedAllowance =
+                    (emp.HasSpouseAllowance ? 60_000m : 0m)
+                    + (emp.ChildAllowanceCount * 30_000m)
+                    + (emp.SecondAndLaterChildren * 30_000m)  // +30K เพิ่มจากปกติ (เป็น 60K รวม)
+                    + (Math.Min(4, emp.ParentAllowanceCount) * 30_000m)
+                    + Math.Min(100_000m, emp.LifeInsurancePremium)
+                    + Math.Min(500_000m, emp.RmfSsfContribution);
+                var hasDetailed = emp.HasSpouseAllowance
+                    || emp.ChildAllowanceCount > 0 || emp.SecondAndLaterChildren > 0
+                    || emp.ParentAllowanceCount > 0 || emp.LifeInsurancePremium > 0
+                    || emp.RmfSsfContribution > 0;
+                var dependantsAllowance = hasDetailed
+                    ? detailedAllowance
+                    : PitPerDependantAllowance * Math.Max(0, emp.TaxAllowances);
+                var baseDeductions = PitPersonalAllowance + dependantsAllowance + annualSso + annualPvd;
+                // เงินบริจาคหักได้ไม่เกิน 10% ของเงินได้สุทธิหลังลดหย่อนอื่น.
+                var afterBase = Math.Max(0, estimatedAnnualIncome - baseDeductions);
+                var donation = Math.Min(emp.DonationAmount, afterBase * 0.10m);
+                var personalDeductions = baseDeductions + donation;
                 var estimatedTaxableIncome = Math.Max(0m, estimatedAnnualIncome - personalDeductions);
 
                 var estimatedAnnualTax = CalculateThaiIncomeTax(estimatedTaxableIncome);
@@ -1065,17 +1343,26 @@ public class PayrollService : IPayrollService
 
     public async Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy)
     {
+        // Row lock on the run for the duration of the approval — pair-protect
+        // against a second concurrent click sliding through the status guard.
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+            payrollRunId, companyId);
+
         var run = await _db.Set<PayrollRun>()
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
         if (run.Status != "Calculated")
-            throw new InvalidOperationException("สามารถอนุมัติได้เฉพาะรอบที่คำนวณแล้วเท่านั้น");
+            throw new InvalidOperationException(
+                "สามารถอนุมัติได้เฉพาะรอบที่คำนวณแล้วเท่านั้น — รอบนี้อาจถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น");
 
         run.Status = "Approved";
         run.ApprovedBy = approvedBy;
         run.ApprovedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         await NotifyRunAsync(companyId, NotificationEvents.PayrollApproved, actorUserId: null,
             title: $"อนุมัติรอบเงินเดือน {run.Month:D2}/{run.Year}",
@@ -1087,13 +1374,33 @@ public class PayrollService : IPayrollService
 
     public async Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy)
     {
+        // Quick existence check before the long-running pay transaction. The
+        // FOR UPDATE lock is taken inside payTransaction below so a concurrent
+        // Pay click waits and re-reads under the lock.
+        if (!await _db.Set<PayrollRun>().AnyAsync(r => r.Id == payrollRunId && r.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
         var run = await _db.Set<PayrollRun>()
             .Include(r => r.Details).ThenInclude(d => d.Employee).ThenInclude(e => e.DepartmentRef)
-            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+            .FirstAsync(r => r.Id == payrollRunId && r.CompanyId == companyId);
 
         if (run.Status != "Approved")
             throw new InvalidOperationException("สามารถจ่ายได้เฉพาะรอบที่อนุมัติแล้วเท่านั้น");
+
+        // Fiscal-period guard: refuse to post into a period that's already
+        // closed by Accounting (DocumentService.cs:1041-1043 does the same
+        // for documents). Otherwise HR clicks Pay → run goes to Paid state,
+        // then AccountingService.CreateJournalEntryAsync throws because the
+        // period is closed → user is left with a stale "Paid" record + no JE.
+        var payDate = run.PayDate;
+        var fp = await _db.FiscalPeriods.AsNoTracking()
+            .Where(p => p.CompanyId == companyId
+                && p.StartDate <= payDate && p.EndDate >= payDate)
+            .Select(p => new { p.Status, p.Name })
+            .FirstOrDefaultAsync();
+        if (fp != null && fp.Status == FiscalPeriodStatus.Closed)
+            throw new InvalidOperationException(
+                $"งวดบัญชี \"{fp.Name}\" ปิดแล้ว — ไม่สามารถจ่ายเงินเดือนเข้างวดนี้ได้ กรุณาเปิดงวดก่อน หรือเปลี่ยน PayDate ให้อยู่ในงวดที่เปิด");
 
         // Prevent duplicate payments for same year/month
         var alreadyPaid = await _db.Set<PayrollRun>()
@@ -1106,6 +1413,19 @@ public class PayrollService : IPayrollService
         await using var payTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // Row lock + re-read under the lock — a concurrent /pay click
+            // would otherwise pass the "Approved" check and double-post.
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                payrollRunId, companyId);
+            var lockedStatus = await _db.Set<PayrollRun>()
+                .Where(r => r.Id == payrollRunId && r.CompanyId == companyId)
+                .Select(r => r.Status)
+                .FirstAsync();
+            if (lockedStatus != "Approved")
+                throw new InvalidOperationException(
+                    "รอบนี้ถูกประมวลผลไปแล้วโดยผู้ใช้งานคนอื่น — กรุณารีเฟรชหน้านี้");
+
             run.Status = "Paid";
             run.UpdatedBy = processedBy;
             run.UpdatedAt = DateTime.UtcNow;
@@ -1231,6 +1551,7 @@ public class PayrollService : IPayrollService
                     foreach (var detail in run.Details)
                     {
                         var employeeRecoverable = detail.NetPay;
+                        decimal detailRecovered = 0m;
                         var outstanding = await _salaryAdvanceService
                             .GetOutstandingForEmployeeAsync(companyId, detail.EmployeeId);
                         foreach (var adv in outstanding)
@@ -1243,8 +1564,12 @@ public class PayrollService : IPayrollService
                             if (recover <= 0) continue;
                             advanceRepayments.Add((adv, recover));
                             totalAdvanceRecovered += recover;
+                            detailRecovered += recover;
                             employeeRecoverable -= recover;
                         }
+                        // Stash the per-employee recovery so VoidPayrollAsync
+                        // can restore SalaryAdvance.OutstandingAmount exactly.
+                        detail.AdvanceRecovered = detailRecovered;
                     }
                 }
                 if (totalAdvanceRecovered > 0)
@@ -1329,6 +1654,20 @@ public class PayrollService : IPayrollService
             message: $"ดำเนินการโดย {processedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
             entityId: run.Id);
 
+        // ── Auto-generate the month's government filings + every payslip and
+        // attach them to the run so HR has a single download point instead of
+        // hunting through three export endpoints. Best-effort — a generation
+        // failure must NOT roll back the already-committed payment.
+        await AutoGenerateFilingsAsync(companyId, run, processedBy);
+
+        // Auto-email schedule hook — เช็คกฎ PayrollPaid + enqueue payslip
+        // ส่งให้พนักงานแต่ละคน (ตามอีเมล Employee.Email/PersonalEmail).
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnPayrollPaidAsync(companyId, run.Id); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Payslip email enqueue failed Run={Run}", run.Id); }
+        }
+
         // Notify each employee whose advance was fully repaid by this run.
         foreach (var adv in clearedAdvances)
         {
@@ -1343,18 +1682,313 @@ public class PayrollService : IPayrollService
         return MapToPayrollRunResponse(run);
     }
 
+    /// <summary>
+    /// ออกใบ 50 ทวิรายปีให้พนักงาน — รวบรวม PayrollDetail ของทุกรอบใน
+    /// ปี ค.ศ. ที่ระบุ จัดเป็นใบรับรองหัก ณ ที่จ่ายต่อพนักงาน 1 ใบ
+    /// (TaxType.WithholdingTax1 = ภงด.1 §40(1) เงินเดือน) แล้ว generate
+    /// PDF ตามเทมเพลตที่ใช้กับ supplier เดิม. ใบรับรองสร้างใน-memory
+    /// ไม่บันทึก WithholdingTaxCert entity (พนักงานเก็บตามรอบ payroll
+    /// อยู่แล้ว — ไม่ต้องซ้ำ).
+    /// คืน Zip ที่รวมทุกใบเป็นไฟล์เดียว (Filename / Bytes).
+    /// </summary>
+    public async Task<(string FileName, byte[] Bytes)> GenerateAnnualEmployeeWhtCertsAsync(
+        Guid companyId, int year, Guid? singleEmployeeId, string requestedBy)
+    {
+        if (_pdfService is not Implementations.PdfGenerationService pdf)
+            throw new InvalidOperationException("PDF service is not available");
+
+        var details = await _db.Set<PayrollDetail>()
+            .Include(d => d.Employee)
+            .Include(d => d.PayrollRun)
+            // §50ทวิ requires a cert for every employee that received income
+            // in the year, even when WithholdingTax is ฿0 (low earner). Also
+            // include runs that finalised after year-end (Approved → late
+            // adjustments), not just Paid.
+            .Where(d => d.CompanyId == companyId
+                && d.PayrollRun.Year == year
+                && (d.PayrollRun.Status == "Paid" || d.PayrollRun.Status == "Approved")
+                && d.GrossIncome > 0
+                && (singleEmployeeId == null || d.EmployeeId == singleEmployeeId.Value))
+            .OrderBy(d => d.EmployeeId).ThenBy(d => d.PayrollRun.Month)
+            .ToListAsync();
+
+        if (details.Count == 0)
+            throw new InvalidOperationException(
+                singleEmployeeId.HasValue
+                    ? "ไม่พบเงินได้ของพนักงานนี้ในปีที่เลือก"
+                    : "ไม่พบเงินได้ของพนักงานในปีที่เลือก");
+
+        var grouped = details.GroupBy(d => d.EmployeeId).ToList();
+
+        // Single employee → return the PDF directly. Multiple → zip them.
+        using var zip = new MemoryStream();
+        using (var archive = new System.IO.Compression.ZipArchive(zip, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var g in grouped)
+            {
+                var emp = g.First().Employee;
+                var totalIncome = g.Sum(d => d.GrossIncome);
+                var totalTax = g.Sum(d => d.WithholdingTax);
+                // Effective rate (display): tax / income × 100. แสดงเป็น
+                // อัตราเฉลี่ยรายปี (RD ยอมรับ).
+                var effRate = totalIncome > 0 ? Math.Round(totalTax * 100m / totalIncome, 2) : 0m;
+
+                var cert = new WithholdingTaxCert
+                {
+                    CompanyId = companyId,
+                    CertificateNumber = $"PAYROLL-{year}-{emp.EmployeeCode}",
+                    PayeeContact = BuildEmployeeAsContact(emp),
+                    PayeeContactId = Guid.Empty,
+                    TaxFormType = TaxType.WithholdingTax1,   // ภงด.1 — §40(1) เงินเดือน
+                    TaxYear = year,
+                    TaxMonth = 12,                            // annual summary
+                    CertificateType = WithholdingTaxCertType.Withhold,
+                    Status = WithholdingTaxCertStatus.Issued,
+                    IssuedDate = DateTime.UtcNow,
+                    TotalIncomeAmount = totalIncome,
+                    TotalTaxAmount = totalTax,
+                    CreatedBy = requestedBy,
+                };
+                // หนึ่งบรรทัดต่อเดือนที่จ่ายจริง — โปร่งใสกว่ารวมยอดเดียว
+                var order = 1;
+                foreach (var d in g.OrderBy(x => x.PayrollRun.Month))
+                {
+                    cert.Lines.Add(new WithholdingTaxCertLine
+                    {
+                        LineOrder = order++,
+                        IncomeTypeCode = "1",   // §40(1) เงินเดือน
+                        IncomeDescription = $"เงินเดือน เดือน {d.PayrollRun.Month:D2}/{year}",
+                        PaymentDate = d.PayrollRun.PayDate,
+                        IncomeAmount = d.GrossIncome,
+                        TaxRate = d.GrossIncome > 0 ? Math.Round(d.WithholdingTax * 100m / d.GrossIncome, 2) : 0m,
+                        TaxAmount = d.WithholdingTax,
+                    });
+                }
+
+                var pdfBytes = await pdf.BuildEmployeeAnnualCertPdfAsync(companyId, cert);
+                // Audit trail: record every 50ทวิ generation so a dispute
+                // ("ผมไม่เคยได้ใบรับรอง") has an answer (when + who + which
+                // employee + amounts).
+                _db.AuditLogs.Add(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserId = Guid.TryParse(requestedBy, out var actorId) ? actorId : (Guid?)null,
+                    Action = AuditAction.Print,
+                    EntityType = "WhtCertAnnual",
+                    EntityId = emp.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        emp.EmployeeCode, emp.CitizenId,
+                        Year = year,
+                        TotalIncome = totalIncome, TotalTax = totalTax,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+
+                if (grouped.Count == 1)
+                {
+                    await _db.SaveChangesAsync();
+                    return ($"WHT50tawi_{emp.EmployeeCode}_{year}.pdf", pdfBytes);
+                }
+
+                var fileName = $"WHT50tawi_{emp.EmployeeCode}_{year}.pdf";
+                var entry = archive.CreateEntry(fileName, System.IO.Compression.CompressionLevel.Fastest);
+                await using var entryStream = entry.Open();
+                await entryStream.WriteAsync(pdfBytes);
+            }
+        }
+        await _db.SaveChangesAsync();   // persist the per-employee audit rows
+        return ($"WHT50tawi_{year}_employees.zip", zip.ToArray());
+    }
+
+    /// <summary>Build a Contact-shaped object holding the employee's identity
+    /// + address — the cert renderer expects PayeeContact. Not saved to DB —
+    /// purely a transport for the PDF builder.</summary>
+    private static Contact BuildEmployeeAsContact(Employee e) => new()
+    {
+        Name = $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
+        TaxId = e.CitizenId,
+        // ContactType heuristic mirrors what BuildContactInfo does elsewhere —
+        // CitizenId เริ่มต้นด้วย 0 = นิติบุคคล (rare for an employee), else บุคคล.
+        ContactType = !string.IsNullOrEmpty(e.CitizenId) && e.CitizenId.StartsWith("0")
+            ? ContactType.JuristicPerson : ContactType.Individual,
+        Address = e.Address,
+    };
+
     public async Task VoidPayrollAsync(Guid companyId, Guid payrollRunId)
     {
         var run = await _db.Set<PayrollRun>()
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        if (run.Status == "Paid")
-            throw new InvalidOperationException("ไม่สามารถยกเลิกรอบที่จ่ายแล้วได้");
+        if (run.Status == "Voided")
+            throw new InvalidOperationException("รอบจ่ายเงินเดือนนี้ถูกยกเลิกแล้ว");
 
-        run.Status = "Voided";
-        run.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        // Paid runs CAN be voided — but the posted journal entry MUST be
+        // reversed in the same transaction so AP/cash/WHT/SSO payables don't
+        // sit on the books for an event that no longer counts. (Previously
+        // VoidPayrollAsync only flipped the status string, leaving the GL
+        // posted — every voided run silently corrupted the trial balance.)
+        // Salary advances paid down by this run ARE NOW restored from each
+        // PayrollDetail.AdvanceRecovered (recorded at Pay time) — without this,
+        // voiding silently zeroed each employee's outstanding advance.
+        var reversedNote = "รอบยังไม่ถูกผูกบัญชี — ยกเลิกได้ทันที";
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            if (run.Status == "Paid" && run.JournalEntryId.HasValue && _accountingService != null)
+            {
+                await _accountingService.ReverseJournalEntryAsync(companyId, run.JournalEntryId.Value,
+                    reversalDate: DateTime.UtcNow.Date,
+                    description: $"ยกเลิกรอบจ่ายเงินเดือน {run.PayrollNumber} ({run.Month:D2}/{run.Year})",
+                    systemTriggered: true);
+                reversedNote = "ระบบกลับรายการบัญชี + คืนยอดเงินทดรองที่หักในรอบนี้ให้พนักงานเรียบร้อย";
+            }
+
+            // Restore salary advances per the recorded per-detail recovery.
+            // Apply oldest-first (FIFO) so the same advances we paid DOWN
+            // become outstanding again in the same order they were cleared.
+            if (run.Status == "Paid")
+            {
+                var details = await _db.Set<PayrollDetail>()
+                    .Where(d => d.PayrollRunId == payrollRunId && d.CompanyId == companyId
+                        && d.AdvanceRecovered > 0)
+                    .Select(d => new { d.EmployeeId, d.AdvanceRecovered })
+                    .ToListAsync();
+                foreach (var d in details)
+                {
+                    var remaining = d.AdvanceRecovered;
+                    // Pull advances that this run could have touched — any
+                    // that still has ClearedAmount > 0 (we'll undo from those).
+                    var advances = await _db.Set<SalaryAdvance>()
+                        .Where(a => a.CompanyId == companyId && a.EmployeeId == d.EmployeeId
+                            && a.ClearedAmount > 0 && !a.IsDeleted)
+                        .OrderBy(a => a.RequestDate).ThenBy(a => a.Id)
+                        .ToListAsync();
+                    foreach (var adv in advances)
+                    {
+                        if (remaining <= 0) break;
+                        var refund = Math.Min(remaining, adv.ClearedAmount);
+                        adv.ClearedAmount -= refund;
+                        adv.OutstandingAmount += refund;
+                        // Re-open if it was fully cleared by this run.
+                        if (adv.Status == "Cleared" && adv.OutstandingAmount > 0)
+                            adv.Status = "Disbursed";
+                        remaining -= refund;
+                    }
+                }
+            }
+
+            run.Status = "Voided";
+            run.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+            title: $"ยกเลิกรอบจ่ายเงินเดือน {run.Month:D2}/{run.Year}",
+            message: reversedNote,
+            entityId: run.Id);
+    }
+
+    /// <summary>
+    /// Auto-generate every government filing + payslip for a paid run and
+    /// attach them to the PayrollRun so HR has ONE place to download from.
+    /// Files produced (each saved as FileAttachment with EntityType="PayrollRun"
+    /// + EntityId=run.Id so the existing attachment list endpoint surfaces
+    /// them):
+    ///   • ภ.ง.ด.1 (รายงานหัก ณ ที่จ่ายเงินเดือน) — submit to RD by the 7th
+    ///   • สปส.1-10 (เงินสมทบประกันสังคม) — submit to SSO by the 15th
+    ///   • Slip เงินเดือน — one PDF per employee
+    /// Every step is wrapped so a single broken payslip doesn't lose the others.
+    /// Idempotent on file name — re-running (e.g. after a retry) skips files
+    /// already attached.
+    /// </summary>
+    private async Task AutoGenerateFilingsAsync(Guid companyId, PayrollRun run, string actor)
+    {
+        if (_attachments == null) return;
+
+        // Resolve a real user for the FileAttachment FK (FileAttachmentService
+        // requires UploadedByUserId). Owner is the safe fallback — same pattern
+        // used by OcrController.ResolveUploaderUserIdAsync / WHT cert attach.
+        Guid uploaderId = Guid.Empty;
+        if (Guid.TryParse(actor, out var parsed)
+            && await _db.Users.AsNoTracking().AnyAsync(u => u.Id == parsed))
+            uploaderId = parsed;
+        if (uploaderId == Guid.Empty)
+            uploaderId = await _db.Set<CompanyUser>().AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+        if (uploaderId == Guid.Empty)
+            uploaderId = await _db.Set<CompanyUser>().AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+        if (uploaderId == Guid.Empty) return;  // no user → can't attribute
+
+        var existing = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted
+                && f.EntityType == "PayrollRun" && f.EntityId == run.Id)
+            .Select(f => f.OriginalFileName)
+            .ToListAsync();
+        var alreadyAttached = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+
+        async Task AttachAsync(string fileName, string contentType, byte[] bytes)
+        {
+            if (alreadyAttached.Contains(fileName) || bytes is null || bytes.Length == 0) return;
+            try { await _attachments.UploadBytesAsync(companyId, "PayrollRun", run.Id, fileName, contentType, bytes, uploaderId); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Attach filing {File} failed for run {Run}", fileName, run.Id); }
+        }
+
+        // ── 1. ภ.ง.ด.1 — monthly salary WHT remittance ──────────────────
+        if (_taxFilingExport != null && run.TotalWithholdingTax > 0)
+        {
+            try
+            {
+                var pnd1 = await _taxFilingExport.ExportPnd1Async(companyId, run.Year, run.Month);
+                await AttachAsync(pnd1.FileName, pnd1.ContentType, pnd1.FileData);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "ภ.ง.ด.1 generation failed for run {Run}", run.Id);
+            }
+        }
+
+        // ── 2. สปส.1-10 — monthly SSO contribution report ────────────────
+        if (_taxFilingExport != null
+            && (run.TotalSocialSecurityEmployee > 0 || run.TotalSocialSecurityEmployer > 0))
+        {
+            try
+            {
+                var sso = await _taxFilingExport.ExportSso110Async(companyId, run.Year, run.Month);
+                await AttachAsync(sso.FileName, sso.ContentType, sso.FileData);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "สปส.1-10 generation failed for run {Run}", run.Id);
+            }
+        }
+
+        // ── 3. Payslips — one PDF per employee ──────────────────────────
+        var employeeIds = await _db.Set<PayrollDetail>().AsNoTracking()
+            .Where(d => d.PayrollRunId == run.Id && d.CompanyId == companyId)
+            .Select(d => d.EmployeeId).ToListAsync();
+        foreach (var empId in employeeIds)
+        {
+            try
+            {
+                var slip = await GeneratePayslipAsync(companyId, run.Id, empId);
+                await AttachAsync(slip.FileName, "application/pdf", slip.PdfData);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Payslip generation failed (run {Run}, employee {Emp})", run.Id, empId);
+            }
+        }
     }
 
     public async Task<PayrollDetailResponse> GetPayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId)
@@ -1781,12 +2415,14 @@ public class PayrollService : IPayrollService
                 && d.Employee.IsSubjectToSocialSecurity)
             .ToListAsync();
 
+        // Wage base cap follows the YEAR being reported, not a fixed 15,000.
+        var ssoParams = await GetSsoParamsAsync(companyId, year);
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
             SocialSecurityNumber = d.Employee.SocialSecurityNumber,
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
-            SalaryBase = Math.Min(d.BaseSalary, SsoMaxBase),
+            SalaryBase = Math.Min(d.BaseSalary, ssoParams.MaxBase),
             EmployeeContribution = d.SocialSecurityEmployee,
             EmployerContribution = d.SocialSecurityEmployer
         }).ToList();

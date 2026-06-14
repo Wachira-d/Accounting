@@ -8,6 +8,12 @@ namespace Accounting.Models.Entities;
 /// </summary>
 public class CompanySettings : TenantEntity
 {
+    /// <summary>เมื่อ false (default) — ปฏิเสธการขาย/เบิกของออกถ้าจะทำให้
+    /// CurrentStock ติดลบ. true = ปล่อยให้ติดลบ (ใช้สำหรับ pre-order หรือ
+    /// บริการที่จับ "ของไม่อยู่ก่อนแล้วเข้า"). ติดลบ stock ทำลาย WAC + COGS
+    /// แบบ irreversible — เปิดเฉพาะเมื่อรู้จริง ๆ ว่าทำอะไรอยู่.</summary>
+    public bool AllowNegativeStock { get; set; } = false;
+
     // Branding
     public string? LogoPath { get; set; }
     public string? LogoUrl { get; set; }

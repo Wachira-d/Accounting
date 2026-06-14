@@ -69,7 +69,30 @@ public class Employee : TenantEntity
 
     // Tax
     public string? TaxId { get; set; }
-    public int TaxAllowances { get; set; } = 0;          // จำนวนค่าลดหย่อน
+    public int TaxAllowances { get; set; } = 0;          // จำนวนค่าลดหย่อน (legacy — count of 30K dependants)
+
+    // ── ค่าลดหย่อนภาษีตามมาตรา 47/47ทวิ (ละเอียดขึ้น) ──
+    // ใช้แทน TaxAllowances เก่าเมื่อต้องการความแม่นยำ — payroll calc รวม
+    // ทุกฟิลด์เป็นค่าลดหย่อนต่อปี เดิม TaxAllowances × 30,000 อาจเพี้ยน
+    // สำหรับครอบครัวที่มีคู่สมรสไม่มีเงินได้ + ลูกหลายคน + บิดามารดา.
+    /// <summary>คู่สมรสที่ไม่มีเงินได้ลดหย่อน 60,000/ปี (true = ใช่)</summary>
+    public bool HasSpouseAllowance { get; set; }
+    /// <summary>จำนวนบุตรที่ลดหย่อนได้ (30,000/คน — บุตรคนที่ 2 ขึ้นไป
+    /// ที่เกิดในหรือหลังปี 2561 ลดหย่อนคนละ 60,000 ตั้งค่าแยกใน
+    /// SecondAndLaterChildren)</summary>
+    public int ChildAllowanceCount { get; set; }
+    /// <summary>จำนวนบุตรที่เกิดในหรือหลังปี 2561 และเป็นคนที่ 2 ขึ้นไป
+    /// (ได้ +30,000/คน เพิ่มจาก ChildAllowanceCount ปกติ)</summary>
+    public int SecondAndLaterChildren { get; set; }
+    /// <summary>จำนวนบิดามารดาที่อายุ ≥60 ปี (30,000/คน — สูงสุด 4 คน
+    /// รวมพ่อแม่ตัวเอง + พ่อแม่คู่สมรส)</summary>
+    public int ParentAllowanceCount { get; set; }
+    /// <summary>เบี้ยประกันชีวิตที่ลดหย่อนได้ (ไม่เกิน 100,000/ปี ตาม §47(1)(ง))</summary>
+    public decimal LifeInsurancePremium { get; set; }
+    /// <summary>เงินสะสมกองทุน RMF/SSF/Thai ESG ที่ลดหย่อนได้ (รวมไม่เกิน 500,000)</summary>
+    public decimal RmfSsfContribution { get; set; }
+    /// <summary>เงินบริจาคที่ลดหย่อนได้ (สูงสุด 10% ของเงินได้สุทธิหลังหักลดหย่อนอื่น)</summary>
+    public decimal DonationAmount { get; set; }
     public bool HasProvidentFund { get; set; } = false;
     public decimal ProvidentFundEmployeePercent { get; set; }
     public decimal ProvidentFundEmployerPercent { get; set; }
@@ -165,6 +188,10 @@ public class PayrollDetail : TenantEntity
     public decimal ProvidentFundEmployee { get; set; }   // กองทุนสำรองเลี้ยงชีพ (ลูกจ้าง)
     public decimal ProvidentFundEmployer { get; set; }   // กองทุนสำรองเลี้ยงชีพ (นายจ้าง)
     public decimal LoanDeduction { get; set; }           // หักเงินกู้
+    /// <summary>ยอดเงินทดรองที่หักคืนในรอบนี้ — บันทึกตอน Pay เพื่อให้
+    /// Void สามารถ restore ยอด OutstandingAmount ของ SalaryAdvance กลับ
+    /// ได้ถูกต้อง (เดิมไม่มี → void แล้วยอดเงินทดรองหาย).</summary>
+    public decimal AdvanceRecovered { get; set; }
     public decimal OtherDeductions { get; set; }
     public decimal TotalDeductions { get; set; }
 
@@ -347,4 +374,28 @@ public class PayrollItem : TenantEntity
     public Guid? AccountId { get; set; }                 // GL account
     public ChartOfAccount? Account { get; set; }
     public int SortOrder { get; set; }
+}
+
+/// <summary>
+/// ค่าตั้งประกันสังคมรายปี (override) — เพดานค่าจ้าง + อัตราสมทบ ของปีนั้น
+/// ของบริษัทนั้น เมื่อไม่มีแถว ระบบใช้ตารางตามกฎหมายใน
+/// Helpers.SsoRateSchedule (15,000 → 17,500 ปี 2026 → 20,000 ปี 2029 →
+/// 23,000 ปี 2032). มีไว้เพราะเพดาน/อัตราปรับได้อีกตามประกาศแต่ละปี
+/// (รวมประกาศลดอัตราชั่วคราว) — ผู้ใช้ปรับเองได้ทันทีไม่ต้องรออัปเดตระบบ
+/// </summary>
+public class SsoYearConfig : TenantEntity
+{
+    /// <summary>ปี ค.ศ. (ระบบ normalize พ.ศ. ให้ตอนบันทึก)</summary>
+    public int Year { get; set; }
+
+    /// <summary>เพดานค่าจ้ายรายเดือนที่ใช้คำนวณสมทบ (เช่น 17,500)</summary>
+    public decimal WageCeiling { get; set; }
+
+    /// <summary>อัตราสมทบลูกจ้าง เป็นเปอร์เซ็นต์ (เช่น 5 = 5%)</summary>
+    public decimal RatePercent { get; set; } = 5m;
+
+    /// <summary>อัตราสมทบนายจ้าง เป็นเปอร์เซ็นต์ — ปกติเท่าลูกจ้าง</summary>
+    public decimal EmployerRatePercent { get; set; } = 5m;
+
+    public string? Notes { get; set; }
 }

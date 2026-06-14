@@ -1574,6 +1574,82 @@ public partial class AccountingService : IAccountingService
 
     // ==================== Reports ====================
 
+    /// <summary>
+    /// คืน Dictionary&lt;AccountId, balance&gt; ตามวันที่ที่ระบุ โดยใช้
+    /// OpeningBalance baseline เดียวกับ GetTrialBalanceAsync — Dashboard /
+    /// CashFlow / ExecutiveReports เรียกตัวนี้แทนการ sum JE จาก inception
+    /// เพื่อให้ทุกหน้าโชว์ยอดเงินสด/AR/AP เท่ากันสำหรับบริษัทที่ migrate มา.
+    /// คืนค่า balance net ตามสัญลักษณ์ของ AccountType:
+    ///   Asset/Expense → Debit > 0
+    ///   Liability/Equity/Revenue → Credit > 0 (เก็บเป็นเลขบวก ผู้เรียก
+    ///   ตีความเอง). Dictionary มีทุกบัญชีที่มี opening หรือ movement.
+    /// </summary>
+    public async Task<Dictionary<Guid, decimal>> GetAccountBalanceAsOfAsync(
+        Guid companyId, DateTime asOfDate)
+    {
+        var asOf = asOfDate.Date.AddDays(1);
+        var anchorPeriodId = await (
+            from p in _db.FiscalPeriods.AsNoTracking()
+            join o in _db.OpeningBalances.AsNoTracking() on p.Id equals o.FiscalPeriodId
+            where p.CompanyId == companyId && p.StartDate <= asOfDate.Date
+            orderby p.StartDate descending
+            select (Guid?)p.Id
+        ).FirstOrDefaultAsync();
+
+        DateTime? anchorStart = null;
+        var openings = new Dictionary<Guid, (decimal Debit, decimal Credit)>();
+        if (anchorPeriodId.HasValue)
+        {
+            anchorStart = await _db.FiscalPeriods.AsNoTracking()
+                .Where(p => p.Id == anchorPeriodId.Value).Select(p => p.StartDate).FirstAsync();
+            openings = await _db.OpeningBalances.AsNoTracking()
+                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == anchorPeriodId.Value)
+                .GroupBy(o => o.AccountId)
+                .Select(g => new { AccountId = g.Key, Debit = g.Sum(x => x.OpeningDebit), Credit = g.Sum(x => x.OpeningCredit) })
+                .ToDictionaryAsync(x => x.AccountId, x => (x.Debit, x.Credit));
+        }
+
+        var movementStart = anchorStart;
+        var movements = await _db.JournalEntryLines.AsNoTracking()
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                    || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+                && l.JournalEntry.EntryDate < asOf
+                && (!movementStart.HasValue || l.JournalEntry.EntryDate >= movementStart.Value))
+            .GroupBy(l => new { l.AccountId, l.Account.AccountType })
+            .Select(g => new
+            {
+                g.Key.AccountId, g.Key.AccountType,
+                Debit = g.Sum(x => x.DebitAmount),
+                Credit = g.Sum(x => x.CreditAmount),
+            })
+            .ToListAsync();
+
+        var result = new Dictionary<Guid, decimal>();
+        var allIds = openings.Keys.Union(movements.Select(m => m.AccountId)).Distinct();
+        var accountTypes = movements.ToDictionary(m => m.AccountId, m => m.AccountType);
+        foreach (var id in allIds)
+        {
+            openings.TryGetValue(id, out var op);
+            var mv = movements.FirstOrDefault(x => x.AccountId == id);
+            var totalDebit = op.Debit + (mv?.Debit ?? 0);
+            var totalCredit = op.Credit + (mv?.Credit ?? 0);
+            if (!accountTypes.TryGetValue(id, out var atype))
+            {
+                atype = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.Id == id)
+                    .Select(a => a.AccountType).FirstOrDefaultAsync();
+            }
+            // Asset/Expense lives on the debit side; Liability/Equity/Revenue
+            // on the credit side. Return the *signed* normal balance.
+            var debitNormal = atype == AccountType.Asset || atype == AccountType.Expense;
+            result[id] = debitNormal ? (totalDebit - totalCredit) : (totalCredit - totalDebit);
+        }
+        return result;
+    }
+
     public async Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null)
     {
         // Pick the OpeningBalance baseline anchored to the most recent fiscal

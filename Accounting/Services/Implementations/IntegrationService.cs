@@ -12,6 +12,24 @@ namespace Accounting.Services.Implementations;
 
 public class IntegrationService : IIntegrationService
 {
+    /// <summary>Cap on the partner-supplied preparer signature (data URI or
+    /// raw base64). A typical PNG signature is &lt;30KB; we allow up to 200KB
+    /// to be generous. Without this, a partner could ship multi-MB images on
+    /// every doc and silently bloat the Documents table.</summary>
+    private const int PreparerSignatureMaxBytes = 200_000;
+
+    /// <summary>Trim + cap the partner-supplied preparer signature. Anything
+    /// over the cap is rejected (throws a 400-equivalent to the caller).</summary>
+    private static string? TrimPreparerSignature(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var trimmed = raw.Trim();
+        if (trimmed.Length > PreparerSignatureMaxBytes)
+            throw new InvalidOperationException(
+                $"PreparerSignatureBase64 ใหญ่เกินกำหนด ({trimmed.Length:N0} > {PreparerSignatureMaxBytes:N0} bytes) — กรุณาบีบอัดรูปลายเซ็นให้เล็กลง");
+        return trimmed;
+    }
+
     private readonly AccountingDbContext _db;
     private readonly ISettingsService _settingsService;
     private readonly ILogger<IntegrationService> _logger;
@@ -544,7 +562,7 @@ public class IntegrationService : IIntegrationService
                 Notes = request.Notes,
                 // Preparer identity from the source system → "ผู้จัดทำ" slot.
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
-                PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
+                PreparerSignatureBase64 = TrimPreparerSignature(request.PreparerSignatureBase64),
                 Lines = lines
             };
 
@@ -1838,7 +1856,7 @@ public class IntegrationService : IIntegrationService
                 // the partner system, not a NextAcc User. Whitespace-only values
                 // are treated as absent (fall back to Owner downstream).
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
-                PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
+                PreparerSignatureBase64 = TrimPreparerSignature(request.PreparerSignatureBase64),
                 Lines = lines
             };
 
@@ -1930,7 +1948,7 @@ public class IntegrationService : IIntegrationService
                 BalanceDue = 0,
                 Notes = request.Notes,
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
-                PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
+                PreparerSignatureBase64 = TrimPreparerSignature(request.PreparerSignatureBase64),
                 Lines = lines
             };
 

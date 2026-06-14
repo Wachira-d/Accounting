@@ -1683,6 +1683,31 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExtractedDiscountAmount" numeric(18,2) NULL;
             """,
 
+            // ===== SsoYearConfigs: per-company-per-year SSO ceiling/rate
+            // override (default schedule lives in Helpers.SsoRateSchedule:
+            // 15,000 → 17,500 (2026) → 20,000 (2029) → 23,000 (2032)) =====
+            """
+            CREATE TABLE IF NOT EXISTS "SsoYearConfigs" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Year" integer NOT NULL,
+                "WageCeiling" numeric(18,2) NOT NULL,
+                "RatePercent" numeric(5,2) NOT NULL DEFAULT 5,
+                "EmployerRatePercent" numeric(5,2) NOT NULL DEFAULT 5,
+                "Notes" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_SsoYearConfigs" PRIMARY KEY ("Id")
+            );
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_SsoYearConfigs_Company_Year"
+            ON "SsoYearConfigs" ("CompanyId", "Year") WHERE "IsDeleted" = false;
+            """,
+
             // ===== OcrLearnedPatterns: zone analyzer learning =====
             """
             CREATE TABLE IF NOT EXISTS "OcrLearnedPatterns" (
@@ -3863,6 +3888,90 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CompanyCompDefaults_Company" ON "CompanyCompensationDefaults" ("CompanyId") WHERE "IsDeleted" = false;""",
+            // Daily meal (คนละกรณีกับ OT meal) + custom allowances list
+            // ที่บริษัทตั้งเองได้ (โทรศัพท์ ค่าเดินทาง ค่าน้ำมัน ฯลฯ).
+            """ALTER TABLE "CompanyCompensationDefaults" ADD COLUMN IF NOT EXISTS "DailyMealAllowance" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CompanyCompensationDefaults" ADD COLUMN IF NOT EXISTS "CustomAllowancesJson" text NULL;""",
+            // PayrollDetail.AdvanceRecovered — per-employee advance repayment
+            // recorded at Pay time so Void can restore it precisely. Without
+            // this, voiding a payroll silently zeroed each employee's
+            // outstanding advance balance.
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "AdvanceRecovered" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // Employee tax allowances §47/47ทวิ — ละเอียดขึ้นจากที่เก่า
+            // เป็น count × 30K เฉย ๆ (ครอบครัวใหญ่ over-withhold).
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "HasSpouseAllowance" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ChildAllowanceCount" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "SecondAndLaterChildren" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "ParentAllowanceCount" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "LifeInsurancePremium" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "RmfSsfContribution" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "DonationAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+
+            // ===== Auto-email scheduling =====
+            """
+            CREATE TABLE IF NOT EXISTS "EmailScheduleRules" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Trigger" varchar(40) NOT NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "DocumentType" varchar(40) NULL,
+                "OffsetDays" integer NOT NULL DEFAULT 0,
+                "SendAtHour" integer NOT NULL DEFAULT 9,
+                "RepeatEveryDays" integer NOT NULL DEFAULT 0,
+                "SubjectTemplate" text NULL,
+                "BodyTemplate" text NULL,
+                "BccEmails" text NULL,
+                "CreatedByName" varchar(200) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_EmailScheduleRules" PRIMARY KEY ("Id")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_EmailRules_Company_Trigger" ON "EmailScheduleRules" ("CompanyId", "Trigger") WHERE "IsDeleted" = false;""",
+            """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "DayOfMonth" integer NOT NULL DEFAULT 5;""",
+            """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "AudienceFilter" varchar(100) NULL;""",
+            // Refresh-token reuse detection (security hardening).
+            """ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "PreviousRefreshToken" varchar(500) NULL;""",
+            """ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "RefreshTokenRevokedAt" timestamp NULL;""",
+            // Negative-inventory guard. Default false = strict (refuse OUT
+            // that would take CurrentStock below zero).
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "AllowNegativeStock" boolean NOT NULL DEFAULT false;""",
+
+            """
+            CREATE TABLE IF NOT EXISTS "EmailQueues" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "RuleId" uuid NULL,
+                "EntityType" varchar(40) NOT NULL,
+                "EntityId" uuid NOT NULL,
+                "ToEmail" varchar(500) NOT NULL,
+                "CcEmail" varchar(500) NULL,
+                "BccEmail" varchar(500) NULL,
+                "Subject" text NOT NULL,
+                "Body" text NOT NULL,
+                "AttachPdf" boolean NOT NULL DEFAULT true,
+                "AttachXml" boolean NOT NULL DEFAULT false,
+                "ScheduledFor" timestamp NOT NULL,
+                "Status" varchar(20) NOT NULL DEFAULT 'Pending',
+                "RetryCount" integer NOT NULL DEFAULT 0,
+                "SentAt" timestamp NULL,
+                "ErrorMessage" text NULL,
+                "IdempotencyKey" varchar(200) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamp NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                CONSTRAINT "PK_EmailQueues" PRIMARY KEY ("Id")
+            );
+            """,
+            // Worker scan index: Pending + due soon.
+            """CREATE INDEX IF NOT EXISTS "IX_EmailQueue_Status_Schedule" ON "EmailQueues" ("Status", "ScheduledFor") WHERE "IsDeleted" = false;""",
+            // Idempotency — กัน enqueue ซ้ำสำหรับ event เดียวกัน.
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmailQueue_Idempotency" ON "EmailQueues" ("CompanyId", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL AND "IsDeleted" = false;""",
 
             // PaymentAllocation — one Payment may settle many Documents.
             // Existing Payment rows stay valid (legacy 1:1 path); new

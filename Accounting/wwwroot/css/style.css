@@ -681,3 +681,127 @@ body.ui-mode-simple .advanced-only { display: none !important; }
   .ticket-item .name { font-size: 16px; }
   .ticket-item .qty { font-size: 14px; padding: 4px 10px; }
 }
+
+/* =====================================================================
+   System-wide UX additions — pill, empty/error/loading state, a11y,
+   responsive table cards. ทุก page ใหม่ใช้จาก class กลางที่นี่
+   ดูสเปคเต็มที่ /pages/design-system.html (← /spec/ux.md)
+   ===================================================================== */
+
+/* Status pills — semantic + cross-page consistent */
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.6;
+  white-space: nowrap;
+}
+.pill-success { background: #dcfce7; color: #166534; }
+.pill-warning { background: #fef3c7; color: #92400e; }
+.pill-danger  { background: #fee2e2; color: #991b1b; }
+.pill-info    { background: #dbeafe; color: #1e40af; }
+.pill-gray    { background: var(--gray-200); color: var(--gray-700); }
+
+/* Empty state — shared across list pages */
+.empty-state {
+  text-align: center; padding: 60px 20px; color: var(--gray-500);
+}
+.empty-state .empty-icon { font-size: 56px; margin-bottom: 12px; opacity: .6; }
+.empty-state h3 { font-size: 1.1rem; margin: 0 0 6px; color: var(--gray-700); }
+.empty-state p { margin: 0 0 16px; font-size: 14px; }
+
+/* Error card */
+.error-card {
+  border-left: 4px solid var(--danger); background: #fef2f2;
+  padding: 16px; border-radius: 8px;
+}
+.error-card .error-icon { font-size: 24px; color: var(--danger); }
+
+/* Skeleton loader */
+.skeleton {
+  background: linear-gradient(90deg, var(--gray-100) 0%, var(--gray-200) 50%, var(--gray-100) 100%);
+  background-size: 200% 100%; animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; } 100% { background-position: 200% 0; }
+}
+.skeleton-row { height: 38px; margin-bottom: 8px; }
+.skeleton-text { height: 12px; margin-bottom: 6px; }
+.skeleton-text.short { width: 40%; }
+.skeleton-text.long  { width: 80%; }
+
+/* Money colors — มาตรฐานบัญชี */
+.money-negative { color: var(--danger); }
+.money-zero { color: var(--gray-400); }
+.money-positive { color: var(--gray-800); }
+
+/* Accessibility — focus ring เห็นชัด, reduced motion เคารพ */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important;
+  }
+}
+
+/* Skip to content link — screen-reader users land at main */
+.skip-to-content {
+  position: absolute; left: -9999px; top: 8px;
+  background: var(--primary); color: #fff; padding: 8px 16px;
+  border-radius: 6px; z-index: 10000; text-decoration: none;
+}
+.skip-to-content:focus { left: 8px; }
+
+/* Touch target minimum 44×44 on mobile — buttons + inputs + table actions */
+@media (max-width: 720px) {
+  .btn, .btn-sm { min-height: 44px; }
+  input, select, textarea { font-size: 16px; /* prevent ios zoom */ min-height: 44px; }
+  .table-actions button { min-width: 44px; min-height: 44px; }
+}
+
+/* Responsive table → cards on small screens.
+   Pages opt in by adding class="table-responsive" to the wrapper +
+   data-label attr on each <td>. CSS hides headers and stacks cells. */
+@media (max-width: 720px) {
+  .table-responsive table,
+  .table-responsive thead,
+  .table-responsive tbody,
+  .table-responsive tr,
+  .table-responsive th,
+  .table-responsive td { display: block; }
+  .table-responsive thead { display: none; }
+  .table-responsive tr {
+    background: #fff; border: 1px solid var(--gray-200);
+    border-radius: 8px; margin-bottom: 10px; padding: 8px;
+  }
+  .table-responsive td {
+    border: none; padding: 6px 4px;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  }
+  .table-responsive td::before {
+    content: attr(data-label); font-weight: 600; color: var(--gray-500); font-size: 12px;
+    text-transform: uppercase; letter-spacing: .03em;
+  }
+  .table-responsive td:last-child { border-bottom: none; }
+}
+
+/* Form helper text + inline error — มาตรฐานทั่วระบบ */
+.form-help { font-size: 11px; color: var(--gray-500); margin-top: 4px; }
+.form-error { font-size: 12px; color: var(--danger); margin-top: 4px; display: flex; align-items: center; gap: 4px; }
+.form-input.has-error, .form-select.has-error { border-color: var(--danger); }
+
+/* Bulk action bar — แสดงเมื่อมี select rows */
+.bulk-bar {
+  position: sticky; top: var(--header-height); z-index: 50;
+  background: var(--primary); color: #fff;
+  padding: 10px 16px; border-radius: 8px;
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-md);
+}
+.bulk-bar button { background: rgba(255,255,255,.2); color: #fff; border: 1px solid rgba(255,255,255,.3); }
+.bulk-bar button:hover { background: rgba(255,255,255,.3); }

@@ -48,8 +48,15 @@ public class CompensationProfileService : ICompensationProfileService
         if (req.PerDiemRate.HasValue) d.PerDiemRate = req.PerDiemRate.Value;
         if (req.AccommodationAllowance.HasValue) d.AccommodationAllowance = req.AccommodationAllowance.Value;
         if (req.OvertimeMealAllowance.HasValue) d.OvertimeMealAllowance = req.OvertimeMealAllowance.Value;
+        if (req.DailyMealAllowance.HasValue) d.DailyMealAllowance = req.DailyMealAllowance.Value;
         if (req.StandardWorkHoursPerDay.HasValue) d.StandardWorkHoursPerDay = req.StandardWorkHoursPerDay.Value;
         if (req.StandardWorkDaysPerMonth.HasValue) d.StandardWorkDaysPerMonth = req.StandardWorkDaysPerMonth.Value;
+        // Custom allowances — null = leave existing; empty list = wipe.
+        // Persisted as JSON; the calc reads it back via SerializeCustom.
+        if (req.CustomAllowances != null)
+            d.CustomAllowancesJson = req.CustomAllowances.Count == 0
+                ? null
+                : System.Text.Json.JsonSerializer.Serialize(req.CustomAllowances);
         d.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return Map(d);
@@ -225,8 +232,18 @@ public class CompensationProfileService : ICompensationProfileService
         return (emp.EmployeeCode, $"{emp.FirstNameTh} {emp.LastNameTh}".Trim());
     }
 
-    private static CompanyCompensationDefaultsResponse Map(CompanyCompensationDefaults d) =>
-        new(d.OvertimeRateMultiplierWeekday, d.OvertimeRateMultiplierHoliday,
+    private static CompanyCompensationDefaultsResponse Map(CompanyCompensationDefaults d)
+    {
+        List<CustomAllowanceItem> custom = new();
+        if (!string.IsNullOrWhiteSpace(d.CustomAllowancesJson))
+        {
+            try { custom = System.Text.Json.JsonSerializer.Deserialize<List<CustomAllowanceItem>>(d.CustomAllowancesJson) ?? new(); }
+            catch { /* malformed → empty */ }
+        }
+        return new(d.OvertimeRateMultiplierWeekday, d.OvertimeRateMultiplierHoliday,
             d.PerDiemRate, d.AccommodationAllowance, d.OvertimeMealAllowance,
-            d.StandardWorkHoursPerDay, d.StandardWorkDaysPerMonth);
+            d.DailyMealAllowance,
+            d.StandardWorkHoursPerDay, d.StandardWorkDaysPerMonth,
+            custom);
+    }
 }

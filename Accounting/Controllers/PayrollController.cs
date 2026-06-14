@@ -4,6 +4,7 @@ using Accounting.Models.DTOs.Payroll;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -102,6 +103,32 @@ public class PayrollController : ControllerBase
         Guid companyId, Guid employeeId, [FromBody] SeverancePreviewRequest request)
         => Ok(new ApiResponse<SeverancePreviewResponse>(true,
             await _service.PreviewSeverancePayAsync(companyId, employeeId, request)));
+
+    /// <summary>ปิดปี: คำนวณวันลาคงเหลือทุกพนักงานของปี ที่ระบุ →
+    /// upsert EmployeeLeaveBalance ของปีถัดไป (carry-forward).</summary>
+    [HttpPost("leaves/carry-forward/{year:int}")]
+    public async Task<ActionResult<ApiResponse<object>>> RunLeaveCarryForward(Guid companyId, int year)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var count = await _service.RunYearEndLeaveCarryForwardAsync(companyId, year, actor);
+        return Ok(new ApiResponse<object>(true, new { upserts = count, targetYear = year + 1 },
+            $"ทำ carry-forward วันลาเข้าปี {year + 1} เรียบร้อย ({count} รายการ)"));
+    }
+
+    public sealed record PostSeveranceRequest(decimal Amount, DateTime PayDate);
+
+    /// <summary>โพสต์ JE เงินชดเชยเลิกจ้าง §118 — Dr Severance / Cr Cash.
+    /// ใช้คู่กับ severance-preview: HR กดยืนยันยอดที่คำนวณแล้วโพสต์เข้า GL.</summary>
+    [HttpPost("employees/{employeeId:guid}/severance/post")]
+    public async Task<ActionResult<ApiResponse<object>>> PostSeverance(
+        Guid companyId, Guid employeeId, [FromBody] PostSeveranceRequest req)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var jeId = await _service.PostSeveranceAsync(companyId, employeeId,
+            req.Amount, req.PayDate, JwtHelper.GetUserIdFromClaims(User).ToString());
+        return Ok(new ApiResponse<object>(true, new { journalEntryId = jeId }, "โพสต์เงินชดเชยเข้า GL เรียบร้อย"));
+    }
 
     // Payroll Items
     [HttpPost("items")]
@@ -218,4 +245,112 @@ public class PayrollController : ControllerBase
     [HttpGet("sso/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetSso(Guid companyId, int year, int month)
         => Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month)));
+
+    /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1) เงินเดือน).
+    /// employeeId=null → คืน Zip รวมทุกคน, ระบุ → คืน PDF เดียวคน.
+    /// อิงเฉพาะ PayrollRun ที่ Status=Paid เท่านั้น.</summary>
+    [HttpGet("wht-cert/annual/{year:int}")]
+    public async Task<IActionResult> GetAnnualWhtCerts(Guid companyId, int year, [FromQuery] Guid? employeeId = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var requestedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var (fileName, bytes) = await _service.GenerateAnnualEmployeeWhtCertsAsync(companyId, year, employeeId, requestedBy);
+        var contentType = fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            ? "application/zip" : "application/pdf";
+        return File(bytes, contentType, fileName);
+    }
+
+    // ===== SSO year-config (เพดานค่าจ้าง/อัตราสมทบ ปรับได้รายปี) =====
+
+    public sealed record SsoYearConfigRequest(int Year, decimal WageCeiling,
+        decimal RatePercent = 5m, decimal EmployerRatePercent = 5m, string? Notes = null);
+
+    /// <summary>Effective SSO parameters per year: company overrides merged
+    /// over the statutory default schedule (15,000 → 17,500 ปี 2026 →
+    /// 20,000 ปี 2572 → 23,000 ปี 2575). UI renders this as the editable
+    /// year table.</summary>
+    [HttpGet("sso-config")]
+    public async Task<ActionResult<ApiResponse<object>>> GetSsoConfig(
+        Guid companyId, [FromServices] Accounting.Data.AccountingDbContext db,
+        [FromQuery] int? fromYear = null, [FromQuery] int? toYear = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var start = fromYear ?? DateTime.UtcNow.Year - 1;
+        var end = toYear ?? DateTime.UtcNow.Year + 6;
+        var overrides = await db.SsoYearConfigs
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Year >= start && c.Year <= end)
+            .ToListAsync();
+        var rows = Enumerable.Range(start, end - start + 1).Select(y =>
+        {
+            var ov = overrides.FirstOrDefault(o => o.Year == y);
+            var (defCeiling, defRate) = SsoRateSchedule.GetDefault(y);
+            var ceiling = ov?.WageCeiling ?? defCeiling;
+            var rate = ov != null ? ov.RatePercent / 100m : defRate;
+            return new
+            {
+                Year = y,
+                WageCeiling = ceiling,
+                RatePercent = rate * 100m,
+                EmployerRatePercent = ov?.EmployerRatePercent ?? defRate * 100m,
+                MaxMonthlyContribution = Math.Round(ceiling * rate, 2),
+                IsOverride = ov != null,
+                ov?.Notes,
+            };
+        }).ToList();
+        return Ok(new ApiResponse<object>(true, rows));
+    }
+
+    /// <summary>Upsert the SSO parameters for one year (ปี ค.ศ. — พ.ศ. ถูก
+    /// normalize ให้). ใช้เมื่อประกาศ/พรฎ. ฉบับใหม่เปลี่ยนเพดานหรืออัตรา
+    /// (รวมกรณีลดอัตราชั่วคราว) โดยไม่ต้องรออัปเดตระบบ.</summary>
+    [HttpPut("sso-config")]
+    public async Task<ActionResult<ApiResponse<object>>> UpsertSsoConfig(
+        Guid companyId, [FromBody] SsoYearConfigRequest req,
+        [FromServices] Accounting.Data.AccountingDbContext db)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var year = req.Year > 2400 ? req.Year - 543 : req.Year;
+        if (year < 2000 || year > 2100)
+            return BadRequest(new ApiResponse<object>(false, null, "ปีไม่ถูกต้อง"));
+        if (req.WageCeiling <= 0 || req.RatePercent <= 0 || req.RatePercent > 30)
+            return BadRequest(new ApiResponse<object>(false, null, "เพดานค่าจ้าง/อัตราสมทบไม่ถูกต้อง"));
+
+        var existing = await db.SsoYearConfigs
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == year && !c.IsDeleted);
+        if (existing == null)
+        {
+            existing = new Models.Entities.SsoYearConfig { CompanyId = companyId, Year = year };
+            db.SsoYearConfigs.Add(existing);
+        }
+        existing.WageCeiling = req.WageCeiling;
+        existing.RatePercent = req.RatePercent;
+        existing.EmployerRatePercent = req.EmployerRatePercent;
+        existing.Notes = req.Notes;
+        existing.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new
+        {
+            existing.Year,
+            existing.WageCeiling,
+            existing.RatePercent,
+            MaxMonthlyContribution = Math.Round(existing.WageCeiling * existing.RatePercent / 100m, 2),
+        }, $"บันทึกค่าประกันสังคมปี {year} แล้ว — สมทบสูงสุด {existing.WageCeiling * existing.RatePercent / 100m:N2} บาท/เดือน"));
+    }
+
+    /// <summary>Remove a year override — the statutory default takes over.</summary>
+    [HttpDelete("sso-config/{year:int}")]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteSsoConfig(
+        Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var y = year > 2400 ? year - 543 : year;
+        var existing = await db.SsoYearConfigs
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Year == y && !c.IsDeleted);
+        if (existing == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบค่าตั้งของปีนี้"));
+        existing.IsDeleted = true;
+        existing.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, $"ลบค่าตั้งปี {y} แล้ว — กลับไปใช้ตารางตามกฎหมาย"));
+    }
 }

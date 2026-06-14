@@ -28,6 +28,8 @@ public class DocumentService : IDocumentService
     private readonly IBotExchangeRateService? _fxRates;
     private readonly ISensitivityService? _sensitivity;
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
+    private readonly IEmailScheduleService? _emailSchedule;
+    private readonly IAdvancedArApService? _advancedArAp;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -41,8 +43,12 @@ public class DocumentService : IDocumentService
         IBotExchangeRateService? fxRates = null,
         ISensitivityService? sensitivity = null,
         Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null,
-        IWebhookService? webhooks = null)
+        IWebhookService? webhooks = null,
+        IEmailScheduleService? emailSchedule = null,
+        IAdvancedArApService? advancedArAp = null)
     {
+        _emailSchedule = emailSchedule;
+        _advancedArAp = advancedArAp;
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
@@ -1071,6 +1077,38 @@ public class DocumentService : IDocumentService
                     && j.CompanyId == companyId
                     && j.Status == JournalEntryStatus.Posted);
 
+                // Credit-limit enforcement on sales-side credit documents —
+                // blocks approval if customer is over their ContactCreditSetting
+                // limit OR on hold. acknowledgeWarnings=true lets the operator
+                // override (recorded in ProcessingNotes). Cash-settled sales
+                // never consume credit (money came in immediately).
+                var creditCheckTypes = new[] {
+                    DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.BillingNote
+                };
+                if (_advancedArAp != null
+                    && creditCheckTypes.Contains(doc.DocumentType)
+                    && doc.PaymentType != Models.Enums.PaymentType.Cash
+                    && doc.ContactId != Guid.Empty)
+                {
+                    try
+                    {
+                        var credit = await _advancedArAp.CheckCreditAsync(companyId, doc.ContactId, doc.TotalAmount);
+                        if (!credit.IsApproved)
+                        {
+                            if (!acknowledgeWarnings)
+                                throw new InvalidOperationException(
+                                    $"ปฏิเสธอนุมัติ: {credit.Reason}. กรุณาตรวจ ContactCreditSetting หรือกด \"อนุมัติพร้อม override\"");
+                            doc.Notes = (doc.Notes ?? "")
+                                + $"\n[Credit override] {credit.Reason} — อนุมัติโดย {approvedBy}";
+                        }
+                    }
+                    catch (InvalidOperationException) { throw; }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Credit check failed Doc={Doc} — proceeding without block", documentId);
+                    }
+                }
+
                 // A cash-settled document (จ่ายทันที) is already fully paid the
                 // moment it's approved — the JE moves real cash, not a payable.
                 // Mark it Paid so it lands in the right bucket and never shows
@@ -1186,6 +1224,16 @@ public class DocumentService : IDocumentService
 
         await FireWebhookAsync(companyId, "document.status_changed",
             new { document = approved, from = "Draft", to = approved.Status });
+
+        // Auto-email schedule hook — เช็คกฎใน EmailScheduleRules ที่ตรง
+        // กับ DocumentApproved + DocumentType แล้ว enqueue. Fail-safe:
+        // ส่งอีเมลไม่สำเร็จต้องไม่ทำให้ approve ล้ม.
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnDocumentApprovedAsync(companyId, documentId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Email schedule enqueue failed Doc={Doc}", documentId); }
+        }
+
         return approved;
     }
 
@@ -1351,6 +1399,24 @@ public class DocumentService : IDocumentService
                 //     actual cost. Same Draft skip: drafts never booked a PCE.
                 if (doc.Status != DocumentStatus.Draft)
                     await ReverseProjectCostEntriesAsync(companyId, doc);
+
+                // 6d) Void any auto-issued WHT certificates that point at this
+                //     document. WHT certs are created at payment time (cash
+                //     basis) and feed PND.3/53 monthly exports — without this
+                //     cascade, voiding a PV/PI/Expense leaves the cert "Issued"
+                //     and the company silently remits + pays tax for a payment
+                //     that no longer exists. Best-effort + bounded: only
+                //     not-already-voided certs linked to THIS doc.
+                var linkedCerts = await _db.WithholdingTaxCerts
+                    .Where(w => w.CompanyId == companyId && w.DocumentId == documentId
+                                && w.Status != WithholdingTaxCertStatus.Voided && !w.IsDeleted)
+                    .Select(w => w.Id)
+                    .ToListAsync();
+                foreach (var certId in linkedCerts)
+                {
+                    try { await _whtService.VoidAsync(companyId, certId); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "WHT cert {Cert} void failed during doc void {Doc}", certId, documentId); }
+                }
 
                 // 7) Finally void the document itself + clear the stale
                 //    aging value. The list-row gate already suppresses the

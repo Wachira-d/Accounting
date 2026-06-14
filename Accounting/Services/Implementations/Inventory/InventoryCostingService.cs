@@ -112,6 +112,22 @@ public class InventoryCostingService : IInventoryCostingService
         var product = await _db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == productId, ct);
         if (product == null) throw new InvalidOperationException($"Product {productId} not found.");
 
+        // Negative-stock guard: refuse OUT that would push CurrentStock below
+        // zero unless the tenant explicitly opted in (CompanySettings
+        // .AllowNegativeStock = true). Stock-tracked products only — services
+        // and supplies bypass the check.
+        if (product.TrackStock && product.CurrentStock - quantity < 0)
+        {
+            var allow = await _db.Set<Models.Entities.CompanySettings>().AsNoTracking()
+                .Where(s => s.CompanyId == product.CompanyId)
+                .Select(s => s.AllowNegativeStock)
+                .FirstOrDefaultAsync(ct);
+            if (!allow)
+                throw new InvalidOperationException(
+                    $"สต๊อกไม่พอ: {product.Code} {product.Name} คงเหลือ {product.CurrentStock} ต้องการ {quantity}. " +
+                    "หากต้องการขาย/เบิกโดยไม่มีสต๊อก ให้เปิด \"อนุญาตสต๊อกติดลบ\" ในตั้งค่าบริษัทก่อน");
+        }
+
         switch (product.CostingMethod)
         {
             case CostingMethod.WeightedAverage:
