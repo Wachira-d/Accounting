@@ -3,6 +3,7 @@ using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
 using Accounting.Models.DTOs.DocumentTemplate;
+using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
