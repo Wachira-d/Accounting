@@ -31,6 +31,7 @@ public class DocumentService : IDocumentService
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly IAdvancedArApService? _advancedArAp;
+    private readonly IApprovalService? _approval;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -46,10 +47,12 @@ public class DocumentService : IDocumentService
         Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null,
         IWebhookService? webhooks = null,
         IEmailScheduleService? emailSchedule = null,
-        IAdvancedArApService? advancedArAp = null)
+        IAdvancedArApService? advancedArAp = null,
+        IApprovalService? approval = null)
     {
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
+        _approval = approval;
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
@@ -1113,6 +1116,24 @@ public class DocumentService : IDocumentService
                     .FirstAsync();
                 if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
+
+                // Multi-level approval gate. ถ้า ApprovalRule match doc นี้ →
+                // ต้องผ่าน workflow ก่อน. user ที่ submit direct approve
+                // โดยไม่ผ่าน workflow จะถูก block ที่นี่. Workflow service
+                // เป็น opt-in (DI nullable) — ถ้าบริษัทไม่ได้ตั้งค่า approval
+                // rule เลย FindMatchingRule คืน null → gate ปล่อยผ่าน.
+                if (_approval != null)
+                {
+                    var matchingRule = await _approval.FindMatchingRuleAsync(
+                        companyId, doc.DocumentType, doc.TotalAmount, doc.ProjectId);
+                    if (matchingRule != null)
+                    {
+                        var gate = await _approval.CheckGateAsync(companyId, documentId);
+                        if (!gate.CanApprove)
+                            throw new InvalidOperationException(gate.BlockReason
+                                ?? "เอกสารต้องผ่าน multi-level approval workflow ก่อน");
+                    }
+                }
 
                 // F20 — 3-way match block over-bill. ถ้า PurchaseInvoice/
                 // Expense อ้างถึง GRN (RelatedDocumentId) → ตรวจ qty/amount

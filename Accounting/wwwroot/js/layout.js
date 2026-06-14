@@ -774,6 +774,8 @@ const Layout = {
       description: 'รายวัน 30/60/90 วัน · เงินเข้า-ออก · ติดลบเมื่อไหร่ · risk alerts · ลูกหนี้/เจ้าหนี้ top' },
     { id: 'cash-management', label: 'จัดการเงินสด (PDC + Advance + Statement)', icon: '🏦', href: '/pages/cash-management.html', feature: 'AdvancedReporting',
       description: 'เช็คล่วงหน้า · เบิก-เคลียร์เงินสด · จ่ายรวม vendor · ใบแจ้งยอดลูกหนี้ — รวมในที่เดียว' },
+    { id: 'mobile-receipt', label: 'รับเงินสดด่วน (Mobile)', icon: '📱', href: '/pages/mobile-receipt.html', feature: 'AdvancedReporting',
+      description: 'หน้าจอ mobile-first สำหรับร้านค้า — numpad + วิธีรับเงิน + พิมพ์ใบเสร็จ 1 click' },
     { id: 'fx-reval', label: 'FX Revaluation', icon: '💱', href: '/pages/fx-reval.html', feature: 'MultiCurrency',
       description: 'Period-end revalue AR/AP FCY → post JE กำไร/ขาดทุน · idempotent ต่องวด' },
     { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',

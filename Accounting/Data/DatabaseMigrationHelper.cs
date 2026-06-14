@@ -4260,6 +4260,75 @@ public static class DatabaseMigrationHelper
 
             // ===== Document: IsForeignService — ภ.พ.36 self-assess VAT flag
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsForeignService" boolean NOT NULL DEFAULT false;""",
+
+            // ===== StockMovement: warehouse + lot/serial tracking
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "WarehouseId" uuid NULL;""",
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "LotNumber" text NULL;""",
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "SerialNumber" text NULL;""",
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "TransferPairId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_StockMovements_WhProduct" ON "StockMovements" ("WarehouseId", "ProductId") WHERE "WarehouseId" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_StockMovements_Lot" ON "StockMovements" ("LotNumber") WHERE "LotNumber" IS NOT NULL;""",
+
+            // ===== StockTransfer + lines
+            """
+            CREATE TABLE IF NOT EXISTS "StockTransfers" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "TransferNumber" text NOT NULL DEFAULT '',
+                "FromWarehouseId" uuid NOT NULL,
+                "ToWarehouseId" uuid NOT NULL,
+                "TransferDate" timestamp with time zone NOT NULL,
+                "Status" text NOT NULL DEFAULT 'Draft',
+                "Reference" text NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "StockTransferLines" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "StockTransferId" uuid NOT NULL REFERENCES "StockTransfers"("Id"),
+                "ProductId" uuid NOT NULL,
+                "Quantity" numeric(18,4) NOT NULL DEFAULT 0,
+                "LotNumber" text NULL,
+                "SerialNumber" text NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_StockTransfers_Company" ON "StockTransfers" ("CompanyId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_StockTransferLines_Transfer" ON "StockTransferLines" ("StockTransferId");""",
+
+            // ===== ProductLot — FIFO/FEFO tracking
+            """
+            CREATE TABLE IF NOT EXISTS "ProductLots" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "ProductId" uuid NOT NULL,
+                "LotNumber" text NOT NULL DEFAULT '',
+                "ManufactureDate" timestamp with time zone NULL,
+                "ExpirationDate" timestamp with time zone NULL,
+                "QuantityOnHand" numeric(18,4) NOT NULL DEFAULT 0,
+                "UnitCost" numeric(18,4) NOT NULL DEFAULT 0,
+                "WarehouseId" uuid NULL,
+                "SupplierBatchRef" text NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Product" ON "ProductLots" ("CompanyId", "ProductId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Expiry" ON "ProductLots" ("CompanyId", "ExpirationDate") WHERE "ExpirationDate" IS NOT NULL AND "QuantityOnHand" > 0;""",
         };
 
         foreach (var sql in statements)

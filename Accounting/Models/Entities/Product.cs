@@ -85,12 +85,81 @@ public class StockMovement : TenantEntity
     public Guid ProductId { get; set; }
     public Product Product { get; set; } = null!;
     public DateTime MovementDate { get; set; }
-    public string MovementType { get; set; } = null!;  // IN, OUT, ADJUST
+    public string MovementType { get; set; } = null!;  // IN, OUT, ADJUST, TRANSFER_OUT, TRANSFER_IN
     public decimal Quantity { get; set; }
     public decimal UnitCost { get; set; }
     public decimal BalanceAfter { get; set; }
     public string? Reference { get; set; }
     public Guid? DocumentId { get; set; }
+    public string? Notes { get; set; }
+
+    /// <summary>Warehouse location ของรายการเคลื่อนไหวนี้. Optional —
+    /// บริษัทที่มี warehouse เดียวเก็บ null. Multi-warehouse ใช้กำหนด
+    /// stock per location.</summary>
+    public Guid? WarehouseId { get; set; }
+
+    /// <summary>Lot/batch number สำหรับ pharma/food/expiration-tracking.
+    /// Optional — ผูกกับ Lot detail (expiry date, supplier batch ref).</summary>
+    public string? LotNumber { get; set; }
+
+    /// <summary>Serial number สำหรับ high-value items (electronics /
+    /// equipment). 1 serial = 1 unit; quantity = 1 เสมอสำหรับรายการ
+    /// ที่ track serial.</summary>
+    public string? SerialNumber { get; set; }
+
+    /// <summary>Counter movement — สำหรับ Transfer ระหว่าง warehouse:
+    /// TRANSFER_OUT มี TransferPairId ชี้ไปยัง TRANSFER_IN movement
+    /// ของ warehouse ปลายทาง. ใช้ match cycle count + audit.</summary>
+    public Guid? TransferPairId { get; set; }
+}
+
+/// <summary>
+/// Stock Transfer (โอนย้ายสินค้าระหว่างคลัง) — 1 transfer สร้าง 2
+/// StockMovements (TRANSFER_OUT + TRANSFER_IN) คู่กัน + JE ไม่มี
+/// (cost ไม่เปลี่ยน internal movement). ใช้สำหรับ:
+///   • โอนสินค้าระหว่างสาขา
+///   • ส่งสินค้าจากคลังกลาง → ร้านค้า
+///   • ย้ายสินค้าจาก quality-hold → available
+/// </summary>
+public class StockTransfer : TenantEntity
+{
+    public string TransferNumber { get; set; } = "";   // ST-YYYYMM-NNNN
+    public Guid FromWarehouseId { get; set; }
+    public Guid ToWarehouseId { get; set; }
+    public DateTime TransferDate { get; set; }
+    public string Status { get; set; } = "Draft";       // Draft, InTransit, Received, Cancelled
+    public string? Reference { get; set; }
+    public string? Notes { get; set; }
+    public ICollection<StockTransferLine> Lines { get; set; } = new List<StockTransferLine>();
+}
+
+public class StockTransferLine : BaseEntity
+{
+    public Guid StockTransferId { get; set; }
+    public StockTransfer StockTransfer { get; set; } = null!;
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public decimal Quantity { get; set; }
+    public string? LotNumber { get; set; }
+    public string? SerialNumber { get; set; }
+    public string? Notes { get; set; }
+}
+
+/// <summary>
+/// Product Lot/Batch — track per-lot inventory + expiration.
+/// pharma / food / cosmetic ที่ต้อง FIFO/FEFO (first-expired-first-out).
+/// </summary>
+public class ProductLot : TenantEntity
+{
+    public Guid ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public string LotNumber { get; set; } = "";
+    public DateTime? ManufactureDate { get; set; }
+    public DateTime? ExpirationDate { get; set; }
+    public decimal QuantityOnHand { get; set; }
+    public decimal UnitCost { get; set; }
+    public Guid? WarehouseId { get; set; }
+    public string? SupplierBatchRef { get; set; }   // batch ref จาก supplier (cross-reference)
     public string? Notes { get; set; }
 }
 
