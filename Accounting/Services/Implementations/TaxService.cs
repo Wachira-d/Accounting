@@ -694,8 +694,26 @@ public partial class TaxService : ITaxService
         // Add depreciation to total expenses
         totalExpenses += totalDepreciation;
 
-        // Net profit before tax
-        var netProfitBeforeTax = totalRevenue - totalExpenses;
+        // F11 — Entertainment expense cap §65 ทวิ (4) per ประมวลรัษฎากร:
+        // ค่ารับรองหักได้ไม่เกิน MIN(0.3% ของรายได้, 0.3% ของทุนชำระแล้ว)
+        // เพดานสูงสุด 10 ล้านบาท. ส่วนเกินถือเป็นรายจ่ายต้องห้าม (non-
+        // deductible) — เพิ่มกลับเข้า net profit เพื่อคำนวณ CIT.
+        // ตรวจหาบัญชีค่ารับรองโดย InputVatClaimable=false (seed มาเป็น
+        // ค่ารับรอง) หรือ AccountName match "รับรอง".
+        var entertainmentLines = expenseLines.Where(l => l.Account != null
+            && (l.Account.InputVatClaimable == false
+                || (l.Account.AccountName != null && l.Account.AccountName.Contains("รับรอง"))))
+            .ToList();
+        var entertainmentExpense = entertainmentLines.Sum(l => l.DebitAmount - l.CreditAmount);
+        var paidUpCapital = company?.PaidUpCapital ?? 0m;
+        var revenueLimit = totalRevenue * 0.003m;
+        var capitalLimit = paidUpCapital * 0.003m;
+        var entertainmentCap = Math.Min(10_000_000m, Math.Max(revenueLimit, capitalLimit));
+        var entertainmentExcess = Math.Max(0, entertainmentExpense - entertainmentCap);
+
+        // Net profit before tax — เพิ่มส่วนเกิน entertainment ที่หักไม่ได้
+        // กลับเข้ามา (tax addition / รายการบวกกลับ §65 ทวิ).
+        var netProfitBeforeTax = totalRevenue - totalExpenses + entertainmentExcess;
 
         // Query previous year's CIT report for tax credit carryforward
         var previousYearCit = await _db.TaxReports
@@ -754,11 +772,35 @@ public partial class TaxService : ITaxService
             });
         }
 
+        // F11 — แสดง entertainment cap §65 ทวิ (4) ที่ apply
+        if (entertainmentExpense > 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = $"ค่ารับรอง (เพดาน §65 ทวิ(4): {entertainmentCap:N2})",
+                IncomeAmount = entertainmentExpense,
+                TaxAmount = 0
+            });
+            if (entertainmentExcess > 0)
+            {
+                report.Lines.Add(new TaxReportLine
+                {
+                    TaxReportId = report.Id,
+                    LineOrder = lineOrder++,
+                    Description = $"➕ บวกกลับ ค่ารับรองส่วนเกิน §65 ทวิ(4) — ไม่หักภาษีได้",
+                    IncomeAmount = entertainmentExcess,
+                    TaxAmount = 0
+                });
+            }
+        }
+
         report.Lines.Add(new TaxReportLine
         {
             TaxReportId = report.Id,
             LineOrder = lineOrder++,
-            Description = "กำไรสุทธิก่อนภาษี",
+            Description = "กำไรสุทธิก่อนภาษี (หลังบวกกลับรายการต้องห้าม)",
             IncomeAmount = netProfitBeforeTax,
             TaxAmount = citAmount,
             TaxRate = netProfitBeforeTax > 0 ? (citAmount / netProfitBeforeTax) * 100 : 0

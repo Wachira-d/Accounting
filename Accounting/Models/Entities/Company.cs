@@ -17,6 +17,11 @@ public class Company : BaseEntity
     public string? JuristicId { get; set; }              // เลขทะเบียนนิติบุคคล (DBD)
     public bool IsVatRegistered { get; set; }            // จดทะเบียนภาษีมูลค่าเพิ่ม
     public decimal VatRate { get; set; } = 7m;           // อัตราภาษีมูลค่าเพิ่ม (%)
+    /// <summary>ทุนชำระแล้ว (registered paid-up capital) — ใช้คำนวณเพดาน
+    /// ค่ารับรอง §65 ทวิ (4): 0.3% ของรายได้ หรือ 0.3% ของทุนชำระแล้ว
+    /// แล้วแต่อย่างไหนสูงกว่า แต่ไม่เกิน 10 ล้านบาท. Default 0 = ใช้แค่
+    /// เพดาน revenue-based.</summary>
+    public decimal PaidUpCapital { get; set; }
     public bool IsWhtRegistered { get; set; } = true;    // หัก ณ ที่จ่าย
     public bool IsSocialSecurityRegistered { get; set; } // จดทะเบียนประกันสังคม
     public string? SocialSecurityAccountNo { get; set; } // เลขที่บัญชีประกันสังคม

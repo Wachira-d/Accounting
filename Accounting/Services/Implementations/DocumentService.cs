@@ -1114,6 +1114,49 @@ public class DocumentService : IDocumentService
                 if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
 
+                // F20 — 3-way match block over-bill. ถ้า PurchaseInvoice/
+                // Expense อ้างถึง GRN (RelatedDocumentId) → ตรวจ qty/amount
+                // ของแต่ละบรรทัด invoice ต้องไม่เกิน GRN ที่รับจริง. ป้องกัน
+                // supplier ออกบิลเกินสินค้าที่ส่ง — ตรงกับมาตรฐาน 3-way match
+                // (PO ↔ GRN ↔ PI). Linked via DocumentLine.SourceLineId.
+                if ((doc.DocumentType == DocumentType.PurchaseInvoice || doc.DocumentType == DocumentType.Expense)
+                    && doc.RelatedDocumentId.HasValue)
+                {
+                    var srcDoc = await _db.Documents.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
+                    if (srcDoc != null && srcDoc.DocumentType == DocumentType.GoodsReceiptNote)
+                    {
+                        var grnLines = await _db.DocumentLines.AsNoTracking()
+                            .Where(l => l.DocumentId == srcDoc.Id)
+                            .ToDictionaryAsync(l => l.Id, l => new { l.Quantity, l.Amount, l.Description });
+                        var overBill = new List<string>();
+                        foreach (var line in doc.Lines.Where(l => l.SourceLineId.HasValue))
+                        {
+                            if (!grnLines.TryGetValue(line.SourceLineId!.Value, out var grn)) continue;
+                            // คำนวณยอด invoice อื่นๆ ที่อ้าง grn line นี้ไปแล้ว
+                            var alreadyBilled = await _db.DocumentLines.AsNoTracking()
+                                .Where(l => l.SourceLineId == line.SourceLineId.Value
+                                            && l.DocumentId != doc.Id
+                                            && !l.Document.IsDeleted
+                                            && l.Document.Status != DocumentStatus.Voided
+                                            && l.Document.Status != DocumentStatus.Draft
+                                            && l.Document.Status != DocumentStatus.Rejected)
+                                .Select(l => new { l.Quantity, l.Amount })
+                                .ToListAsync();
+                            var billedQty = alreadyBilled.Sum(b => b.Quantity);
+                            var billedAmt = alreadyBilled.Sum(b => b.Amount);
+                            if (line.Quantity + billedQty > grn.Quantity + 0.0001m)
+                                overBill.Add($"\"{grn.Description}\": รับจริง {grn.Quantity:N2} บิลแล้ว {billedQty:N2} ใบนี้ {line.Quantity:N2} → เกิน");
+                            if (line.Amount + billedAmt > grn.Amount + 0.01m)
+                                overBill.Add($"\"{grn.Description}\": ยอด GRN {grn.Amount:N2} บิลแล้ว {billedAmt:N2} ใบนี้ {line.Amount:N2} → เกิน");
+                        }
+                        if (overBill.Count > 0 && !acknowledgeWarnings)
+                            throw new InvalidOperationException(
+                                "บิลเกินจำนวน/ยอด GRN ที่รับจริง (3-way match):\n• " + string.Join("\n• ", overBill)
+                                + "\n\nกดรับทราบเพื่อบังคับอนุมัติ");
+                    }
+                }
+
                 // Idempotency guard INSIDE transaction to prevent race condition
                 var hasExistingJournal = await _db.JournalEntries.AnyAsync(j =>
                     j.SourceDocumentId == documentId

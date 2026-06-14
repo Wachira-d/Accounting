@@ -4145,9 +4145,17 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_WithholdingTaxCerts_SourcePayrollRunId" ON "WithholdingTaxCerts" ("SourcePayrollRunId") WHERE "SourcePayrollRunId" IS NOT NULL;""",
 
             // ===== PayrollDetails: TaxableGross — รายได้ที่ใช้คำนวณ WHT
-            // (Gross − exempt benefits เช่นค่ารักษาพยาบาล). ภ.ง.ด.1 export
-            // ใช้ค่านี้ ไม่ใช่ GrossIncome.
             """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "TaxableGross" numeric(18,2) NOT NULL DEFAULT 0;""",
+
+            // ===== Companies.PaidUpCapital — ทุนชำระแล้ว สำหรับ §65 ทวิ (4)
+            // entertainment cap 0.3% revenue/capital max 10M (F11).
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "PaidUpCapital" numeric(18,2) NOT NULL DEFAULT 0;""",
+
+            // ===== ChartOfAccounts.CashFlowSection — per-account override
+            // ของหมวด Cash Flow (Operating / Investing / Financing). ถ้า
+            // null/0 → engine fall back ใช้ code-prefix heuristics เดิม.
+            // For F23 — ผังบัญชี custom ที่ไม่ตามรหัส default จะ map ผิด.
+            """ALTER TABLE "ChartOfAccounts" ADD COLUMN IF NOT EXISTS "CashFlowSection" smallint NOT NULL DEFAULT 0;""",
         };
 
         foreach (var sql in statements)

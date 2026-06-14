@@ -119,6 +119,18 @@ public enum AccountType
     Expense = 5           // ค่าใช้จ่าย
 }
 
+/// <summary>หมวด Cash Flow Statement (TFRS 7) — per-account override
+/// สำหรับผังบัญชี custom ที่ไม่ตามรหัส default. ใช้ในรายงาน Cash Flow.
+/// None = fallback ใช้ code-prefix heuristics (operating: 113/115/212/56...,
+/// investing: 122/123, financing: 221/31).</summary>
+public enum CashFlowSectionType
+{
+    None = 0,             // ปล่อยให้ engine fallback (code-prefix)
+    Operating = 1,        // กิจกรรมดำเนินงาน
+    Investing = 2,        // กิจกรรมลงทุน
+    Financing = 3         // กิจกรรมจัดหาเงิน
+}
+
 public enum JournalEntryStatus
 {
     Draft = 0,
