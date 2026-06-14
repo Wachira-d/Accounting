@@ -61,13 +61,18 @@ public partial class PdfGenerationService
                     var bodyFont = float.TryParse(template.BodyFontSize, out var bf) ? bf : 10f;
                     page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(bodyFont).FontColor(primary));
 
-                    // Watermark behind everything.
+                    // Watermark behind everything. ค่า opacity (0..1) จาก
+                    // template.WatermarkOpacity แปลงเป็น hex 8-digit ARGB
+                    // (เดิม hard-code Colors.Grey.Lighten3) — HTML CSS
+                    // BuildCss line 1160 ก็เคารพค่านี้.
                     if (!string.IsNullOrWhiteSpace(b.WatermarkText))
                     {
                         try
                         {
+                            var op = (double)Math.Clamp(template.WatermarkOpacity, 0.05m, 0.6m);
+                            var aa = ((int)Math.Round(op * 255)).ToString("X2");
                             page.Background().AlignCenter().AlignMiddle()
-                                .Text(b.WatermarkText).FontSize(72).FontColor(Colors.Grey.Lighten3).Bold();
+                                .Text(b.WatermarkText).FontSize(72).FontColor($"#{aa}000000").Bold();
                         }
                         catch { }
                     }
@@ -78,7 +83,7 @@ public partial class PdfGenerationService
                         ComposeContact(col, doc, template, accent);
                         ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent);
                         ComposeSummary(col, doc, template, accent, layout);
-                        ComposeFooter(col, doc, template);
+                        ComposeFooter(col, doc, template, accent);
                         ComposeSignatures(col, template, b, signers);
                         ComposeGlPosting(col, gl, lang);
                     });
@@ -243,19 +248,29 @@ public partial class PdfGenerationService
                 // Logo + company info ฝั่งซ้าย, Big title + doc number ฝั่งขวา
                 // (เลียนแบบ HTML view ที่ผู้ใช้เห็นจาก "กดดู" — title +
                 // เลขที่ติดกัน เด่นชัด เป็นกลุ่มเดียว ไม่กระจัดกระจาย).
-                col.Item().Row(r =>
+                // HeaderBackgroundColor ถ้า template ตั้งค่าจะใส่ bg
+                // ครอบทั้ง section (เทียบ HTML BuildCss line 1163).
+                var headerBgColor = SanitizeHex(template.HeaderBackgroundColor);
+                var headerOuter = col.Item();
+                if (headerBgColor != null) headerOuter = headerOuter.Background(headerBgColor).Padding(12);
+                var companyTextColor = headerBgColor != null ? "#FFFFFF" : "#222";
+                headerOuter.Row(r =>
                 {
                     r.RelativeItem().Row(rr =>
                     {
                         if (b.LogoBytes is { Length: > 0 })
                             try { rr.ConstantItem(b.LogoHeightMm + 10, Unit.Millimetre).Image(b.LogoBytes); } catch { }
-                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, "#222"));
+                        rr.RelativeItem().PaddingLeft(12).Column(c => RenderCompanyLines(c, company, template, companyTextColor));
                     });
-                    r.ConstantItem(220).AlignRight().Column(rc =>
+                    r.ConstantItem(260).AlignRight().Column(rc =>
                     {
-                        rc.Item().AlignRight().Text(titleText).FontSize(titleFontSize).Bold().FontColor(accent);
+                        var titleColor = headerBgColor != null ? "#FFFFFF" : accent;
+                        // Thai titles ยาวสุด "ใบรับรองแทนใบเสร็จรับเงิน" ~22
+                        // ตัวอักษร — 260pt @ 22pt ลึก wrap ได้ 2 บรรทัด.
+                        // English "Certificate in Lieu of Receipt" ก็ wrap ได้.
+                        rc.Item().AlignRight().Text(titleText).FontSize(titleFontSize).Bold().FontColor(titleColor);
                         if (template.ShowDocumentNumber)
-                            rc.Item().AlignRight().Text(doc.DocumentNumber).FontSize(13).SemiBold().FontColor(accent);
+                            rc.Item().AlignRight().Text(doc.DocumentNumber).FontSize(13).SemiBold().FontColor(titleColor);
                     });
                 });
                 col.Item().PaddingTop(6).PaddingBottom(4).BorderBottom(2).BorderColor(accent);
@@ -385,13 +400,23 @@ public partial class PdfGenerationService
                 Th("จำนวนเงิน", "right");
             });
 
+            // TableBorderStyle ตาม template: Full = กรอบทุกด้าน, HeaderOnly
+            // = เส้นใต้ทุกแถว, None = ไม่มีเส้น (HTML CSS line 1184 ก็แยก
+            // 3 แบบนี้ — เดิม native ใช้แค่ BorderBottom 0.3pt ทุกแบบ).
+            var borderStyle = (t.TableBorderStyle ?? "Full").Trim();
             int idx = 1;
             foreach (var line in doc.Lines.OrderBy(l => l.LineOrder))
             {
                 var bg = idx % 2 == 0 ? stripe : "#FFFFFF";
                 void Td(string text, string align = "left")
                 {
-                    var cell = table.Cell().Background(bg).BorderBottom(0.3f).BorderColor("#E5E7EB").Padding(5);
+                    var cell = table.Cell().Background(bg);
+                    cell = borderStyle switch
+                    {
+                        "Full" => cell.Border(0.5f).BorderColor("#E5E7EB").Padding(5),
+                        "None" => cell.Padding(5),
+                        _ => cell.BorderBottom(0.5f).BorderColor("#E5E7EB").Padding(5), // HeaderOnly
+                    };
                     var tx = cell.Text(text).FontSize(10);
                     if (align == "right") tx.AlignRight();
                     else if (align == "center") tx.AlignCenter();
@@ -456,14 +481,72 @@ public partial class PdfGenerationService
         }
     }
 
-    private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t)
+    private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent)
     {
+        // CertificateInLieu — เอกสารใบรับรองการจ่ายเงินแทนใบเสร็จ
+        // (กรณีจ่ายให้คนไม่จด VAT / ไม่ออกใบเสร็จ) มี metadata block
+        // เฉพาะ ที่ HTML view แสดงไว้ที่ BuildDocumentHtml บรรทัด
+        // 614-637 — เดิม native renderer ตกหล่นทั้งหมด ทำให้
+        // PDF ใบรับรองขาดข้อมูลผู้รับรอง/พยาน/วันที่จ่าย → ใช้ไม่ได้.
+        if (doc.DocumentType == Models.Enums.DocumentType.CertificateInLieu)
+        {
+            col.Item().PaddingTop(14).Border(1).BorderColor("#333").Padding(12).Column(cc =>
+            {
+                cc.Item().Text("ข้อมูลการรับรอง").FontSize(12).Bold().FontColor(accent);
+                if (!string.IsNullOrWhiteSpace(doc.CertificateReason))
+                    cc.Item().PaddingTop(4).Text(t =>
+                    {
+                        t.Span("เหตุผลที่ไม่ได้รับใบเสร็จ: ").Bold().FontSize(10);
+                        t.Span(doc.CertificateReason!).FontSize(10);
+                    });
+                if (doc.PaymentDate.HasValue)
+                    cc.Item().PaddingTop(2).Text(t =>
+                    {
+                        t.Span("วันที่จ่ายเงิน: ").Bold().FontSize(10);
+                        t.Span($"{doc.PaymentDate:dd/MM/yyyy}").FontSize(10);
+                    });
+                cc.Item().PaddingTop(8).Row(r =>
+                {
+                    r.RelativeItem().Column(c =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(doc.CertifierName))
+                            c.Item().Text(tt => { tt.Span("ผู้รับรอง: ").Bold().FontSize(10); tt.Span(doc.CertifierName!).FontSize(10); });
+                        if (!string.IsNullOrWhiteSpace(doc.CertifierPosition))
+                            c.Item().Text(tt => { tt.Span("ตำแหน่ง: ").Bold().FontSize(10); tt.Span(doc.CertifierPosition!).FontSize(10); });
+                    });
+                    if (!string.IsNullOrWhiteSpace(doc.WitnessName))
+                        r.RelativeItem().Column(c =>
+                        {
+                            c.Item().Text(tt => { tt.Span("พยาน: ").Bold().FontSize(10); tt.Span(doc.WitnessName!).FontSize(10); });
+                            if (!string.IsNullOrWhiteSpace(doc.WitnessPosition))
+                                c.Item().Text(tt => { tt.Span("ตำแหน่ง: ").Bold().FontSize(10); tt.Span(doc.WitnessPosition!).FontSize(10); });
+                        });
+                });
+            });
+        }
+
+        // Custom appendix (per-document) — HTML แสดงก่อน bank details
+        if (!string.IsNullOrWhiteSpace(doc.CustomAppendix))
+            col.Item().PaddingTop(12).Text(doc.CustomAppendix!).FontSize(10).FontColor("#333");
+
         if (t.ShowBankDetails && !string.IsNullOrWhiteSpace(t.BankDetailsText))
-            col.Item().PaddingTop(12).Background("#F8F9FA").Padding(10)
-                .Text($"ข้อมูลชำระเงิน: {t.BankDetailsText}").FontSize(10);
+            col.Item().PaddingTop(12).Background("#F8F9FA").Padding(10).Text(tt =>
+            {
+                tt.Span("ข้อมูลชำระเงิน: ").Bold().FontSize(10);
+                tt.Span(t.BankDetailsText!).FontSize(10);
+            });
+
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes) ? doc.CustomFooterNotes : t.FooterNotes;
         if (!string.IsNullOrWhiteSpace(footerNotes))
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");
+
+        // T&C override per-document (HTML BuildDocumentHtml บรรทัด 653)
+        if (!string.IsNullOrWhiteSpace(doc.CustomTermsAndConditions))
+            col.Item().PaddingTop(8).BorderTop(0.5f).BorderColor("#EEE").PaddingTop(6).Column(cc =>
+            {
+                cc.Item().Text("เงื่อนไข").Bold().FontSize(10).FontColor("#555");
+                cc.Item().Text(doc.CustomTermsAndConditions!).FontSize(10).FontColor("#555");
+            });
     }
 
     private static void ComposeSignatures(ColumnDescriptor col, EntTemplate t, PdfBranding b,

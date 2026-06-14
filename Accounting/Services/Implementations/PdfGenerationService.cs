@@ -565,6 +565,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{caddr}</div>");
         }
         if (template.ShowContactPhone && doc.Contact.Phone != null) sb.AppendLine($"<div>โทร: {doc.Contact.Phone}</div>");
+        if (template.ShowContactEmail && doc.Contact.Email != null) sb.AppendLine($"<div>Email: {doc.Contact.Email}</div>");
         sb.AppendLine("</div>");
 
         // Line Items Table
