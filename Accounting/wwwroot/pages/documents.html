@@ -380,6 +380,7 @@
             <div class="text-sm">VAT: <strong id="sumVat">0.00</strong></div>
             <div class="text-sm">หัก ณ ที่จ่าย: <strong id="sumWht">0.00</strong></div>
             <div class="text-lg font-bold" style="margin-top:4px">ยอดสุทธิ: <span id="sumTotal">0.00</span></div>
+            <div id="sumTotalWords" style="font-size:11px;color:#6b7280;margin-top:2px;font-style:italic"></div>
           </div>
 
           <!-- Send via email (visible only if email configured) -->
@@ -1516,7 +1517,13 @@
         document.getElementById('sumSubTotal').textContent = Layout.money(sub);
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
-        document.getElementById('sumTotal').textContent = Layout.money(sub + vat - wht);
+        const totalCalc = sub + vat - wht;
+        document.getElementById('sumTotal').textContent = Layout.money(totalCalc);
+        // #10 — amount in words (Thai baht) ใต้ยอดสุทธิ
+        const wordsEl = document.getElementById('sumTotalWords');
+        if (wordsEl && window.UxHelpers?.AmountInWords) {
+          wordsEl.textContent = totalCalc > 0 ? '(' + window.UxHelpers.AmountInWords.convert(totalCalc) + ')' : '';
+        }
         // Keep email template's amount in sync — only when email is enabled to
         // avoid wasted DOM work on every keystroke during line editing.
         if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();
@@ -2298,6 +2305,20 @@
             }
             if (extraSections) {
               document.getElementById('detailContent').innerHTML += extraSections;
+            }
+            // #23 Comments widget — mount thread + activity log
+            const commentsHost = document.createElement('div');
+            commentsHost.id = `commentsMount-${id}`;
+            commentsHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';
+            document.getElementById('detailContent').appendChild(commentsHost);
+            // Lazy-load comments script if not loaded
+            if (!window.CommentsWidget) {
+              const s = document.createElement('script');
+              s.src = '/js/comments-widget.js';
+              s.onload = () => window.CommentsWidget.mount(commentsHost, { companyId: Layout.getCompanyId(), entityType: 'Document', entityId: id });
+              document.head.appendChild(s);
+            } else {
+              window.CommentsWidget.mount(commentsHost, { companyId: Layout.getCompanyId(), entityType: 'Document', entityId: id });
             }
           } catch(e) { /* non-critical */ }
 

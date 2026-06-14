@@ -98,10 +98,51 @@
     return hits === tokens.length ? 25 : 0;
   }
 
+  let dynamicCommands = [];
+  let dynSearchTimer = null;
+
+  async function fetchDynamic(q) {
+    if (!q || q.length < 2) { dynamicCommands = []; return; }
+    try {
+      const cid = (() => { try { return JSON.parse(localStorage.getItem('currentCompany'))?.id; } catch { return null; } })();
+      if (!cid) return;
+      const r = await fetch(`/api/companies/${cid}/search/quick?q=${encodeURIComponent(q)}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const j = await r.json();
+      const d = j.data || {};
+      const items = [];
+      (d.documents || []).slice(0, 5).forEach(x => items.push({
+        id: 'dyn-doc-' + x.id, icon: '📄',
+        label: `${x.documentNumber || x.id} — ${x.contactName || ''}`,
+        keys: q,
+        action: () => location.href = `/pages/documents.html?id=${x.id}`
+      }));
+      (d.contacts || []).slice(0, 5).forEach(x => items.push({
+        id: 'dyn-ct-' + x.id, icon: '👤',
+        label: `${x.name}${x.taxId ? ' · ' + x.taxId : ''}`,
+        keys: q,
+        action: () => location.href = `/pages/contacts.html?id=${x.id}`
+      }));
+      (d.journalEntries || []).slice(0, 5).forEach(x => items.push({
+        id: 'dyn-je-' + x.id, icon: '📒',
+        label: `JE ${x.entryNumber} · ${x.description || ''}`,
+        keys: q,
+        action: () => location.href = `/pages/journals.html?entryId=${x.id}`
+      }));
+      dynamicCommands = items;
+      render();
+    } catch {}
+  }
+
   function render() {
     const q = inputEl.value.trim();
+    // Debounce dynamic search
+    clearTimeout(dynSearchTimer);
+    dynSearchTimer = setTimeout(() => fetchDynamic(q), 250);
     let filtered;
     if (!q) {
+      dynamicCommands = [];
       const recents = getRecents();
       const recentCmds = recents.map(id => allCommands.find(c => c.id === id)).filter(Boolean);
       const others = allCommands.filter(c => !recents.includes(c.id));
@@ -111,12 +152,21 @@
         ...others.slice(0, 10)
       ];
     } else {
-      filtered = allCommands.map(c => ({ c, s: score(q, c) }))
+      const staticMatches = allCommands.map(c => ({ c, s: score(q, c) }))
         .filter(x => x.s > 0)
         .sort((a, b) => b.s - a.s)
-        .slice(0, 15)
+        .slice(0, 8)
         .map(x => x.c);
-      filtered = filtered.length ? filtered : [{ empty: true }];
+      filtered = [];
+      if (staticMatches.length > 0) {
+        filtered.push({ groupHeader: 'หน้าจอ + คำสั่ง' });
+        filtered.push(...staticMatches);
+      }
+      if (dynamicCommands.length > 0) {
+        filtered.push({ groupHeader: 'ค้นพบในระบบ (เอกสาร / ลูกค้า / JE)' });
+        filtered.push(...dynamicCommands.slice(0, 10));
+      }
+      if (filtered.length === 0) filtered = [{ empty: true }];
     }
     visibleCommands = filtered.filter(f => !f.groupHeader && !f.empty);
     if (selectedIdx >= visibleCommands.length) selectedIdx = Math.max(0, visibleCommands.length - 1);
