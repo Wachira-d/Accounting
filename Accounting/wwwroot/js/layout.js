@@ -46,13 +46,8 @@ const Layout = {
     if (!document.querySelector('script[src="/js/command-palette.js"]')) {
       const s1 = document.createElement('script'); s1.src = '/js/command-palette.js'; s1.defer = true; document.head.appendChild(s1);
       const s2 = document.createElement('script'); s2.src = '/js/ux-helpers.js'; s2.defer = true; document.head.appendChild(s2);
-      const s3 = document.createElement('script'); s3.src = '/js/notification-bell.js'; s3.defer = true;
-      s3.onload = () => setTimeout(() => {
-        // Mount bell ใน header เมื่อ DOM พร้อม
-        const target = document.querySelector('.header-right, .sidebar-header, header');
-        if (target && window.NotificationBell) window.NotificationBell.mount(target);
-      }, 500);
-      document.head.appendChild(s3);
+      // Smart inline validators — tax-id checksum / period close / VAT mismatch
+      const s3 = document.createElement('script'); s3.src = '/js/smart-hooks.js'; s3.defer = true; document.head.appendChild(s3);
     }
     // Reflect ui-mode on <body> so pages can hide advanced-only sections via CSS.
     const uiMode = localStorage.getItem('uiMode') || 'simple';
@@ -790,6 +785,8 @@ const Layout = {
       description: 'เช็คล่วงหน้า · เบิก-เคลียร์เงินสด · จ่ายรวม vendor · ใบแจ้งยอดลูกหนี้ — รวมในที่เดียว' },
     { id: 'mobile-receipt', label: 'รับเงินสดด่วน (Mobile)', icon: '📱', href: '/pages/mobile-receipt.html', feature: 'AdvancedReporting',
       description: 'หน้าจอ mobile-first สำหรับร้านค้า — numpad + วิธีรับเงิน + พิมพ์ใบเสร็จ 1 click' },
+    { id: 'sme-config', label: 'ตั้งค่าระบบขั้นสูง (Approval + Schedule + Stock)', icon: '⚙️', href: '/pages/sme-config.html', feature: 'AdvancedReporting',
+      description: 'Approval workflow · Schedule reports · ส่วนลดเงินสด · Stock transfer · Sample data — รวมไว้ที่เดียว' },
     { id: 'fx-reval', label: 'FX Revaluation', icon: '💱', href: '/pages/fx-reval.html', feature: 'MultiCurrency',
       description: 'Period-end revalue AR/AP FCY → post JE กำไร/ขาดทุน · idempotent ต่องวด' },
     { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',

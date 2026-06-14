@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าระบบขั้นสูง — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ตั้งค่าระบบขั้นสูง</h2>
+        <p class="page-subtitle">Approval flow · Schedule reports · ส่วนลดเงินสด · Stock transfer · Sample data</p>
+      </div>
+    </div>
+    <div class="tabs">
+      <div class="tab active" onclick="Page.switchTab('approval',this)">✅ Approval Rules</div>
+      <div class="tab" onclick="Page.switchTab('schedule',this)">📧 Schedule Reports</div>
+      <div class="tab" onclick="Page.switchTab('discount',this)">🏷️ Early Payment Discount</div>
+      <div class="tab" onclick="Page.switchTab('stock',this)">📦 Stock Transfer</div>
+      <div class="tab" onclick="Page.switchTab('sample',this)">🎁 Sample Data</div>
+    </div>
+
+    <!-- TAB: Approval Rules -->
+    <div id="tab-approval" class="tab-pane">
+      <div class="toolbar"><button class="btn btn-primary" onclick="Page.openApprovalModal()">+ สร้างกฎอนุมัติ</button></div>
+      <div class="card"><div id="approvalTable" style="padding:16px"><p class="text-center text-gray-400">กำลังโหลด…</p></div></div>
+    </div>
+
+    <!-- TAB: Schedule Reports -->
+    <div id="tab-schedule" class="tab-pane" style="display:none">
+      <div class="toolbar"><button class="btn btn-primary" onclick="Page.openScheduleModal()">+ ตั้ง schedule รายงาน</button></div>
+      <div class="card"><div id="scheduleTable" style="padding:16px"><p class="text-center text-gray-400">กำลังโหลด…</p></div></div>
+    </div>
+
+    <!-- TAB: Early Payment Discount -->
+    <div id="tab-discount" class="tab-pane" style="display:none">
+      <div class="toolbar"><button class="btn btn-primary" onclick="Page.openDiscountModal()">+ เพิ่ม term ส่วนลด</button></div>
+      <div class="card"><div id="discountTable" style="padding:16px"><p class="text-center text-gray-400">กำลังโหลด…</p></div></div>
+    </div>
+
+    <!-- TAB: Stock Transfer -->
+    <div id="tab-stock" class="tab-pane" style="display:none">
+      <div class="toolbar"><button class="btn btn-primary" onclick="Page.openStockModal()">+ สร้าง Transfer</button></div>
+      <div class="card"><div id="stockTable" style="padding:16px"><p class="text-center text-gray-400">กำลังโหลด…</p></div></div>
+      <div class="card" style="margin-top:16px"><div style="padding:16px"><h3 style="margin:0 0 12px;font-size:16px">⏰ Lot ใกล้หมดอายุ (30 วัน)</h3><div id="expiringLots"></div></div></div>
+    </div>
+
+    <!-- TAB: Sample Data -->
+    <div id="tab-sample" class="tab-pane" style="display:none">
+      <div class="card" style="padding:20px">
+        <h3 style="margin:0 0 12px;font-size:18px">🎁 Sample data — ลองระบบโดยไม่ต้อง setup</h3>
+        <p class="text-gray-400" style="font-size:14px;margin-bottom:16px">
+          กดปุ่มด้านล่างเพื่อสร้าง 5 ลูกค้า/vendor + 3 ใบแจ้งหนี้ + 2 ค่าใช้จ่ายตัวอย่าง.
+          ใช้ทดลองดู aging / cash forecast / รายงาน. ลบทิ้งทีหลังได้ด้วยปุ่ม cleanup.
+        </p>
+        <div id="sampleStatus" style="margin-bottom:12px"></div>
+        <button class="btn btn-primary" onclick="Page.seedSample()">🌱 Seed sample data</button>
+        <button class="btn btn-danger" onclick="Page.cleanupSample()">🗑️ ลบ sample data ทั้งหมด</button>
+      </div>
+    </div>
+
+    <!-- Modals -->
+    <div class="modal-overlay" id="approvalModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">สร้างกฎอนุมัติ</h3><button class="modal-close" onclick="Layout.closeModal('approvalModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อกฎ *</label><input type="text" class="form-input" id="aName" placeholder="เช่น เอกสารยอดเกิน 100K ต้องผ่าน CFO"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภทเอกสาร</label>
+              <select class="form-select" id="aDocType">
+                <option value="">— ทุกประเภท —</option>
+                <option value="PurchaseInvoice">PurchaseInvoice</option>
+                <option value="Expense">Expense</option>
+                <option value="PaymentVoucher">PaymentVoucher</option>
+                <option value="Invoice">Invoice</option>
+                <option value="TaxInvoice">TaxInvoice</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">ยอดขั้นต่ำ (บาท)</label><input type="number" class="form-input" id="aMinAmount" placeholder="0"></div>
+            <div class="form-group"><label class="form-label">ยอดสูงสุด</label><input type="number" class="form-input" id="aMaxAmount" placeholder="ไม่จำกัด"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ผู้อนุมัติตามลำดับ (กดเพิ่ม)</label>
+            <div id="aStepsList"></div>
+            <button class="btn btn-sm btn-outline" onclick="Page.addApproverStep()">+ เพิ่มผู้อนุมัติ</button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('approvalModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveApproval()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="scheduleModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">ตั้ง Schedule รายงาน</h3><button class="modal-close" onclick="Layout.closeModal('scheduleModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">ชื่อ schedule *</label><input type="text" class="form-input" id="sName" placeholder="P&L รายสัปดาห์"></div>
+          <div class="form-group"><label class="form-label">รายงาน *</label>
+            <select class="form-select" id="sReport">
+              <option value="PNL">งบกำไรขาดทุน (P&L)</option>
+              <option value="BALANCE_SHEET">งบดุล</option>
+              <option value="AR_AGING">อายุลูกหนี้</option>
+              <option value="AP_AGING">อายุเจ้าหนี้</option>
+              <option value="CASH_FORECAST">พยากรณ์เงินสด</option>
+              <option value="TRIAL_BALANCE">งบทดลอง</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ความถี่</label>
+              <select class="form-select" id="sFreq">
+                <option value="Daily">รายวัน</option>
+                <option value="Weekly" selected>รายสัปดาห์</option>
+                <option value="Monthly">รายเดือน</option>
+                <option value="Quarterly">รายไตรมาส</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">เวลา (ชม.)</label><input type="number" class="form-input" id="sHour" value="8" min="0" max="23"></div>
+          </div>
+          <div class="form-group"><label class="form-label">วันในสัปดาห์ (สำหรับ weekly)</label>
+            <select class="form-select" id="sDayOfWeek">
+              <option value="1">จันทร์</option><option value="2">อังคาร</option><option value="3">พุธ</option>
+              <option value="4">พฤหัส</option><option value="5">ศุกร์</option><option value="6">เสาร์</option><option value="0">อาทิตย์</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">Emails (คั่นด้วย ,)</label><input type="text" class="form-input" id="sEmails" placeholder="owner@co.com, finance@co.com"></div>
+          <div class="form-group"><label class="form-label">Format</label>
+            <select class="form-select" id="sFormat"><option value="PDF">PDF</option><option value="EXCEL">Excel</option><option value="CSV">CSV</option><option value="INLINE">Inline</option></select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('scheduleModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveSchedule()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="discountModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่ม term ส่วนลดเงินสด</h3><button class="modal-close" onclick="Layout.closeModal('discountModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="dCode" placeholder="2/10-N30"></div>
+            <div class="form-group"><label class="form-label">ส่วนลด %</label><input type="number" class="form-input" id="dPercent" step="0.1" placeholder="2"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ภายใน (วัน)</label><input type="number" class="form-input" id="dWindow" placeholder="10"></div>
+            <div class="form-group"><label class="form-label">ครบกำหนด (วัน)</label><input type="number" class="form-input" id="dNet" placeholder="30"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ชื่อเรียก</label><input type="text" class="form-input" id="dName" placeholder="2% ภายใน 10 วัน, ครบกำหนด 30"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('discountModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveDiscount()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="stockModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h3 class="modal-title">สร้าง Stock Transfer</h3><button class="modal-close" onclick="Layout.closeModal('stockModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">คลังต้นทาง *</label><select class="form-select" id="stFrom"></select></div>
+            <div class="form-group"><label class="form-label">คลังปลายทาง *</label><select class="form-select" id="stTo"></select></div>
+          </div>
+          <div class="form-group"><label class="form-label">วันที่</label><input type="date" class="form-input" id="stDate"></div>
+          <div class="form-group"><label class="form-label">รายการสินค้า (Excel-paste สนับสนุน — productCode,qty,lotNumber บรรทัดละ 1)</label>
+            <textarea class="form-input" id="stLines" rows="6" placeholder="P001,10,LOT2025-01&#10;P002,5,"></textarea>
+          </div>
+          <div class="form-group"><label class="form-label">หมายเหตุ</label><input type="text" class="form-input" id="stNotes"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('stockModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveStock()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      currentTab: 'approval',
+      _users: null,
+      _warehouses: null,
+      _products: null,
+      async init() {
+        if (!Layout.init('sme-config')) return;
+        Layout.setTitle('ตั้งค่าระบบขั้นสูง');
+        document.getElementById('stDate').value = Layout.toDateInput(new Date());
+        await this.loadUsers();
+        this.loadApproval();
+      },
+      switchTab(tab, el) {
+        this.currentTab = tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        ['approval','schedule','discount','stock','sample'].forEach(t => {
+          const el = document.getElementById('tab-'+t);
+          if (el) el.style.display = t === tab ? '' : 'none';
+        });
+        if (tab === 'approval') this.loadApproval();
+        else if (tab === 'schedule') this.loadSchedule();
+        else if (tab === 'discount') this.loadDiscount();
+        else if (tab === 'stock') { this.loadStock(); this.loadExpiringLots(); this.loadWarehouses(); }
+        else if (tab === 'sample') this.loadSampleStatus();
+      },
+      async loadUsers() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/users?pageSize=200`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          this._users = j.data?.items || j.data || [];
+        } catch { this._users = []; }
+      },
+      // ==== Approval ====
+      _approverSteps: [],
+      addApproverStep() {
+        const sel = document.createElement('select');
+        sel.className = 'form-select';
+        sel.style.cssText = 'margin-bottom:6px';
+        sel.innerHTML = '<option value="">— เลือกผู้อนุมัติ —</option>' +
+          (this._users || []).map(u => `<option value="${u.id}">${Layout.esc(u.fullName || u.email)}</option>`).join('');
+        document.getElementById('aStepsList').appendChild(sel);
+      },
+      openApprovalModal() {
+        document.getElementById('aName').value = '';
+        document.getElementById('aDocType').value = '';
+        document.getElementById('aMinAmount').value = '';
+        document.getElementById('aMaxAmount').value = '';
+        document.getElementById('aStepsList').innerHTML = '';
+        this.addApproverStep();
+        Layout.openModal('approvalModal');
+      },
+      async loadApproval() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/approval/rules`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          const rules = j.data || [];
+          document.getElementById('approvalTable').innerHTML = rules.length === 0
+            ? '<p class="text-center text-gray-400" style="padding:30px">ยังไม่มีกฎอนุมัติ</p>'
+            : `<table class="table"><thead><tr><th>ชื่อ</th><th>ประเภท</th><th>ช่วงยอด</th><th>ผู้อนุมัติ</th><th>การจัดการ</th></tr></thead><tbody>${
+              rules.map(r => `<tr>
+                <td><strong>${Layout.esc(r.name || '')}</strong></td>
+                <td>${Layout.esc(r.documentType || 'ทุกประเภท')}</td>
+                <td>${r.minAmount ? Layout.money(r.minAmount) : '0'} - ${r.maxAmount ? Layout.money(r.maxAmount) : '∞'}</td>
+                <td>${(r.steps || []).map(s => s.approverUserName || '?').join(' → ')}</td>
+                <td><button class="btn btn-sm btn-danger" onclick="Page.deleteApproval('${r.id}')">ลบ</button></td>
+              </tr>`).join('')
+            }</tbody></table>`;
+        } catch(e) { document.getElementById('approvalTable').innerHTML = `<p class="text-danger">${e.message}</p>`; }
+      },
+      async saveApproval() {
+        const steps = Array.from(document.querySelectorAll('#aStepsList select'))
+          .map(s => s.value).filter(Boolean);
+        if (steps.length === 0) { Layout.toast('เลือกผู้อนุมัติอย่างน้อย 1 คน', 'error'); return; }
+        const body = {
+          name: document.getElementById('aName').value.trim(),
+          documentType: document.getElementById('aDocType').value || null,
+          minAmount: parseFloat(document.getElementById('aMinAmount').value) || null,
+          maxAmount: parseFloat(document.getElementById('aMaxAmount').value) || null,
+          isActive: true,
+          steps: steps.map((u, i) => ({ stepOrder: i + 1, approverUserId: u, isRequired: true }))
+        };
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/approval/rules`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('บันทึกกฎอนุมัติแล้ว');
+          Layout.closeModal('approvalModal');
+          this.loadApproval();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteApproval(id) {
+        if (!confirm('ลบกฎนี้?')) return;
+        const cid = Layout.getCompanyId();
+        await fetch(`/api/companies/${cid}/approval/rules/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        this.loadApproval();
+      },
+
+      // ==== Schedule Reports ====
+      openScheduleModal() { Layout.openModal('scheduleModal'); },
+      async loadSchedule() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/scheduled-reports`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          const rows = j.data || [];
+          document.getElementById('scheduleTable').innerHTML = rows.length === 0
+            ? '<p class="text-center text-gray-400" style="padding:30px">ยังไม่ตั้ง schedule</p>'
+            : `<table class="table"><thead><tr><th>ชื่อ</th><th>รายงาน</th><th>ความถี่</th><th>Emails</th><th>ล่าสุด</th><th>การจัดการ</th></tr></thead><tbody>${
+              rows.map(r => `<tr>
+                <td><strong>${Layout.esc(r.name)}</strong></td>
+                <td>${r.reportCode}</td>
+                <td>${r.frequency} ${r.hourBangkok}:00</td>
+                <td style="font-size:11px">${r.recipients}</td>
+                <td>${r.lastSentAt ? new Date(r.lastSentAt).toLocaleString('th-TH') : '-'}</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="Page.sendNow('${r.id}')">ส่งทันที</button>
+                    <button class="btn btn-sm btn-danger" onclick="Page.deleteSchedule('${r.id}')">ลบ</button></td>
+              </tr>`).join('')
+            }</tbody></table>`;
+        } catch(e) {}
+      },
+      async saveSchedule() {
+        const emails = document.getElementById('sEmails').value.split(',').map(e => e.trim()).filter(Boolean);
+        if (emails.length === 0) { Layout.toast('ใส่ email อย่างน้อย 1', 'error'); return; }
+        const body = {
+          name: document.getElementById('sName').value.trim(),
+          reportCode: document.getElementById('sReport').value,
+          frequency: document.getElementById('sFreq').value,
+          dayOfWeek: parseInt(document.getElementById('sDayOfWeek').value),
+          dayOfMonth: null,
+          hourBangkok: parseInt(document.getElementById('sHour').value) || 8,
+          recipients: emails,
+          format: document.getElementById('sFormat').value,
+          isActive: true
+        };
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/scheduled-reports`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('บันทึก schedule แล้ว');
+          Layout.closeModal('scheduleModal');
+          this.loadSchedule();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async sendNow(id) {
+        const cid = Layout.getCompanyId();
+        await fetch(`/api/companies/${cid}/scheduled-reports/${id}/send-now`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        Layout.toast('Queue ส่งแล้ว');
+        this.loadSchedule();
+      },
+      async deleteSchedule(id) {
+        if (!confirm('ลบ schedule นี้?')) return;
+        const cid = Layout.getCompanyId();
+        await fetch(`/api/companies/${cid}/scheduled-reports/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        this.loadSchedule();
+      },
+
+      // ==== Discount ====
+      openDiscountModal() { Layout.openModal('discountModal'); },
+      async loadDiscount() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/early-payment-discount-terms`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          const rows = j.data || [];
+          document.getElementById('discountTable').innerHTML = rows.length === 0
+            ? '<p class="text-center text-gray-400" style="padding:30px">ยังไม่มี term</p>'
+            : `<table class="table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th>ส่วนลด %</th><th>ภายใน (วัน)</th><th>ครบกำหนด</th><th>สถานะ</th></tr></thead><tbody>${
+              rows.map(r => `<tr><td><strong>${Layout.esc(r.code)}</strong></td><td>${Layout.esc(r.displayName)}</td><td>${r.discountPercent}%</td><td>${r.discountWindowDays}</td><td>${r.netTermDays}</td><td><span class="pill pill-${r.isActive ? 'success' : 'danger'}">${r.isActive ? 'ใช้งาน' : 'ปิด'}</span></td></tr>`).join('')
+            }</tbody></table>`;
+        } catch(e) {}
+      },
+      async saveDiscount() {
+        const body = {
+          code: document.getElementById('dCode').value.trim(),
+          displayName: document.getElementById('dName').value.trim(),
+          discountPercent: parseFloat(document.getElementById('dPercent').value) || 0,
+          discountWindowDays: parseInt(document.getElementById('dWindow').value) || 0,
+          netTermDays: parseInt(document.getElementById('dNet').value) || 0,
+          isActive: true
+        };
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/early-payment-discount-terms`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast('บันทึกแล้ว');
+          Layout.closeModal('discountModal');
+          this.loadDiscount();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ==== Stock Transfer ====
+      async loadWarehouses() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/warehouses`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          this._warehouses = j.data || [];
+          const opts = this._warehouses.map(w => `<option value="${w.id}">${Layout.esc(w.name || w.code)}</option>`).join('');
+          ['stFrom','stTo'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<option value="">— เลือก —</option>' + opts;
+          });
+        } catch {}
+      },
+      openStockModal() { Layout.openModal('stockModal'); },
+      async loadStock() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/stock-transfers`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          const rows = j.data || [];
+          document.getElementById('stockTable').innerHTML = rows.length === 0
+            ? '<p class="text-center text-gray-400" style="padding:30px">ยังไม่มี transfer</p>'
+            : `<table class="table"><thead><tr><th>เลขที่</th><th>ต้นทาง→ปลายทาง</th><th>วันที่</th><th>รายการ</th><th>สถานะ</th><th>การจัดการ</th></tr></thead><tbody>${
+              rows.map(r => `<tr>
+                <td>${Layout.esc(r.transferNumber)}</td>
+                <td>${r.fromWarehouseId?.substring(0,8)} → ${r.toWarehouseId?.substring(0,8)}</td>
+                <td>${new Date(r.transferDate).toLocaleDateString('th-TH')}</td>
+                <td>${r.lineCount} (${r.totalQty})</td>
+                <td><span class="pill pill-info">${r.status}</span></td>
+                <td>
+                  ${r.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.stockAction('${r.id}','ship')">📤 Ship</button>` : ''}
+                  ${r.status === 'InTransit' ? `<button class="btn btn-sm btn-success" onclick="Page.stockAction('${r.id}','receive')">📥 รับ</button>` : ''}
+                </td>
+              </tr>`).join('')
+            }</tbody></table>`;
+        } catch(e) {}
+      },
+      async saveStock() {
+        const text = document.getElementById('stLines').value.trim();
+        const lines = text.split('\n').map(l => l.split(',').map(c => c.trim())).filter(c => c[0] && c[1]);
+        if (lines.length === 0) { Layout.toast('ใส่รายการสินค้า', 'error'); return; }
+        const cid = Layout.getCompanyId();
+        // Resolve product codes → ids
+        try {
+          const pr = await fetch(`/api/companies/${cid}/products?pageSize=500`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const pj = await pr.json();
+          const products = pj.data?.items || pj.data || [];
+          const byCode = Object.fromEntries(products.map(p => [p.code, p.id]));
+          const resolvedLines = lines.map(c => ({
+            productId: byCode[c[0]] || null,
+            quantity: parseFloat(c[1]) || 0,
+            lotNumber: c[2] || null
+          })).filter(l => l.productId);
+          if (resolvedLines.length === 0) { Layout.toast('ไม่พบ product code', 'error'); return; }
+          const body = {
+            fromWarehouseId: document.getElementById('stFrom').value,
+            toWarehouseId: document.getElementById('stTo').value,
+            transferDate: document.getElementById('stDate').value,
+            notes: document.getElementById('stNotes').value,
+            lines: resolvedLines
+          };
+          const r = await fetch(`/api/companies/${cid}/stock-transfers`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          Layout.closeModal('stockModal');
+          this.loadStock();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async stockAction(id, action) {
+        const cid = Layout.getCompanyId();
+        await fetch(`/api/companies/${cid}/stock-transfers/${id}/${action}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        Layout.toast('ดำเนินการแล้ว');
+        this.loadStock();
+      },
+      async loadExpiringLots() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/stock-transfers/expiring-lots?withinDays=30`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          const d = j.data;
+          if (!d || d.count === 0) {
+            document.getElementById('expiringLots').innerHTML = '<p class="text-center text-gray-400">ไม่มี lot ใกล้หมดอายุ</p>';
+            return;
+          }
+          document.getElementById('expiringLots').innerHTML = `
+            <p class="text-warning">⚠️ ${d.count} lot ใกล้หมดอายุ — มูลค่ารวม ${Layout.money(d.totalLossExposure)}</p>
+            <table class="table"><thead><tr><th>สินค้า</th><th>Lot</th><th>หมดอายุ</th><th>อีก</th><th class="text-right">คงเหลือ</th><th class="text-right">มูลค่า</th></tr></thead><tbody>${
+              d.lots.map(l => `<tr><td>${Layout.esc(l.productName)}</td><td>${Layout.esc(l.lotNumber)}</td><td>${new Date(l.expirationDate).toLocaleDateString('th-TH')}</td><td class="${l.daysToExpire < 7 ? 'text-danger' : 'text-warning'}">${l.daysToExpire} วัน</td><td class="text-right">${l.quantityOnHand}</td><td class="text-right">${Layout.money(l.estimatedLoss)}</td></tr>`).join('')
+            }</tbody></table>`;
+        } catch {}
+      },
+
+      // ==== Sample data ====
+      async loadSampleStatus() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/sample-data/status`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          document.getElementById('sampleStatus').innerHTML = j.data?.hasSample
+            ? '<div style="padding:12px;background:#fef3c7;border-radius:6px;color:#92400e">✅ บริษัทนี้มี sample data อยู่แล้ว — กด cleanup เพื่อลบทิ้งก่อน seed ใหม่</div>'
+            : '';
+        } catch {}
+      },
+      async seedSample() {
+        if (!confirm('สร้าง sample data?')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await fetch(`/api/companies/${cid}/sample-data/seed`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.loadSampleStatus();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+      async cleanupSample() {
+        if (!confirm('ลบ sample data ทั้งหมด?')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await fetch(`/api/companies/${cid}/sample-data`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.loadSampleStatus();
+        } catch(e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

@@ -354,6 +354,10 @@
                   <input type="checkbox" id="fPricesIncludeVat" style="margin:0" onchange="Page.calcSum()">
                   <span title="ติ๊กเมื่อราคา/หน่วยที่กรอกรวม VAT 7% แล้ว — ระบบจะถอด VAT ออกให้อัตโนมัติเพื่อแยกฐานภาษีให้ถูกต้อง">ราคารวมภาษี</span>
                 </label>
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsForeignServiceWrap">
+                  <input type="checkbox" id="fIsForeignService" style="margin:0">
+                  <span title="ติ๊กเมื่อซื้อบริการจากต่างประเทศ (Google Ads / AWS / Facebook ฯลฯ) — ระบบจะรวมรายการนี้ในรายงาน ภ.พ.36 (self-assess VAT 7%) และ ภ.ง.ด.54 (WHT)">🌐 บริการต่างประเทศ (§83/6)</span>
+                </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
@@ -1428,6 +1432,7 @@
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${hasEtaxId(d.etaxInvoiceId) ? ' 📥' : ''}</button>
+              <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.cloneDoc('${d.id}')" title="คัดลอกเอกสารฉบับนี้ — สร้างใหม่จากข้อมูลเดิม (ลูกค้า + รายการ + บัญชี)">📋</button>
               ${d.status === 'Draft' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteDoc('${d.id}')" title="ลบเอกสารฉบับร่าง">ลบ</button>` : ''}
               ${d.status !== 'Draft' && d.status !== 'Voided' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidDoc('${d.id}')" title="ยกเลิกเอกสาร">ยกเลิก</button>` : ''}
             </td>
@@ -1968,6 +1973,7 @@
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
             ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
           pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
+          isForeignService: document.getElementById('fIsForeignService')?.checked || false,
         };
         try {
           let savedDocId = this.editingId;
@@ -2627,6 +2633,29 @@
           setTimeout(() => URL.revokeObjectURL(u), 1000);
           Layout.toast('ดาวน์โหลด PDF/A-3 สำเร็จ — ไฟล์มี XML ฝังในตัว');
         } catch (e) { Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error'); }
+      },
+      /**
+       * คัดลอกเอกสาร (#4) — สร้างเอกสารใหม่จากต้นแบบ. server endpoint
+       * /documents/{id}/clone จะ pre-fill ลูกค้า + รายการ + บัญชี ทั้งหมด
+       * แต่ reset DocumentNumber + PaidAmount + Status. หลัง clone redirect
+       * ไปเปิด edit form ของ doc ใหม่ทันที.
+       */
+      async cloneDoc(id) {
+        if (!confirm('สร้างเอกสารใหม่จากต้นแบบนี้ (ลูกค้า + รายการ + บัญชี)?')) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/documents/${id}/clone`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ autoCreate: true })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          // Refresh list + open new doc for edit
+          this.load();
+          setTimeout(() => this.edit(j.data.newDocumentId), 300);
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async voidDoc(id) {
         const api = Layout.api(); if (!api) return;

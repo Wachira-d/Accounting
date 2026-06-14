@@ -57,7 +57,11 @@ public record CreateDocumentRequest(
     // Null → service infers per type (standalone PV defaults to Cash).
     PaymentType? PaymentType = null,
     // Unit prices entered VAT-inclusive (ราคารวมภาษี). True → back 7% VAT out.
-    bool PricesIncludeVat = false);
+    bool PricesIncludeVat = false,
+    // ภ.พ.36 / ภ.ง.ด.54 — flag เมื่อซื้อบริการจากต่างประเทศ (Google Ads /
+    // AWS / Facebook ฯลฯ). ผู้รับบริการในไทยต้อง self-assess VAT 7% และ
+    // หัก WHT ตาม DTA. Default false. Apply เฉพาะ PI/Expense/PV.
+    bool IsForeignService = false);
 
 public record DocumentLineRequest(
     string Description,

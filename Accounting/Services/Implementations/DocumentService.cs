@@ -485,6 +485,7 @@ public class DocumentService : IDocumentService
                     .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
+            doc.IsForeignService = request.IsForeignService;
             foreach (var line in request.Lines ?? [])
             {
                 var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
