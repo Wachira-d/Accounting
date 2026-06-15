@@ -520,8 +520,21 @@
         <label class="form-label">ตำแหน่ง</label>
         <input id="sigTitle" type="text" class="form-input" placeholder="เช่น ผู้จัดการ / กรรมการ" />
       </div>
+
+      <!-- วิธีที่ 1: วาดลายเซ็นบนระบบ (เผื่อไม่มีไฟล์ลายเซ็น) -->
       <div class="form-group">
-        <label class="form-label">รูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
+        <label class="form-label">✍️ วิธีที่ 1 — วาดลายเซ็นบนระบบ (เซ็นด้วยเมาส์ / นิ้ว / ปากกาสไตลัส)</label>
+        <canvas id="sigDrawCanvas" width="600" height="200"
+                style="border:2px dashed #94a3b8;border-radius:8px;cursor:crosshair;background:#fff;display:block;width:100%;max-width:600px;touch-action:none"></canvas>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" class="btn btn-secondary" onclick="Page.clearSignatureCanvas()">ล้างกระดาน</button>
+          <button type="button" class="btn btn-primary" onclick="Page.useDrawnSignature()">ใช้ลายเซ็นที่วาดนี้</button>
+          <span class="text-gray-400" style="font-size:12px">เซ็นในกรอบด้านบน แล้วกด "ใช้ลายเซ็นที่วาดนี้" → จากนั้นกด "บันทึกลายเซ็น"</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">📁 วิธีที่ 2 — อัพโหลดรูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
         <div style="display:flex;gap:12px;align-items:flex-start">
           <div style="flex:1">
             <input id="sigUpload" type="file" accept="image/png,image/jpeg" onchange="Page.onSignatureUpload(event)" />
@@ -721,9 +734,55 @@
           document.getElementById('sigTitle').value = p.signatureTitle || '';
           this._signatureBase64 = p.signatureImageBase64 || null;
           this._renderSignaturePreview();
+          this.setupSignatureCanvas();
         } catch (e) {
           Layout.toast(e.message || 'โหลดลายเซ็นไม่สำเร็จ', 'error');
         }
+      },
+
+      // ===== วาดลายเซ็นบน canvas (เผื่อผู้ใช้ไม่มีไฟล์) =====
+      setupSignatureCanvas() {
+        const canvas = document.getElementById('sigDrawCanvas');
+        if (!canvas || canvas._wired) return;
+        canvas._wired = true;
+        const ctx = canvas.getContext('2d');
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        this._sigCtx = ctx;
+        let drawing = false;
+        // แปลงพิกัด pointer → พิกัดภายใน canvas (รองรับ CSS scale + จอมือถือ)
+        const pos = (e) => {
+          const r = canvas.getBoundingClientRect();
+          const p = e.touches && e.touches[0] ? e.touches[0] : e;
+          return {
+            x: (p.clientX - r.left) * (canvas.width / r.width),
+            y: (p.clientY - r.top) * (canvas.height / r.height)
+          };
+        };
+        const start = (e) => { e.preventDefault(); drawing = true; const c = pos(e); ctx.beginPath(); ctx.moveTo(c.x, c.y); };
+        const move = (e) => { if (!drawing) return; e.preventDefault(); const c = pos(e); ctx.lineTo(c.x, c.y); ctx.stroke(); this._sigDrawn = true; };
+        const end = () => { drawing = false; };
+        canvas.addEventListener('mousedown', start);
+        canvas.addEventListener('mousemove', move);
+        canvas.addEventListener('mouseup', end);
+        canvas.addEventListener('mouseleave', end);
+        canvas.addEventListener('touchstart', start, { passive: false });
+        canvas.addEventListener('touchmove', move, { passive: false });
+        canvas.addEventListener('touchend', end);
+      },
+      clearSignatureCanvas() {
+        const canvas = document.getElementById('sigDrawCanvas');
+        if (canvas && this._sigCtx) this._sigCtx.clearRect(0, 0, canvas.width, canvas.height);
+        this._sigDrawn = false;
+      },
+      useDrawnSignature() {
+        if (!this._sigDrawn) { Layout.toast('กรุณาวาดลายเซ็นในกรอบก่อน', 'error'); return; }
+        const canvas = document.getElementById('sigDrawCanvas');
+        this._signatureBase64 = canvas.toDataURL('image/png');
+        this._renderSignaturePreview();
+        Layout.toast('ใช้ลายเซ็นที่วาดแล้ว — อย่าลืมกด "บันทึกลายเซ็น"');
       },
       onSignatureUpload(ev) {
         const file = ev.target.files && ev.target.files[0];
@@ -742,6 +801,7 @@
       clearSignature() {
         this._signatureBase64 = null;
         document.getElementById('sigUpload').value = '';
+        this.clearSignatureCanvas();
         this._renderSignaturePreview();
       },
       _renderSignaturePreview() {
