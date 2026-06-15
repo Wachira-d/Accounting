@@ -21,11 +21,11 @@ namespace Accounting.Services.Implementations.Import;
 ///   JournalEntry: EntryNumber+Date (1.0)
 ///
 /// คืน null = ไม่ใช่ duplicate (ปล่อย import ปกติ).
-/// คืน ImportConflict = staged + existing → user resolve.
+/// คืน ImportDuplicateConflict = staged + existing → user resolve.
 /// </summary>
 public interface IDuplicateDetector
 {
-    Task<ImportConflict?> DetectAsync(Guid companyId, string entityType,
+    Task<ImportDuplicateConflict?> DetectAsync(Guid companyId, string entityType,
         Dictionary<string, object?> stagedData, Guid? sessionId = null,
         string? sessionRef = null, int rowNumber = 0,
         CancellationToken ct = default);
@@ -33,7 +33,7 @@ public interface IDuplicateDetector
     /// <summary>Bulk detect — รับ list ของ staged rows + คืน list conflicts
     /// (เฉพาะแถวที่เจอ dup). มี optimization: pre-load existing records ทั้ง
     /// company ครั้งเดียว แล้ว match in-memory.</summary>
-    Task<List<ImportConflict>> DetectBatchAsync(Guid companyId, string entityType,
+    Task<List<ImportDuplicateConflict>> DetectBatchAsync(Guid companyId, string entityType,
         List<Dictionary<string, object?>> stagedRows, Guid? sessionId = null,
         string? sessionRef = null, CancellationToken ct = default);
 }
@@ -43,7 +43,7 @@ public class DuplicateDetector : IDuplicateDetector
     private readonly AccountingDbContext _db;
     public DuplicateDetector(AccountingDbContext db) { _db = db; }
 
-    public async Task<ImportConflict?> DetectAsync(Guid companyId, string entityType,
+    public async Task<ImportDuplicateConflict?> DetectAsync(Guid companyId, string entityType,
         Dictionary<string, object?> stagedData, Guid? sessionId, string? sessionRef,
         int rowNumber, CancellationToken ct = default)
     {
@@ -60,11 +60,11 @@ public class DuplicateDetector : IDuplicateDetector
         };
     }
 
-    public async Task<List<ImportConflict>> DetectBatchAsync(Guid companyId, string entityType,
+    public async Task<List<ImportDuplicateConflict>> DetectBatchAsync(Guid companyId, string entityType,
         List<Dictionary<string, object?>> stagedRows, Guid? sessionId, string? sessionRef,
         CancellationToken ct = default)
     {
-        var conflicts = new List<ImportConflict>();
+        var conflicts = new List<ImportDuplicateConflict>();
         for (int i = 0; i < stagedRows.Count; i++)
         {
             var c = await DetectAsync(companyId, entityType, stagedRows[i], sessionId, sessionRef, i + 1, ct);
@@ -94,10 +94,10 @@ public class DuplicateDetector : IDuplicateDetector
         return null;
     }
 
-    private static ImportConflict Pack(Guid companyId, string entityType,
+    private static ImportDuplicateConflict Pack(Guid companyId, string entityType,
         Dictionary<string, object?> staged, Guid? existingId, object existingData,
         double score, string reason, Guid? sessionId, string? sessionRef, int rowNumber)
-        => new ImportConflict
+        => new ImportDuplicateConflict
         {
             CompanyId = companyId,
             SessionId = sessionId,
@@ -112,7 +112,7 @@ public class DuplicateDetector : IDuplicateDetector
             Resolution = ImportConflictResolution.Pending
         };
 
-    private async Task<ImportConflict?> DetectContactAsync(Guid cid, Dictionary<string, object?> d,
+    private async Task<ImportDuplicateConflict?> DetectContactAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)
     {
         var taxId = Get(d, "TaxId", "taxId", "เลขผู้เสียภาษี");
@@ -139,7 +139,7 @@ public class DuplicateDetector : IDuplicateDetector
         return null;
     }
 
-    private async Task<ImportConflict?> DetectProductAsync(Guid cid, Dictionary<string, object?> d,
+    private async Task<ImportDuplicateConflict?> DetectProductAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)
     {
         var code = Get(d, "Code", "code", "ProductCode", "รหัส");
@@ -163,7 +163,7 @@ public class DuplicateDetector : IDuplicateDetector
         return null;
     }
 
-    private async Task<ImportConflict?> DetectDocumentAsync(Guid cid, Dictionary<string, object?> d,
+    private async Task<ImportDuplicateConflict?> DetectDocumentAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)
     {
         var docNo = Get(d, "DocumentNumber", "documentNumber", "เลขที่");
@@ -195,7 +195,7 @@ public class DuplicateDetector : IDuplicateDetector
         return null;
     }
 
-    private async Task<ImportConflict?> DetectEmployeeAsync(Guid cid, Dictionary<string, object?> d,
+    private async Task<ImportDuplicateConflict?> DetectEmployeeAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)
     {
         var idCard = Get(d, "CitizenId", "citizenId", "TaxId", "taxId", "เลขบัตรประชาชน");
@@ -219,7 +219,7 @@ public class DuplicateDetector : IDuplicateDetector
         return null;
     }
 
-    private async Task<ImportConflict?> DetectBankTxnAsync(Guid cid, Dictionary<string, object?> d,
+    private async Task<ImportDuplicateConflict?> DetectBankTxnAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)
     {
         var bankRef = Get(d, "BankReference", "bankReference", "Reference", "เลขอ้างอิงธนาคาร");
@@ -239,7 +239,7 @@ public class DuplicateDetector : IDuplicateDetector
         return null;
     }
 
-    private async Task<ImportConflict?> DetectFixedAssetAsync(Guid cid, Dictionary<string, object?> d,
+    private async Task<ImportDuplicateConflict?> DetectFixedAssetAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)
     {
         var code = Get(d, "AssetCode", "assetCode", "Code", "รหัสสินทรัพย์");
@@ -254,7 +254,7 @@ public class DuplicateDetector : IDuplicateDetector
         return null;
     }
 
-    private async Task<ImportConflict?> DetectJournalEntryAsync(Guid cid, Dictionary<string, object?> d,
+    private async Task<ImportDuplicateConflict?> DetectJournalEntryAsync(Guid cid, Dictionary<string, object?> d,
         Guid? sid, string? sref, int rn, CancellationToken ct)
     {
         var entryNo = Get(d, "EntryNumber", "entryNumber", "เลขที่ JE");

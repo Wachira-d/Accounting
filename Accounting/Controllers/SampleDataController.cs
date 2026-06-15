@@ -47,14 +47,14 @@ public class SampleDataController : ControllerBase
         // 5 contacts
         var customers = new[]
         {
-            new Contact { CompanyId = companyId, Name = "บริษัท ตัวอย่าง ก จำกัด", TaxId = "0105566123456", IsCustomer = true, ContactType = ContactType.Company, Phone = "02-111-1111", Email = "sample-a@example.com" },
-            new Contact { CompanyId = companyId, Name = "บริษัท ตัวอย่าง ข จำกัด", TaxId = "0105566234567", IsCustomer = true, ContactType = ContactType.Company, Phone = "02-222-2222", Email = "sample-b@example.com" },
+            new Contact { CompanyId = companyId, Name = "บริษัท ตัวอย่าง ก จำกัด", TaxId = "0105566123456", IsCustomer = true, ContactType = ContactType.JuristicPerson, Phone = "02-111-1111", Email = "sample-a@example.com" },
+            new Contact { CompanyId = companyId, Name = "บริษัท ตัวอย่าง ข จำกัด", TaxId = "0105566234567", IsCustomer = true, ContactType = ContactType.JuristicPerson, Phone = "02-222-2222", Email = "sample-b@example.com" },
             new Contact { CompanyId = companyId, Name = "ร้านค้าตัวอย่าง ค", TaxId = "3101234567890", IsCustomer = true, ContactType = ContactType.Individual, Phone = "081-333-3333" }
         };
         var vendors = new[]
         {
-            new Contact { CompanyId = companyId, Name = "บริษัท ผู้ขาย ก จำกัด", TaxId = "0105566345678", IsSupplier = true, ContactType = ContactType.Company, Phone = "02-444-4444" },
-            new Contact { CompanyId = companyId, Name = "บริษัท ผู้ขาย ข จำกัด", TaxId = "0105566456789", IsSupplier = true, ContactType = ContactType.Company, Phone = "02-555-5555" }
+            new Contact { CompanyId = companyId, Name = "บริษัท ผู้ขาย ก จำกัด", TaxId = "0105566345678", IsSupplier = true, ContactType = ContactType.JuristicPerson, Phone = "02-444-4444" },
+            new Contact { CompanyId = companyId, Name = "บริษัท ผู้ขาย ข จำกัด", TaxId = "0105566456789", IsSupplier = true, ContactType = ContactType.JuristicPerson, Phone = "02-555-5555" }
         };
         var allContacts = customers.Concat(vendors).ToArray();
         _db.Contacts.AddRange(allContacts);

@@ -239,7 +239,7 @@ public class AccountingDbContext : DbContext
     public DbSet<ProductLot> ProductLots => Set<ProductLot>();
     public DbSet<DocumentComment> DocumentComments => Set<DocumentComment>();
     public DbSet<ScheduledReport> ScheduledReports => Set<ScheduledReport>();
-    public DbSet<ImportConflict> ImportConflicts => Set<ImportConflict>();
+    public DbSet<ImportDuplicateConflict> ImportConflicts => Set<ImportDuplicateConflict>();
     public DbSet<CashAdvanceRequest> CashAdvanceRequests => Set<CashAdvanceRequest>();
     public DbSet<EarlyPaymentDiscountTerm> EarlyPaymentDiscountTerms => Set<EarlyPaymentDiscountTerm>();
     public DbSet<EmailScheduleRule> EmailScheduleRules => Set<EmailScheduleRule>();
