@@ -634,13 +634,25 @@
         try {
           const res = await fetch(`/api/companies/${cid}/tax/${reportId}/export-xlsx`,
             { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-          if (!res.ok) throw new Error(`ส่งออก Excel ล้มเหลว (${res.status})`);
+          if (!res.ok) {
+            // อ่าน server message (ApiResponse.message) เพื่อให้ผู้ใช้รู้ว่า
+            // 404 มาจาก "ไม่พบรายงาน" (อาจถูกลบ/บริษัทเปลี่ยน) ไม่ใช่ endpoint หาย,
+            // 403 คือสิทธิ์, 401 คือ token หมดอายุ.
+            let detail = '';
+            try { const j = await res.clone().json(); detail = j?.message || ''; } catch {}
+            const reasons = {
+              401: 'เซสชันหมดอายุ — กรุณา login ใหม่',
+              403: detail || 'ไม่มีสิทธิ์เข้าถึงรายงานในบริษัทนี้',
+              404: detail || 'ไม่พบรายงานนี้ (อาจถูกลบ หรือสลับบริษัทแล้ว — กรุณารีโหลดหน้า)',
+            };
+            throw new Error(reasons[res.status] || `ส่งออก Excel ล้มเหลว (${res.status}) ${detail}`);
+          }
           const blob = await res.blob();
           const cd = res.headers.get('content-disposition') || '';
-          const m = cd.match(/filename="?([^"]+)"?/);
+          const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = m ? m[1] : `TaxReport_${reportId}.xlsx`;
+          a.download = m ? decodeURIComponent(m[1]) : `TaxReport_${reportId}.xlsx`;
           a.click();
           URL.revokeObjectURL(a.href);
           Layout.toast('ส่งออก Excel สำเร็จ');
