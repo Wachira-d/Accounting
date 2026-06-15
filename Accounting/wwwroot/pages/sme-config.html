@@ -229,7 +229,7 @@
         sel.className = 'form-select';
         sel.style.cssText = 'margin-bottom:6px';
         sel.innerHTML = '<option value="">— เลือกผู้อนุมัติ —</option>' +
-          (this._users || []).map(u => `<option value="${u.id}">${Layout.esc(u.fullName || u.email)}</option>`).join('');
+          (this._users || []).map(u => `<option value="${u.userId || u.id}">${Layout.esc(u.fullName || u.email)}</option>`).join('');
         document.getElementById('aStepsList').appendChild(sel);
       },
       openApprovalModal() {
@@ -255,7 +255,7 @@
                 <td><strong>${Layout.esc(r.name || '')}</strong></td>
                 <td>${Layout.esc(r.documentType || 'ทุกประเภท')}</td>
                 <td>${r.minAmount ? Layout.money(r.minAmount) : '0'} - ${r.maxAmount ? Layout.money(r.maxAmount) : '∞'}</td>
-                <td>${(r.steps || []).map(s => s.approverUserName || '?').join(' → ')}</td>
+                <td>${(r.steps || []).map(s => s.approverName || '?').join(' → ')}</td>
                 <td><button class="btn btn-sm btn-danger" onclick="Page.deleteApproval('${r.id}')">ลบ</button></td>
               </tr>`).join('')
             }</tbody></table>`;

@@ -106,31 +106,22 @@
     try {
       const cid = (() => { try { return JSON.parse(localStorage.getItem('currentCompany'))?.id; } catch { return null; } })();
       if (!cid) return;
-      const r = await fetch(`/api/companies/${cid}/search/quick?q=${encodeURIComponent(q)}`, {
+      const r = await fetch(`/api/companies/${cid}/search/quick?q=${encodeURIComponent(q)}&perKindLimit=5`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       const j = await r.json();
-      const d = j.data || {};
-      const items = [];
-      (d.documents || []).slice(0, 5).forEach(x => items.push({
-        id: 'dyn-doc-' + x.id, icon: '📄',
-        label: `${x.documentNumber || x.id} — ${x.contactName || ''}`,
+      // QuickSearchHit { Kind, Id, Title, Subtitle, Detail, DeepLink }
+      const hits = Array.isArray(j.data) ? j.data : [];
+      dynamicCommands = hits.map(h => ({
+        id: 'dyn-' + h.kind + '-' + h.id,
+        icon: h.kind === 'Document' ? '📄' :
+              h.kind === 'Contact' ? '👤' :
+              h.kind === 'Product' ? '📦' :
+              h.kind === 'JournalEntry' ? '📒' : '•',
+        label: h.title + (h.subtitle ? ' — ' + h.subtitle : ''),
         keys: q,
-        action: () => location.href = `/pages/documents.html?id=${x.id}`
+        action: () => { if (h.deepLink) location.href = h.deepLink; }
       }));
-      (d.contacts || []).slice(0, 5).forEach(x => items.push({
-        id: 'dyn-ct-' + x.id, icon: '👤',
-        label: `${x.name}${x.taxId ? ' · ' + x.taxId : ''}`,
-        keys: q,
-        action: () => location.href = `/pages/contacts.html?id=${x.id}`
-      }));
-      (d.journalEntries || []).slice(0, 5).forEach(x => items.push({
-        id: 'dyn-je-' + x.id, icon: '📒',
-        label: `JE ${x.entryNumber} · ${x.description || ''}`,
-        keys: q,
-        action: () => location.href = `/pages/journals.html?entryId=${x.id}`
-      }));
-      dynamicCommands = items;
       render();
     } catch {}
   }
