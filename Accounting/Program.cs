@@ -125,6 +125,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Accounting.IFxRev
 // before serving data — prevents IDOR cross-tenant data leak.
 builder.Services.AddScoped<Accounting.Services.Implementations.Security.ITenantGuard,
                            Accounting.Services.Implementations.Security.TenantGuard>();
+// Central duplicate detection for ทุก import flow (CSV/Excel/OCR/Bank/etc.)
+builder.Services.AddScoped<Accounting.Services.Implementations.Import.IDuplicateDetector,
+                           Accounting.Services.Implementations.Import.DuplicateDetector>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accounting.Services.Implementations.LineBotService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();

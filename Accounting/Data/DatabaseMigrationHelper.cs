@@ -4356,6 +4356,37 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_ScheduledReports_Company" ON "ScheduledReports" ("CompanyId") WHERE "IsDeleted" = false AND "IsActive" = true;""",
 
+            // ===== ImportConflicts — duplicate detection during import flows
+            """
+            CREATE TABLE IF NOT EXISTS "ImportConflicts" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "SessionId" uuid NULL,
+                "SessionRef" text NULL,
+                "RowNumber" integer NOT NULL DEFAULT 0,
+                "EntityType" text NOT NULL DEFAULT '',
+                "StagedDataJson" text NOT NULL DEFAULT '{}',
+                "ExistingEntityId" uuid NULL,
+                "ExistingDataJson" text NOT NULL DEFAULT '{}',
+                "MatchScore" double precision NOT NULL DEFAULT 0,
+                "MatchReason" text NOT NULL DEFAULT '',
+                "Resolution" integer NOT NULL DEFAULT 0,
+                "ResolvedAt" timestamp with time zone NULL,
+                "ResolvedBy" text NULL,
+                "MergeChoicesJson" text NULL,
+                "UserNote" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ImportConflicts_Session" ON "ImportConflicts" ("SessionId") WHERE "SessionId" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ImportConflicts_SessionRef" ON "ImportConflicts" ("CompanyId", "SessionRef") WHERE "SessionRef" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ImportConflicts_Pending" ON "ImportConflicts" ("CompanyId", "Resolution") WHERE "Resolution" = 0 AND "IsDeleted" = false;""",
+
             // ===== ProductLot — FIFO/FEFO tracking
             """
             CREATE TABLE IF NOT EXISTS "ProductLots" (

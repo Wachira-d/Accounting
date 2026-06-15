@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เลือกข้อมูลที่ตรวจพบว่าซ้ำ — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .conflict-card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 16px; overflow: hidden; }
+    .conflict-header { padding: 12px 16px; background: #fef3c7; border-bottom: 1px solid #fde68a; display: flex; justify-content: space-between; align-items: center; }
+    .conflict-header.resolved { background: #d1fae5; border-color: #a7f3d0; }
+    .side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px; }
+    .side { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #f9fafb; }
+    .side.staged { border-color: #3b82f6; background: #eff6ff; }
+    .side.existing { border-color: #10b981; background: #ecfdf5; }
+    .side h4 { margin: 0 0 8px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .side dl { margin: 0; font-size: 12px; }
+    .side dt { color: #6b7280; margin-top: 6px; }
+    .side dd { margin: 0 0 4px; color: #111; font-weight: 500; }
+    .actions { padding: 12px 16px; background: #f9fafb; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { font-size: 12px; }
+    .match-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; font-weight: 600; }
+    .match-exact { background: #fee2e2; color: #991b1b; }
+    .match-strong { background: #fef3c7; color: #92400e; }
+    .match-weak { background: #e0e7ff; color: #3730a3; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เลือกข้อมูลที่ตรวจพบว่าซ้ำ</h2>
+        <p class="page-subtitle">ระบบเจอข้อมูลที่อาจซ้ำกับที่มีในระบบอยู่แล้ว — กรุณาเลือกว่าจะใช้ของเดิมหรือของใหม่</p>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-bottom:16px">
+      <span>Session: <strong id="sessionLabel">-</strong></span>
+      <span style="margin-left:16px">ทั้งหมด: <strong id="totalCount">0</strong> · ยังไม่ตัดสิน: <strong id="pendingCount" style="color:#dc2626">0</strong></span>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn btn-sm btn-secondary" onclick="Page.resolveAll(1)" title="ใช้ของเดิมทั้งหมด — ทิ้งข้อมูลใหม่">↩ ใช้ของเดิมทั้งหมด</button>
+        <button class="btn btn-sm btn-secondary" onclick="Page.resolveAll(2)" title="ใช้ของใหม่ทั้งหมด — อัปเดตของเดิมด้วยข้อมูลใหม่">↪ ใช้ใหม่ทั้งหมด</button>
+        <button class="btn btn-sm btn-secondary" onclick="Page.resolveAll(3)" title="ข้ามทั้งหมด">⏭ ข้ามทั้งหมด</button>
+      </div>
+    </div>
+
+    <div id="conflictList"><p class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</p></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const RESOLUTION = { 0: 'รอ', 1: 'ใช้เดิม', 2: 'ใช้ใหม่', 3: 'ข้าม', 4: 'รวม', 5: 'สร้างใหม่' };
+    const Page = {
+      sessionId: null,
+      sessionRef: null,
+      async init() {
+        if (!Layout.init('import-conflicts')) return;
+        Layout.setTitle('เลือกข้อมูลที่ซ้ำ');
+        const params = new URLSearchParams(location.search);
+        this.sessionId = params.get('session');
+        this.sessionRef = params.get('sessionRef');
+        document.getElementById('sessionLabel').textContent = this.sessionId || this.sessionRef || '-';
+        await this.load();
+      },
+      async load() {
+        const cid = Layout.getCompanyId();
+        const url = this.sessionId
+          ? `/api/companies/${cid}/import-conflicts/session/${this.sessionId}`
+          : `/api/companies/${cid}/import-conflicts/session-ref/${encodeURIComponent(this.sessionRef)}`;
+        try {
+          const r = await fetch(url, { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          const d = j.data;
+          document.getElementById('totalCount').textContent = d.total || 0;
+          document.getElementById('pendingCount').textContent = d.pending || 0;
+          this.renderList(d.conflicts || []);
+        } catch (e) {
+          document.getElementById('conflictList').innerHTML = `<p class="text-danger" style="padding:30px;text-align:center">${Layout.esc(e.message)}</p>`;
+        }
+      },
+      renderList(conflicts) {
+        if (conflicts.length === 0) {
+          document.getElementById('conflictList').innerHTML = '<p class="text-center text-gray-400" style="padding:40px">✅ ไม่มี conflict ที่รอ — Import พร้อมดำเนินการ</p>';
+          return;
+        }
+        document.getElementById('conflictList').innerHTML = conflicts.map(c => this.renderCard(c)).join('');
+      },
+      renderCard(c) {
+        const score = c.matchScore || 0;
+        const badgeClass = score >= 0.95 ? 'match-exact' : score >= 0.8 ? 'match-strong' : 'match-weak';
+        const badgeLabel = score >= 0.95 ? 'ตรงเป๊ะ' : score >= 0.8 ? 'ใกล้เคียงสูง' : 'อาจเหมือน';
+        const isResolved = c.resolution !== 0;
+        return `<div class="conflict-card">
+          <div class="conflict-header ${isResolved ? 'resolved' : ''}">
+            <div>
+              <strong style="font-size:14px">แถวที่ ${c.rowNumber} — ${Layout.esc(c.entityType)}</strong>
+              <span class="match-badge ${badgeClass}" style="margin-left:8px">${badgeLabel} (${(score*100).toFixed(0)}%)</span>
+              <div style="font-size:12px;color:#6b7280;margin-top:2px">${Layout.esc(c.matchReason)}</div>
+            </div>
+            <span style="font-size:12px;color:${isResolved ? '#065f46' : '#92400e'}">
+              ${isResolved ? '✅ ' + (RESOLUTION[c.resolution] || c.resolution) : '⏳ รอตัดสิน'}
+            </span>
+          </div>
+          <div class="side-by-side">
+            <div class="side staged">
+              <h4>📥 ข้อมูลใหม่ (จาก import) <span style="font-weight:normal;color:#3b82f6;font-size:11px">NEW</span></h4>
+              ${this.renderFields(c.staged)}
+            </div>
+            <div class="side existing">
+              <h4>📁 ข้อมูลเดิม (ในระบบ) <span style="font-weight:normal;color:#10b981;font-size:11px">EXISTING</span></h4>
+              ${this.renderFields(c.existing)}
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-sm ${c.resolution===1?'btn-success':'btn-outline'}" onclick="Page.resolve('${c.id}',1)">↩ ใช้ของเดิม</button>
+            <button class="btn btn-sm ${c.resolution===2?'btn-success':'btn-outline'}" onclick="Page.resolve('${c.id}',2)">↪ ใช้ของใหม่ (อัปเดต)</button>
+            <button class="btn btn-sm ${c.resolution===3?'btn-success':'btn-outline'}" onclick="Page.resolve('${c.id}',3)">⏭ ข้าม</button>
+            <button class="btn btn-sm ${c.resolution===5?'btn-success':'btn-outline'}" onclick="Page.resolve('${c.id}',5)" title="สร้างใหม่แม้จะซ้ำ (เช่น vendor มี 2 บัญชี)">➕ สร้างใหม่อยู่ดี</button>
+          </div>
+        </div>`;
+      },
+      renderFields(obj) {
+        if (!obj || typeof obj !== 'object') return '<div class="text-gray-400">-</div>';
+        const skipKeys = ['id', 'createdAt', 'updatedAt', 'isDeleted', 'version'];
+        const items = Object.entries(obj)
+          .filter(([k]) => !skipKeys.includes(k.toLowerCase()))
+          .slice(0, 12)
+          .map(([k, v]) => {
+            let val = v;
+            if (val === null || val === undefined) val = '-';
+            else if (typeof val === 'object') val = JSON.stringify(val);
+            return `<dt>${Layout.esc(k)}</dt><dd>${Layout.esc(String(val))}</dd>`;
+          }).join('');
+        return `<dl>${items}</dl>`;
+      },
+      async resolve(conflictId, resolution) {
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await fetch(`/api/companies/${cid}/import-conflicts/${conflictId}/resolve`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resolution, mergeChoices: null, userNote: null })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async resolveAll(resolution) {
+        if (!confirm(`ใช้ resolution "${RESOLUTION[resolution]}" กับทุกแถวที่ยังไม่ตัดสิน?`)) return;
+        const cid = Layout.getCompanyId();
+        if (!this.sessionId) { Layout.toast('Bulk ใช้ได้เฉพาะ session ที่มี sessionId', 'error'); return; }
+        try {
+          const r = await fetch(`/api/companies/${cid}/import-conflicts/session/${this.sessionId}/resolve-all`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resolution })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      }
+    };
+    Page.init();
+  </script>
+</body>
+</html>

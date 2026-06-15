@@ -787,6 +787,8 @@ const Layout = {
       description: 'หน้าจอ mobile-first สำหรับร้านค้า — numpad + วิธีรับเงิน + พิมพ์ใบเสร็จ 1 click' },
     { id: 'sme-config', label: 'ตั้งค่าระบบขั้นสูง (Approval + Schedule + Stock)', icon: '⚙️', href: '/pages/sme-config.html', feature: 'AdvancedReporting',
       description: 'Approval workflow · Schedule reports · ส่วนลดเงินสด · Stock transfer · Sample data — รวมไว้ที่เดียว' },
+    { id: 'import-conflicts', label: 'แก้ของซ้ำตอน Import', icon: '🔀', href: '/pages/import-conflicts.html', feature: 'AdvancedReporting',
+      description: 'เมื่อ import เจอข้อมูลที่ซ้ำกับในระบบ — เลือก side-by-side ว่าจะใช้ของเดิมหรือใหม่ ต่อแถว/ทั้งหมด' },
     { id: 'fx-reval', label: 'FX Revaluation', icon: '💱', href: '/pages/fx-reval.html', feature: 'MultiCurrency',
       description: 'Period-end revalue AR/AP FCY → post JE กำไร/ขาดทุน · idempotent ต่องวด' },
     { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',

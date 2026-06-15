@@ -698,7 +698,19 @@ public enum ImportSessionStatus
     Ready = 5,             // พร้อม Import
     Importing = 6,         // กำลัง Import
     Completed = 7,         // Import สำเร็จ
-    Failed = 8             // Import ล้มเหลว
+    Failed = 8,            // Import ล้มเหลว
+    AwaitingDuplicateResolution = 9   // ตรวจพบของซ้ำ — รอ user เลือก
+}
+
+/// <summary>ทางเลือกของ user เมื่อ import detect ของซ้ำ.</summary>
+public enum ImportConflictResolution
+{
+    Pending = 0,        // ยังไม่ได้ตัดสิน
+    UseExisting = 1,    // ใช้ข้อมูลเดิม ทิ้งของใหม่
+    UseNew = 2,         // ใช้ข้อมูลใหม่ ทับของเดิม (update)
+    Skip = 3,           // ข้ามแถวนี้ ไม่ทำอะไร
+    Merge = 4,          // รวม field-by-field (เก็บใน MergeChoicesJson)
+    CreateAnyway = 5    // สร้างใหม่ทั้งสองอย่าง (allow duplicate — vendor มี 2 บัญชี)
 }
 
 public enum ColumnMatchType
