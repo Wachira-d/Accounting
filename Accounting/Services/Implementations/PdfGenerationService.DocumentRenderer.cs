@@ -409,6 +409,19 @@ public partial class PdfGenerationService
     // ─────────────────────────────────────────────────────────────────
     //  Shared section composers (contact / table / summary / etc.)
     // ─────────────────────────────────────────────────────────────────
+    /// <summary>Per-doc-type fallback label สำหรับ contact section ใน PDF.
+    /// เอกสารฝั่งซื้อ (PV/PO/PI/Expense) ใช้ "ผู้รับเงิน" / "ผู้ขาย" — ไม่ใช่
+    /// "ลูกค้า" ที่ทำให้ผู้อ่านสับสน. Sales side ยังคง "ลูกค้า" ตามเดิม. ค่า
+    /// override ที่ template ตั้งไว้ (ContactSectionTitle) มี priority สูงกว่า.</summary>
+    private static string DefaultContactLabelFor(Accounting.Models.Enums.DocumentType type) => type switch
+    {
+        Accounting.Models.Enums.DocumentType.PaymentVoucher => "ผู้รับเงิน",
+        Accounting.Models.Enums.DocumentType.PurchaseOrder => "ผู้ขาย",
+        Accounting.Models.Enums.DocumentType.PurchaseInvoice => "ผู้ขาย",
+        Accounting.Models.Enums.DocumentType.ExpenseClaim => "ผู้ขาย/ผู้รับเงิน",
+        _ => "ลูกค้า",
+    };
+
     private static void ComposeContact(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent)
     {
         var c = doc.Contact;
@@ -419,7 +432,14 @@ public partial class PdfGenerationService
         col.Item().PaddingTop(12).BorderLeft(4).BorderColor(accent).Background("#F8FAFC")
             .Padding(10).Column(cc =>
         {
-            cc.Item().Text(t.ContactSectionTitle ?? "ลูกค้า").FontSize(11).Bold().FontColor(accent);
+            // Template override > smart per-doc-type fallback > "ลูกค้า"
+            // ใบสำคัญจ่ายเป็น "ผู้รับเงิน" ไม่ใช่ "ลูกค้า" — เพราะ PV คือ
+            // เราซื้อ/จ่ายจากเขา ไม่ใช่เขาเป็นลูกค้าเรา.
+            var label = !string.IsNullOrWhiteSpace(t.ContactSectionTitle)
+                && t.ContactSectionTitle != "ลูกค้า"
+                ? t.ContactSectionTitle
+                : DefaultContactLabelFor(doc.DocumentType);
+            cc.Item().Text(label).FontSize(11).Bold().FontColor(accent);
             cc.Item().PaddingTop(2).Text(c.Name ?? "").FontSize(13).Bold().FontColor("#111827");
             if (t.ShowContactTaxId && !string.IsNullOrWhiteSpace(c.TaxId))
                 cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}").FontSize(10).FontColor("#374151");
