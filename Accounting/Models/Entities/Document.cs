@@ -142,6 +142,11 @@ public class Document : TenantEntity
     /// จาก US, etc.).</summary>
     public bool IsForeignService { get; set; }
 
+    /// <summary>Link ไปยัง EarlyPaymentDiscountTerm ("2/10 net 30") ที่ผูก
+    /// กับเอกสารฝั่งขาย. Receipt ตรวจ window → auto-apply discount. Null =
+    /// ไม่มีเงื่อนไขส่วนลดเงินสด.</summary>
+    public Guid? EarlyPaymentDiscountTermId { get; set; }
+
     // ===== External preparer signature override =====
     // When a document is created by an integrating system (e.g. TakeTime
     // syncing a payment voucher), the real preparer is a user of THAT system,

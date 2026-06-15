@@ -23,7 +23,7 @@ namespace Accounting.Models.Entities;
 ///   5. เมื่อ all resolved → user คลิก "Apply All" → import service ทำตาม
 ///      Resolution ของแต่ละแถว
 /// </summary>
-public class ImportConflict : TenantEntity
+public class ImportDuplicateConflict : TenantEntity
 {
     /// <summary>FK to SmartImportSession (หรือ session อื่นที่อ้างอิงผ่าน
     /// SessionRef string สำหรับ flow ที่ไม่ใช้ SmartImportSession).</summary>

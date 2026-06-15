@@ -25,12 +25,17 @@ public class SetupStatusController : ControllerBase
         var company = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == companyId)
             .Select(c => new {
-                c.Name, c.TaxId, c.LogoUrl,
+                c.Name, c.TaxId,
                 HasName = !string.IsNullOrWhiteSpace(c.Name) && c.Name != "ตั้งชื่อบริษัทใหม่",
                 HasTaxId = !string.IsNullOrWhiteSpace(c.TaxId)
             })
             .FirstOrDefaultAsync();
         if (company == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
+
+        // Logo อยู่ใน CompanySettings (ไม่ใช่ Company entity)
+        var hasLogo = await _db.CompanySettings.AsNoTracking()
+            .AnyAsync(s => s.CompanyId == companyId
+                && (s.LogoUrl != null && s.LogoUrl != "" || s.LogoPath != null && s.LogoPath != ""));
 
         var coaCount = await _db.ChartOfAccounts
             .CountAsync(a => a.CompanyId == companyId && !a.IsDeleted);
@@ -51,7 +56,7 @@ public class SetupStatusController : ControllerBase
             chartOfAccounts = coaCount >= 10,    // ผังบัญชี seed default มี ≥30 ปกติ
             firstContact = contactCount >= 1,
             bankAccount = bankCount >= 1,
-            documentTemplate = templateCount >= 1 && !string.IsNullOrWhiteSpace(company.LogoUrl),
+            documentTemplate = templateCount >= 1 && hasLogo,
             firstEmployee = employeeCount >= 1,
             firstDocument = docCount >= 1,
             // Summary fields for KPI
