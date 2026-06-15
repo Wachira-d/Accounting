@@ -126,6 +126,23 @@ public class CompanySettings : TenantEntity
     public string? EmailGmailRefreshToken { get; set; }
     public string? EmailGmailServiceAccountJson { get; set; }         // alt: service account credentials JSON
 
+    // ===== LINE Messaging API (per-company) =====
+    // ระบบเดิมใช้ token global จาก appsettings — ปรับให้ตั้งต่อบริษัทได้
+    // ถ้าฟิลด์เหล่านี้ว่าง LineNotifyService จะ fallback ไปอ่าน appsettings
+    // (สำหรับการใช้งานเก่า) เพื่อไม่ break ระบบเก่า.
+    public bool LineEnabled { get; set; } = false;
+    /// <summary>Channel Access Token จาก LINE Developers (Messaging API).
+    /// เข้ารหัสด้วย SecretProtector ก่อนเก็บลง DB.</summary>
+    public string? LineChannelAccessToken { get; set; }
+    /// <summary>Channel Secret สำหรับตรวจ webhook signature (เข้ารหัส).</summary>
+    public string? LineChannelSecret { get; set; }
+    /// <summary>LINE Group/Room ID สำหรับส่งแจ้งเตือนกลุ่ม (เช่น ทีมบัญชี).
+    /// optional — ถ้าใส่ จะใช้แทน global GroupId เดิม.</summary>
+    public string? LineDefaultGroupId { get; set; }
+    public bool LineConfigured { get; set; } = false;
+    public DateTime? LineLastTestedAt { get; set; }
+    public string? LineLastTestStatus { get; set; }
+
     // ─── Cross-tenant knowledge sharing (OCR learning) ───
     // When true (default), this company's per-tenant training data
     // (OcrCategoryMappings + OcrVendorIntelligence) is anonymously

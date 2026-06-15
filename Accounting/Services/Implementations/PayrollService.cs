@@ -255,6 +255,7 @@ public class PayrollService : IPayrollService
             ExternalId = request.ExternalId,
             ExternalSystem = request.ExternalSystem,
             LastSyncedAt = request.ExternalId != null ? DateTime.UtcNow : null,
+            LineId = request.LineId,
         };
 
         _db.Set<Employee>().Add(employee);
@@ -359,6 +360,7 @@ public class PayrollService : IPayrollService
             employee.LastSyncedAt = DateTime.UtcNow;
         }
         if (request.ExternalSystem != null) employee.ExternalSystem = request.ExternalSystem;
+        if (request.LineId != null) employee.LineId = request.LineId;
         if (request.IsActive.HasValue)
         {
             employee.IsActive = request.IsActive.Value;
@@ -2711,7 +2713,8 @@ public class PayrollService : IPayrollService
                 : null,
             e.ContactId,
             e.CostBehavior,
-            e.ExternalId, e.ExternalSystem, e.LastSyncedAt);
+            e.ExternalId, e.ExternalSystem, e.LastSyncedAt,
+            e.Phone, e.Email, e.LineId);
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,

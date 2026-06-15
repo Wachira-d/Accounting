@@ -23,7 +23,10 @@ public record CreateEmployeeRequest(
     /// <summary>External HR system identifier — enables 2-way sync without
     /// name-matching. ExternalSystem labels the source.</summary>
     string? ExternalId = null,
-    string? ExternalSystem = null);
+    string? ExternalSystem = null,
+    /// <summary>LINE User ID ของพนักงาน (รูปแบบ Uxxxxxxxx) — ใช้ส่งแจ้งเตือน
+    /// ผลอนุมัติลา/สลิปเงินเดือนตรงถึงพนักงานโดยไม่ต้องเป็น user ในระบบ.</summary>
+    string? LineId = null);
 
 public record UpdateEmployeeRequest(
     string? Position, string? Department, string? Phone,
@@ -41,7 +44,8 @@ public record UpdateEmployeeRequest(
     string? CostBehavior = null,
     string? ExternalId = null,
     string? ExternalSystem = null,
-    string? SalaryType = null);
+    string? SalaryType = null,
+    string? LineId = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -58,7 +62,10 @@ public record EmployeeResponse(
     string CostBehavior = "Fixed",
     string? ExternalId = null,
     string? ExternalSystem = null,
-    DateTime? LastSyncedAt = null);
+    DateTime? LastSyncedAt = null,
+    string? Phone = null,
+    string? Email = null,
+    string? LineId = null);
 
 /// <summary>Bulk-sync envelope for employees from an external HRIS. Each
 /// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows

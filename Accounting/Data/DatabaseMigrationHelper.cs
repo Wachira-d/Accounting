@@ -3940,6 +3940,15 @@ public static class DatabaseMigrationHelper
             // that would take CurrentStock below zero).
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "AllowNegativeStock" boolean NOT NULL DEFAULT false;""",
 
+            // ===== LINE Messaging API per-company (was global in appsettings) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineChannelAccessToken" varchar(2000) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineChannelSecret" varchar(500) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineDefaultGroupId" varchar(100) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineConfigured" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineLastTestedAt" timestamp NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineLastTestStatus" varchar(500) NULL;""",
+
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
