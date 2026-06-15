@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Signature;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -12,13 +13,16 @@ public class SignatureApprovalService : ISignatureApprovalService
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _docService;
     private readonly Accounting.Services.Implementations.Ocr.VendorIntelligenceService _vendorIntel;
+    private readonly INotificationEngine? _notify;
 
     public SignatureApprovalService(AccountingDbContext db, IDocumentService docService,
-        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel)
+        Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _docService = docService;
         _vendorIntel = vendorIntel;
+        _notify = notify;
     }
 
     // ==================== USER SIGNATURES ====================
@@ -283,6 +287,25 @@ public class SignatureApprovalService : ISignatureApprovalService
         approval.Document.Status = DocumentStatus.Rejected;
 
         await _db.SaveChangesAsync();
+
+        // Best-effort notify — never block the rejection on a notification fail.
+        if (_notify != null)
+        {
+            try
+            {
+                Guid.TryParse(userId, out var actorId);
+                await _notify.DispatchAsync(companyId, NotificationEvents.DocumentVoided, new NotificationContext
+                {
+                    Title = $"เอกสาร {approval.Document.DocumentNumber} ถูกปฏิเสธ",
+                    Message = $"ผู้พิจารณา: {approval.ApproverName ?? "-"}\nเหตุผล: {request.Comments ?? "-"}",
+                    EntityType = "Document",
+                    EntityId = approval.DocumentId,
+                    ActorUserId = actorId == Guid.Empty ? null : actorId,
+                    ActionUrl = $"/pages/document-detail.html?id={approval.DocumentId}",
+                });
+            }
+            catch { /* swallow — notification must not affect business txn */ }
+        }
         return MapApproval(approval);
     }
 
@@ -430,6 +453,25 @@ public class SignatureApprovalService : ISignatureApprovalService
         doc.Status = DocumentStatus.Approved;
         await _db.SaveChangesAsync();
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
+
+        // Notify on full approval — best-effort.
+        if (_notify != null)
+        {
+            try
+            {
+                Guid.TryParse(userId, out var actorId);
+                await _notify.DispatchAsync(companyId, NotificationEvents.DocumentApproved, new NotificationContext
+                {
+                    Title = $"เอกสาร {doc.DocumentNumber} อนุมัติครบทุกขั้นแล้ว",
+                    Message = $"ประเภท: {doc.DocumentType}\nยอดรวม: {doc.TotalAmount:N2} บาท",
+                    EntityType = "Document",
+                    EntityId = doc.Id,
+                    ActorUserId = actorId == Guid.Empty ? null : actorId,
+                    ActionUrl = $"/pages/document-detail.html?id={doc.Id}",
+                });
+            }
+            catch { /* swallow */ }
+        }
 
         // Run post-approval action from last step
         var lastAction = allApprovals
