@@ -928,11 +928,54 @@
         // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
           this.suggestPaymentType(contactId);
+          // PV-only — แนะนำ bank account/cash channel จาก payment history
+          this.suggestPaymentChannel(contactId);
         }
         // Auto-suggest payment terms (Net X) จาก history ของผู้ติดต่อรายนี้
         // — ไม่เกี่ยวกับ doc type, ใช้ได้ทั้ง sales (Invoice/Quotation) +
         // purchase (PurchaseInvoice). ไม่ override ถ้า user เคย touch แล้ว.
         if (contactId) this.suggestPaymentTerms(contactId);
+      },
+
+      async suggestPaymentChannel(contactId) {
+        try {
+          const sel = document.getElementById('fPaymentChannel');
+          if (!sel || sel.dataset.userTouched === '1') return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/payment-channel/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          const suggested = j.data.paymentChannel || '';
+          // Apply only when (a) field is empty/default, AND (b) the suggested
+          // value exists in the dropdown (channels list may differ per company).
+          const optionExists = Array.from(sel.options).some(o => o.value === suggested);
+          if (!sel.value && optionExists) {
+            sel.value = suggested;
+            sel.dataset.aiFeedbackId = j.data.feedbackId || '';
+            sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            // mirror the change downstream — derives PaymentMethod for save
+            try { this._deriveMethodFromChannel?.(); } catch {}
+          }
+          // bind once: ถ้า user เปลี่ยน → ส่ง feedback กลับ + กัน override
+          sel.addEventListener('change', () => {
+            sel.dataset.userTouched = '1';
+            const fbId = sel.dataset.aiFeedbackId;
+            if (!fbId) return;
+            try {
+              fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  feedbackId: fbId,
+                  chosenAnswer: sel.value,
+                  acceptedAi: sel.value === suggested,
+                })
+              }).catch(() => {});
+            } catch {}
+          }, { once: true });
+        } catch { /* best-effort */ }
       },
 
       async suggestPaymentTerms(contactId) {

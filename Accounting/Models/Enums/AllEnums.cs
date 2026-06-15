@@ -1339,6 +1339,16 @@ public enum AiFeatureKey
     /// so per-vendor accuracy is tracked + drift detected.</summary>
     PaymentTermsSuggestion = 31,
 
+    /// <summary>Bank account / payment channel suggestion for a new
+    /// PaymentVoucher — picks the bank account this supplier is most
+    /// commonly paid from based on the last 12 PVs to them. Falls
+    /// back to (a) the bank's LinkedAccount when a previous PV
+    /// touched a specific bank, or (b) the company's first active
+    /// bank account, or (c) generic cash. Helps avoid the operator
+    /// digging through the dropdown when a supplier always settles
+    /// from one channel.</summary>
+    PaymentChannelSuggestion = 32,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

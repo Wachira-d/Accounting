@@ -257,6 +257,8 @@ public class AiFeedbackTrainingJob : BackgroundService
         // feedback rows become training corpus over time.
         nameof(AiFeatureKey.VatTypeInference),
         nameof(AiFeatureKey.PaymentTermsSuggestion),
+        // Sprint-2 feature
+        nameof(AiFeatureKey.PaymentChannelSuggestion),
     };
 
     /// <summary>
@@ -305,6 +307,7 @@ public class AiFeedbackTrainingJob : BackgroundService
             // → admin ตัดสินได้ว่าจะ promote เป็น distillation table writer
             nameof(AiFeatureKey.VatTypeInference) => true,
             nameof(AiFeatureKey.PaymentTermsSuggestion) => true,
+            nameof(AiFeatureKey.PaymentChannelSuggestion) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

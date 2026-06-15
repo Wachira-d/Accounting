@@ -403,6 +403,132 @@ public class AiSuggestionController : ControllerBase
     }
 
     // ────────────────────────────────────────────────────────────────
+    //  Payment channel — bank account / cash account to pay this
+    //  supplier from. Looks at the last 12 Payments to the same
+    //  contact and picks the channel that occurs most frequently.
+    //  Falls back to first active bank account, then cash.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("payment-channel/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestPaymentChannel(
+        Guid companyId, [FromQuery] Guid contactId, CancellationToken ct)
+    {
+        if (contactId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        // Find recent payments to documents belonging to this contact.
+        // Each payment has BankAccountId (bank) or OverridePaymentAccountId
+        // (cash/director-advance/clearing — non-bank GL). The Mode of the
+        // top channel wins. Payment.PaymentMethod is recorded too as a
+        // secondary signal (Cash vs BankTransfer).
+        var recent = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.Document.ContactId == contactId && !p.IsDeleted)
+            .OrderByDescending(p => p.PaymentDate)
+            .Take(12)
+            .Select(p => new
+            {
+                p.BankAccountId,
+                p.OverridePaymentAccountId,
+                p.PaymentMethod,
+            })
+            .ToListAsync(ct);
+
+        string? channelValue = null;     // "bank:<id>" | "account:<id>" | ""
+        string? label = null;
+        string source; decimal confidence;
+
+        if (recent.Count >= 2)
+        {
+            // Build a unified key per row + count occurrences
+            var grouped = recent
+                .Select(p => p.OverridePaymentAccountId.HasValue
+                    ? ($"account:{p.OverridePaymentAccountId.Value}", "account", p.OverridePaymentAccountId.Value)
+                    : p.BankAccountId.HasValue
+                        ? ($"bank:{p.BankAccountId.Value}", "bank", p.BankAccountId.Value)
+                        : ("", "cash", Guid.Empty))
+                .GroupBy(x => x.Item1)
+                .OrderByDescending(g => g.Count())
+                .First();
+            channelValue = grouped.Key;
+            source = "PaymentHistory";
+            confidence = recent.Count >= 5 ? 0.90m : 0.70m;
+
+            // Resolve a friendly label for the picked channel.
+            if (grouped.Key.StartsWith("bank:") && Guid.TryParse(grouped.Key[5..], out var bid))
+            {
+                var b = await _db.Set<BankAccount>().AsNoTracking()
+                    .Where(x => x.Id == bid && x.CompanyId == companyId)
+                    .Select(x => new { x.BankName, x.AccountName, x.AccountNumber })
+                    .FirstOrDefaultAsync(ct);
+                if (b != null) label = $"{b.AccountName} ({b.BankName} {b.AccountNumber})";
+            }
+            else if (grouped.Key.StartsWith("account:") && Guid.TryParse(grouped.Key[8..], out var aid))
+            {
+                var a = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(x => x.Id == aid && x.CompanyId == companyId)
+                    .Select(x => new { x.AccountCode, x.AccountName })
+                    .FirstOrDefaultAsync(ct);
+                if (a != null) label = $"{a.AccountCode} - {a.AccountName}";
+            }
+            else label = "เงินสด";
+        }
+        else
+        {
+            // Cold-start: prefer the first active bank account; if none, cash.
+            var bank = await _db.Set<BankAccount>().AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted)
+                .OrderBy(x => x.AccountName)
+                .Select(x => new { x.Id, x.BankName, x.AccountName, x.AccountNumber })
+                .FirstOrDefaultAsync(ct);
+            if (bank != null)
+            {
+                channelValue = $"bank:{bank.Id}";
+                label = $"{bank.AccountName} ({bank.BankName} {bank.AccountNumber})";
+                source = "FirstActiveBank";
+            }
+            else
+            {
+                channelValue = "";
+                label = "เงินสด";
+                source = "CashFallback";
+            }
+            confidence = 0.40m;
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { contactId, sampleSize = recent.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.PaymentChannelSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: channelValue, AiConfidence: confidence,
+                LocalModelAnswer: channelValue, LocalModelConfidence: confidence,
+                LocalModelVersion: "history-mode-v1",
+                SourceEntityType: "Contact", SourceEntityId: contactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            paymentChannel = channelValue,
+            label,
+            confidence,
+            source,
+            reasoning = source switch
+            {
+                "PaymentHistory" => $"จากการจ่าย {recent.Count} ครั้งล่าสุดให้ผู้ขายรายนี้: ใช้ {label} บ่อยสุด",
+                "FirstActiveBank" => $"ยังไม่มีประวัติจ่าย — แนะนำบัญชีธนาคารหลัก: {label}",
+                _ => "ยังไม่มีบัญชีธนาคารตั้งไว้ — จ่ายเงินสด",
+            },
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Credit-note reason classification — when user creates a CN
     //  from an invoice, AI proposes Return / Discount / Adjustment /
     //  Writeoff before they pick from the dropdown.
