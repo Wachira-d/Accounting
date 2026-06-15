@@ -929,6 +929,115 @@
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
           this.suggestPaymentType(contactId);
         }
+        // Auto-suggest payment terms (Net X) จาก history ของผู้ติดต่อรายนี้
+        // — ไม่เกี่ยวกับ doc type, ใช้ได้ทั้ง sales (Invoice/Quotation) +
+        // purchase (PurchaseInvoice). ไม่ override ถ้า user เคย touch แล้ว.
+        if (contactId) this.suggestPaymentTerms(contactId);
+      },
+
+      async suggestPaymentTerms(contactId) {
+        try {
+          const cdEl = document.getElementById('fCreditDays');
+          if (!cdEl || cdEl.dataset.userTouched === '1') return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/payment-terms/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          if (j.data.creditDays && !cdEl.value) {
+            cdEl.value = j.data.creditDays;
+            cdEl.dataset.aiFeedbackId = j.data.feedbackId || '';
+            cdEl.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            // อัปเดต fDueDate ถ้ามี + ยังว่าง
+            const dateEl = document.getElementById('fDate');
+            const dueEl = document.getElementById('fDueDate');
+            if (dateEl?.value && dueEl && !dueEl.value) {
+              const d = new Date(dateEl.value);
+              d.setDate(d.getDate() + parseInt(j.data.creditDays, 10));
+              dueEl.value = d.toISOString().slice(0, 10);
+            }
+          }
+          // mark touched bind — ถ้า user เปลี่ยน ส่ง feedback กลับ
+          cdEl.addEventListener('change', () => {
+            cdEl.dataset.userTouched = '1';
+            const fbId = cdEl.dataset.aiFeedbackId;
+            if (!fbId) return;
+            try {
+              fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  feedbackId: fbId,
+                  chosenAnswer: cdEl.value,
+                  acceptedAi: parseInt(cdEl.value, 10) === parseInt(j.data.creditDays, 10),
+                })
+              }).catch(() => {});
+            } catch {}
+          }, { once: true });
+        } catch { /* best-effort */ }
+      },
+
+      // VAT-rate suggestion per line — heuristic AI endpoint.
+      // Don't override an explicit user pick (lc-vat-touched flag).
+      async suggestVatType(row) {
+        try {
+          const desc = (row.querySelector('[data-f="desc"]')?.value || '').trim();
+          if (desc.length < 3) return;
+          const vatSel = row.querySelector('[data-f="vat"]');
+          if (!vatSel || vatSel.dataset.userTouched === '1') return;
+
+          const cid = Layout.getCompanyId();
+          const contactId = document.getElementById('fContactId')?.value || null;
+          const amount = parseFloat(row.querySelector('[data-f="price"]')?.value || '0') || 0;
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/vat/infer-type`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contactId,
+              vendorName: this._selectedContact?.name,
+              vendorTaxId: this._selectedContact?.taxId,
+              vendorCountryCode: this._selectedContact?.countryCode,
+              lineDescription: desc,
+              amount,
+              currentRate: vatSel.value,
+            })
+          });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          const suggested = j.data.vatType === 'Exempt' ? '-1' : String(j.data.vatType);
+          if (vatSel.value !== suggested) {
+            vatSel.value = suggested;
+            vatSel.dataset.aiFeedbackId = j.data.feedbackId || '';
+            vatSel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            this.calcSum();
+          }
+        } catch { /* best-effort */ }
+      },
+
+      // ผู้ใช้เปลี่ยน VAT ด้วยตัวเอง → mark touched + ส่ง override กลับ
+      // เป็น ground-truth ให้ AI เรียน
+      onVatTypeChange(sel) {
+        sel.dataset.userTouched = '1';
+        // Ground-truth feedback (best-effort).
+        const fbId = sel.dataset.aiFeedbackId;
+        if (fbId) {
+          try {
+            const cid = Layout.getCompanyId();
+            const token = localStorage.getItem('token');
+            fetch(`/api/companies/${cid}/ai-feedback/record`, {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                feedbackId: fbId,
+                chosenAnswer: sel.value === '-1' ? 'Exempt' : sel.value,
+                acceptedAi: false,
+              })
+            }).catch(() => {});
+          } catch {}
+        }
+        this.calcSum();
       },
 
       // Local-model suggestion for the PV settlement basis. Non-blocking:
@@ -1529,7 +1638,7 @@
             <div class="lc-field"><label>ส่วนลด %</label>
               <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></div>
             <div class="lc-field"><label>VAT %</label>
-              <select class="form-select" data-f="vat" onchange="Page.calcSum()"><option value="7">7%</option><option value="0">0%</option></select></div>
+              <select class="form-select" data-f="vat" onchange="Page.onVatTypeChange(this)"><option value="7">7%</option><option value="0">0%</option><option value="-1">ยกเว้น</option></select></div>
             <div class="lc-field lc-claim"><label title="VAT เคลม ภพ.30 ได้หรือไม่ (§82/5)">เคลม VAT</label>
               <span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;user-select:none">✓</span></div>
             <div class="lc-field"><label>หัก ณ ที่จ่าย %</label>
@@ -1550,6 +1659,10 @@
         // เท่านั้น (PurchaseInvoice / Expense / PaymentVoucher) — ฝั่งขาย
         // ไม่มี input VAT ให้เคลม ค่าจะถูก ignore โดย server.
         descInput.addEventListener('input', () => this.suggestVatClaim(row));
+        // AI VAT-type suggest บน blur ของ description (ไม่ทุก keystroke
+        // เพื่อลด API call) — heuristic-only endpoint ฟรี cloud cost.
+        // ค่ายัง override ได้ ไม่ผูกมัด.
+        descInput.addEventListener('blur', () => this.suggestVatType(row));
         if (window.ProductLookup) {
           ProductLookup.attach(descInput, (r, p) => ProductLookup.fillRow(r, p, { overwriteQty: false }));
         } else {
@@ -1574,7 +1687,10 @@
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
           const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
           const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
-          const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
+          // VAT sentinel: -1 = ยกเว้น (Exempt) — คำนวณเหมือน 0% แต่ flag
+          // isVatClaimable=false (handled ที่ฝั่ง save).
+          const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
+          const vatR = rawVat === -1 ? 0 : (rawVat || 0);
           const whtR = parseFloat(row.querySelector('[data-f="wht"]').value) || 0;
           const entered = qty * price * (1 - disc / 100);
           let net, lineVat;
@@ -1980,13 +2096,20 @@
           if (strict && desc && !row.dataset.productCode) {
             strictViolators.push({ idx: idx + 1, desc });
           }
+          // VAT sentinel: -1 = "ยกเว้น" (Exempt) — แปลงเป็น 0 ส่งให้
+          // backend เพราะ schema vatRate เป็น decimal ที่ 0-100 + ตั้ง
+          // isVatClaimable=false เพื่อ flag ว่าไม่นำเข้า ภพ.30. server
+          // จะอ่าน vatRate=0 + isVatClaimable=false เป็นกรณี Exempt
+          // (ต่างจาก 0% export ที่ isVatClaimable=true).
+          const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
+          const isVatExempt = rawVat === -1;
           const line = {
             description: desc,
             quantity: parseFloat(row.querySelector('[data-f="qty"]').value) || 1,
             unit: (row.querySelector('[data-f="unit"]')?.value || '').trim() || 'ชิ้น',
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
             discountPercent: parseFloat(row.querySelector('[data-f="disc"]').value) || 0,
-            vatRate: parseFloat(row.querySelector('[data-f="vat"]').value) || 0,
+            vatRate: isVatExempt ? 0 : (rawVat || 0),
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           };
           // Persist the product linkage when the user picked one via the typeahead.
