@@ -119,12 +119,55 @@ public enum AccountType
     Expense = 5           // ค่าใช้จ่าย
 }
 
+/// <summary>หมวด Cash Flow Statement (TFRS 7) — per-account override
+/// สำหรับผังบัญชี custom ที่ไม่ตามรหัส default. ใช้ในรายงาน Cash Flow.
+/// None = fallback ใช้ code-prefix heuristics (operating: 113/115/212/56...,
+/// investing: 122/123, financing: 221/31).</summary>
+public enum CashFlowSectionType
+{
+    None = 0,             // ปล่อยให้ engine fallback (code-prefix)
+    Operating = 1,        // กิจกรรมดำเนินงาน
+    Investing = 2,        // กิจกรรมลงทุน
+    Financing = 3         // กิจกรรมจัดหาเงิน
+}
+
 public enum JournalEntryStatus
 {
     Draft = 0,
     Posted = 1,
     Voided = 2,
     Reversed = 3
+}
+
+/// <summary>Post-Dated Check direction.</summary>
+public enum PdcDirection
+{
+    Inbound = 1,    // ลูกค้าจ่ายเช็คให้เรา (receivable)
+    Outbound = 2    // เราจ่ายเช็คให้ vendor (payable)
+}
+
+/// <summary>Post-Dated Check lifecycle.</summary>
+public enum PdcStatus
+{
+    Held = 1,           // เก็บไว้ ยังไม่ถึงวัน — Inbound: เก็บในตู้เซฟ; Outbound: ออกแล้วแต่ผู้รับยังไม่ขึ้นเงิน
+    Deposited = 2,      // ฝากธนาคารแล้ว รอ clearing
+    Cleared = 3,        // ธนาคารหักเงินสำเร็จ — final
+    Dishonored = 4,     // เด้ง (เงินไม่พอ / บัญชีปิด / สั่งห้ามจ่าย) — ต้องตามจริง
+    Cancelled = 5,      // ยกเลิกก่อนฝาก (ลูกค้าขอเปลี่ยนเป็นโอน, etc.)
+    Returned = 6        // ส่งคืน Inbound: คืนเช็คให้ลูกค้า; Outbound: vendor คืนเช็คเรา
+}
+
+/// <summary>Cash advance request lifecycle.</summary>
+public enum CashAdvanceStatus
+{
+    Requested = 1,        // พนง.ขอเบิก รอ manager อนุมัติ
+    Approved = 2,         // อนุมัติแล้ว รอ finance จ่ายเงิน
+    Disbursed = 3,        // จ่ายเงินสด/โอนแล้ว รอ clearance
+    PendingClearance = 4, // เลยกำหนด clear แล้วยังไม่ส่งใบเสร็จครบ
+    Cleared = 5,          // ส่งใบเสร็จครบ + ค่าใช้จ่ายลงบัญชีแล้ว
+    Refunded = 6,         // เคลียร์เกิน → พนง.คืนเงิน
+    Rejected = 7,         // ปฏิเสธคำขอ
+    Cancelled = 8         // พนง.ยกเลิกเอง
 }
 
 /// <summary>
@@ -655,7 +698,19 @@ public enum ImportSessionStatus
     Ready = 5,             // พร้อม Import
     Importing = 6,         // กำลัง Import
     Completed = 7,         // Import สำเร็จ
-    Failed = 8             // Import ล้มเหลว
+    Failed = 8,            // Import ล้มเหลว
+    AwaitingDuplicateResolution = 9   // ตรวจพบของซ้ำ — รอ user เลือก
+}
+
+/// <summary>ทางเลือกของ user เมื่อ import detect ของซ้ำ.</summary>
+public enum ImportConflictResolution
+{
+    Pending = 0,        // ยังไม่ได้ตัดสิน
+    UseExisting = 1,    // ใช้ข้อมูลเดิม ทิ้งของใหม่
+    UseNew = 2,         // ใช้ข้อมูลใหม่ ทับของเดิม (update)
+    Skip = 3,           // ข้ามแถวนี้ ไม่ทำอะไร
+    Merge = 4,          // รวม field-by-field (เก็บใน MergeChoicesJson)
+    CreateAnyway = 5    // สร้างใหม่ทั้งสองอย่าง (allow duplicate — vendor มี 2 บัญชี)
 }
 
 public enum ColumnMatchType

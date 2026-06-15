@@ -719,6 +719,20 @@
           // Delete is now allowed in any status (backend soft-deletes).
           actions += ` <button class="btn btn-danger" onclick="Page.deleteEntry('${j.id}')" data-i18n="common.delete">ลบ</button>`;
           document.getElementById('detailActions').innerHTML = actions;
+          // Comments + activity timeline (#23)
+          const commentsHost = document.createElement('div');
+          commentsHost.id = `jeComments-${id}`;
+          commentsHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';
+          document.getElementById('detailContent').appendChild(commentsHost);
+          const mountComments = () => window.CommentsWidget?.mount(commentsHost,
+            { companyId: Layout.getCompanyId(), entityType: 'JournalEntry', entityId: id });
+          if (window.CommentsWidget) { mountComments(); }
+          else {
+            const s = document.createElement('script');
+            s.src = '/js/comments-widget.js';
+            s.onload = mountComments;
+            document.head.appendChild(s);
+          }
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

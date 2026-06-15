@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1f2937">
+  <title>รับเงินสด — Mobile</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { font-family: 'Noto Sans Thai', sans-serif; background: #f3f4f6; color: #111; min-height: 100vh; }
+    .header { background: #1f2937; color: #fff; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+    .header h1 { font-size: 18px; }
+    .header .balance { font-size: 13px; opacity: 0.8; }
+    .container { padding: 16px; max-width: 480px; margin: 0 auto; padding-bottom: 100px; }
+
+    .amount-display { background: #fff; border-radius: 16px; padding: 28px 20px; margin-bottom: 16px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .amount-display .label { font-size: 13px; color: #6b7280; margin-bottom: 6px; }
+    .amount-display .amount { font-size: 48px; font-weight: 700; color: #1f2937; letter-spacing: -1px; }
+    .amount-display .currency { font-size: 18px; color: #6b7280; margin-left: 6px; }
+
+    /* Numpad — large touch targets ≥ 60px */
+    .numpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+    .numkey { background: #fff; border: 0; border-radius: 14px; height: 64px; font-size: 24px; font-weight: 600; color: #1f2937; box-shadow: 0 1px 3px rgba(0,0,0,0.08); transition: transform 0.05s, background 0.15s; }
+    .numkey:active { transform: scale(0.96); background: #e5e7eb; }
+    .numkey.action-clear { background: #fee2e2; color: #991b1b; }
+    .numkey.action-back { background: #fef3c7; color: #92400e; }
+
+    .quick-amounts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+    .quick { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px 4px; font-size: 13px; color: #374151; cursor: pointer; }
+    .quick:active { background: #f3f4f6; }
+
+    .form-block { background: #fff; border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+    .form-block label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+    .form-block input, .form-block select { width: 100%; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 10px; font-size: 16px; font-family: inherit; }
+
+    .method-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+    .method { background: #fff; border: 2px solid #e5e7eb; border-radius: 12px; padding: 12px 6px; text-align: center; cursor: pointer; transition: border-color 0.15s; }
+    .method.active { border-color: #1f2937; background: #1f2937; color: #fff; }
+    .method .icon { font-size: 24px; display: block; margin-bottom: 4px; }
+    .method .label { font-size: 12px; font-weight: 500; }
+
+    .submit-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 14px 16px; box-shadow: 0 -2px 12px rgba(0,0,0,0.08); display: flex; gap: 8px; }
+    .btn { flex: 1; padding: 16px; border: 0; border-radius: 12px; font-size: 16px; font-weight: 600; font-family: inherit; }
+    .btn-primary { background: #1f2937; color: #fff; }
+    .btn-primary:disabled { background: #9ca3af; }
+    .btn-secondary { background: #e5e7eb; color: #1f2937; max-width: 100px; }
+
+    .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); background: #10b981; color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; animation: slide-in 0.2s; }
+    .toast.error { background: #ef4444; }
+    @keyframes slide-in { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>💰 รับเงินสด</h1>
+    <div><a href="/" style="color:#fff;font-size:14px;text-decoration:none">✕</a></div>
+  </div>
+
+  <div class="container">
+    <div class="amount-display">
+      <div class="label">จำนวนเงินรับ</div>
+      <div><span class="amount" id="display">0</span><span class="currency">บาท</span></div>
+      <div id="displayWords" style="font-size:12px;color:#9ca3af;margin-top:6px;font-style:italic"></div>
+    </div>
+
+    <div class="quick-amounts">
+      <button class="quick" onclick="quickAdd(100)">+100</button>
+      <button class="quick" onclick="quickAdd(500)">+500</button>
+      <button class="quick" onclick="quickAdd(1000)">+1,000</button>
+      <button class="quick" onclick="quickAdd(5000)">+5,000</button>
+    </div>
+
+    <div class="numpad">
+      <button class="numkey" onclick="press('7')">7</button>
+      <button class="numkey" onclick="press('8')">8</button>
+      <button class="numkey" onclick="press('9')">9</button>
+      <button class="numkey" onclick="press('4')">4</button>
+      <button class="numkey" onclick="press('5')">5</button>
+      <button class="numkey" onclick="press('6')">6</button>
+      <button class="numkey" onclick="press('1')">1</button>
+      <button class="numkey" onclick="press('2')">2</button>
+      <button class="numkey" onclick="press('3')">3</button>
+      <button class="numkey action-clear" onclick="clearAmt()">C</button>
+      <button class="numkey" onclick="press('0')">0</button>
+      <button class="numkey action-back" onclick="backspace()">←</button>
+    </div>
+
+    <div class="form-block">
+      <label>ลูกค้า (ถ้ามี)</label>
+      <select id="customer"><option value="">— เงินสดทั่วไป —</option></select>
+    </div>
+
+    <div class="form-block">
+      <label>วิธีรับเงิน</label>
+      <div class="method-grid">
+        <div class="method active" data-method="cash" onclick="selectMethod(this)"><span class="icon">💵</span><span class="label">เงินสด</span></div>
+        <div class="method" data-method="transfer" onclick="selectMethod(this)"><span class="icon">📱</span><span class="label">โอน</span></div>
+        <div class="method" data-method="qr" onclick="selectMethod(this)"><span class="icon">📲</span><span class="label">QR</span></div>
+      </div>
+    </div>
+
+    <div class="form-block">
+      <label>รายละเอียด</label>
+      <input type="text" id="memo" placeholder="ขายของหน้าร้าน / บริการ / ค่าเช่า">
+    </div>
+  </div>
+
+  <div class="submit-bar">
+    <button class="btn btn-secondary" onclick="clearAmt()">ล้าง</button>
+    <button class="btn btn-primary" id="submitBtn" onclick="submit()">บันทึก + พิมพ์ใบเสร็จ</button>
+  </div>
+
+  <script>
+    let amount = 0;
+    let method = 'cash';
+    const display = document.getElementById('display');
+
+    function fmt(n) { return n.toLocaleString('en-US'); }
+    function refresh() {
+      display.textContent = fmt(amount);
+      const w = document.getElementById('displayWords');
+      if (w && window.UxHelpers?.AmountInWords) {
+        w.textContent = amount > 0 ? '(' + window.UxHelpers.AmountInWords.convert(amount) + ')' : '';
+      }
+    }
+    function press(d) {
+      if (amount === 0 && d === '0') return;
+      amount = amount * 10 + parseInt(d);
+      if (amount > 99999999) amount = 99999999;
+      refresh();
+    }
+    function quickAdd(n) { amount += n; refresh(); }
+    function backspace() { amount = Math.floor(amount / 10); refresh(); }
+    function clearAmt() { amount = 0; refresh(); }
+    function selectMethod(el) {
+      document.querySelectorAll('.method').forEach(m => m.classList.remove('active'));
+      el.classList.add('active');
+      method = el.dataset.method;
+    }
+    function toast(msg, type) {
+      const t = document.createElement('div');
+      t.className = 'toast' + (type === 'error' ? ' error' : '');
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 2500);
+    }
+
+    function getCid() {
+      try { return JSON.parse(localStorage.getItem('currentCompany'))?.id; } catch { return null; }
+    }
+    async function loadCustomers() {
+      const cid = getCid(); if (!cid) return;
+      try {
+        const r = await fetch(`/api/companies/${cid}/contacts?isCustomer=true&pageSize=200`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        const j = await r.json();
+        const items = j.data?.items || j.data || [];
+        document.getElementById('customer').innerHTML = '<option value="">— เงินสดทั่วไป —</option>' +
+          items.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      } catch {}
+    }
+    async function submit() {
+      if (amount <= 0) { toast('กรุณาใส่จำนวนเงิน', 'error'); return; }
+      const cid = getCid(); if (!cid) { toast('เลือกบริษัทก่อน', 'error'); return; }
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+      try {
+        const customerId = document.getElementById('customer').value;
+        const memo = document.getElementById('memo').value.trim() || 'รับเงินสด';
+        // Create Receipt document — 1 line "บริการ/สินค้า" pre-VAT inclusive
+        const body = {
+          documentType: 'Receipt',
+          documentDate: new Date().toISOString(),
+          contactId: customerId || '00000000-0000-0000-0000-000000000000',
+          reference: memo,
+          notes: `รับผ่าน ${method}`,
+          lines: [{
+            description: memo,
+            quantity: 1,
+            unit: 'รายการ',
+            unitPrice: amount,
+            discountPercent: 0,
+            vatRate: 0,
+            withholdingTaxRate: 0,
+            accountId: null
+          }],
+          paymentType: 'Cash',
+          pricesIncludeVat: true
+        };
+        const r = await fetch(`/api/companies/${cid}/documents`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!j.success) throw new Error(j.message);
+        toast('บันทึกใบเสร็จเรียบร้อย ✓');
+        amount = 0; refresh();
+        document.getElementById('memo').value = '';
+        // Open print preview in same tab for thermal printer / Save as PDF
+        const docId = j.data?.id;
+        if (docId) {
+          setTimeout(() => {
+            window.open(`/api/companies/${cid}/document-templates/generate-html`, '_blank');
+          }, 500);
+        }
+      } catch (e) { toast(e.message, 'error'); }
+      finally { btn.disabled = false; btn.textContent = 'บันทึก + พิมพ์ใบเสร็จ'; }
+    }
+
+    loadCustomers();
+  </script>
+</body>
+</html>

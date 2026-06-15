@@ -27,6 +27,13 @@ public class ChartOfAccount : TenantEntity
     /// </summary>
     public bool InputVatClaimable { get; set; } = true;
 
+    /// <summary>หมวด Cash Flow Statement — null/None = engine fallback
+    /// ใช้ code-prefix heuristics เดิม (operating / investing / financing
+    /// resolved by AccountCode pattern). ตั้งค่าได้สำหรับผังบัญชี custom
+    /// ที่ไม่ตามรหัสเริ่มต้น (เช่นบัญชี 5xxxx ที่ admin map เป็น
+    /// investing — เครื่องจักรซ่อม).</summary>
+    public CashFlowSectionType CashFlowSection { get; set; } = CashFlowSectionType.None;
+
     /// <summary>
     /// Cost behavior classification used by the Fix-vs-Variable cost
     /// report. "Fixed" = incurred regardless of activity (rent, salaried

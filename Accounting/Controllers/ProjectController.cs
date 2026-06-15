@@ -164,6 +164,55 @@ public class ProjectController : ControllerBase
         }));
     }
 
+    /// <summary>F19 — Export Project P&L เป็น CSV — ใช้ในงานนำเสนอ
+    /// stakeholder + audit. รวมรายได้/ต้นทุน/กำไร + cost breakdown
+    /// แยกตามหมวด. UTF-8 BOM เพื่อให้ Excel ภาษาไทยเปิดได้ปกติ.</summary>
+    [HttpGet("{projectId:guid}/pnl/export")]
+    public async Task<ActionResult> ExportProjectPnL(
+        Guid companyId, Guid projectId,
+        [FromServices] IAccountingService accounting,
+        CancellationToken ct)
+    {
+        var project = await _service.GetByIdAsync(companyId, projectId);
+        var profit = await _service.GetProfitabilityAsync(companyId, projectId);
+        var from = new DateTime(DateTime.UtcNow.Year, 1, 1);
+        var to = DateTime.UtcNow.Date;
+        var cashFlow = await accounting.GetCashFlowStatementAsync(companyId, from, to, projectId);
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append('﻿');  // BOM
+        sb.AppendLine("Project P&L — โครงการ");
+        sb.AppendLine($"Code,{project.Code}");
+        sb.AppendLine($"Name,{Esc(project.Name)}");
+        sb.AppendLine($"Period,{from:yyyy-MM-dd} → {to:yyyy-MM-dd}");
+        sb.AppendLine();
+        sb.AppendLine("หมวด,ยอด (บาท)");
+        sb.AppendLine($"มูลค่าสัญญา,{profit.ContractAmount:F2}");
+        sb.AppendLine($"รายได้รวม (Revenue),{profit.TotalRevenue:F2}");
+        sb.AppendLine($"ต้นทุนรวม (Cost),{profit.TotalCost:F2}");
+        sb.AppendLine($"กำไรขั้นต้น (Gross Profit),{profit.GrossProfit:F2}");
+        sb.AppendLine($"อัตรากำไรขั้นต้น %,{profit.GrossProfitPercent:F2}");
+        sb.AppendLine($"ความคืบหน้า %,{profit.CompletionPercent:F2}");
+        sb.AppendLine($"Variance งบประมาณ,{profit.BudgetVariance:F2}");
+        sb.AppendLine();
+        sb.AppendLine("Cost Breakdown,ยอด (บาท)");
+        foreach (var kv in profit.CostBreakdown)
+            sb.AppendLine($"{Esc(kv.Key)},{kv.Value:F2}");
+        sb.AppendLine();
+        sb.AppendLine("Cash Flow YTD,ยอด (บาท)");
+        sb.AppendLine($"กิจกรรมดำเนินงาน (Operating),{cashFlow.OperatingActivities.SubTotal:F2}");
+        sb.AppendLine($"กิจกรรมลงทุน (Investing),{cashFlow.InvestingActivities.SubTotal:F2}");
+        sb.AppendLine($"กิจกรรมจัดหาเงิน (Financing),{cashFlow.FinancingActivities.SubTotal:F2}");
+        sb.AppendLine($"กระแสเงินสดสุทธิ,{cashFlow.NetCashChange:F2}");
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        var fileName = $"ProjectPnL_{project.Code}_{DateTime.UtcNow:yyyyMMdd}.csv";
+        return File(bytes, "text/csv; charset=utf-8", fileName);
+
+        static string Esc(string s) => s == null ? "" : (s.Contains(',') || s.Contains('"') || s.Contains('\n')
+            ? "\"" + s.Replace("\"", "\"\"") + "\"" : s);
+    }
+
     [HttpDelete("{projectId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid projectId)
     {

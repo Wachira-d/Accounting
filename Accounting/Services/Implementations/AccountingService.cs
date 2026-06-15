@@ -1895,66 +1895,101 @@ public partial class AccountingService : IAccountingService
         var netIncome = revenue - expenses;
         operatingItems.Add(new CashFlowLineItem("กำไร(ขาดทุน)สุทธิ", null, netIncome));
 
-        // Depreciation add-back (non-cash expense) - 56xxx ค่าเสื่อมราคาและค่าตัดจำหน่าย
-        var depreciation = postedLines
+        // F23 — แยกบรรทัด postedLines ตาม CashFlowSection override ก่อน.
+        // บัญชีที่ admin ตั้ง override ไว้ (CashFlowSection != None) ใช้
+        // override นั้น และ exclude จากการ match prefix ด้านล่าง (ป้องกัน
+        // double-count). บัญชี None ปล่อยให้ prefix heuristic เดิมจับ.
+        var overrideOperating = postedLines
+            .Where(l => l.Account.CashFlowSection == CashFlowSectionType.Operating).ToList();
+        var overrideInvesting = postedLines
+            .Where(l => l.Account.CashFlowSection == CashFlowSectionType.Investing).ToList();
+        var overrideFinancing = postedLines
+            .Where(l => l.Account.CashFlowSection == CashFlowSectionType.Financing).ToList();
+        var noOverride = postedLines
+            .Where(l => l.Account.CashFlowSection == CashFlowSectionType.None).ToList();
+
+        // Depreciation add-back (non-cash expense) - 56xxx
+        var depreciation = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("56"))
             .Sum(l => l.DebitAmount - l.CreditAmount);
         if (depreciation != 0)
             operatingItems.Add(new CashFlowLineItem("ค่าเสื่อมราคา (บวกกลับ)", "56", depreciation));
 
         // Changes in AR - 113xx ลูกหนี้การค้า
-        var arChange = postedLines
+        var arChange = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("113"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (arChange != 0)
             operatingItems.Add(new CashFlowLineItem("ลูกหนี้การค้า (เพิ่มขึ้น)/ลดลง", "113", arChange));
 
         // Changes in Inventory - 115xx สินค้าคงเหลือ
-        var inventoryChange = postedLines
+        var inventoryChange = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("115"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (inventoryChange != 0)
             operatingItems.Add(new CashFlowLineItem("สินค้าคงเหลือ (เพิ่มขึ้น)/ลดลง", "115", inventoryChange));
 
         // Changes in AP - 212xx เจ้าหนี้การค้า
-        var apChange = postedLines
+        var apChange = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("212"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (apChange != 0)
             operatingItems.Add(new CashFlowLineItem("เจ้าหนี้การค้า เพิ่มขึ้น/(ลดลง)", "212", apChange));
 
         // Tax payable changes - 219xx ภาษีค้างจ่าย
-        var taxPayableChange = postedLines
+        var taxPayableChange = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("219"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (taxPayableChange != 0)
             operatingItems.Add(new CashFlowLineItem("ภาษีค้างจ่าย เพิ่มขึ้น/(ลดลง)", "219", taxPayableChange));
 
+        // F23 — รวม override accounts ที่กำหนดเป็น Operating ด้วยตนเอง
+        foreach (var grp in overrideOperating.GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName }))
+        {
+            var amt = grp.Sum(l => l.CreditAmount - l.DebitAmount);
+            if (amt != 0)
+                operatingItems.Add(new CashFlowLineItem($"{grp.Key.AccountName} (ตั้งค่าเป็น Operating)", grp.Key.AccountCode, amt));
+        }
+
         var operatingTotal = operatingItems.Sum(i => i.Amount);
 
         // Investing Activities: Fixed asset accounts - 122xx ที่ดิน อาคาร อุปกรณ์
         var investingItems = new List<CashFlowLineItem>();
-        var fixedAssetChange = postedLines
+        var fixedAssetChange = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("122") || l.Account.AccountCode.StartsWith("123"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (fixedAssetChange != 0)
             investingItems.Add(new CashFlowLineItem("ซื้อ/ขาย ที่ดิน อาคาร อุปกรณ์", "122", fixedAssetChange));
 
+        foreach (var grp in overrideInvesting.GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName }))
+        {
+            var amt = grp.Sum(l => l.CreditAmount - l.DebitAmount);
+            if (amt != 0)
+                investingItems.Add(new CashFlowLineItem($"{grp.Key.AccountName} (ตั้งค่าเป็น Investing)", grp.Key.AccountCode, amt));
+        }
+
         var investingTotal = investingItems.Sum(i => i.Amount);
 
         // Financing Activities: Long-term liabilities (221xxx) + Equity (31xxx)
         var financingItems = new List<CashFlowLineItem>();
-        var longTermDebtChange = postedLines
+        var longTermDebtChange = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("221"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (longTermDebtChange != 0)
             financingItems.Add(new CashFlowLineItem("เงินกู้ยืมระยะยาว เพิ่มขึ้น/(ลดลง)", "221", longTermDebtChange));
 
-        var equityChange = postedLines
+        var equityChange = noOverride
             .Where(l => l.Account.AccountCode.StartsWith("31"))
             .Sum(l => l.CreditAmount - l.DebitAmount);
         if (equityChange != 0)
             financingItems.Add(new CashFlowLineItem("ทุนจดทะเบียน เพิ่มขึ้น/(ลดลง)", "31", equityChange));
+
+        foreach (var grp in overrideFinancing.GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName }))
+        {
+            var amt = grp.Sum(l => l.CreditAmount - l.DebitAmount);
+            if (amt != 0)
+                financingItems.Add(new CashFlowLineItem($"{grp.Key.AccountName} (ตั้งค่าเป็น Financing)", grp.Key.AccountCode, amt));
+        }
 
         var financingTotal = financingItems.Sum(i => i.Amount);
 
@@ -2305,12 +2340,17 @@ public partial class AccountingService : IAccountingService
             throw new InvalidOperationException(
                 "ไม่พบบัญชีกำไรสะสม (32020) ในผังบัญชี — กรุณาเพิ่มก่อนปิดงวด");
 
+        // F9 — รวมเฉพาะ Posted (ที่ยังมีผล). Status==Reversed = entry ต้นที่
+        // ถูก reverse แล้ว — มี reversal entry คู่ขนานที่ post กลับด้านอยู่
+        // แล้ว ถ้านับ Reversed ด้วยจะ double-count: ต้น + reversal = 0 net
+        // แต่ใส่ Reversed อันต้นเข้าไปอีก = +1 ทับ. ตัด Reversed ทิ้ง — เหลือ
+        // เฉพาะ Posted ทั้ง original + reversal (สอง entries post normal +
+        // post กลับ — net = 0 ถ้า cancel กันพอดี).
         var postedLines = await _db.JournalEntryLines
             .Include(l => l.Account)
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && (l.JournalEntry.Status == JournalEntryStatus.Posted
-                    || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= period.StartDate
                 && l.JournalEntry.EntryDate <= period.EndDate
                 && (l.Account!.AccountType == AccountType.Revenue

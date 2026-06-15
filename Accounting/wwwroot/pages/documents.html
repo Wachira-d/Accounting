@@ -354,6 +354,10 @@
                   <input type="checkbox" id="fPricesIncludeVat" style="margin:0" onchange="Page.calcSum()">
                   <span title="ติ๊กเมื่อราคา/หน่วยที่กรอกรวม VAT 7% แล้ว — ระบบจะถอด VAT ออกให้อัตโนมัติเพื่อแยกฐานภาษีให้ถูกต้อง">ราคารวมภาษี</span>
                 </label>
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsForeignServiceWrap">
+                  <input type="checkbox" id="fIsForeignService" style="margin:0">
+                  <span title="ติ๊กเมื่อซื้อบริการจากต่างประเทศ (Google Ads / AWS / Facebook ฯลฯ) — ระบบจะรวมรายการนี้ในรายงาน ภ.พ.36 (self-assess VAT 7%) และ ภ.ง.ด.54 (WHT)">🌐 บริการต่างประเทศ (§83/6)</span>
+                </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
@@ -362,7 +366,7 @@
             </div>
             <div class="table-container">
               <table class="table" id="linesTable" data-doc-side="revenue">
-                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th style="min-width:140px" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติ ระบบจะลงค่าใช้จ่ายเข้าโครงการนั้นๆ ให้อัตโนมัติ">โครงการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th style="min-width:140px" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติ ระบบจะลงค่าใช้จ่ายเข้าโครงการนั้นๆ ให้อัตโนมัติ">โครงการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th title="VAT เคลม ภพ.30 ได้หรือไม่ — คลิกไอคอนเพื่อสลับ. กฎ §82/5: ค่ารับรอง / น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์ → เคลมไม่ได้">เคลม</th><th>WHT%</th><th></th></tr></thead>
                 <tbody id="linesBody"></tbody>
               </table>
               <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:4px">
@@ -376,6 +380,7 @@
             <div class="text-sm">VAT: <strong id="sumVat">0.00</strong></div>
             <div class="text-sm">หัก ณ ที่จ่าย: <strong id="sumWht">0.00</strong></div>
             <div class="text-lg font-bold" style="margin-top:4px">ยอดสุทธิ: <span id="sumTotal">0.00</span></div>
+            <div id="sumTotalWords" style="font-size:11px;color:#6b7280;margin-top:2px;font-style:italic"></div>
           </div>
 
           <!-- Send via email (visible only if email configured) -->
@@ -427,14 +432,13 @@
           <h3 class="modal-title" id="pdfTitle">ดูตัวอย่างเอกสาร</h3>
           <div class="flex gap-2" id="pdfModalActions" style="flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
-            <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF (สร้างจาก server — ไฟล์เดียวกันทุกเครื่อง รองรับ PDF/A-3 + ฝัง XML สำหรับ e-Tax)">📥 ดาวน์โหลด PDF</button>
+            <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — เอกสารที่ผ่าน e-Tax flow แล้วจะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที), เอกสารอื่นได้ PDF ปกติ">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
-            <button id="pdfDownloadEtaxBtn" class="btn btn-sm btn-success" style="display:none" onclick="Page.downloadEtaxPdf()" title="PDF/A-3 ที่ฝัง XML ตามข้อกำหนดสรรพากร — ใช้สำหรับส่งทางอีเมลและยื่นภาษี">📥 ดาวน์โหลด PDF/A-3 (ฝัง XML)</button>
             <button class="modal-close" onclick="Layout.closeModal('pdfModal')">&times;</button>
           </div>
         </div>
         <div id="pdfEtaxBanner" style="display:none;flex-shrink:0;padding:8px 16px;background:#ecfdf5;border-bottom:1px solid #a7f3d0;font-size:12px;color:#065f46">
-          ✓ <strong>เอกสาร e-Tax</strong> — กดปุ่ม "ดาวน์โหลด PDF/A-3 (ฝัง XML)" เพื่อได้ไฟล์ที่มี XML ฝังตามข้อกำหนดกรมสรรพากร <span style="color:#dc2626">การพิมพ์จะตัด XML ออก</span>
+          ✓ <strong>เอกสาร e-Tax</strong> — กด "ดาวน์โหลด PDF" จะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที)
         </div>
         <div class="modal-body" id="pdfContent" style="padding:0;flex:1;min-height:0;overflow-y:auto"></div>
       </div>
@@ -1429,6 +1433,7 @@
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.showPdf('${d.id}')">PDF${hasEtaxId(d.etaxInvoiceId) ? ' 📥' : ''}</button>
+              <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.cloneDoc('${d.id}')" title="คัดลอกเอกสารฉบับนี้ — สร้างใหม่จากข้อมูลเดิม (ลูกค้า + รายการ + บัญชี)">📋</button>
               ${d.status === 'Draft' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteDoc('${d.id}')" title="ลบเอกสารฉบับร่าง">ลบ</button>` : ''}
               ${d.status !== 'Draft' && d.status !== 'Voided' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidDoc('${d.id}')" title="ยกเลิกเอกสาร">ยกเลิก</button>` : ''}
             </td>
@@ -1458,6 +1463,7 @@
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></td>
           <td><select class="form-select" data-f="vat" onchange="Page.calcSum()" style="font-size:13px"><option value="7">7%</option><option value="0">0%</option></select></td>
+          <td style="text-align:center"><span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;font-size:18px;user-select:none">✓</span></td>
           <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="wht" oninput="Page.calcSum()"></td>
           <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcSum()">✕</button></td>`;
         document.getElementById('linesBody').appendChild(row);
@@ -1465,6 +1471,12 @@
         // user already typed (overwriteQty:false) — picking a product mid-edit
         // shouldn't reset the count they just entered.
         const descInput = row.querySelector('[data-f="desc"]');
+        // VAT-claimability heuristic: ตรวจจากคำในรายการ → ติ๊ก
+        // 🚫 อัตโนมัติเมื่อมีคำที่บ่งบอกค่าใช้จ่ายต้องห้าม
+        // §82/5 (น้ำมัน / รถยนต์ / รับรอง / ฯลฯ). ใช้กับ doc ฝั่งซื้อ
+        // เท่านั้น (PurchaseInvoice / Expense / PaymentVoucher) — ฝั่งขาย
+        // ไม่มี input VAT ให้เคลม ค่าจะถูก ignore โดย server.
+        descInput.addEventListener('input', () => this.suggestVatClaim(row));
         if (window.ProductLookup) {
           ProductLookup.attach(descInput, (r, p) => ProductLookup.fillRow(r, p, { overwriteQty: false }));
         } else {
@@ -1505,10 +1517,99 @@
         document.getElementById('sumSubTotal').textContent = Layout.money(sub);
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
-        document.getElementById('sumTotal').textContent = Layout.money(sub + vat - wht);
+        const totalCalc = sub + vat - wht;
+        document.getElementById('sumTotal').textContent = Layout.money(totalCalc);
+        // #10 — amount in words (Thai baht) ใต้ยอดสุทธิ
+        const wordsEl = document.getElementById('sumTotalWords');
+        if (wordsEl && window.UxHelpers?.AmountInWords) {
+          wordsEl.textContent = totalCalc > 0 ? '(' + window.UxHelpers.AmountInWords.convert(totalCalc) + ')' : '';
+        }
         // Keep email template's amount in sync — only when email is enabled to
         // avoid wasted DOM work on every keystroke during line editing.
         if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();
+        // Refresh non-claimable VAT banner เมื่อ totals เปลี่ยน
+        this.refreshVatProhibitedBanner();
+      },
+
+      // ภาษีซื้อต้องห้าม (§82/5 ประมวลรัษฎากร) — toggle + AI heuristic
+      // ─────────────────────────────────────────────────────────────
+      // Click ไอคอนสลับ ✓ ↔ 🚫 ต่อบรรทัด. 🚫 = VAT ไม่ขึ้น ภพ.30
+      // (รวมเป็น cost แทน). User override จะ "ล็อค" ไม่ให้ heuristic
+      // เปลี่ยนตามคำในรายการ.
+      toggleVatClaim(el) {
+        const cur = el.dataset.claim === 'true';
+        const nxt = !cur;
+        el.dataset.claim = nxt ? 'true' : 'false';
+        el.dataset.userOverride = '1';
+        if (nxt) {
+          el.textContent = '✓';
+          el.style.color = '';
+          el.dataset.reason = '';
+          el.title = 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ';
+        } else {
+          el.textContent = '🚫';
+          el.style.color = '#dc2626';
+          el.dataset.reason = el.dataset.reason || 'ผู้ใช้กำหนดเอง';
+          el.title = `VAT ต้องห้าม — ไม่นำเข้า ภพ.30 (${el.dataset.reason})`;
+        }
+        this.refreshVatProhibitedBanner();
+      },
+
+      // Heuristic regex: คำที่บ่งบอกค่าใช้จ่ายต้องห้าม §82/5(3)(6) —
+      // ตรวจอัตโนมัติเมื่อ user พิมพ์รายการ. ถ้ามี match + user ยังไม่
+      // override → set 🚫 + reason. User override = ล็อค.
+      suggestVatClaim(row) {
+        const indicator = row.querySelector('[data-f="vatClaim"]');
+        if (!indicator || indicator.dataset.userOverride) return;
+        const desc = (row.querySelector('[data-f="desc"]').value || '').toLowerCase();
+        const rules = [
+          { re: /รับรอง|เลี้ยง(?:ลูกค้า|รับรอง)?|กระเช้า|ของขวัญลูกค้า|กอล์ฟ|พาลูกค้า/i, code: '§82/5(3)', label: 'ค่ารับรอง' },
+          { re: /น้ำมัน(?:รถ|เชื้อเพลิง)?|เติมน้ำมัน|ปั๊มน้ำมัน|ปตท|บางจาก|เชลล์|ค่าน้ำมัน/i, code: '§82/5(6)', label: 'น้ำมันรถยนต์นั่ง' },
+          { re: /ซ่อมรถ|อะไหล่รถ|ประกันรถยนต์|พรบ\.?รถยนต์|ค่าทางด่วน|ค่าทางพิเศษ/i, code: '§82/5(6)', label: 'รถยนต์นั่ง' },
+          { re: /ใบเสร็จเงินสด|บิลเงินสด/i, code: '§82/5(1)', label: 'ใบกำกับฯ ไม่สมบูรณ์' }
+        ];
+        let matched = null;
+        for (const r of rules) { if (r.re.test(desc)) { matched = r; break; } }
+        if (matched && indicator.dataset.claim === 'true') {
+          indicator.dataset.claim = 'false';
+          indicator.dataset.reason = `${matched.code} ${matched.label}`;
+          indicator.textContent = '🚫';
+          indicator.style.color = '#dc2626';
+          indicator.title = `AI ตรวจพบ: ${matched.code} ${matched.label} — เคลมไม่ได้ (คลิกเพื่อสลับกลับ)`;
+          this.refreshVatProhibitedBanner();
+        }
+      },
+
+      // Banner เตือนเหนือสรุปยอด: รวม VAT ต้องห้ามทุก row + แสดง
+      // ผลกระทบงบ (ค่าใช้จ่ายเพิ่ม VAT เป็น cost).
+      refreshVatProhibitedBanner() {
+        let prohibitedTotal = 0;
+        const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
+        const inclVat = document.getElementById('fPricesIncludeVat')?.checked || false;
+        document.querySelectorAll('#linesBody tr').forEach(row => {
+          const claim = row.querySelector('[data-f="vatClaim"]');
+          if (!claim || claim.dataset.claim === 'true') return;
+          const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
+          const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
+          const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
+          const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
+          const entered = qty * price * (1 - disc / 100);
+          const lineVat = inclVat && vatR > 0 ? r2(entered - entered / (1 + vatR / 100)) : r2(entered * vatR / 100);
+          prohibitedTotal += lineVat;
+        });
+        let banner = document.getElementById('vatProhibitedBanner');
+        const sumBox = document.getElementById('sumVat')?.closest('div');
+        if (prohibitedTotal > 0.01) {
+          if (!banner && sumBox && sumBox.parentElement) {
+            banner = document.createElement('div');
+            banner.id = 'vatProhibitedBanner';
+            banner.style.cssText = 'margin:8px 0;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12.5px;color:#991b1b';
+            sumBox.parentElement.insertBefore(banner, sumBox);
+          }
+          if (banner) banner.innerHTML = `🚫 <strong>VAT ต้องห้าม ${Layout.money(prohibitedTotal)} บาท</strong> — จะไม่นำเข้า ภพ.30 (รวมเป็น cost ของค่าใช้จ่ายแทน). กดไอคอน ✓/🚫 ที่บรรทัดเพื่อสลับ`;
+        } else if (banner) {
+          banner.remove();
+        }
       },
       editingId: null,
       /**
@@ -1702,6 +1803,19 @@
             row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
             row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
+            // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
+            // เพื่อไม่ให้ heuristic regex เปลี่ยนค่าทับ user/AI choice
+            // ที่บันทึกไว้แล้ว.
+            const claimEl = row.querySelector('[data-f="vatClaim"]');
+            if (claimEl) {
+              const claim = l.isVatClaimable !== false;
+              claimEl.dataset.claim = claim ? 'true' : 'false';
+              claimEl.dataset.reason = l.vatNonClaimableReason || '';
+              claimEl.dataset.userOverride = '1';
+              claimEl.textContent = claim ? '✓' : '🚫';
+              claimEl.style.color = claim ? '' : '#dc2626';
+              claimEl.title = claim ? 'VAT เคลมได้' : `VAT ต้องห้าม — ${l.vatNonClaimableReason || 'ไม่นำเข้า ภพ.30'}`;
+            }
             if (l.productCode) {
               row.dataset.productCode = l.productCode;
               if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
@@ -1805,6 +1919,15 @@
           // DocumentLine.ProjectId and feeds SyncProjectCostEntriesAsync.
           const lineProj = row.querySelector('[data-f="project"]')?.value;
           if (lineProj) line.projectId = lineProj;
+          // ภาษีซื้อต้องห้าม flag + เหตุผล — server บังคับ false ถ้า
+          // account ที่ผังบัญชี InputVatClaimable=false ไม่ว่า client
+          // จะส่งอะไร (กัน user override บัญชีต้องห้าม).
+          const claim = row.querySelector('[data-f="vatClaim"]');
+          if (claim) {
+            line.isVatClaimable = claim.dataset.claim !== 'false';
+            if (!line.isVatClaimable && claim.dataset.reason)
+              line.vatNonClaimableReason = claim.dataset.reason;
+          }
           lines.push(line);
         });
         if (strict && strictViolators.length) {
@@ -1857,6 +1980,7 @@
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
             ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
           pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
+          isForeignService: document.getElementById('fIsForeignService')?.checked || false,
         };
         try {
           let savedDocId = this.editingId;
@@ -2182,6 +2306,20 @@
             if (extraSections) {
               document.getElementById('detailContent').innerHTML += extraSections;
             }
+            // #23 Comments widget — mount thread + activity log
+            const commentsHost = document.createElement('div');
+            commentsHost.id = `commentsMount-${id}`;
+            commentsHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';
+            document.getElementById('detailContent').appendChild(commentsHost);
+            // Lazy-load comments script if not loaded
+            if (!window.CommentsWidget) {
+              const s = document.createElement('script');
+              s.src = '/js/comments-widget.js';
+              s.onload = () => window.CommentsWidget.mount(commentsHost, { companyId: Layout.getCompanyId(), entityType: 'Document', entityId: id });
+              document.head.appendChild(s);
+            } else {
+              window.CommentsWidget.mount(commentsHost, { companyId: Layout.getCompanyId(), entityType: 'Document', entityId: id });
+            }
           } catch(e) { /* non-critical */ }
 
           // Document chain — render parent + siblings + children
@@ -2209,9 +2347,10 @@
               && !hasEtaxId) {
             actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
           }
-          if (hasEtaxId) {
-            actions += ` <button class="btn btn-success" onclick="Page.downloadEtaxPdfFromDetail('${d.etaxInvoiceId}', '${d.id}')" title="ดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัว (e-Tax Invoice)">📥 ดาวน์โหลด PDF/A-3</button>`;
-          }
+          // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
+          // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
+          // ด้านบนแล้วเลือก "ดาวน์โหลด PDF" → ได้ PDF/A-3 อัตโนมัติ
+          // ไม่ต้องมีปุ่มแยก.
           // Payment recording: for approved+ docs with balance due
           const payableStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Overdue'];
           if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
@@ -2515,6 +2654,29 @@
           setTimeout(() => URL.revokeObjectURL(u), 1000);
           Layout.toast('ดาวน์โหลด PDF/A-3 สำเร็จ — ไฟล์มี XML ฝังในตัว');
         } catch (e) { Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error'); }
+      },
+      /**
+       * คัดลอกเอกสาร (#4) — สร้างเอกสารใหม่จากต้นแบบ. server endpoint
+       * /documents/{id}/clone จะ pre-fill ลูกค้า + รายการ + บัญชี ทั้งหมด
+       * แต่ reset DocumentNumber + PaidAmount + Status. หลัง clone redirect
+       * ไปเปิด edit form ของ doc ใหม่ทันที.
+       */
+      async cloneDoc(id) {
+        if (!confirm('สร้างเอกสารใหม่จากต้นแบบนี้ (ลูกค้า + รายการ + บัญชี)?')) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/documents/${id}/clone`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ autoCreate: true })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message);
+          Layout.toast(j.message);
+          // Refresh list + open new doc for edit
+          this.load();
+          setTimeout(() => this.edit(j.data.newDocumentId), 300);
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async voidDoc(id) {
         const api = Layout.api(); if (!api) return;
@@ -3269,13 +3431,11 @@
           } catch (_) { /* fall through to client render */ }
           document.getElementById('pdfContent').innerHTML = renderedHtml
             || this.generatePdfHtml(d, companyInfo, signature, glEntry);
-          // Toggle etax-only UI: download button + green banner appear only when this
-          // document has an associated EtaxInvoice (i.e. its XML has been generated).
-          // Guard against empty-Guid sentinel which would otherwise pass !! truthy check.
-          const etaxBtn = document.getElementById('pdfDownloadEtaxBtn');
+          // Toggle etax banner — แจ้งผู้ใช้ว่ากด "ดาวน์โหลด PDF"
+          // จะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติสำหรับเอกสาร e-Tax.
+          // ปุ่มดาวน์โหลด PDF/A-3 แยกถูกถอดออกแล้ว — รวมเป็นปุ่มเดียว.
           const etaxBanner = document.getElementById('pdfEtaxBanner');
           const hasEtax = !!d.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
-          if (etaxBtn) etaxBtn.style.display = hasEtax ? 'inline-block' : 'none';
           if (etaxBanner) etaxBanner.style.display = hasEtax ? 'block' : 'none';
           Layout.openModal('pdfModal');
         } catch (e) { Layout.toast(e.message, 'error'); }

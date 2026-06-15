@@ -490,4 +490,41 @@ public class ApprovalService : IApprovalService
             r.Actions.OrderBy(a => a.StepOrder).Select(a =>
                 new ApprovalActionResponse(a.StepOrder, a.ApproverUser?.FullName ?? "",
                     a.Status, a.ActionAt, a.Comments)).ToList());
+
+    public async Task<ApprovalRule?> FindMatchingRuleAsync(
+        Guid companyId, DocumentType docType, decimal amount, Guid? projectId)
+    {
+        return await _db.ApprovalRules.AsNoTracking()
+            .Include(r => r.Steps)
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.IsActive
+                && (r.DocumentType == null || r.DocumentType == docType)
+                && (r.MinAmount == null || amount >= r.MinAmount.Value)
+                && (r.MaxAmount == null || amount <= r.MaxAmount.Value)
+                && (r.ProjectId == null || r.ProjectId == projectId))
+            // เลือก rule ที่ specific ที่สุดก่อน — type-specific + amount band
+            // แคบสุด > type-only > generic
+            .OrderByDescending(r => r.DocumentType != null ? 1 : 0)
+            .ThenByDescending(r => r.MinAmount ?? 0)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<ApprovalWorkflowGate> CheckGateAsync(Guid companyId, Guid documentId)
+    {
+        var existing = await _db.ApprovalRequests.AsNoTracking()
+            .Where(r => r.CompanyId == companyId
+                && r.EntityType == "Document" && r.EntityId == documentId
+                && !r.IsDeleted)
+            .OrderByDescending(r => r.RequestedAt)
+            .Select(r => new { r.Id, r.OverallStatus })
+            .FirstOrDefaultAsync();
+        if (existing == null)
+            return new ApprovalWorkflowGate(true, null, null);
+        if (existing.OverallStatus == ApprovalStatus.Approved)
+            return new ApprovalWorkflowGate(true, null, existing.Id);
+        if (existing.OverallStatus == ApprovalStatus.Rejected)
+            return new ApprovalWorkflowGate(false, "เอกสารถูกปฏิเสธในขั้น approval workflow — ส่งใหม่หรือแก้ไขก่อน", existing.Id);
+        return new ApprovalWorkflowGate(false,
+            $"เอกสารต้องผ่าน multi-level approval workflow ก่อน (ขั้นปัจจุบัน: รออนุมัติ)",
+            existing.Id);
+    }
 }

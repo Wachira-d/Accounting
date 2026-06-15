@@ -27,4 +27,19 @@ public interface ITaxFilingExportService
 
     // สปส.1-10 - SSO monthly contribution report
     Task<TaxFilingExportResult> ExportSso110Async(Guid companyId, int year, int month);
+
+    /// <summary>ภ.ง.ด.2 — Monthly dividend WHT (เงินปันผล §40(4)(ข)).
+    /// บริษัทจ่ายเงินปันผลให้ผู้ถือหุ้น ต้องหัก WHT 10% ส่งสรรพากร
+    /// ภายในวันที่ 7 ของเดือนถัดไป. รวมจาก JournalEntries ที่ลงบัญชี
+    /// "เงินปันผลค้างจ่าย" / "ภาษีหัก ณ ที่จ่าย" สำหรับ §40(4)(ข).</summary>
+    Task<TaxFilingExportResult> ExportPnd2Async(Guid companyId, int year, int month);
+
+    /// <summary>ภ.พ.36 — Foreign Service VAT self-assessment.</summary>
+    Task<TaxFilingExportResult> ExportPp36Async(Guid companyId, int year, int month);
+
+    /// <summary>ภ.ง.ด.54 — WHT จาก foreign vendor (จ่ายค่าบริการ ดอกเบี้ย
+    /// ค่าสิทธิ์ ฯลฯ ไปต่างประเทศ) ผู้จ่ายในไทยต้องหัก ณ ที่จ่าย ตาม DTA
+    /// (15% สำหรับประเทศไม่มีอนุสัญญา / 5-15% มี DTA). ยื่นภายในวันที่ 7
+    /// ของเดือนถัดไป. รวมจาก PI/Expense ที่ IsForeignService=true + มี WHT.</summary>
+    Task<TaxFilingExportResult> ExportPnd54Async(Guid companyId, int year, int month);
 }

@@ -353,4 +353,117 @@ public class PayrollController : ControllerBase
         await db.SaveChangesAsync();
         return Ok(new ApiResponse<object>(true, null, $"ลบค่าตั้งปี {y} แล้ว — กลับไปใช้ตารางตามกฎหมาย"));
     }
+
+    // ===== Tax-rule config (PIT brackets + allowances รายปี) =====
+
+    public sealed record TaxRuleConfigRequest(
+        int FiscalYear,
+        string? BracketsJson,
+        decimal PersonalAllowance,
+        decimal SpouseAllowance,
+        decimal ChildAllowance,
+        decimal ChildAllowancePost2561,
+        decimal ParentAllowance,
+        decimal Section42TwiCap,
+        decimal LifeInsuranceCap,
+        decimal HealthInsuranceCap,
+        decimal PvdCap,
+        decimal MortgageInterestCap,
+        decimal DonationCapPercent,
+        string? Notes);
+
+    /// <summary>คืน TaxRuleConfig ของบริษัท × ช่วงปี (default 6 ปีย้อนหลัง +
+    /// ล่วงหน้า). Row ที่ไม่มีใน DB คืน statutory default + IsOverride=false
+    /// เพื่อให้ UI render ตารางครบทุกปีในช่วง.</summary>
+    [HttpGet("tax-rule-config")]
+    public async Task<ActionResult<ApiResponse<object>>> GetTaxRuleConfig(
+        Guid companyId, [FromServices] Accounting.Data.AccountingDbContext db,
+        [FromQuery] int? fromYear = null, [FromQuery] int? toYear = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var start = fromYear ?? DateTime.UtcNow.Year - 1;
+        var end = toYear ?? DateTime.UtcNow.Year + 4;
+        var overrides = await db.TaxRuleConfigs
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.FiscalYear >= start && c.FiscalYear <= end)
+            .ToListAsync();
+        var defaultBrackets = "[{\"upperBound\":150000,\"rate\":0},{\"upperBound\":300000,\"rate\":0.05},{\"upperBound\":500000,\"rate\":0.10},{\"upperBound\":750000,\"rate\":0.15},{\"upperBound\":1000000,\"rate\":0.20},{\"upperBound\":2000000,\"rate\":0.25},{\"upperBound\":5000000,\"rate\":0.30},{\"upperBound\":0,\"rate\":0.35}]";
+        var rows = Enumerable.Range(start, end - start + 1).Select(y =>
+        {
+            var ov = overrides.FirstOrDefault(o => o.FiscalYear == y);
+            return new
+            {
+                FiscalYear = y,
+                BracketsJson = ov?.BracketsJson ?? defaultBrackets,
+                PersonalAllowance = ov?.PersonalAllowance ?? 60_000m,
+                SpouseAllowance = ov?.SpouseAllowance ?? 60_000m,
+                ChildAllowance = ov?.ChildAllowance ?? 30_000m,
+                ChildAllowancePost2561 = ov?.ChildAllowancePost2561 ?? 60_000m,
+                ParentAllowance = ov?.ParentAllowance ?? 30_000m,
+                Section42TwiCap = ov?.Section42TwiCap ?? 100_000m,
+                LifeInsuranceCap = ov?.LifeInsuranceCap ?? 100_000m,
+                HealthInsuranceCap = ov?.HealthInsuranceCap ?? 25_000m,
+                PvdCap = ov?.PvdCap ?? 500_000m,
+                MortgageInterestCap = ov?.MortgageInterestCap ?? 100_000m,
+                DonationCapPercent = ov?.DonationCapPercent ?? 10m,
+                IsOverride = ov != null,
+                ov?.Notes,
+            };
+        }).ToList();
+        return Ok(new ApiResponse<object>(true, rows));
+    }
+
+    [HttpPut("tax-rule-config")]
+    public async Task<ActionResult<ApiResponse<object>>> UpsertTaxRuleConfig(
+        Guid companyId, [FromBody] TaxRuleConfigRequest req,
+        [FromServices] Accounting.Data.AccountingDbContext db)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var year = req.FiscalYear > 2400 ? req.FiscalYear - 543 : req.FiscalYear;
+        if (year < 2000 || year > 2100)
+            return BadRequest(new ApiResponse<object>(false, null, "ปีไม่ถูกต้อง"));
+        if (req.PersonalAllowance < 0 || req.SpouseAllowance < 0 || req.ChildAllowance < 0
+            || req.ParentAllowance < 0 || req.PvdCap < 0 || req.DonationCapPercent < 0 || req.DonationCapPercent > 100)
+            return BadRequest(new ApiResponse<object>(false, null, "ค่าลดหย่อนติดลบ หรือ donationCap > 100% ไม่ได้"));
+
+        var existing = await db.TaxRuleConfigs
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.FiscalYear == year && !c.IsDeleted);
+        if (existing == null)
+        {
+            existing = new Models.Entities.TaxRuleConfig { CompanyId = companyId, FiscalYear = year };
+            db.TaxRuleConfigs.Add(existing);
+        }
+        existing.BracketsJson = req.BracketsJson ?? "";
+        existing.PersonalAllowance = req.PersonalAllowance;
+        existing.SpouseAllowance = req.SpouseAllowance;
+        existing.ChildAllowance = req.ChildAllowance;
+        existing.ChildAllowancePost2561 = req.ChildAllowancePost2561;
+        existing.ParentAllowance = req.ParentAllowance;
+        existing.Section42TwiCap = req.Section42TwiCap;
+        existing.LifeInsuranceCap = req.LifeInsuranceCap;
+        existing.HealthInsuranceCap = req.HealthInsuranceCap;
+        existing.PvdCap = req.PvdCap;
+        existing.MortgageInterestCap = req.MortgageInterestCap;
+        existing.DonationCapPercent = req.DonationCapPercent;
+        existing.Notes = req.Notes;
+        existing.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, new { existing.FiscalYear, existing.PersonalAllowance, existing.PvdCap },
+            $"บันทึกกฎภาษี ปี {year} แล้ว"));
+    }
+
+    [HttpDelete("tax-rule-config/{year:int}")]
+    public async Task<ActionResult<ApiResponse<object>>> DeleteTaxRuleConfig(
+        Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var y = year > 2400 ? year - 543 : year;
+        var existing = await db.TaxRuleConfigs
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.FiscalYear == y && !c.IsDeleted);
+        if (existing == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบกฎภาษีของปีนี้"));
+        existing.IsDeleted = true;
+        existing.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new ApiResponse<object>(true, null, $"ลบกฎภาษีปี {y} แล้ว — กลับไปใช้ default"));
+    }
 }

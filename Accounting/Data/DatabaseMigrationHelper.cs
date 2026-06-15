@@ -4100,6 +4100,315 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Employee_Date" ON "EmployeeProjectTimes" ("CompanyId", "EmployeeId", "WorkDate") WHERE "IsDeleted" = false;""",
             """CREATE INDEX IF NOT EXISTS "IX_EmployeeProjectTimes_Project_Date" ON "EmployeeProjectTimes" ("CompanyId", "ProjectId", "WorkDate") WHERE "ProjectId" IS NOT NULL AND "IsDeleted" = false;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_EmployeeProjectTimes_ExternalSync" ON "EmployeeProjectTimes" ("CompanyId", "ExternalSystem", "ExternalId") WHERE "ExternalId" IS NOT NULL AND "IsDeleted" = false;""",
+
+            // ===== DocumentLines: ภาษีซื้อต้องห้าม (Non-claimable Input VAT) =====
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IsVatClaimable" boolean NOT NULL DEFAULT true;""",
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "VatNonClaimableReason" text NULL;""",
+
+            // ===== TaxRuleConfig: configurable PIT brackets + allowances ต่อปี =====
+            // Per company × per year. Engine fallback ถ้าไม่มี config → ใช้
+            // hard-coded constants (PayrollService.Pit*) เพื่อ backward compat
+            // กับบริษัทที่ยังไม่เคยตั้งค่า.
+            """
+            CREATE TABLE IF NOT EXISTS "TaxRuleConfigs" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "FiscalYear" integer NOT NULL,
+                "BracketsJson" text NOT NULL DEFAULT '',
+                "PersonalAllowance" numeric(18,2) NOT NULL DEFAULT 60000,
+                "SpouseAllowance" numeric(18,2) NOT NULL DEFAULT 60000,
+                "ChildAllowance" numeric(18,2) NOT NULL DEFAULT 30000,
+                "ChildAllowancePost2561" numeric(18,2) NOT NULL DEFAULT 60000,
+                "ParentAllowance" numeric(18,2) NOT NULL DEFAULT 30000,
+                "Section42TwiCap" numeric(18,2) NOT NULL DEFAULT 100000,
+                "LifeInsuranceCap" numeric(18,2) NOT NULL DEFAULT 100000,
+                "HealthInsuranceCap" numeric(18,2) NOT NULL DEFAULT 25000,
+                "PvdCap" numeric(18,2) NOT NULL DEFAULT 500000,
+                "MortgageInterestCap" numeric(18,2) NOT NULL DEFAULT 100000,
+                "DonationCapPercent" numeric(8,4) NOT NULL DEFAULT 10,
+                "Notes" text NULL,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0,
+                CONSTRAINT "UX_TaxRuleConfigs_CompanyYear" UNIQUE ("CompanyId", "FiscalYear")
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_TaxRuleConfigs_CompanyId" ON "TaxRuleConfigs" ("CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== WithholdingTaxCerts: link to source PayrollRun สำหรับ
+            // monthly auto-issue + idempotency check (re-post payroll = re-issue cert).
+            """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "SourcePayrollRunId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_WithholdingTaxCerts_SourcePayrollRunId" ON "WithholdingTaxCerts" ("SourcePayrollRunId") WHERE "SourcePayrollRunId" IS NOT NULL;""",
+
+            // ===== PayrollDetails: TaxableGross — รายได้ที่ใช้คำนวณ WHT
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "TaxableGross" numeric(18,2) NOT NULL DEFAULT 0;""",
+
+            // ===== Companies.PaidUpCapital — ทุนชำระแล้ว สำหรับ §65 ทวิ (4)
+            // entertainment cap 0.3% revenue/capital max 10M (F11).
+            """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "PaidUpCapital" numeric(18,2) NOT NULL DEFAULT 0;""",
+
+            // ===== ChartOfAccounts.CashFlowSection — per-account override
+            // ของหมวด Cash Flow (Operating / Investing / Financing).
+            """ALTER TABLE "ChartOfAccounts" ADD COLUMN IF NOT EXISTS "CashFlowSection" smallint NOT NULL DEFAULT 0;""",
+
+            // ===== AuditLogs: F14 hash chain (forensic tamper-evident)
+            """ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "PrevHash" text NULL;""",
+            """ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "RowHash" text NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_AuditLogs_Company_Id" ON "AuditLogs" ("CompanyId", "Id");""",
+
+            // ===== Advanced Thai SME entities =====
+            // PostDatedCheck (เช็คล่วงหน้า) — B2B Thai norm. Inbound / Outbound
+            // + lifecycle Held → Deposited → Cleared / Dishonored / Returned.
+            """
+            CREATE TABLE IF NOT EXISTS "PostDatedChecks" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "Direction" smallint NOT NULL,
+                "CheckNumber" text NOT NULL DEFAULT '',
+                "BankName" text NOT NULL DEFAULT '',
+                "BankBranch" text NULL,
+                "Amount" numeric(18,2) NOT NULL DEFAULT 0,
+                "CheckDate" timestamp with time zone NOT NULL,
+                "IssueDate" timestamp with time zone NOT NULL,
+                "ScheduledDepositDate" timestamp with time zone NOT NULL,
+                "DepositedAt" timestamp with time zone NULL,
+                "ClearedAt" timestamp with time zone NULL,
+                "DishonoredAt" timestamp with time zone NULL,
+                "DishonorReason" text NULL,
+                "Status" smallint NOT NULL DEFAULT 1,
+                "ContactId" uuid NULL,
+                "SourceDocumentId" uuid NULL,
+                "BankAccountId" uuid NULL,
+                "RelatedVoucherId" uuid NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PostDatedChecks_Company_Status" ON "PostDatedChecks" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_PostDatedChecks_ScheduledDeposit" ON "PostDatedChecks" ("CompanyId", "ScheduledDepositDate") WHERE "IsDeleted" = false AND "Status" IN (1,2);""",
+            """CREATE INDEX IF NOT EXISTS "IX_PostDatedChecks_Source" ON "PostDatedChecks" ("SourceDocumentId") WHERE "SourceDocumentId" IS NOT NULL;""",
+
+            // CashAdvanceRequest (เบิก-เคลียร์เงินสดล่วงหน้า)
+            """
+            CREATE TABLE IF NOT EXISTS "CashAdvanceRequests" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "RequestNumber" text NOT NULL DEFAULT '',
+                "EmployeeId" uuid NOT NULL,
+                "RequestedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "ApprovedAmount" numeric(18,2) NULL,
+                "DisbursedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "ClearedAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "RefundAmount" numeric(18,2) NOT NULL DEFAULT 0,
+                "RequestDate" timestamp with time zone NOT NULL,
+                "ApprovedAt" timestamp with time zone NULL,
+                "DisbursedAt" timestamp with time zone NULL,
+                "ClearanceDueDate" timestamp with time zone NULL,
+                "ClearedAt" timestamp with time zone NULL,
+                "Status" smallint NOT NULL DEFAULT 1,
+                "Purpose" text NOT NULL DEFAULT '',
+                "ApproverNote" text NULL,
+                "RejectionReason" text NULL,
+                "ApproverUserId" uuid NULL,
+                "DisbursementVoucherId" uuid NULL,
+                "ClearanceDocumentIdsJson" text NOT NULL DEFAULT '[]',
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_CashAdvanceRequests_Company_Status" ON "CashAdvanceRequests" ("CompanyId", "Status") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_CashAdvanceRequests_Employee" ON "CashAdvanceRequests" ("EmployeeId");""",
+            """CREATE INDEX IF NOT EXISTS "IX_CashAdvanceRequests_ClearanceDue" ON "CashAdvanceRequests" ("CompanyId", "ClearanceDueDate") WHERE "Status" IN (3,4);""",
+
+            // EarlyPaymentDiscountTerm (ส่วนลดเงินสด 2/10 net 30)
+            """
+            CREATE TABLE IF NOT EXISTS "EarlyPaymentDiscountTerms" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "Code" text NOT NULL DEFAULT '',
+                "DisplayName" text NOT NULL DEFAULT '',
+                "DiscountWindowDays" integer NOT NULL DEFAULT 0,
+                "DiscountPercent" numeric(8,4) NOT NULL DEFAULT 0,
+                "NetTermDays" integer NOT NULL DEFAULT 0,
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_EarlyPaymentDiscountTerms_Company" ON "EarlyPaymentDiscountTerms" ("CompanyId") WHERE "IsDeleted" = false;""",
+
+            // ===== Document: EarlyPaymentDiscountTermId — link เอกสารกับ
+            // discount term ที่ใช้ (auto-apply ตอน receipt มาถึงในช่วงเวลา).
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EarlyPaymentDiscountTermId" uuid NULL;""",
+
+            // ===== Document: IsForeignService — ภ.พ.36 self-assess VAT flag
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsForeignService" boolean NOT NULL DEFAULT false;""",
+
+            // ===== StockMovement: warehouse + lot/serial tracking
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "WarehouseId" uuid NULL;""",
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "LotNumber" text NULL;""",
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "SerialNumber" text NULL;""",
+            """ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "TransferPairId" uuid NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_StockMovements_WhProduct" ON "StockMovements" ("WarehouseId", "ProductId") WHERE "WarehouseId" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_StockMovements_Lot" ON "StockMovements" ("LotNumber") WHERE "LotNumber" IS NOT NULL;""",
+
+            // ===== StockTransfer + lines
+            """
+            CREATE TABLE IF NOT EXISTS "StockTransfers" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "TransferNumber" text NOT NULL DEFAULT '',
+                "FromWarehouseId" uuid NOT NULL,
+                "ToWarehouseId" uuid NOT NULL,
+                "TransferDate" timestamp with time zone NOT NULL,
+                "Status" text NOT NULL DEFAULT 'Draft',
+                "Reference" text NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "StockTransferLines" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "StockTransferId" uuid NOT NULL REFERENCES "StockTransfers"("Id"),
+                "ProductId" uuid NOT NULL,
+                "Quantity" numeric(18,4) NOT NULL DEFAULT 0,
+                "LotNumber" text NULL,
+                "SerialNumber" text NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_StockTransfers_Company" ON "StockTransfers" ("CompanyId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_StockTransferLines_Transfer" ON "StockTransferLines" ("StockTransferId");""",
+
+            // ===== DocumentComments — collaboration on documents (#23)
+            """
+            CREATE TABLE IF NOT EXISTS "DocumentComments" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "EntityType" text NOT NULL DEFAULT 'Document',
+                "EntityId" uuid NOT NULL,
+                "AuthorUserId" uuid NOT NULL,
+                "Body" text NOT NULL DEFAULT '',
+                "MentionedUserIdsJson" text NOT NULL DEFAULT '[]',
+                "ParentCommentId" uuid NULL,
+                "EditedAt" timestamp with time zone NULL,
+                "AttachmentUrl" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentComments_Entity" ON "DocumentComments" ("CompanyId", "EntityType", "EntityId") WHERE "IsDeleted" = false;""",
+
+            // ===== ScheduledReports — email digest schedule (#15)
+            """
+            CREATE TABLE IF NOT EXISTS "ScheduledReports" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "Name" text NOT NULL DEFAULT '',
+                "ReportCode" text NOT NULL DEFAULT '',
+                "Frequency" text NOT NULL DEFAULT 'Weekly',
+                "DayOfWeek" integer NULL,
+                "DayOfMonth" integer NULL,
+                "HourBangkok" integer NOT NULL DEFAULT 8,
+                "RecipientsJson" text NOT NULL DEFAULT '[]',
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "LastSentAt" timestamp with time zone NULL,
+                "LastResult" text NULL,
+                "Format" text NOT NULL DEFAULT 'PDF',
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ScheduledReports_Company" ON "ScheduledReports" ("CompanyId") WHERE "IsDeleted" = false AND "IsActive" = true;""",
+
+            // ===== ImportConflicts — duplicate detection during import flows
+            """
+            CREATE TABLE IF NOT EXISTS "ImportConflicts" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "SessionId" uuid NULL,
+                "SessionRef" text NULL,
+                "RowNumber" integer NOT NULL DEFAULT 0,
+                "EntityType" text NOT NULL DEFAULT '',
+                "StagedDataJson" text NOT NULL DEFAULT '{}',
+                "ExistingEntityId" uuid NULL,
+                "ExistingDataJson" text NOT NULL DEFAULT '{}',
+                "MatchScore" double precision NOT NULL DEFAULT 0,
+                "MatchReason" text NOT NULL DEFAULT '',
+                "Resolution" integer NOT NULL DEFAULT 0,
+                "ResolvedAt" timestamp with time zone NULL,
+                "ResolvedBy" text NULL,
+                "MergeChoicesJson" text NULL,
+                "UserNote" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ImportConflicts_Session" ON "ImportConflicts" ("SessionId") WHERE "SessionId" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ImportConflicts_SessionRef" ON "ImportConflicts" ("CompanyId", "SessionRef") WHERE "SessionRef" IS NOT NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ImportConflicts_Pending" ON "ImportConflicts" ("CompanyId", "Resolution") WHERE "Resolution" = 0 AND "IsDeleted" = false;""",
+
+            // ===== ProductLot — FIFO/FEFO tracking
+            """
+            CREATE TABLE IF NOT EXISTS "ProductLots" (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "CompanyId" uuid NOT NULL,
+                "ProductId" uuid NOT NULL,
+                "LotNumber" text NOT NULL DEFAULT '',
+                "ManufactureDate" timestamp with time zone NULL,
+                "ExpirationDate" timestamp with time zone NULL,
+                "QuantityOnHand" numeric(18,4) NOT NULL DEFAULT 0,
+                "UnitCost" numeric(18,4) NOT NULL DEFAULT 0,
+                "WarehouseId" uuid NULL,
+                "SupplierBatchRef" text NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Product" ON "ProductLots" ("CompanyId", "ProductId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_ProductLots_Expiry" ON "ProductLots" ("CompanyId", "ExpirationDate") WHERE "ExpirationDate" IS NOT NULL AND "QuantityOnHand" > 0;""",
         };
 
         foreach (var sql in statements)

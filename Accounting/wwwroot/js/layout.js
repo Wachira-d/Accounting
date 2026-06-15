@@ -40,6 +40,15 @@ const Layout = {
     this.currentPage = pageName;
     this._initialized = true;
     this._installGlobalErrorHandler();
+    // Lazy-load UX convenience scripts (Cmd+K palette + helpers). โหลด
+    // ครั้งเดียวจาก layout.js → ทุกหน้าได้ feature เหมือนกันโดยไม่ต้องเพิ่ม
+    // <script> ในทุก HTML.
+    if (!document.querySelector('script[src="/js/command-palette.js"]')) {
+      const s1 = document.createElement('script'); s1.src = '/js/command-palette.js'; s1.defer = true; document.head.appendChild(s1);
+      const s2 = document.createElement('script'); s2.src = '/js/ux-helpers.js'; s2.defer = true; document.head.appendChild(s2);
+      // Smart inline validators — tax-id checksum / period close / VAT mismatch
+      const s3 = document.createElement('script'); s3.src = '/js/smart-hooks.js'; s3.defer = true; document.head.appendChild(s3);
+    }
     // Reflect ui-mode on <body> so pages can hide advanced-only sections via CSS.
     const uiMode = localStorage.getItem('uiMode') || 'simple';
     document.body.classList.toggle('ui-mode-simple', uiMode === 'simple');
@@ -772,6 +781,14 @@ const Layout = {
       description: 'แยกตามอายุ 30/60/90/120 วัน · alert ค้างชำระ · auto-refresh ทุก 6 ชม.' },
     { id: 'cash-forecast', label: 'คาดการณ์กระแสเงินสด', icon: '💰', href: '/pages/cash-forecast.html', feature: 'AdvancedReporting',
       description: 'รายวัน 30/60/90 วัน · เงินเข้า-ออก · ติดลบเมื่อไหร่ · risk alerts · ลูกหนี้/เจ้าหนี้ top' },
+    { id: 'cash-management', label: 'จัดการเงินสด (PDC + Advance + Statement)', icon: '🏦', href: '/pages/cash-management.html', feature: 'AdvancedReporting',
+      description: 'เช็คล่วงหน้า · เบิก-เคลียร์เงินสด · จ่ายรวม vendor · ใบแจ้งยอดลูกหนี้ — รวมในที่เดียว' },
+    { id: 'mobile-receipt', label: 'รับเงินสดด่วน (Mobile)', icon: '📱', href: '/pages/mobile-receipt.html', feature: 'AdvancedReporting',
+      description: 'หน้าจอ mobile-first สำหรับร้านค้า — numpad + วิธีรับเงิน + พิมพ์ใบเสร็จ 1 click' },
+    { id: 'sme-config', label: 'ตั้งค่าระบบขั้นสูง (Approval + Schedule + Stock)', icon: '⚙️', href: '/pages/sme-config.html', feature: 'AdvancedReporting',
+      description: 'Approval workflow · Schedule reports · ส่วนลดเงินสด · Stock transfer · Sample data — รวมไว้ที่เดียว' },
+    { id: 'import-conflicts', label: 'แก้ของซ้ำตอน Import', icon: '🔀', href: '/pages/import-conflicts.html', feature: 'AdvancedReporting',
+      description: 'เมื่อ import เจอข้อมูลที่ซ้ำกับในระบบ — เลือก side-by-side ว่าจะใช้ของเดิมหรือใหม่ ต่อแถว/ทั้งหมด' },
     { id: 'fx-reval', label: 'FX Revaluation', icon: '💱', href: '/pages/fx-reval.html', feature: 'MultiCurrency',
       description: 'Period-end revalue AR/AP FCY → post JE กำไร/ขาดทุน · idempotent ต่องวด' },
     { id: 'arap-analysis', label: 'วิเคราะห์ AR / AP', icon: '🔍', href: '/pages/arap-analysis.html', feature: 'AdvancedReporting', _i18nKey: 'nav.arapAnalysis',

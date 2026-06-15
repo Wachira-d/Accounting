@@ -108,6 +108,26 @@ builder.Services.AddScoped<PreCloseChecklistService>();
 builder.Services.AddScoped<DocumentCompletenessService>();
 builder.Services.AddScoped<GlobalSearchService>();
 builder.Services.AddSingleton<Accounting.Helpers.ISecretProtector, Accounting.Helpers.SecretProtector>();
+// F15 — Column-level PII encryption via ASP.NET DataProtection. Keys
+// persist to ./.dpkeys (override ผ่าน config "DataProtection:KeyPath").
+// ใน production ให้ mount persistent volume → keys อยู่รอด pod restart.
+var dpKeyPath = builder.Configuration["DataProtection:KeyPath"] ?? "./.dpkeys";
+try { System.IO.Directory.CreateDirectory(dpKeyPath); } catch { }
+builder.Services.AddDataProtection()
+    .SetApplicationName("Accounting")
+    .PersistKeysToFileSystem(new System.IO.DirectoryInfo(dpKeyPath));
+builder.Services.AddSingleton<Accounting.Services.Implementations.Security.IPiiProtector,
+                              Accounting.Services.Implementations.Security.PiiProtector>();
+// F3 — FX gain/loss helper service (realized + unrealized snapshot)
+builder.Services.AddScoped<Accounting.Services.Implementations.Accounting.IFxRevaluationService,
+                           Accounting.Services.Implementations.Accounting.FxRevaluationService>();
+// F1 — Tenant safety guard. Verifies route companyId ⊂ user membership
+// before serving data — prevents IDOR cross-tenant data leak.
+builder.Services.AddScoped<Accounting.Services.Implementations.Security.ITenantGuard,
+                           Accounting.Services.Implementations.Security.TenantGuard>();
+// Central duplicate detection for ทุก import flow (CSV/Excel/OCR/Bank/etc.)
+builder.Services.AddScoped<Accounting.Services.Implementations.Import.IDuplicateDetector,
+                           Accounting.Services.Implementations.Import.DuplicateDetector>();
 builder.Services.AddScoped<Accounting.Services.Interfaces.ILineBotService, Accounting.Services.Implementations.LineBotService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
@@ -436,6 +456,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBac
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
+builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
@@ -445,6 +466,9 @@ builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddControllers(options =>
     {
         options.Filters.Add<Accounting.Filters.DateRangeValidationFilter>();
+        // F1 — Cross-cutting tenant guard: ทุก route ที่มี {companyId}
+        // ต้องผ่าน membership check ก่อนเข้า action.
+        options.Filters.Add<Accounting.Middleware.TenantGuardFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -558,6 +582,9 @@ app.UseMiddleware<ExceptionMiddleware>();
 
 // 2. Rate limiting (protect from abuse early)
 app.UseMiddleware<RateLimitMiddleware>();
+// F24 — Structured request logging (status/duration/user/company/trace).
+// ก่อน controller → ครอบ exception ของ controller ด้วย try/finally.
+app.UseMiddleware<Accounting.Middleware.RequestLoggingMiddleware>();
 
 // 3. Security headers & path protection
 app.UseMiddleware<SecurityMiddleware>();

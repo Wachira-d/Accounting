@@ -123,6 +123,21 @@
         </p>
         <div id="ssoConfigTable"><p class="text-gray-400 text-center">กำลังโหลด...</p></div>
       </div>
+
+      <!-- Tax Rule Config: PIT brackets + ค่าลดหย่อนหลัก ปรับได้รายปี
+           เพื่อรองรับกรณีสรรพากรเปลี่ยนเกณฑ์ (ไม่ต้องรอ deploy) -->
+      <div class="card" style="padding:24px;margin-top:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <h3 style="margin:0;font-size:16px">🧮 ตั้งค่ากฎภาษีเงินได้บุคคลธรรมดารายปี (Brackets + ค่าลดหย่อน)</h3>
+          <button class="btn btn-sm btn-outline" onclick="Page.loadTaxRuleConfig()">↻ โหลดใหม่</button>
+        </div>
+        <p class="text-gray-400" style="font-size:12px;margin:0 0 12px">
+          ค่าเริ่มต้นตามกฎหมายปัจจุบัน (ส่วนตัว 60K / คู่สมรส 60K / บุตร 30K /
+          บิดามารดา 30K / PVD เพดาน 500K / บริจาค 10%). แก้เฉพาะปีที่สรรพากร
+          ประกาศเปลี่ยน — engine WHT จะคำนวณตามค่าใหม่ทันที.
+        </p>
+        <div id="taxRuleConfigTable"><p class="text-gray-400 text-center">กำลังโหลด...</p></div>
+      </div>
     </div>
 
     <!-- Employee Modal -->
@@ -176,7 +191,7 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">เงินเดือน *</label><input type="number" class="form-input" id="empSalary" step="0.01"></div>
+            <div class="form-group"><label class="form-label">เงินเดือน *</label><input type="number" class="form-input" id="empSalary" step="0.01" data-amount-words></div>
             <div class="form-group"><label class="form-label">บัญชีธนาคาร</label><input type="text" class="form-input" id="empBankAccount" placeholder="เลขบัญชี"></div>
           </div>
           <div class="form-row">
@@ -289,7 +304,7 @@ const Page = {
     if (tab === 'employees') this.loadEmployees();
     else if (tab === 'runs') this.loadRuns();
     else if (tab === 'leaves') this.loadLeaves();
-    else if (tab === 'reports') { this.loadReports(); this.loadSsoConfig(); }
+    else if (tab === 'reports') { this.loadReports(); this.loadSsoConfig(); this.loadTaxRuleConfig(); }
   },
 
   // ===== SSO year-config (เพดานค่าจ้าง/อัตราสมทบ รายปี) =====
@@ -403,6 +418,99 @@ const Page = {
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
+  // ===== Tax Rule Config (PIT brackets + allowances รายปี) =====
+  async loadTaxRuleConfig() {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const wrap = document.getElementById('taxRuleConfigTable');
+    if (!wrap) return;
+    try {
+      const res = await fetch(`/api/companies/${cid}/payroll/tax-rule-config`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.message || 'โหลดไม่สำเร็จ');
+      const rows = j.data || [];
+      const head = `<thead><tr style="background:#f8fafc">
+        <th style="padding:8px 10px;text-align:left">ปี</th>
+        <th style="padding:8px 10px;text-align:right">ส่วนตัว</th>
+        <th style="padding:8px 10px;text-align:right">คู่สมรส</th>
+        <th style="padding:8px 10px;text-align:right">บุตร</th>
+        <th style="padding:8px 10px;text-align:right">บุตรคนที่2+ (พ.ศ.2561+)</th>
+        <th style="padding:8px 10px;text-align:right">บิดามารดา</th>
+        <th style="padding:8px 10px;text-align:right">ประกันชีวิต</th>
+        <th style="padding:8px 10px;text-align:right">PVD รวม</th>
+        <th style="padding:8px 10px;text-align:right">บริจาค%</th>
+        <th style="padding:8px 10px;text-align:center">สถานะ</th>
+        <th style="padding:8px 10px;text-align:center">จัดการ</th>
+      </tr></thead>`;
+      const body = rows.map(r => `<tr data-year="${r.fiscalYear}">
+        <td style="padding:6px 10px;font-weight:600">${r.fiscalYear} (${r.fiscalYear+543})</td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="personalAllowance" value="${r.personalAllowance}" style="width:90px"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="spouseAllowance" value="${r.spouseAllowance}" style="width:90px"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="childAllowance" value="${r.childAllowance}" style="width:80px"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="childAllowancePost2561" value="${r.childAllowancePost2561}" style="width:90px"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="parentAllowance" value="${r.parentAllowance}" style="width:80px"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="lifeInsuranceCap" value="${r.lifeInsuranceCap}" style="width:90px"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="pvdCap" value="${r.pvdCap}" style="width:100px"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="donationCapPercent" value="${r.donationCapPercent}" step="0.1" style="width:60px"></td>
+        <td style="padding:6px 10px;text-align:center"><span class="pill pill-${r.isOverride ? 'warning' : 'info'}">${r.isOverride ? 'Override' : 'Default'}</span></td>
+        <td style="padding:4px 8px;text-align:center white-space:nowrap">
+          <button class="btn btn-sm btn-primary" onclick="Page.saveTaxRuleConfig(${r.fiscalYear}, this)">💾</button>
+          ${r.isOverride ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.resetTaxRuleConfig(${r.fiscalYear})" title="กลับไป default">↺</button>` : ''}
+        </td>
+      </tr>`).join('');
+      wrap.innerHTML = `<div class="table-container" style="border:none"><table class="table" style="font-size:12px">${head}<tbody>${body}</tbody></table></div>`;
+    } catch (err) { wrap.innerHTML = `<p class="text-danger">${err.message}</p>`; }
+  },
+
+  async saveTaxRuleConfig(year, btn) {
+    const row = btn.closest('tr');
+    const get = f => parseFloat(row.querySelector(`[data-f="${f}"]`).value) || 0;
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const body = {
+      fiscalYear: year,
+      bracketsJson: null,   // brackets edit ใน v2 (UI สลับ default ใช้ JSON form)
+      personalAllowance: get('personalAllowance'),
+      spouseAllowance: get('spouseAllowance'),
+      childAllowance: get('childAllowance'),
+      childAllowancePost2561: get('childAllowancePost2561'),
+      parentAllowance: get('parentAllowance'),
+      section42TwiCap: 100000,
+      lifeInsuranceCap: get('lifeInsuranceCap'),
+      healthInsuranceCap: 25000,
+      pvdCap: get('pvdCap'),
+      mortgageInterestCap: 100000,
+      donationCapPercent: get('donationCapPercent'),
+      notes: null,
+    };
+    try {
+      const res = await fetch(`/api/companies/${cid}/payroll/tax-rule-config`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+      Layout.toast(j.message || 'บันทึกแล้ว');
+      this.loadTaxRuleConfig();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async resetTaxRuleConfig(year) {
+    if (!confirm(`ลบกฎภาษีของปี ${year} แล้วกลับไปใช้ค่า default?`)) return;
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    try {
+      const res = await fetch(`/api/companies/${cid}/payroll/tax-rule-config/${year}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.message || 'ลบไม่สำเร็จ');
+      Layout.toast(j.message || 'กลับไปใช้ค่า default แล้ว');
+      this.loadTaxRuleConfig();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
   // ===== Employees =====
   async loadEmployees() {
     const api = Layout.api(); if (!api) return;
@@ -463,6 +571,12 @@ const Page = {
     await this._loadOrgDropdowns(null);
     ['empDepartmentRef','empPositionRef','empDirectManager'].forEach(id => document.getElementById(id).value = '');
     Layout.openModal('empModal');
+    // AutoSave draft (#5) — กรอกเลย ปิด browser แล้วกลับมา ได้ของเก่าครบ
+    if (window.UxHelpers?.AutoSave) {
+      const modal = document.getElementById('empModal');
+      if (modal) modal.id = 'empModal';
+      window.UxHelpers.AutoSave.attach('empModal', { restore: true, ttlMinutes: 60 });
+    }
   },
 
   async editEmployee(id) {
@@ -635,6 +749,20 @@ const Page = {
           <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${d.employeeId||d.id}')">ดูสลิป</button></td>
         </tr>`).join('') : '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>`;
       document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      // Comments + activity timeline (#23) — HR ทีมแชร์ note ระหว่าง run
+      const commentsHost = document.createElement('div');
+      commentsHost.id = `runComments-${id}`;
+      commentsHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';
+      document.getElementById('runDetailContent').appendChild(commentsHost);
+      const mountComments = () => window.CommentsWidget?.mount(commentsHost,
+        { companyId: Layout.getCompanyId(), entityType: 'PayrollRun', entityId: id });
+      if (window.CommentsWidget) { mountComments(); }
+      else {
+        const s = document.createElement('script');
+        s.src = '/js/comments-widget.js';
+        s.onload = mountComments;
+        document.head.appendChild(s);
+      }
       Layout.openModal('runDetailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },

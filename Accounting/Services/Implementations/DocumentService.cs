@@ -31,6 +31,7 @@ public class DocumentService : IDocumentService
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly IAdvancedArApService? _advancedArAp;
+    private readonly IApprovalService? _approval;
 
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
@@ -46,10 +47,12 @@ public class DocumentService : IDocumentService
         Accounting.Services.Ai.IDocumentAiAugmenter? aiAugmenter = null,
         IWebhookService? webhooks = null,
         IEmailScheduleService? emailSchedule = null,
-        IAdvancedArApService? advancedArAp = null)
+        IAdvancedArApService? advancedArAp = null,
+        IApprovalService? approval = null)
     {
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
+        _approval = approval;
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
@@ -471,7 +474,18 @@ public class DocumentService : IDocumentService
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
+            // โหลด InputVatClaimable flag ของทุกบัญชีที่ line ใช้ — รอบเดียว
+            // ไว้บังคับ IsVatClaimable=false เมื่อบัญชีเป็นภาษีซื้อต้องห้าม.
+            var accountIds = (request.Lines ?? []).Where(l => l.AccountId.HasValue)
+                .Select(l => l.AccountId!.Value).Distinct().ToList();
+            var accountFlags = accountIds.Count == 0
+                ? new Dictionary<Guid, bool>()
+                : await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
+                    .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
+
             doc.PricesIncludeVat = request.PricesIncludeVat;
+            doc.IsForeignService = request.IsForeignService;
             foreach (var line in request.Lines ?? [])
             {
                 var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
@@ -481,6 +495,18 @@ public class DocumentService : IDocumentService
                 totalVat += amt.VatAmount;
                 totalWht += amt.WhtAmount;
 
+                // ภาษีซื้อต้องห้าม: ถ้าบัญชีตั้งเป็น InputVatClaimable=false
+                // (เช่น ค่ารับรอง) → บังคับ line.IsVatClaimable=false
+                // ไม่ว่า request จะส่งอะไรมา — รักษา consistency กับ chart
+                // ของบริษัท. User ที่ต้องการเคลม VAT ต้องเปลี่ยน account
+                // หรือเปลี่ยน flag ของบัญชีที่ผังบัญชี.
+                var enforcedClaimable = line.IsVatClaimable;
+                string? enforcedReason = line.VatNonClaimableReason;
+                if (line.AccountId.HasValue && accountFlags.TryGetValue(line.AccountId.Value, out var acctClaimable) && !acctClaimable)
+                {
+                    enforcedClaimable = false;
+                    enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
+                }
                 _db.DocumentLines.Add(new DocumentLine
                 {
                     DocumentId = doc.Id,
@@ -499,7 +525,9 @@ public class DocumentService : IDocumentService
                     AccountId = line.AccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
-                    SourceLineId = line.SourceLineId
+                    SourceLineId = line.SourceLineId,
+                    IsVatClaimable = enforcedClaimable,
+                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason
                 });
             }
 
@@ -867,6 +895,15 @@ public class DocumentService : IDocumentService
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
+            // VAT-claimability enforcement ตามผังบัญชี (เหมือนใน Create)
+            var updAccountIds = request.Lines.Where(l => l.AccountId.HasValue)
+                .Select(l => l.AccountId!.Value).Distinct().ToList();
+            var accountFlags = updAccountIds.Count == 0
+                ? new Dictionary<Guid, bool>()
+                : await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && updAccountIds.Contains(a.Id))
+                    .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
+
             foreach (var line in request.Lines)
             {
                 var amt = ComputeLineAmounts(line, doc.PricesIncludeVat);
@@ -876,6 +913,13 @@ public class DocumentService : IDocumentService
                 totalVat += amt.VatAmount;
                 totalWht += amt.WhtAmount;
 
+                var enforcedClaimable = line.IsVatClaimable;
+                string? enforcedReason = line.VatNonClaimableReason;
+                if (line.AccountId.HasValue && accountFlags.TryGetValue(line.AccountId.Value, out var acctClaimable) && !acctClaimable)
+                {
+                    enforcedClaimable = false;
+                    enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
+                }
                 _db.DocumentLines.Add(new DocumentLine
                 {
                     DocumentId = doc.Id,
@@ -897,7 +941,9 @@ public class DocumentService : IDocumentService
                     // Preserve the conversion-traceability link across edits —
                     // the edit form round-trips SourceLineId per line, so a
                     // converted document keeps its fulfilment accounting intact.
-                    SourceLineId = line.SourceLineId
+                    SourceLineId = line.SourceLineId,
+                    IsVatClaimable = enforcedClaimable,
+                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason
                 });
             }
 
@@ -1071,6 +1117,67 @@ public class DocumentService : IDocumentService
                     .FirstAsync();
                 if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
+
+                // Multi-level approval gate. ถ้า ApprovalRule match doc นี้ →
+                // ต้องผ่าน workflow ก่อน. user ที่ submit direct approve
+                // โดยไม่ผ่าน workflow จะถูก block ที่นี่. Workflow service
+                // เป็น opt-in (DI nullable) — ถ้าบริษัทไม่ได้ตั้งค่า approval
+                // rule เลย FindMatchingRule คืน null → gate ปล่อยผ่าน.
+                if (_approval != null)
+                {
+                    var matchingRule = await _approval.FindMatchingRuleAsync(
+                        companyId, doc.DocumentType, doc.TotalAmount, doc.ProjectId);
+                    if (matchingRule != null)
+                    {
+                        var gate = await _approval.CheckGateAsync(companyId, documentId);
+                        if (!gate.CanApprove)
+                            throw new InvalidOperationException(gate.BlockReason
+                                ?? "เอกสารต้องผ่าน multi-level approval workflow ก่อน");
+                    }
+                }
+
+                // F20 — 3-way match block over-bill. ถ้า PurchaseInvoice/
+                // Expense อ้างถึง GRN (RelatedDocumentId) → ตรวจ qty/amount
+                // ของแต่ละบรรทัด invoice ต้องไม่เกิน GRN ที่รับจริง. ป้องกัน
+                // supplier ออกบิลเกินสินค้าที่ส่ง — ตรงกับมาตรฐาน 3-way match
+                // (PO ↔ GRN ↔ PI). Linked via DocumentLine.SourceLineId.
+                if ((doc.DocumentType == DocumentType.PurchaseInvoice || doc.DocumentType == DocumentType.Expense)
+                    && doc.RelatedDocumentId.HasValue)
+                {
+                    var srcDoc = await _db.Documents.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
+                    if (srcDoc != null && srcDoc.DocumentType == DocumentType.GoodsReceiptNote)
+                    {
+                        var grnLines = await _db.DocumentLines.AsNoTracking()
+                            .Where(l => l.DocumentId == srcDoc.Id)
+                            .ToDictionaryAsync(l => l.Id, l => new { l.Quantity, l.Amount, l.Description });
+                        var overBill = new List<string>();
+                        foreach (var line in doc.Lines.Where(l => l.SourceLineId.HasValue))
+                        {
+                            if (!grnLines.TryGetValue(line.SourceLineId!.Value, out var grn)) continue;
+                            // คำนวณยอด invoice อื่นๆ ที่อ้าง grn line นี้ไปแล้ว
+                            var alreadyBilled = await _db.DocumentLines.AsNoTracking()
+                                .Where(l => l.SourceLineId == line.SourceLineId.Value
+                                            && l.DocumentId != doc.Id
+                                            && !l.Document.IsDeleted
+                                            && l.Document.Status != DocumentStatus.Voided
+                                            && l.Document.Status != DocumentStatus.Draft
+                                            && l.Document.Status != DocumentStatus.Rejected)
+                                .Select(l => new { l.Quantity, l.Amount })
+                                .ToListAsync();
+                            var billedQty = alreadyBilled.Sum(b => b.Quantity);
+                            var billedAmt = alreadyBilled.Sum(b => b.Amount);
+                            if (line.Quantity + billedQty > grn.Quantity + 0.0001m)
+                                overBill.Add($"\"{grn.Description}\": รับจริง {grn.Quantity:N2} บิลแล้ว {billedQty:N2} ใบนี้ {line.Quantity:N2} → เกิน");
+                            if (line.Amount + billedAmt > grn.Amount + 0.01m)
+                                overBill.Add($"\"{grn.Description}\": ยอด GRN {grn.Amount:N2} บิลแล้ว {billedAmt:N2} ใบนี้ {line.Amount:N2} → เกิน");
+                        }
+                        if (overBill.Count > 0 && !acknowledgeWarnings)
+                            throw new InvalidOperationException(
+                                "บิลเกินจำนวน/ยอด GRN ที่รับจริง (3-way match):\n• " + string.Join("\n• ", overBill)
+                                + "\n\nกดรับทราบเพื่อบังคับอนุมัติ");
+                    }
+                }
 
                 // Idempotency guard INSIDE transaction to prevent race condition
                 var hasExistingJournal = await _db.JournalEntries.AnyAsync(j =>
@@ -3497,33 +3604,43 @@ public class DocumentService : IDocumentService
         return await FindAccountAsync(companyId, "212", contact);
     }
 
+    /// <summary>Per-instance cache สำหรับ FindAccountAsync — ApproveDocument
+    /// / Post payroll หา default account ซ้ำๆ (113, 212, 116, 21914...
+    /// ราว 8-15 ครั้งต่อ post). DocumentService เป็น scoped ต่อ request →
+    /// cache ตามอายุ request เท่านั้น ไม่มี stale-data risk ข้าม request.
+    /// Key เป็น (codePrefix, contactDefaultId) — pinned contact overrides
+    /// ใช้ key ต่าง ให้ cache แยก hit.</summary>
+    private readonly Dictionary<(string CodePrefix, Guid? ContactDefault), ChartOfAccount?> _findAccountCache = new();
+
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
     {
-        if (contactOverride != null)
+        Guid? overrideId = contactOverride == null ? null : codePrefix switch
         {
-            Guid? overrideId = codePrefix switch
-            {
-                "113" => contactOverride.DefaultArAccountId,
-                "212" => contactOverride.DefaultApAccountId,
-                "212305" => contactOverride.DefaultIrGrAccountId,
-                _ => null,
-            };
-            if (overrideId.HasValue)
-            {
-                var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
-                if (pinned != null) return pinned;
-                // The override points at a deleted/inactive account —
-                // fall through to the system default rather than throw.
-            }
+            "113" => contactOverride.DefaultArAccountId,
+            "212" => contactOverride.DefaultApAccountId,
+            "212305" => contactOverride.DefaultIrGrAccountId,
+            _ => null,
+        };
+        var cacheKey = (codePrefix, overrideId);
+        if (_findAccountCache.TryGetValue(cacheKey, out var cached)) return cached;
+
+        if (overrideId.HasValue)
+        {
+            var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
+            if (pinned != null) { _findAccountCache[cacheKey] = pinned; return pinned; }
+            // The override points at a deleted/inactive account —
+            // fall through to the system default rather than throw.
         }
-        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+        var found = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4 && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
+        _findAccountCache[cacheKey] = found;
+        return found;
     }
 
     /// <summary>
@@ -3972,22 +4089,34 @@ public class DocumentService : IDocumentService
             }
             else
             {
-                // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ (standalone purchase)
+                // Dr: ค่าใช้จ่าย/สินค้า ตามรายการ (standalone purchase).
+                // ภาษีซื้อต้องห้าม (§82/5): บรรทัดที่ IsVatClaimable=false →
+                // รวม VAT เข้าค่าใช้จ่าย (Dr expense = Amount + VatAmount).
+                // บรรทัด claimable → Dr expense net of VAT ปกติ + รวม VAT
+                // ไปเข้าบัญชีภาษีซื้อ 116 ด้านล่าง.
                 foreach (var docLine in doc.Lines)
                 {
                     var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
-                    if (expenseAccountId.HasValue)
-                        AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+                    if (!expenseAccountId.HasValue) continue;
+                    var debitAmount = docLine.IsVatClaimable
+                        ? docLine.Amount
+                        : docLine.Amount + docLine.VatAmount;
+                    var desc = docLine.IsVatClaimable
+                        ? docLine.Description
+                        : $"{docLine.Description} (รวม VAT ต้องห้าม{(string.IsNullOrWhiteSpace(docLine.VatNonClaimableReason) ? "" : " - " + docLine.VatNonClaimableReason)})";
+                    AddLine(expenseAccountId.Value, debitAmount, 0, desc, docLine.ProjectId);
                 }
             }
 
-            // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30
-            if (doc.VatAmount > 0)
+            // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30 — เฉพาะส่วนที่
+            // เคลมได้เท่านั้น (line.IsVatClaimable=true).
+            var claimableVatPi = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+            if (claimableVatPi > 0)
             {
                 var vatInputAccount = await FindAccountAsync(companyId, "116")
                     ?? throw new InvalidOperationException("ไม่พบบัญชีภาษีซื้อ (116) ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่มี VAT");
                 if (vatInputAccount != null)
-                    AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
+                    AddLine(vatInputAccount.Id, claimableVatPi, 0, "ภาษีซื้อ (เคลมได้)");
             }
 
             // Cr: payable — role-separated (หลักบัญชีไทย):
@@ -4166,18 +4295,29 @@ public class DocumentService : IDocumentService
             }
             else
             {
+                // PaymentVoucher standalone: เหมือน PI ทุกประการ แต่ Cr =
+                // Cash/Bank โดยตรง. ภาษีซื้อต้องห้าม (§82/5) แยก per-line
+                // เหมือนกัน — บรรทัด IsVatClaimable=false → Dr expense รวม
+                // VAT, claimable → Dr expense net + รวม VAT เข้า 116.
                 foreach (var docLine in doc.Lines)
                 {
                     var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
-                    if (expenseAccountId.HasValue)
-                        AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
+                    if (!expenseAccountId.HasValue) continue;
+                    var debitAmount = docLine.IsVatClaimable
+                        ? docLine.Amount
+                        : docLine.Amount + docLine.VatAmount;
+                    var desc = docLine.IsVatClaimable
+                        ? docLine.Description
+                        : $"{docLine.Description} (รวม VAT ต้องห้าม{(string.IsNullOrWhiteSpace(docLine.VatNonClaimableReason) ? "" : " - " + docLine.VatNonClaimableReason)})";
+                    AddLine(expenseAccountId.Value, debitAmount, 0, desc, docLine.ProjectId);
                 }
 
-                if (doc.VatAmount > 0)
+                var claimableVatPv = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+                if (claimableVatPv > 0)
                 {
                     var vatInputAccount = await FindAccountAsync(companyId, "116");
                     if (vatInputAccount != null)
-                        AddLine(vatInputAccount.Id, doc.VatAmount, 0, "ภาษีซื้อ");
+                        AddLine(vatInputAccount.Id, claimableVatPv, 0, "ภาษีซื้อ (เคลมได้)");
                 }
 
                 // Credit side depends on the settlement basis:
@@ -4527,7 +4667,9 @@ public class DocumentService : IDocumentService
             ProjectCode: l.Project != null ? l.Project.Code : null,
             ProjectName: l.Project != null ? l.Project.Name : null,
             ProjectCostEntryId: pceByLine != null && pceByLine.TryGetValue(l.Id, out var pceId) ? pceId : (Guid?)null,
-            HasProjectCostEntry: pceByLine != null && pceByLine.ContainsKey(l.Id))).ToList(),
+            HasProjectCostEntry: pceByLine != null && pceByLine.ContainsKey(l.Id),
+            IsVatClaimable: l.IsVatClaimable,
+            VatNonClaimableReason: l.VatNonClaimableReason)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,

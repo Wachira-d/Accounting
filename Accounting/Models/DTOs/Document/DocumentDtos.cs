@@ -57,7 +57,11 @@ public record CreateDocumentRequest(
     // Null → service infers per type (standalone PV defaults to Cash).
     PaymentType? PaymentType = null,
     // Unit prices entered VAT-inclusive (ราคารวมภาษี). True → back 7% VAT out.
-    bool PricesIncludeVat = false);
+    bool PricesIncludeVat = false,
+    // ภ.พ.36 / ภ.ง.ด.54 — flag เมื่อซื้อบริการจากต่างประเทศ (Google Ads /
+    // AWS / Facebook ฯลฯ). ผู้รับบริการในไทยต้อง self-assess VAT 7% และ
+    // หัก WHT ตาม DTA. Default false. Apply เฉพาะ PI/Expense/PV.
+    bool IsForeignService = false);
 
 public record DocumentLineRequest(
     string Description,
@@ -77,7 +81,12 @@ public record DocumentLineRequest(
     // Traceability link for flexible/partial conversion — set by the
     // conversion engine, and round-tripped by the edit form so editing a
     // converted document never loses its link to the source line.
-    Guid? SourceLineId = null);
+    Guid? SourceLineId = null,
+    // ภาษีซื้อต้องห้าม (Non-claimable Input VAT) per ประมวลรัษฎากร §82/5.
+    // Default true (เคลมได้). UI ติ๊กออก / AI suggest false สำหรับค่ารับรอง
+    // / น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์.
+    bool IsVatClaimable = true,
+    string? VatNonClaimableReason = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,
@@ -269,7 +278,10 @@ public record DocumentLineResponse(
     // approval (via SyncProjectCostEntriesAsync). UI flags the line
     // "🏗️ ลงโครงการแล้ว" so the user knows the cost has been booked.
     Guid? ProjectCostEntryId = null,
-    bool HasProjectCostEntry = false);
+    bool HasProjectCostEntry = false,
+    // ภาษีซื้อต้องห้าม flag + เหตุผล — UI แสดง checkbox + tooltip
+    bool IsVatClaimable = true,
+    string? VatNonClaimableReason = null);
 
 // ===== Flexible / partial document conversion =====
 

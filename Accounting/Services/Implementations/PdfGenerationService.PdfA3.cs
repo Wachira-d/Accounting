@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using Accounting.Models.DTOs.Etax;
+using Microsoft.EntityFrameworkCore;
 using QuestPDF.Drawing;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -48,6 +49,92 @@ public partial class PdfGenerationService
             }
             _fontsRegistered = true;
         }
+    }
+
+    /// <summary>สร้าง EtaxPdfMetadata จาก entity ที่โหลดมาแล้ว — ใช้ใน
+    /// GenerateDocumentPdfAsync เพื่อทำ PDF/A-3 with embedded XML เป็น
+    /// default download ของทุกเอกสารที่มี e-Tax XML. Logic mirror กับ
+    /// EtaxInvoiceService.GeneratePdfA3Async แต่ไม่เขียนไฟล์ลง disk
+    /// (ครั้งเดียวพอ — service หลักทำตอน sign/submit แล้ว).</summary>
+    internal async Task<EtaxPdfMetadata> BuildEtaxMetadataFromEntityAsync(
+        Accounting.Models.Entities.EtaxInvoice etax,
+        Accounting.Models.Entities.Document document,
+        Accounting.Models.Entities.Company company)
+    {
+        var docTypeRoot = document.DocumentType switch
+        {
+            Accounting.Models.Enums.DocumentType.TaxInvoice => "TaxInvoice_CrossIndustryInvoice",
+            Accounting.Models.Enums.DocumentType.Receipt => "TaxInvoice_CrossIndustryInvoice",
+            Accounting.Models.Enums.DocumentType.DebitNote => "DebitCreditNote_CrossIndustryInvoice",
+            Accounting.Models.Enums.DocumentType.CreditNote => "DebitCreditNote_CrossIndustryInvoice",
+            _ => "TaxInvoice_CrossIndustryInvoice"
+        };
+        var docTypeNameTh = document.DocumentType switch
+        {
+            Accounting.Models.Enums.DocumentType.TaxInvoice => "ใบกำกับภาษี",
+            Accounting.Models.Enums.DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",
+            Accounting.Models.Enums.DocumentType.DebitNote => "ใบเพิ่มหนี้",
+            Accounting.Models.Enums.DocumentType.CreditNote => "ใบลดหนี้",
+            _ => "ใบกำกับภาษี"
+        };
+
+        string? createdByName = null, createdBySignature = null;
+        string? approvedByName = null, approvedBySignature = null;
+        DateTime? approvedAt = null;
+        if (document.CreatedBy != null && Guid.TryParse(document.CreatedBy, out var creatorId))
+        {
+            var creator = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == creatorId);
+            if (creator != null) { createdByName = creator.FullName; createdBySignature = creator.SignatureImageBase64; }
+        }
+        if (document.UpdatedBy != null && Guid.TryParse(document.UpdatedBy, out var approverId))
+        {
+            var approver = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == approverId);
+            if (approver != null) { approvedByName = approver.FullName; approvedBySignature = approver.SignatureImageBase64; approvedAt = document.UpdatedAt; }
+        }
+
+        var lines = document.Lines.OrderBy(l => l.LineOrder).Select((l, i) => new EtaxPdfLineItem(
+            LineNo: i + 1,
+            Description: l.Description,
+            ProductCode: l.ProductCode,
+            Quantity: l.Quantity,
+            Unit: l.Unit,
+            UnitPrice: l.UnitPrice,
+            DiscountAmount: l.DiscountAmount,
+            Amount: l.Amount,
+            VatRate: l.VatRate,
+            VatAmount: l.VatAmount)).ToList();
+
+        return new EtaxPdfMetadata(
+            DocumentNumber: document.DocumentNumber,
+            DocumentType: docTypeRoot,
+            DocumentTypeNameTh: docTypeNameTh,
+            XmlVersion: "v2.0",
+            SellerName: etax.SellerName,
+            SellerTaxId: etax.SellerTaxId,
+            SellerBranch: company.BranchCode ?? "00000",
+            SellerAddress: $"{company.Address ?? ""} {company.SubDistrict ?? ""} {company.District ?? ""} {company.Province ?? ""} {company.PostalCode ?? ""}".Trim(),
+            SellerPhone: company.Phone,
+            SellerEmail: company.Email,
+            BuyerName: etax.BuyerName,
+            BuyerTaxId: etax.BuyerTaxId,
+            BuyerBranch: document.Contact?.BranchCode ?? "00000",
+            BuyerAddress: document.Contact?.Address,
+            EtaxRefNumber: etax.EtaxRefNumber,
+            DocumentDate: document.DocumentDate,
+            SubTotal: document.SubTotal,
+            DiscountAmount: document.DiscountAmount,
+            VatAmount: document.VatAmount,
+            WithholdingTaxAmount: document.WithholdingTaxAmount,
+            TotalAmount: document.TotalAmount,
+            Currency: document.Currency ?? "THB",
+            LineItems: lines,
+            CreatedByName: createdByName,
+            CreatedBySignatureBase64: createdBySignature,
+            CreatedAt: document.CreatedAt,
+            ApprovedByName: approvedByName,
+            ApprovedBySignatureBase64: approvedBySignature,
+            ApprovedAt: approvedAt,
+            Notes: document.Notes);
     }
 
     public byte[] BuildEtaxPdfA3WithEmbeddedXml(string xmlContent, EtaxPdfMetadata metadata)

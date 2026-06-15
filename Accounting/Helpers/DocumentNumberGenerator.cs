@@ -45,7 +45,19 @@ public static class DocumentNumberGenerator
         var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
 
-        var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
+        // BUG FIX (TZ): ใช้ Asia/Bangkok แทน UTC. เดิม UtcNow ที่
+        // 00:00-06:59 BKK ของวันแรกของเดือน = previous month UTC →
+        // เอกสารที่สร้างกลางคืน 7 ชม.แรกของเดือนใหม่ ได้เลขเดือนก่อน
+        // (เช่น 1 มี.ค. 03:00 BKK → "INV-202402-001" แทน "INV-202403-001").
+        DateTime bkkNow;
+        try
+        {
+            var bkkTz = TimeZoneInfo.FindSystemTimeZoneById(
+                OperatingSystem.IsWindows() ? "SE Asia Standard Time" : "Asia/Bangkok");
+            bkkNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, bkkTz);
+        }
+        catch { bkkNow = DateTime.UtcNow.AddHours(7); }   // hardcoded fallback (+07:00 ตลอดปี ไม่มี DST)
+        var yearMonth = bkkNow.ToString("yyyyMM");
         var docPrefix = $"{prefix}-{yearMonth}-";
         // BUG FIX: previously used `MaxAsync()` over the string column. That
         // returns the LEXICOGRAPHIC max — "9999" > "10000" because '9' > '1'.

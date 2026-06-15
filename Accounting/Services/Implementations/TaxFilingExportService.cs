@@ -54,7 +54,11 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         var allDetails = payrollRuns.SelectMany(p => p.Details)
             .Where(d => d.WithholdingTax > 0).ToList();
-        var totalIncome = allDetails.Sum(d => d.GrossIncome);
+        // ใช้ TaxableGross ถ้ามี (รายได้ที่นำมาคำนวณ WHT — Gross −
+        // สวัสดิการยกเว้นภาษี). Fallback GrossIncome สำหรับข้อมูลเก่า
+        // ที่ยังไม่ migrate.
+        decimal IncomeForTax(PayrollDetail d) => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
+        var totalIncome = allDetails.Sum(IncomeForTax);
         var totalTax = allDetails.Sum(d => d.WithholdingTax);
 
         // Header: H|TaxId|BranchCode|FormCode|Period(YYYYMM)|TotalRecords|TotalIncome|TotalTax
@@ -67,7 +71,8 @@ public class TaxFilingExportService : ITaxFilingExportService
             var payDate = payrollRuns.First(p => p.Details.Contains(detail)).PayDate;
             var payDateThai = $"{payDate.Day:D2}/{payDate.Month:D2}/{payDate.Year + 543}";
             // D|Seq|TitleCode|FirstName|LastName|CitizenId|PaymentDate|IncomeType(1=§40(1))|Income|Tax|Condition(1=หักภาษี ณ ที่จ่าย)
-            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.CitizenId ?? emp.TaxId}|{payDateThai}|1|{detail.GrossIncome:F2}|{detail.WithholdingTax:F2}|1");
+            var income = IncomeForTax(detail);
+            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.CitizenId ?? emp.TaxId}|{payDateThai}|1|{income:F2}|{detail.WithholdingTax:F2}|1");
         }
 
         // Trailer: T|TotalRecords|TotalIncome|TotalTax — required by RD parser
@@ -186,12 +191,14 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && d.PayrollRun.Status != "Draft" && d.PayrollRun.Status != "Voided")
             .ToListAsync();
 
+        // ใช้ TaxableGross ถ้ามี (รายได้ที่ใช้คำนวณ WHT จริง — Gross
+        // หัก สวัสดิการยกเว้นภาษี). Fallback GrossIncome สำหรับข้อมูลเก่า.
         var empGroups = payrollDetails
             .GroupBy(d => d.EmployeeId)
             .Select(g => new
             {
                 Employee = g.First().Employee,
-                TotalIncome = g.Sum(d => d.GrossIncome),
+                TotalIncome = g.Sum(d => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome),
                 TotalTax = g.Sum(d => d.WithholdingTax),
                 TotalSSO = g.Sum(d => d.SocialSecurityEmployee),
                 TotalPVD = g.Sum(d => d.ProvidentFundEmployee),
@@ -457,4 +464,180 @@ public class TaxFilingExportService : ITaxFilingExportService
             byEmployee.Count, totalIncome, totalWht,
             $"ภ.ง.ด.91 ประจำปี {year} จำนวน {byEmployee.Count} คน รายได้รวม {totalIncome:N2} บาท ภาษีรวม {totalWht:N2} บาท");
     }
+
+    /// <summary>ภ.ง.ด.2 — Monthly dividend WHT. Multi-tier detection:
+    ///   (1) JournalEntry.Tags ที่มี "DIVIDEND" / "PND2" / "ปันผล"
+    ///       (CSV tag-based — แม่นที่สุด, ผู้ใช้/system ตั้งได้)
+    ///   (2) JournalEntry.Description มีคำว่า "เงินปันผล" (heuristic)
+    ///   (3) Account.AccountCode "21915" หรือ AccountName มี "ปันผล"
+    ///       (ผังบัญชี-based — รองรับ custom code)
+    /// รวม union ของทั้ง 3 → ลด miss สำหรับบริษัทที่ใช้ผังบัญชี custom.</summary>
+    public async Task<TaxFilingExportResult> ExportPnd2Async(Guid companyId, int year, int month)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var thaiYear = year + 543;
+        var period = $"{thaiYear:D4}{month:D2}";
+        var monthStart = new DateTime(year, month, 1);
+        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
+        // หาบรรทัด JE ที่เกี่ยวกับเงินปันผล — multi-tier detection
+        var lines = await _db.JournalEntryLines.AsNoTracking()
+            .Include(l => l.JournalEntry).Include(l => l.Account)
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == Models.Enums.JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate >= monthStart && l.JournalEntry.EntryDate <= monthEnd
+                && (
+                    // (1) JE Tags
+                    (l.JournalEntry.Tags != null && (
+                        l.JournalEntry.Tags.Contains("DIVIDEND")
+                        || l.JournalEntry.Tags.Contains("PND2")
+                        || l.JournalEntry.Tags.Contains("ปันผล")))
+                    // (2) Description heuristic
+                    || (l.JournalEntry.Description != null && l.JournalEntry.Description.Contains("เงินปันผล"))
+                    // (3) Account code/name
+                    || (l.Account!.AccountCode == "21915"
+                        || (l.Account.AccountName != null && l.Account.AccountName.Contains("ปันผล")))
+                ))
+            .ToListAsync();
+
+        // Group by JE → 1 dividend payment per shareholder
+        var byJe = lines.GroupBy(l => l.JournalEntryId)
+            .Select(g => new {
+                EntryId = g.Key,
+                Date = g.First().JournalEntry.EntryDate,
+                Description = g.First().JournalEntry.Description ?? "เงินปันผล",
+                // WHT line = บัญชี WHT (21915 หรือ name มี "ปันผล" / "หัก ณ ที่จ่าย")
+                WhtAmount = g.Where(x => x.Account != null && (
+                        x.Account.AccountCode == "21915"
+                        || (x.Account.AccountName != null && (x.Account.AccountName.Contains("ปันผล")
+                            || x.Account.AccountName.Contains("หัก ณ ที่จ่าย")))))
+                    .Sum(x => x.CreditAmount),
+                // Dividend amount = expense/equity side (ไม่ใช่ WHT, ไม่ใช่ cash 111)
+                DividendAmount = g.Where(x => x.Account != null
+                        && x.Account.AccountCode != "21915"
+                        && !x.Account.AccountCode.StartsWith("111")
+                        && (x.Account.AccountName == null || !x.Account.AccountName.Contains("หัก ณ ที่จ่าย")))
+                                  .Sum(x => Math.Abs(x.DebitAmount - x.CreditAmount))
+            })
+            .Where(x => x.WhtAmount > 0)
+            .ToList();
+
+        var sb = new System.Text.StringBuilder();
+        var totalIncome = byJe.Sum(x => x.DividendAmount);
+        var totalWht = byJe.Sum(x => x.WhtAmount);
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.2|{period}|{byJe.Count}|{totalIncome:F2}|{totalWht:F2}");
+        int seq = 1;
+        foreach (var je in byJe)
+        {
+            var payDate = $"{je.Date.Day:D2}/{je.Date.Month:D2}/{je.Date.Year + 543}";
+            // §40(4)(ข) เงินปันผล — IncomeType=4, Condition=1 (หัก ณ ที่จ่าย)
+            sb.AppendLine($"D|{seq++}|—|—|—|—|{payDate}|4|{je.DividendAmount:F2}|{je.WhtAmount:F2}|1|{Esc(je.Description)}");
+        }
+        sb.AppendLine($"T|{byJe.Count}|{totalIncome:F2}|{totalWht:F2}");
+
+        return new TaxFilingExportResult(
+            "PND2", "ภ.ง.ด.2", $"PND2_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            byJe.Count, totalIncome, totalWht,
+            $"ภ.ง.ด.2 เดือน {month}/{year} เงินปันผล {byJe.Count} รายการ ภาษีรวม {totalWht:N2} บาท");
+    }
+
+    /// <summary>ภ.พ.36 — Foreign service VAT self-assessment per §83/6.
+    /// ผู้รับบริการในไทยที่ซื้อจาก supplier ต่างประเทศ (ที่ไม่ได้จด VAT
+    /// ในไทย) ต้องนำส่ง VAT 7% เอง. รวมจาก PurchaseInvoice/Expense ที่
+    /// IsForeignService=true. กำหนดยื่นภายในวันที่ 7 ของเดือนถัดไป.</summary>
+    public async Task<TaxFilingExportResult> ExportPp36Async(Guid companyId, int year, int month)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var thaiYear = year + 543;
+        var period = $"{thaiYear:D4}{month:D2}";
+        var monthStart = new DateTime(year, month, 1);
+        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
+        var docs = await _db.Documents.AsNoTracking()
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.IsForeignService
+                && d.DocumentDate >= monthStart && d.DocumentDate <= monthEnd
+                && (d.DocumentType == Models.Enums.DocumentType.PurchaseInvoice
+                    || d.DocumentType == Models.Enums.DocumentType.Expense)
+                && d.Status != Models.Enums.DocumentStatus.Voided
+                && d.Status != Models.Enums.DocumentStatus.Draft)
+            .OrderBy(d => d.DocumentDate)
+            .ToListAsync();
+
+        var sb = new System.Text.StringBuilder();
+        var totalServiceAmount = docs.Sum(d => d.SubTotal);
+        // §83/6: self-assessed VAT = 7% × ฐานบริการ (gross-up หากในเอกสาร
+        // มี VAT แล้ว → ใช้ d.VatAmount โดยตรง; ถ้ายัง not VAT → คำนวณ
+        // 7% ของ SubTotal)
+        var totalSelfVat = docs.Sum(d => d.VatAmount > 0 ? d.VatAmount : Math.Round(d.SubTotal * 0.07m, 2));
+
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.พ.36|{period}|{docs.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
+        int seq = 1;
+        foreach (var d in docs)
+        {
+            var docDate = $"{d.DocumentDate.Day:D2}/{d.DocumentDate.Month:D2}/{d.DocumentDate.Year + 543}";
+            var serviceAmt = d.SubTotal;
+            var vatAmt = d.VatAmount > 0 ? d.VatAmount : Math.Round(serviceAmt * 0.07m, 2);
+            var supplierName = d.Contact?.Name ?? "—";
+            var country = d.Contact?.Province ?? "Foreign";
+            // D|Seq|SupplierName|SupplierCountry|InvoiceDate|InvoiceNumber|ServiceAmount|VatAmount|Description
+            sb.AppendLine($"D|{seq++}|{Esc(supplierName)}|{Esc(country)}|{docDate}|{Esc(d.DocumentNumber)}|{serviceAmt:F2}|{vatAmt:F2}|{Esc(d.Notes ?? d.Reference ?? "")}");
+        }
+        sb.AppendLine($"T|{docs.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
+
+        return new TaxFilingExportResult(
+            "PP36", "ภ.พ.36", $"PP36_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            docs.Count, totalServiceAmount, totalSelfVat,
+            $"ภ.พ.36 เดือน {month}/{year} ซื้อบริการต่างประเทศ {docs.Count} รายการ VAT self-assess {totalSelfVat:N2} บาท");
+    }
+
+    /// <summary>ภ.ง.ด.54 — Foreign-vendor WHT. รวม PI/Expense ที่
+    /// IsForeignService=true + WithholdingTaxAmount > 0 ในเดือน → text format
+    /// ตาม RD spec. Income type 6 = §40(3)(4) ค่าสิทธิ์/ดอกเบี้ย/ปันผล.</summary>
+    public async Task<TaxFilingExportResult> ExportPnd54Async(Guid companyId, int year, int month)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var thaiYear = year + 543;
+        var period = $"{thaiYear:D4}{month:D2}";
+        var monthStart = new DateTime(year, month, 1);
+        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
+        var docs = await _db.Documents.AsNoTracking()
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.IsForeignService
+                && d.WithholdingTaxAmount > 0
+                && d.DocumentDate >= monthStart && d.DocumentDate <= monthEnd
+                && (d.DocumentType == Models.Enums.DocumentType.PurchaseInvoice
+                    || d.DocumentType == Models.Enums.DocumentType.Expense
+                    || d.DocumentType == Models.Enums.DocumentType.PaymentVoucher)
+                && d.Status != Models.Enums.DocumentStatus.Voided
+                && d.Status != Models.Enums.DocumentStatus.Draft)
+            .OrderBy(d => d.DocumentDate)
+            .ToListAsync();
+
+        var sb = new System.Text.StringBuilder();
+        var totalIncome = docs.Sum(d => d.SubTotal);
+        var totalWht = docs.Sum(d => d.WithholdingTaxAmount);
+        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.54|{period}|{docs.Count}|{totalIncome:F2}|{totalWht:F2}");
+        int seq = 1;
+        foreach (var d in docs)
+        {
+            var docDate = $"{d.DocumentDate.Day:D2}/{d.DocumentDate.Month:D2}/{d.DocumentDate.Year + 543}";
+            var supplierName = d.Contact?.Name ?? "—";
+            var country = d.Contact?.Province ?? "Foreign";
+            var taxId = d.Contact?.TaxId ?? "—";
+            var rate = d.SubTotal > 0 ? Math.Round(d.WithholdingTaxAmount / d.SubTotal * 100, 2) : 0;
+            sb.AppendLine($"D|{seq++}|{Esc(supplierName)}|{Esc(taxId)}|{Esc(country)}|{docDate}|6|{d.SubTotal:F2}|{rate:F2}|{d.WithholdingTaxAmount:F2}");
+        }
+        sb.AppendLine($"T|{docs.Count}|{totalIncome:F2}|{totalWht:F2}");
+
+        return new TaxFilingExportResult(
+            "PND54", "ภ.ง.ด.54", $"PND54_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            docs.Count, totalIncome, totalWht,
+            $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {docs.Count} รายการ WHT {totalWht:N2} บาท");
+    }
+
+    private static string Esc(string? s) => s == null ? "" : s.Replace("|", "/").Replace("\n", " ").Trim();
 }

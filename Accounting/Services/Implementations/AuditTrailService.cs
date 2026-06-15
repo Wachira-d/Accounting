@@ -176,3 +176,11 @@ public class AuditTrailService : IAuditTrailService
         a.Id, a.CompanyId, a.UserId, a.UserEmail, a.Action, a.EntityType,
         a.EntityId, a.OldValues, a.NewValues, a.IpAddress, a.UserAgent, a.Timestamp);
 }
+
+/// <summary>F14 hash chain — กันการแก้ไข AuditLogs หลังจากบันทึก. ปกติ
+/// ใน production ควรเพิ่ม PostgreSQL trigger BEFORE UPDATE/DELETE
+/// บน AuditLogs → RAISE EXCEPTION เพื่อกัน DBA จาก raw SQL. แต่ application
+/// guarantee ขั้นต่ำ: ChangeTracker entries ไม่ track AuditLog (AuditTrailService
+/// line 118 skip "AuditLog" → no Update via DbContext). hash chain ตรวจ
+/// ภายหลังเป็นชั้นที่ 2.</summary>
+
