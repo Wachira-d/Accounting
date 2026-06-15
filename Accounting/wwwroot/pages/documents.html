@@ -8,6 +8,61 @@
   <link rel="stylesheet" href="/css/style.css">
   <style>
     @media(max-width:768px) { .modal { max-width:95vw !important; } }
+
+    /* ===== Responsive line-item card editor ===== */
+    #linesBody { display: flex; flex-direction: column; gap: 10px; }
+    .line-card {
+      border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px;
+      background: #fff; position: relative;
+    }
+    .line-card .lc-desc-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
+    .line-card .lc-desc-row .lc-num {
+      flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
+      background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; margin-top: 6px;
+    }
+    .line-card .lc-desc-wrap { flex: 1 1 auto; min-width: 0; }
+    .line-card input.lc-desc { width: 100%; font-size: 15px; padding: 10px 12px; }
+    .line-card .lc-del {
+      flex: 0 0 auto; background: none; border: 0; color: #ef4444;
+      font-size: 18px; cursor: pointer; padding: 6px; line-height: 1;
+    }
+    /* numeric fields grid — wraps on narrow screens */
+    .line-card .lc-fields {
+      display: grid; gap: 8px;
+      grid-template-columns: repeat(6, 1fr);
+    }
+    .line-card .lc-field { display: flex; flex-direction: column; min-width: 0; }
+    .line-card .lc-field > label {
+      font-size: 11px; color: #6b7280; margin-bottom: 3px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .line-card .lc-field input, .line-card .lc-field select {
+      width: 100%; font-size: 15px; padding: 8px 10px; text-align: right;
+    }
+    .line-card .lc-field select { text-align: left; }
+    .line-card .lc-field.lc-claim { align-items: center; }
+    .line-card .lc-field.lc-claim .vat-claim-toggle { font-size: 22px; margin-top: 4px; }
+    .line-card .lc-total {
+      margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e5e7eb;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 14px;
+    }
+    .line-card .lc-total .lc-total-val { font-weight: 700; font-size: 16px; color: #1f2937; }
+    .line-card .lc-project-row { margin-top: 8px; }
+    .line-card .lc-project-row select { width: 100%; font-size: 13px; padding: 7px 10px; }
+
+    /* Mobile: numeric fields 2-per-row, big tap targets */
+    @media (max-width: 640px) {
+      .line-card .lc-fields { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .line-card .lc-field input, .line-card .lc-field select { font-size: 16px; padding: 11px 12px; }
+      .line-card input.lc-desc { font-size: 16px; padding: 12px; }
+      .line-card .lc-field > label { font-size: 12px; }
+    }
+    /* Desktop: claim + wht slightly narrower */
+    @media (min-width: 769px) {
+      .line-card .lc-fields { grid-template-columns: 0.8fr 0.7fr 1.1fr 0.8fr 0.8fr 0.6fr; }
+    }
   </style>
 </head>
 <body>
@@ -364,12 +419,9 @@
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
               </div>
             </div>
-            <div class="table-container">
-              <table class="table" id="linesTable" data-doc-side="revenue">
-                <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th style="min-width:140px" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติ ระบบจะลงค่าใช้จ่ายเข้าโครงการนั้นๆ ให้อัตโนมัติ">โครงการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด%</th><th>VAT%</th><th title="VAT เคลม ภพ.30 ได้หรือไม่ — คลิกไอคอนเพื่อสลับ. กฎ §82/5: ค่ารับรอง / น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์ → เคลมไม่ได้">เคลม</th><th>WHT%</th><th></th></tr></thead>
-                <tbody id="linesBody"></tbody>
-              </table>
-              <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:4px">
+            <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
+              <div id="linesBody"></div>
+              <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:8px">
                 💡 พิมพ์ในช่อง "รายละเอียด" อย่างน้อย 2 ตัวอักษรเพื่อค้นหาสินค้า/บริการ — ราคาและ VAT จะถูกเติมให้อัตโนมัติ
               </div>
             </div>
@@ -817,6 +869,7 @@
           const row = document.getElementById('linesBody').lastElementChild;
           row.querySelector('[data-f="desc"]').value = l.description || '';
           row.querySelector('[data-f="qty"]').value = l.quantity ?? 1;
+          const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
           row.querySelector('[data-f="price"]').value = l.unitPrice ?? 0;
           row.querySelector('[data-f="disc"]').value = l.discountPercent ?? 0;
           const vatSel = row.querySelector('[data-f="vat"]');
@@ -826,7 +879,7 @@
           const pSel = row.querySelector('[data-f="project"]');
           if (pSel && l.projectId) pSel.value = l.projectId;
         });
-        if (!document.querySelector('#linesBody tr')) this.addLine();
+        if (!document.querySelector('#linesBody .line-card')) this.addLine();
         this.calcSum();
 
         Layout.toast('นำเข้าข้อมูลจาก OCR แล้ว — กรุณาตรวจสอบก่อนบันทึก', 'info');
@@ -1447,9 +1500,11 @@
       lineCount: 0,
       addLine() {
         const i = this.lineCount++;
-        const row = document.createElement('tr');
-        // Build per-line project options from the header dropdown so the
-        // user doesn't have to refetch — null = inherit header's project.
+        // Card-based responsive line item (แทน table row แคบ). ฟิลด์ตัวเลข
+        // เป็น grid wrap ลงมือถือได้ + label กำกับทุกช่อง + line total ต่อแถว
+        // เห็นเลขชัด. data-f attributes คงเดิม → calcSum/save/fillRow ทำงานต่อ.
+        const row = document.createElement('div');
+        row.className = 'line-card';
         const headerProj = document.getElementById('fProject');
         const projOptHtml = headerProj
           ? '<option value="">— ตามหัวเอกสาร —</option>' +
@@ -1457,19 +1512,37 @@
               `<option value="${o.value}">${o.textContent}</option>`).join('')
           : '<option value="">—</option>';
         row.innerHTML = `
-          <td><input type="text" class="form-input" style="font-size:13px" data-f="desc" placeholder="พิมพ์ชื่อสินค้า/บริการ…"></td>
-          <td><select class="form-select" data-f="project" style="font-size:12px">${projOptHtml}</select></td>
-          <td><input type="number" class="form-input text-right" value="1" min="1" step="1" data-f="qty" oninput="Page.calcSum()"></td>
-          <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></td>
-          <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></td>
-          <td><select class="form-select" data-f="vat" onchange="Page.calcSum()" style="font-size:13px"><option value="7">7%</option><option value="0">0%</option></select></td>
-          <td style="text-align:center"><span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;font-size:18px;user-select:none">✓</span></td>
-          <td><input type="number" class="form-input text-right" value="0" step="0.01" data-f="wht" oninput="Page.calcSum()"></td>
-          <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcSum()">✕</button></td>`;
+          <div class="lc-desc-row">
+            <div class="lc-num">${i + 1}</div>
+            <div class="lc-desc-wrap">
+              <input type="text" class="form-input lc-desc" data-f="desc" placeholder="พิมพ์ชื่อสินค้า/บริการ… (≥2 ตัวอักษรเพื่อค้นหา)">
+            </div>
+            <button type="button" class="lc-del" title="ลบรายการนี้" onclick="this.closest('.line-card').remove();Page.calcSum()">✕</button>
+          </div>
+          <div class="lc-fields">
+            <div class="lc-field"><label>จำนวน</label>
+              <input type="number" class="form-input" inputmode="decimal" value="1" min="0" step="1" data-f="qty" oninput="Page.calcSum()"></div>
+            <div class="lc-field"><label>หน่วย</label>
+              <input type="text" class="form-input" data-f="unit" value="ชิ้น" style="text-align:left"></div>
+            <div class="lc-field"><label>ราคา/หน่วย</label>
+              <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></div>
+            <div class="lc-field"><label>ส่วนลด %</label>
+              <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></div>
+            <div class="lc-field"><label>VAT %</label>
+              <select class="form-select" data-f="vat" onchange="Page.calcSum()"><option value="7">7%</option><option value="0">0%</option></select></div>
+            <div class="lc-field lc-claim"><label title="VAT เคลม ภพ.30 ได้หรือไม่ (§82/5)">เคลม VAT</label>
+              <span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;user-select:none">✓</span></div>
+            <div class="lc-field"><label>หัก ณ ที่จ่าย %</label>
+              <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="wht" oninput="Page.calcSum()"></div>
+          </div>
+          <div class="lc-project-row">
+            <select class="form-select" data-f="project" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติระบบลงค่าใช้จ่ายเข้าโครงการให้อัตโนมัติ">${projOptHtml}</select>
+          </div>
+          <div class="lc-total">
+            <span style="color:#6b7280">ยอดบรรทัดนี้ (รวม VAT)</span>
+            <span class="lc-total-val" data-f="lineTotal">0.00</span>
+          </div>`;
         document.getElementById('linesBody').appendChild(row);
-        // Wire the product typeahead. On select we keep whatever quantity the
-        // user already typed (overwriteQty:false) — picking a product mid-edit
-        // shouldn't reset the count they just entered.
         const descInput = row.querySelector('[data-f="desc"]');
         // VAT-claimability heuristic: ตรวจจากคำในรายการ → ติ๊ก
         // 🚫 อัตโนมัติเมื่อมีคำที่บ่งบอกค่าใช้จ่ายต้องห้าม
@@ -1495,7 +1568,9 @@
         const inclVat = document.getElementById('fPricesIncludeVat')?.checked || false;
         const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
         let sub = 0, vat = 0, wht = 0;
-        document.querySelectorAll('#linesBody tr').forEach(row => {
+        document.querySelectorAll('#linesBody .line-card').forEach((row, idx) => {
+          // Re-sequence line numbers (ลบแถวกลางแล้วเลขไม่ขาดช่วง)
+          const numEl = row.querySelector('.lc-num'); if (numEl) numEl.textContent = idx + 1;
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
           const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
           const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
@@ -1513,6 +1588,9 @@
           sub += net;
           vat += lineVat;
           wht += r2(net * whtR / 100);
+          // Per-line total (net + VAT) — แสดงให้ user เห็นยอดต่อแถวชัดเจน
+          const lineTotalEl = row.querySelector('[data-f="lineTotal"]');
+          if (lineTotalEl) lineTotalEl.textContent = Layout.money(net + lineVat);
         });
         document.getElementById('sumSubTotal').textContent = Layout.money(sub);
         document.getElementById('sumVat').textContent = Layout.money(vat);
@@ -1586,7 +1664,7 @@
         let prohibitedTotal = 0;
         const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
         const inclVat = document.getElementById('fPricesIncludeVat')?.checked || false;
-        document.querySelectorAll('#linesBody tr').forEach(row => {
+        document.querySelectorAll('#linesBody .line-card').forEach(row => {
           const claim = row.querySelector('[data-f="vatClaim"]');
           if (!claim || claim.dataset.claim === 'true') return;
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
@@ -1799,6 +1877,7 @@
             const row = document.getElementById('linesBody').lastElementChild;
             row.querySelector('[data-f="desc"]').value = l.description || '';
             row.querySelector('[data-f="qty"]').value = l.quantity || 1;
+            const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
             row.querySelector('[data-f="price"]').value = l.unitPrice || 0;
             row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
             row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
@@ -1896,7 +1975,7 @@
 
         const lines = [];
         const strictViolators = [];
-        document.querySelectorAll('#linesBody tr').forEach((row, idx) => {
+        document.querySelectorAll('#linesBody .line-card').forEach((row, idx) => {
           const desc = (row.querySelector('[data-f="desc"]').value || '').trim();
           if (strict && desc && !row.dataset.productCode) {
             strictViolators.push({ idx: idx + 1, desc });
@@ -1904,6 +1983,7 @@
           const line = {
             description: desc,
             quantity: parseFloat(row.querySelector('[data-f="qty"]').value) || 1,
+            unit: (row.querySelector('[data-f="unit"]')?.value || '').trim() || 'ชิ้น',
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
             discountPercent: parseFloat(row.querySelector('[data-f="disc"]').value) || 0,
             vatRate: parseFloat(row.querySelector('[data-f="vat"]').value) || 0,
@@ -2439,7 +2519,7 @@
         // ('ค่าธรรมเนียมวิชาชีพ บริการตรวจสอบบัญชี' >> 'ค่าใช้จ่ายทั่วไป').
         const lineParts = [];
         let amountFromLines = 0;
-        document.querySelectorAll('#linesBody tr').forEach(row => {
+        document.querySelectorAll('#linesBody .line-card').forEach(row => {
           const d = row.querySelector('[data-f="desc"]')?.value?.trim();
           if (d) lineParts.push(d);
           const q = parseFloat(row.querySelector('[data-f="qty"]')?.value) || 0;
