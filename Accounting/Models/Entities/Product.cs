@@ -114,40 +114,11 @@ public class StockMovement : TenantEntity
 }
 
 /// <summary>
-/// Stock Transfer (โอนย้ายสินค้าระหว่างคลัง) — 1 transfer สร้าง 2
-/// StockMovements (TRANSFER_OUT + TRANSFER_IN) คู่กัน + JE ไม่มี
-/// (cost ไม่เปลี่ยน internal movement). ใช้สำหรับ:
-///   • โอนสินค้าระหว่างสาขา
-///   • ส่งสินค้าจากคลังกลาง → ร้านค้า
-///   • ย้ายสินค้าจาก quality-hold → available
-/// </summary>
-public class StockTransfer : TenantEntity
-{
-    public string TransferNumber { get; set; } = "";   // ST-YYYYMM-NNNN
-    public Guid FromWarehouseId { get; set; }
-    public Guid ToWarehouseId { get; set; }
-    public DateTime TransferDate { get; set; }
-    public string Status { get; set; } = "Draft";       // Draft, InTransit, Received, Cancelled
-    public string? Reference { get; set; }
-    public string? Notes { get; set; }
-    public ICollection<StockTransferLine> Lines { get; set; } = new List<StockTransferLine>();
-}
-
-public class StockTransferLine : BaseEntity
-{
-    public Guid StockTransferId { get; set; }
-    public StockTransfer StockTransfer { get; set; } = null!;
-    public Guid ProductId { get; set; }
-    public Product Product { get; set; } = null!;
-    public decimal Quantity { get; set; }
-    public string? LotNumber { get; set; }
-    public string? SerialNumber { get; set; }
-    public string? Notes { get; set; }
-}
-
-/// <summary>
 /// Product Lot/Batch — track per-lot inventory + expiration.
 /// pharma / food / cosmetic ที่ต้อง FIFO/FEFO (first-expired-first-out).
+/// NOTE: StockTransfer + StockTransferLine นิยามอยู่ใน AdvancedOperations.cs
+/// (ของเดิม) — ไม่ define ซ้ำที่นี่. StockTransferController ใช้ของเดิม
+/// ซึ่งมีฟิลด์ครบ (TransferNumber/From/To/Status/Lines + line Notes/Lot/Serial).
 /// </summary>
 public class ProductLot : TenantEntity
 {

@@ -83,6 +83,7 @@ public class StockTransferController : ControllerBase
         foreach (var l in req.Lines)
             t.Lines.Add(new StockTransferLine
             {
+                CompanyId = companyId,   // StockTransferLine = TenantEntity → ต้องมี CompanyId
                 ProductId = l.ProductId,
                 Quantity = l.Quantity,
                 LotNumber = l.LotNumber,

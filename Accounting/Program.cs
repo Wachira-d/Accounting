@@ -118,9 +118,8 @@ builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new System.IO.DirectoryInfo(dpKeyPath));
 builder.Services.AddSingleton<Accounting.Services.Implementations.Security.IPiiProtector,
                               Accounting.Services.Implementations.Security.PiiProtector>();
-// F3 — FX gain/loss helper service (realized + unrealized snapshot)
-builder.Services.AddScoped<Accounting.Services.Implementations.Accounting.IFxRevaluationService,
-                           Accounting.Services.Implementations.Accounting.FxRevaluationService>();
+// NOTE: FX gain/loss — ใช้ของเดิม Accounting.Services.Implementations.Forex
+// (ProposeAsync + PostAsync ครบกว่า) registered ด้านล่าง. ไม่ register ซ้ำ.
 // F1 — Tenant safety guard. Verifies route companyId ⊂ user membership
 // before serving data — prevents IDOR cross-tenant data leak.
 builder.Services.AddScoped<Accounting.Services.Implementations.Security.ITenantGuard,

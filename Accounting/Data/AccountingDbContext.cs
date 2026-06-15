@@ -236,8 +236,6 @@ public class AccountingDbContext : DbContext
     public DbSet<SsoYearConfig> SsoYearConfigs => Set<SsoYearConfig>();
     public DbSet<TaxRuleConfig> TaxRuleConfigs => Set<TaxRuleConfig>();
     public DbSet<PostDatedCheck> PostDatedChecks => Set<PostDatedCheck>();
-    public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
-    public DbSet<StockTransferLine> StockTransferLines => Set<StockTransferLine>();
     public DbSet<ProductLot> ProductLots => Set<ProductLot>();
     public DbSet<DocumentComment> DocumentComments => Set<DocumentComment>();
     public DbSet<ScheduledReport> ScheduledReports => Set<ScheduledReport>();
