@@ -161,6 +161,9 @@ public class AiFeedbackTrainingJob : BackgroundService
             .ToListAsync(ct);
 
         var trainedFeatures = new Dictionary<string, int>();
+        // Features ที่มี ground-truth row แต่ TrainSingleAsync ไม่มี case
+        // — เก็บนับ "rows ที่หลุดวง training" ต่อ feature
+        var orphanedFeatures = new Dictionary<string, int>();
         foreach (var row in labelled)
         {
             try
@@ -173,6 +176,11 @@ public class AiFeedbackTrainingJob : BackgroundService
                     trainedFeatures.TryGetValue(row.FeatureKey, out var c);
                     trainedFeatures[row.FeatureKey] = c + 1;
                 }
+                else if (!KnownTrainerFeatures.Contains(row.FeatureKey))
+                {
+                    orphanedFeatures.TryGetValue(row.FeatureKey, out var oc);
+                    orphanedFeatures[row.FeatureKey] = oc + 1;
+                }
             }
             catch (Exception ex)
             {
@@ -183,7 +191,58 @@ public class AiFeedbackTrainingJob : BackgroundService
         if (trainedFeatures.Count > 0)
             _logger.LogInformation("AiFeedbackTrainingJob: trained {Counts}",
                 string.Join(", ", trainedFeatures.Select(kv => $"{kv.Key}={kv.Value}")));
+
+        // Roll-up warning + stamp LocalModelHealth.Recommendation ครั้งเดียว
+        // ต่อ feature ที่มี feedback แต่ไม่มี trainer — admin จะเห็นใน
+        // /pages/ai-health.html ทันทีว่า feature ใดเสีย opportunity.
+        if (orphanedFeatures.Count > 0)
+        {
+            _logger.LogWarning(
+                "AiFeedbackTrainingJob: features with ground-truth feedback but NO trainer case " +
+                "in TrainSingleAsync — signal is being silently dropped. Add a writer for: {Orphans}",
+                string.Join(", ", orphanedFeatures.Select(kv => $"{kv.Key}({kv.Value} rows)")));
+            foreach (var (featureKey, rows) in orphanedFeatures)
+            {
+                var health = await db.LocalModelHealths
+                    .FirstOrDefaultAsync(h => h.FeatureKey == featureKey, ct);
+                if (health == null)
+                {
+                    health = new LocalModelHealth { FeatureKey = featureKey };
+                    db.LocalModelHealths.Add(health);
+                }
+                health.Status = LocalModelHealthStatus.NeedsRedesign;
+                health.Recommendation = $"⚠ ขาด trainer ใน AiFeedbackTrainingJob.TrainSingleAsync — " +
+                    $"มี {rows} ground-truth rows ที่ไม่ถูก distill เก็บเข้าตาราง local. " +
+                    "เพิ่ม case + เพิ่มชื่อใน KnownTrainerFeatures เพื่อปิด gap นี้.";
+                health.LastEvaluatedAt = DateTime.UtcNow;
+            }
+            await db.SaveChangesAsync(ct);
+        }
     }
+
+    /// <summary>FeatureKey ที่มี trainer dispatch แล้ว — ใช้ตรวจช่วง
+    /// TrainLocalModelsAsync ว่ามี feature ใดเรียก AI + เก็บ feedback ground-
+    /// truth ครบแล้ว แต่ยังไม่มี case ใน TrainSingleAsync. ถ้าเจอ → log
+    /// warning ครั้งเดียวต่อ run + stamp LocalModelHealth.Recommendation ให้
+    /// admin เห็นในหน้าจอ. ป้องกันการเสียโอกาส training data เงียบ ๆ. ค่า
+    /// list นี้ต้อง sync กับ switch ใน TrainSingleAsync (compile-time
+    /// guarantee: ทดสอบใน DEBUG ด้วย EnsureSwitchCoverage).</summary>
+    internal static readonly HashSet<string> KnownTrainerFeatures = new(StringComparer.Ordinal)
+    {
+        nameof(AiFeatureKey.VendorCanonicalization),
+        nameof(AiFeatureKey.GlAccountSuggestion),
+        nameof(AiFeatureKey.PaymentVoucherAccountingSuggestion),
+        nameof(AiFeatureKey.CreditNoteReasonClassification),
+        nameof(AiFeatureKey.DocumentTypeClassification),
+        nameof(AiFeatureKey.OcrFullReview),
+        nameof(AiFeatureKey.DocumentConversionSuggestion),
+        nameof(AiFeatureKey.WhtCategoryInference),
+        nameof(AiFeatureKey.BankStatementMatch),
+        nameof(AiFeatureKey.ApprovalWarningFixSuggestion),
+        nameof(AiFeatureKey.AnomalyExplanation),
+        nameof(AiFeatureKey.StockMovementValidation),
+        nameof(AiFeatureKey.AgingExplanation),
+    };
 
     /// <summary>
     /// Per-feature dispatch — returns true when the row was successfully
@@ -218,7 +277,10 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.StockMovementValidation) => true,
             nameof(AiFeatureKey.AgingExplanation) => true,
             // Other features get their writer added later — return false
-            // so the row stays available for a future code release.
+            // so the row stays available for a future code release. The
+            // unmatched FeatureKey is rolled up + logged once per run in
+            // TrainLocalModelsAsync via KnownTrainerFeatures, so admins
+            // see exactly which feature is silently dropping signal.
             _ => false,
         };
     }
