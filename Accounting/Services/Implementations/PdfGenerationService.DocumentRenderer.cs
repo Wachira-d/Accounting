@@ -28,7 +28,8 @@ public partial class PdfGenerationService
 {
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
-        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
+        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
+        bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null)
     {
         EnsureThaiFontsRegistered();
         var lang = langOverride ?? template.Language ?? "th";
@@ -102,6 +103,25 @@ public partial class PdfGenerationService
                     });
                 });
             });
+            // PDF/A-3 conformance (สำหรับ e-Tax ที่ฝัง XML) — ใช้ layout
+            // เดียวกับ preview (template-styled สีส้ม) แต่ mark PdfA + ใส่
+            // metadata. ETDA ไม่บังคับ layout — แค่ต้อง embed XML +
+            // PDF/A metadata. ผลคือ download e-Tax = หน้าตาเหมือน preview.
+            if (pdfA)
+            {
+                pdf.WithMetadata(new QuestPDF.Infrastructure.DocumentMetadata
+                {
+                    Title = pdfTitle ?? $"{GetDocumentTitle(doc.DocumentType, lang)} {doc.DocumentNumber}",
+                    Author = pdfAuthor ?? company.Name,
+                    Subject = "e-Tax Invoice (PDF/A-3)",
+                    Keywords = "e-Tax, ETDA, Thailand, PDF/A-3",
+                    Producer = "NextAcc e-Tax PDF/A-3 Generator (QuestPDF)",
+                    Creator = "NextAcc",
+                    CreationDate = DateTime.UtcNow,
+                    ModifiedDate = DateTime.UtcNow
+                });
+                pdf.WithSettings(new QuestPDF.Infrastructure.DocumentSettings { PdfA = true });
+            }
             return pdf.GeneratePdf();
         }
         catch (Exception ex)

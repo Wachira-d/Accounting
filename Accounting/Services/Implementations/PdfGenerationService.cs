@@ -47,36 +47,17 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
-        // PDF/A-3 with embedded e-Tax XML — เป็น default ของทุกเอกสาร
-        // ที่ผ่าน e-Tax flow แล้ว (มี EtaxInvoice + XmlContent). ผู้ใช้
-        // กดดาวน์โหลด PDF ครั้งเดียวได้ไฟล์เดียวที่ใช้:
-        //   - แสดงเอกสารปกติให้ลูกค้าดู (PDF view)
-        //   - ส่งให้สรรพากร / ยื่นภาษีได้ (XML ฝังในไฟล์ตามมาตรฐาน ETDA)
-        // เอกสารที่ยังไม่ได้สร้าง e-Tax XML (Quotation / PO / PV / ฯลฯ
-        // หรือ TaxInvoice ที่ยังไม่ generate XML) → fall ไปใช้ render
-        // ปกติ (QuestPDF native).
+        // e-Tax check — ถ้าเอกสารผ่าน e-Tax flow แล้ว (มี EtaxInvoice +
+        // XmlContent) → download จะเป็น PDF/A-3 ฝัง XML. แต่ใช้ layout
+        // เดียวกับ template (สีส้ม/ดีไซน์ที่ตั้งค่า) — ไม่ใช่ layout ขาวดำ
+        // คนละแบบ. ETDA ไม่บังคับ layout — แค่ embed XML + PDF/A metadata.
+        // เก็บ etax ไว้ inject XML หลัง render (ด้านล่าง).
         var etax = await _db.EtaxInvoices.AsNoTracking()
             .Where(e => e.DocumentId == document.Id && e.CompanyId == companyId
                         && e.Status != EtaxStatus.Voided
                         && e.XmlContent != null && e.XmlContent != "")
             .OrderByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
-        if (etax != null)
-        {
-            try
-            {
-                var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
-                var pdfA3Bytes = BuildEtaxPdfA3WithEmbeddedXml(etax.XmlContent, metadata);
-                var pdfA3FileName = $"{etax.EtaxRefNumber}.pdf";
-                return new GeneratePdfResponse(document.Id, document.DocumentNumber, pdfA3FileName,
-                    "application/pdf", pdfA3Bytes.Length, pdfA3Bytes, DateTime.UtcNow);
-            }
-            catch
-            {
-                // ถ้าสร้าง PDF/A-3 ไม่ผ่าน (XML format / metadata edge case) —
-                // fall ไป render ปกติ ดีกว่าค้าง.
-            }
-        }
 
         // Get template
         DocumentTemplate template;
@@ -108,6 +89,36 @@ public partial class PdfGenerationService : IPdfGenerationService
         // server PDF/HTML never showed it — this wires it into both renderers.
         var gl = settings?.ShowGlEntryOnDocument == true
             ? await LoadGlPostingAsync(companyId, document.Id) : null;
+
+        // e-Tax path: render template-styled (สีส้ม) + PDF/A conformance →
+        // inject XML. ผลลัพธ์ = หน้าตาเหมือน preview + ฝัง XML ยื่นภาษีได้.
+        if (etax != null)
+        {
+            try
+            {
+                var etaxPdf = RenderDocumentPdfNative(document, company, settings, template,
+                    request.WatermarkOverride, request.Language, signers, gl,
+                    pdfA: true,
+                    pdfTitle: $"{GetDocumentTitle(document.DocumentType, request.Language ?? template.Language ?? "th")} {document.DocumentNumber}",
+                    pdfAuthor: company.Name);
+                var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
+                var xmlFileName = $"{etax.EtaxRefNumber}.xml";
+                var xmlBytes = System.Text.Encoding.UTF8.GetBytes(etax.XmlContent);
+                var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName);
+                var withXml = PdfAttachmentInjector.AttachXml(etaxPdf, xmlFileName, xmlBytes,
+                    "e-Tax XML data per ETDA Recommendation 3-2560 v2.0", etdaXmpMetadata: etdaXmp);
+                var etaxFileName = $"{etax.EtaxRefNumber}.pdf";
+                return new GeneratePdfResponse(document.Id, document.DocumentNumber, etaxFileName,
+                    "application/pdf", withXml.Length, withXml, DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                // ถ้า inject XML ไม่ผ่าน (PDF/A edge case) → fall ไป render
+                // ปกติ ดีกว่าค้าง. ผู้ใช้ยังได้ PDF สวย แค่ไม่ฝัง XML รอบนี้.
+                System.Diagnostics.Trace.TraceWarning(
+                    $"e-Tax PDF/A-3 (template-styled) failed doc={document.Id}: {ex.Message} — fallback plain");
+            }
+        }
 
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
