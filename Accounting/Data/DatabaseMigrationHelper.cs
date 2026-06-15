@@ -3940,6 +3940,12 @@ public static class DatabaseMigrationHelper
             // that would take CurrentStock below zero).
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "AllowNegativeStock" boolean NOT NULL DEFAULT false;""",
 
+            // ===== Payment: per-request payer signature override =====
+            // ใช้ใน PV PDF "ผู้จ่ายเงิน" slot สำหรับ caller ที่ user ไม่มีลายเซ็น
+            // upload ไว้ (เช่น service account ของระบบเชื่อมต่อ).
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "PayerSignatureBase64" text NULL;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "PayerSignatureName" varchar(200) NULL;""",
+
             // ===== LINE Messaging API per-company (was global in appsettings) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineChannelAccessToken" varchar(2000) NULL;""",

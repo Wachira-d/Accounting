@@ -35,6 +35,19 @@ public class Payment : TenantEntity
     /// linked GL. Null = use the normal resolution (bank's linked GL → 111).</summary>
     public Guid? OverridePaymentAccountId { get; set; }
 
+    /// <summary>Per-payment override of the "ผู้จ่ายเงิน" signature image
+    /// rendered on the PV PDF. Format: data-url ("data:image/png;base64,...")
+    /// or bare base64. When set, takes priority over the CreatedBy User's
+    /// stored SignatureImageBase64 — useful for API integrations where the
+    /// caller signs on behalf of a service account that has no signature on
+    /// file. Null = fall back to CreatedBy user's signature → empty space.
+    /// Image is rendered at the bottom-left signature slot of the
+    /// PaymentVoucher template.</summary>
+    public string? PayerSignatureBase64 { get; set; }
+    /// <summary>Optional display name for the payer slot — printed under the
+    /// signature image. Falls back to CreatedBy user's FullName when null.</summary>
+    public string? PayerSignatureName { get; set; }
+
     /// <summary>WHT withheld by the customer (revenue side) / by us (purchase
     /// side) on THIS installment. Per Thai practice + ประมวลรัษฎากร §50, when
     /// the source invoice is paid in installments the customer withholds

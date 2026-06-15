@@ -3140,6 +3140,12 @@ public class DocumentService : IDocumentService
                 // project" needs no extra input.
                 ProjectId = request.ProjectId,
                 Notes = request.Notes,
+                // Optional per-request payer signature override (for service
+                // accounts / API callers whose user has no signature on file).
+                // Validation: cap size to ~512 KB base64 (~384 KB raw image)
+                // so a buggy caller can't inflate a Payment row.
+                PayerSignatureBase64 = TrimSignature(request.PayerSignatureBase64),
+                PayerSignatureName = request.PayerSignatureName,
                 CreatedBy = createdBy
             };
 
@@ -3238,7 +3244,9 @@ public class DocumentService : IDocumentService
                 payment.Id, payment.PaymentNumber, payment.DocumentId,
                 payment.PaymentDate, payment.Amount, payment.PaymentMethod,
                 payment.Reference, payment.BankAccount, payment.BankAccountId,
-                payment.Notes, payment.CreatedAt);
+                payment.Notes, payment.CreatedAt,
+                HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
+                PayerSignatureName: payment.PayerSignatureName);
         }
         catch
         {
@@ -3348,6 +3356,8 @@ public class DocumentService : IDocumentService
                     WithholdingTaxAmount = 0,  // accumulated below from allocations
                     ProjectId = request.ProjectId,
                     Notes = request.Notes,
+                    PayerSignatureBase64 = TrimSignature(request.PayerSignatureBase64),
+                    PayerSignatureName = request.PayerSignatureName,
                     CreatedBy = createdBy,
                 };
                 _db.Payments.Add(payment);
@@ -3471,7 +3481,9 @@ public class DocumentService : IDocumentService
                     payment.PaymentDate, payment.Amount, payment.PaymentMethod,
                     payment.Reference, payment.BankAccount, payment.BankAccountId,
                     payment.Notes, payment.CreatedAt,
-                    persistedAllocs, request.Amount - allocSum);
+                    persistedAllocs, request.Amount - allocSum,
+                    HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
+                    PayerSignatureName: payment.PayerSignatureName);
             }
             catch
             {
@@ -3491,7 +3503,9 @@ public class DocumentService : IDocumentService
             p.Id, p.PaymentNumber, p.DocumentId,
             p.PaymentDate, p.Amount, p.PaymentMethod,
             p.Reference, p.BankAccount, p.BankAccountId,
-            p.Notes, p.CreatedAt)).ToList();
+            p.Notes, p.CreatedAt,
+            HasPayerSignature: !string.IsNullOrWhiteSpace(p.PayerSignatureBase64),
+            PayerSignatureName: p.PayerSignatureName)).ToList();
     }
 
     // ==================== Private ====================
@@ -4487,6 +4501,20 @@ public class DocumentService : IDocumentService
             if (int.TryParse(lastPart, out var n)) nextSeq = n + 1;
         }
         return $"{pattern}{nextSeq:D4}";
+    }
+
+    /// <summary>Cap payer signature payload size — reject anything bigger
+    /// than ~512 KB base64 (~384 KB raw image). Real signatures rendered at
+    /// PDF DPI are well under 50 KB; if a caller posts a multi-megabyte
+    /// blob it's a bug or abuse. Returns null for blank input so EF skips
+    /// the column.</summary>
+    private static string? TrimSignature(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var v = value.Trim();
+        if (v.Length > 512 * 1024)
+            throw new InvalidOperationException("รูปลายเซ็นมีขนาดใหญ่เกิน 512 KB — กรุณาบีบอัดก่อนส่ง");
+        return v;
     }
 
     /// <summary>
