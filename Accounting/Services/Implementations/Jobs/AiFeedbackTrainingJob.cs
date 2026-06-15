@@ -253,6 +253,10 @@ public class AiFeedbackTrainingJob : BackgroundService
         nameof(AiFeatureKey.ManualJournalSuggestion),
         nameof(AiFeatureKey.ForecastNarrative),
         nameof(AiFeatureKey.DocumentRoleInference),
+        // New Sprint-1 features (VAT type + Payment terms) — wired live;
+        // feedback rows become training corpus over time.
+        nameof(AiFeatureKey.VatTypeInference),
+        nameof(AiFeatureKey.PaymentTermsSuggestion),
     };
 
     /// <summary>
@@ -296,6 +300,11 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.ManualJournalSuggestion) => true,
             nameof(AiFeatureKey.ForecastNarrative) => true,
             nameof(AiFeatureKey.DocumentRoleInference) => true,
+            // Sprint-1 features — consume-only เริ่มต้น; เมื่อสะสม
+            // ground-truth ≥30 rows ใน LocalModelHealth จะเห็น accuracy
+            // → admin ตัดสินได้ว่าจะ promote เป็น distillation table writer
+            nameof(AiFeatureKey.VatTypeInference) => true,
+            nameof(AiFeatureKey.PaymentTermsSuggestion) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

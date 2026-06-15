@@ -202,6 +202,207 @@ public class AiSuggestionController : ControllerBase
     }
 
     // ────────────────────────────────────────────────────────────────
+    //  VAT type inference — per document line (7% / 0% / Exempt).
+    //  Heuristic-first picker; ground-truth from user override trains
+    //  OcrCategoryMapping (vendor+keyword → rate) so reused vendor lines
+    //  auto-fill the right rate.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record InferVatRequest(
+        Guid? ContactId,
+        string? VendorName,
+        string? VendorTaxId,
+        string? VendorCountryCode,    // "TH" or 2-letter ISO; null = unknown
+        string LineDescription,
+        decimal Amount,
+        string? CurrentRate);          // "7" | "0" | "Exempt"
+
+    [HttpPost("vat/infer-type")]
+    public async Task<ActionResult<ApiResponse<object>>> InferVatType(
+        Guid companyId, [FromBody] InferVatRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.LineDescription))
+            return BadRequest(new ApiResponse<object>(false, null, "LineDescription ห้ามว่าง"));
+
+        // 1) Vendor-side check: ผู้ขายต่างประเทศ → export rule (0% ฝั่งขาย,
+        //    หรือ ภ.พ.36 ฝั่งซื้อ). ใช้ทั้ง explicit country และเทียบ TaxId
+        //    ที่ไม่ใช่รูปแบบไทย (13 หลัก เริ่ม 0–9).
+        var isForeign = !string.IsNullOrWhiteSpace(req.VendorCountryCode)
+            && !string.Equals(req.VendorCountryCode, "TH", StringComparison.OrdinalIgnoreCase);
+        if (!isForeign && !string.IsNullOrWhiteSpace(req.VendorTaxId))
+        {
+            var tid = req.VendorTaxId.Where(char.IsDigit).ToArray();
+            if (tid.Length > 0 && tid.Length != 13) isForeign = true;
+        }
+
+        // 2) Description-side check: keyword สำหรับ Exempt (ตาม §81/1-15)
+        //    ครอบคลุมหมวดที่ SMB ไทยเจอบ่อย — ครู / ผัก / นม / หนังสือ /
+        //    หนังสือพิมพ์ / ยา (เฉพาะตามรายการกระทรวงสาธารณสุข) / ปุ๋ย
+        var desc = req.LineDescription.ToLowerInvariant();
+        var exemptKeywords = new[]
+        {
+            "ค่าเล่าเรียน", "ค่าเรียน", "ค่าสอน", "tuition",
+            "ผัก", "ผลไม้", "ข้าวสาร",
+            "นม", "milk", "fresh milk",
+            "หนังสือ", "นิตยสาร", "หนังสือพิมพ์", "newspaper",
+            "ปุ๋ย", "อาหารสัตว์", "เมล็ดพันธุ์",
+            "ค่าขนส่งสาธารณะ", "รถเมล์", "รถไฟ", "btx", "mrt",
+            "ค่าเช่าอสังหาริมทรัพย์", "rental of immovable property",
+            "ค่ารักษาพยาบาล", "โรงพยาบาล",
+        };
+        var isExempt = exemptKeywords.Any(k => desc.Contains(k));
+
+        // 3) Pick + reasoning
+        string suggestion;
+        string reasoning;
+        if (isExempt)
+        {
+            suggestion = "Exempt";
+            reasoning = "รายละเอียดตรงกับหมวดยกเว้น VAT ตาม §81 (อาหาร / ขนส่ง / การศึกษา / หนังสือ ฯลฯ)";
+        }
+        else if (isForeign)
+        {
+            suggestion = "0";
+            reasoning = "ผู้ขายต่างประเทศ — ฝั่งขายใช้ 0% (export), ฝั่งซื้อให้บันทึก ภ.พ.36 แยก";
+        }
+        else
+        {
+            suggestion = "7";
+            reasoning = "ผู้ขายในประเทศ + รายการทั่วไป → VAT 7% (อัตราปกติ)";
+        }
+
+        // Log to feedback so user override trains the model
+        var inputJson = JsonSerializer.Serialize(new
+        {
+            req.ContactId, req.VendorTaxId, req.VendorCountryCode,
+            req.LineDescription, req.Amount, isForeign, isExempt,
+        });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.VatTypeInference,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: suggestion, AiConfidence: isExempt || isForeign ? 0.85m : 0.95m,
+                LocalModelAnswer: suggestion, LocalModelConfidence: 0.85m,
+                LocalModelVersion: "heuristic-v1",
+                SourceEntityType: "DocumentLine",
+                SourceEntityId: req.ContactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "heuristic", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            vatType = suggestion,
+            confidence = isExempt || isForeign ? 0.85m : 0.95m,
+            reasoning,
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Payment terms (credit days) — pure-lookup picker when user
+    //  selects a contact on a new sales/purchase document. Resolves:
+    //   Contact.CreditDays
+    //    → OcrVendorIntelligence.TypicalPaymentTermsDays
+    //    → CompanySettings.DefaultPaymentDueDays (final fallback)
+    //  No ML — but logged through orchestrator so override pattern
+    //  feeds future per-vendor improvement.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("payment-terms/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestPaymentTerms(
+        Guid companyId, [FromQuery] Guid contactId, CancellationToken ct)
+    {
+        if (contactId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var contact = await _db.Contacts.AsNoTracking()
+            .Where(c => c.Id == contactId && c.CompanyId == companyId)
+            .Select(c => new { c.Name, c.TaxId })
+            .FirstOrDefaultAsync(ct);
+
+        // Tier 1 — Mode (ค่าที่ใช้บ่อยที่สุด) จากเอกสารล่าสุด 12 ใบที่มี
+        //          CreditDays ระบุ — ทนกับเอกสารกระตุ้นเดี่ยวที่ตั้งผิด.
+        // Tier 2 — OcrVendorIntelligence.TypicalPaymentTermsDays (per-tax-id)
+        // Tier 3 — CompanySettings.DefaultPaymentDueDays
+        int days; string source; decimal confidence;
+        var recentTerms = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId
+                && d.CreditDays != null && d.CreditDays > 0 && !d.IsDeleted)
+            .OrderByDescending(d => d.DocumentDate)
+            .Take(12)
+            .Select(d => d.CreditDays!.Value)
+            .ToListAsync(ct);
+        if (recentTerms.Count >= 2)
+        {
+            // Mode of recent CreditDays values — บ่อยสุดชนะ tie ใช้ค่าล่าสุด
+            days = recentTerms.GroupBy(x => x).OrderByDescending(g => g.Count())
+                .ThenByDescending(g => g.Key).First().Key;
+            source = "DocumentHistory";
+            confidence = recentTerms.Count >= 5 ? 0.92m : 0.75m;
+        }
+        else
+        {
+            int? learned = null;
+            if (!string.IsNullOrWhiteSpace(contact?.TaxId))
+            {
+                learned = await _db.Set<OcrVendorIntelligence>().AsNoTracking()
+                    .Where(v => v.CompanyId == companyId && v.VendorTaxId == contact.TaxId)
+                    .Select(v => v.TypicalPaymentTermsDays)
+                    .FirstOrDefaultAsync(ct);
+            }
+            if (learned.HasValue && learned.Value > 0)
+            {
+                days = learned.Value; source = "OcrVendorIntelligence"; confidence = 0.80m;
+            }
+            else
+            {
+                days = await _db.CompanySettings.AsNoTracking()
+                    .Where(s => s.CompanyId == companyId)
+                    .Select(s => s.DefaultPaymentDueDays)
+                    .FirstOrDefaultAsync(ct);
+                if (days <= 0) days = 30;
+                source = "CompanySettings.DefaultPaymentDueDays"; confidence = 0.50m;
+            }
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { contactId, vendorName = contact?.Name, vendorTaxId = contact?.TaxId });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.PaymentTermsSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: days.ToString(), AiConfidence: confidence,
+                LocalModelAnswer: days.ToString(), LocalModelConfidence: confidence,
+                LocalModelVersion: "lookup-v1",
+                SourceEntityType: "Contact", SourceEntityId: contactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "lookup", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            creditDays = days,
+            source,
+            confidence,
+            reasoning = source switch
+            {
+                "DocumentHistory" => $"จากเอกสาร {recentTerms.Count} ใบล่าสุดกับผู้ติดต่อรายนี้: บ่อยสุด Net {days} วัน",
+                "OcrVendorIntelligence" => $"เรียนรู้จากประวัติเอกสารกับผู้ขายรายนี้: ปกติ {days} วัน",
+                _ => $"ใช้ค่าเริ่มต้นบริษัท: Net {days} วัน (ยังไม่มีข้อมูลผู้ขายรายนี้)",
+            },
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Credit-note reason classification — when user creates a CN
     //  from an invoice, AI proposes Return / Discount / Adjustment /
     //  Writeoff before they pick from the dropdown.

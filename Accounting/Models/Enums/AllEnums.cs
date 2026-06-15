@@ -1322,6 +1322,23 @@ public enum AiFeatureKey
     /// first; AI only adjudicates lines that span ≥2 candidate projects.</summary>
     OcrProjectMatch = 29,
 
+    /// <summary>VAT type per document line: 7%, 0% (export / international
+    /// services), or Exempt (ยกเว้น — food, medicine, books per VAT-act §81).
+    /// Heuristic: line description keywords + vendor type (domestic /
+    /// foreign) cold-starts the picker; user override trains
+    /// OcrCategoryMapping per (vendor + keyword) → vat-rate so future
+    /// invoices auto-fill the same value. Per-line, not per-document.</summary>
+    VatTypeInference = 30,
+
+    /// <summary>Credit-term days (Net 7/15/30/60/90) auto-suggested when
+    /// the operator picks a contact on a new document. Resolution
+    /// priority: Contact.CreditDays (explicit per-contact setting) →
+    /// OcrVendorIntelligence.TypicalPaymentTermsDays (learned from doc
+    /// history) → CompanySettings.DefaultPaymentDueDays. Pure lookup,
+    /// no ML required for day one — but logged through the orchestrator
+    /// so per-vendor accuracy is tracked + drift detected.</summary>
+    PaymentTermsSuggestion = 31,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }
