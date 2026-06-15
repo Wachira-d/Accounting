@@ -10,12 +10,23 @@ public interface ILineNotifyService
     /// not configured or the userId is empty.</summary>
     Task PushToUserAsync(string lineUserId, string message);
 
+    /// <summary>Company-aware push — resolves Channel Access Token from
+    /// CompanySettings.LineChannelAccessToken (falls back to global
+    /// appsettings if the company didn't configure their own).</summary>
+    Task PushToUserAsync(Guid? companyId, string lineUserId, string message);
+
     /// <summary>Push a LINE Flex Message bubble to a specific user.
     /// <paramref name="flexContents"/> is the "contents" payload LINE
     /// expects (the bubble shape with header / body / footer / actions
     /// — caller builds it). <paramref name="altText"/> is the fallback
     /// shown in chat lists / push previews.</summary>
     Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents);
+    Task PushFlexToUserAsync(Guid? companyId, string lineUserId, string altText, object flexContents);
+
+    /// <summary>Send a test message using the per-company config to verify
+    /// the token + destination ID work. Returns (success, message) suitable
+    /// for echoing to the admin UI.</summary>
+    Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId);
 
     Task NotifyDocumentApprovedAsync(Guid companyId, string documentNumber, string contactName, decimal amount);
     Task NotifyPaymentReceivedAsync(Guid companyId, string documentNumber, decimal amount);
