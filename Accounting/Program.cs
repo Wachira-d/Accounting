@@ -453,6 +453,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBac
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
+builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 
 // ===== Validation =====
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

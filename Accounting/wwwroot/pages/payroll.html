@@ -191,7 +191,7 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">เงินเดือน *</label><input type="number" class="form-input" id="empSalary" step="0.01"></div>
+            <div class="form-group"><label class="form-label">เงินเดือน *</label><input type="number" class="form-input" id="empSalary" step="0.01" data-amount-words></div>
             <div class="form-group"><label class="form-label">บัญชีธนาคาร</label><input type="text" class="form-input" id="empBankAccount" placeholder="เลขบัญชี"></div>
           </div>
           <div class="form-row">
@@ -571,6 +571,12 @@ const Page = {
     await this._loadOrgDropdowns(null);
     ['empDepartmentRef','empPositionRef','empDirectManager'].forEach(id => document.getElementById(id).value = '');
     Layout.openModal('empModal');
+    // AutoSave draft (#5) — กรอกเลย ปิด browser แล้วกลับมา ได้ของเก่าครบ
+    if (window.UxHelpers?.AutoSave) {
+      const modal = document.getElementById('empModal');
+      if (modal) modal.id = 'empModal';
+      window.UxHelpers.AutoSave.attach('empModal', { restore: true, ttlMinutes: 60 });
+    }
   },
 
   async editEmployee(id) {
@@ -743,6 +749,20 @@ const Page = {
           <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${d.employeeId||d.id}')">ดูสลิป</button></td>
         </tr>`).join('') : '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>`;
       document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      // Comments + activity timeline (#23) — HR ทีมแชร์ note ระหว่าง run
+      const commentsHost = document.createElement('div');
+      commentsHost.id = `runComments-${id}`;
+      commentsHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';
+      document.getElementById('runDetailContent').appendChild(commentsHost);
+      const mountComments = () => window.CommentsWidget?.mount(commentsHost,
+        { companyId: Layout.getCompanyId(), entityType: 'PayrollRun', entityId: id });
+      if (window.CommentsWidget) { mountComments(); }
+      else {
+        const s = document.createElement('script');
+        s.src = '/js/comments-widget.js';
+        s.onload = mountComments;
+        document.head.appendChild(s);
+      }
       Layout.openModal('runDetailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },

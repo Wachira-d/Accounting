@@ -465,10 +465,13 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"ภ.ง.ด.91 ประจำปี {year} จำนวน {byEmployee.Count} คน รายได้รวม {totalIncome:N2} บาท ภาษีรวม {totalWht:N2} บาท");
     }
 
-    /// <summary>ภ.ง.ด.2 — Monthly dividend WHT. Aggregates JournalEntryLines
-    /// ที่ลงบัญชี "21915" (ภาษีหัก ณ ที่จ่าย ภ.ง.ด.2 ค้างจ่าย) หรือ
-    /// JournalEntry Description มีคำว่า "เงินปันผล". Pipe-delimited per
-    /// RD e-Filing spec — Header / per-shareholder Detail / Trailer.</summary>
+    /// <summary>ภ.ง.ด.2 — Monthly dividend WHT. Multi-tier detection:
+    ///   (1) JournalEntry.Tags ที่มี "DIVIDEND" / "PND2" / "ปันผล"
+    ///       (CSV tag-based — แม่นที่สุด, ผู้ใช้/system ตั้งได้)
+    ///   (2) JournalEntry.Description มีคำว่า "เงินปันผล" (heuristic)
+    ///   (3) Account.AccountCode "21915" หรือ AccountName มี "ปันผล"
+    ///       (ผังบัญชี-based — รองรับ custom code)
+    /// รวม union ของทั้ง 3 → ลด miss สำหรับบริษัทที่ใช้ผังบัญชี custom.</summary>
     public async Task<TaxFilingExportResult> ExportPnd2Async(Guid companyId, int year, int month)
     {
         var company = await GetCompanyAsync(companyId);
@@ -477,15 +480,24 @@ public class TaxFilingExportService : ITaxFilingExportService
         var monthStart = new DateTime(year, month, 1);
         var monthEnd = monthStart.AddMonths(1).AddDays(-1);
 
-        // หาบรรทัด JE ที่ลง "ภาษีหัก ณ ที่จ่าย ภ.ง.ด.2 ค้างจ่าย" (21915)
-        // หรือ description มีคำว่า "เงินปันผล" + "ภาษีหัก"
+        // หาบรรทัด JE ที่เกี่ยวกับเงินปันผล — multi-tier detection
         var lines = await _db.JournalEntryLines.AsNoTracking()
             .Include(l => l.JournalEntry).Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == Models.Enums.JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= monthStart && l.JournalEntry.EntryDate <= monthEnd
-                && (l.Account!.AccountCode == "21915"
-                    || l.JournalEntry.Description != null && l.JournalEntry.Description.Contains("เงินปันผล")))
+                && (
+                    // (1) JE Tags
+                    (l.JournalEntry.Tags != null && (
+                        l.JournalEntry.Tags.Contains("DIVIDEND")
+                        || l.JournalEntry.Tags.Contains("PND2")
+                        || l.JournalEntry.Tags.Contains("ปันผล")))
+                    // (2) Description heuristic
+                    || (l.JournalEntry.Description != null && l.JournalEntry.Description.Contains("เงินปันผล"))
+                    // (3) Account code/name
+                    || (l.Account!.AccountCode == "21915"
+                        || (l.Account.AccountName != null && l.Account.AccountName.Contains("ปันผล")))
+                ))
             .ToListAsync();
 
         // Group by JE → 1 dividend payment per shareholder
@@ -494,8 +506,17 @@ public class TaxFilingExportService : ITaxFilingExportService
                 EntryId = g.Key,
                 Date = g.First().JournalEntry.EntryDate,
                 Description = g.First().JournalEntry.Description ?? "เงินปันผล",
-                WhtAmount = g.Where(x => x.Account?.AccountCode == "21915").Sum(x => x.CreditAmount),
-                DividendAmount = g.Where(x => x.Account?.AccountCode != "21915" && x.Account?.AccountCode != "111")
+                // WHT line = บัญชี WHT (21915 หรือ name มี "ปันผล" / "หัก ณ ที่จ่าย")
+                WhtAmount = g.Where(x => x.Account != null && (
+                        x.Account.AccountCode == "21915"
+                        || (x.Account.AccountName != null && (x.Account.AccountName.Contains("ปันผล")
+                            || x.Account.AccountName.Contains("หัก ณ ที่จ่าย")))))
+                    .Sum(x => x.CreditAmount),
+                // Dividend amount = expense/equity side (ไม่ใช่ WHT, ไม่ใช่ cash 111)
+                DividendAmount = g.Where(x => x.Account != null
+                        && x.Account.AccountCode != "21915"
+                        && !x.Account.AccountCode.StartsWith("111")
+                        && (x.Account.AccountName == null || !x.Account.AccountName.Contains("หัก ณ ที่จ่าย")))
                                   .Sum(x => Math.Abs(x.DebitAmount - x.CreditAmount))
             })
             .Where(x => x.WhtAmount > 0)

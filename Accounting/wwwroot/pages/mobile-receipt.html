@@ -61,6 +61,7 @@
     <div class="amount-display">
       <div class="label">จำนวนเงินรับ</div>
       <div><span class="amount" id="display">0</span><span class="currency">บาท</span></div>
+      <div id="displayWords" style="font-size:12px;color:#9ca3af;margin-top:6px;font-style:italic"></div>
     </div>
 
     <div class="quick-amounts">
@@ -116,7 +117,13 @@
     const display = document.getElementById('display');
 
     function fmt(n) { return n.toLocaleString('en-US'); }
-    function refresh() { display.textContent = fmt(amount); }
+    function refresh() {
+      display.textContent = fmt(amount);
+      const w = document.getElementById('displayWords');
+      if (w && window.UxHelpers?.AmountInWords) {
+        w.textContent = amount > 0 ? '(' + window.UxHelpers.AmountInWords.convert(amount) + ')' : '';
+      }
+    }
     function press(d) {
       if (amount === 0 && d === '0') return;
       amount = amount * 10 + parseInt(d);

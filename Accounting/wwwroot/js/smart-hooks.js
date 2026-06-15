@@ -151,24 +151,51 @@
   }
 
   // ============================================================
-  // Auto-scan + attach
+  // Auto-scan + attach (perf: scoped + throttled)
   // ============================================================
-  function scan() {
-    document.querySelectorAll('input[data-validate="tax-id"], input[id="fTaxId"], input[id="empIdCard"]').forEach(attachTaxId);
-    document.querySelectorAll('input[data-validate="vat-amount"]').forEach(attachVatCheck);
-    document.querySelectorAll('input[type="date"][data-check-period]').forEach(attachPeriodCheck);
-    document.querySelectorAll('input[data-amount-words]').forEach(attachAmountWords);
+  const SELECTORS = [
+    'input[data-validate="tax-id"]',
+    'input[id="fTaxId"]',
+    'input[id="empIdCard"]',
+    'input[data-validate="vat-amount"]',
+    'input[type="date"][data-check-period]',
+    'input[data-amount-words]'
+  ];
+  function scan(root) {
+    root = root || document;
+    root.querySelectorAll(SELECTORS[0] + ', ' + SELECTORS[1] + ', ' + SELECTORS[2]).forEach(attachTaxId);
+    root.querySelectorAll(SELECTORS[3]).forEach(attachVatCheck);
+    root.querySelectorAll(SELECTORS[4]).forEach(attachPeriodCheck);
+    root.querySelectorAll(SELECTORS[5]).forEach(attachAmountWords);
   }
 
-  // Run on load + MutationObserver for dynamic forms
+  // Run on load + MutationObserver with throttle + scoped scanning
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', scan);
+    document.addEventListener('DOMContentLoaded', () => scan());
   } else {
     scan();
   }
-  const observer = new MutationObserver(() => {
+  // Throttle 400ms — long table re-render ไม่ trigger หลายครั้งติด.
+  // Scope scan ไปที่ added nodes เฉพาะ (ไม่ใช่ document ทั้งหมด) เมื่อ
+  // เป็นไปได้ → ลด selector queries ลง 10-100×.
+  let pendingNodes = new Set();
+  const observer = new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType === 1 /* element */) pendingNodes.add(n);
+      }
+    }
     clearTimeout(window._smartScanTimer);
-    window._smartScanTimer = setTimeout(scan, 200);
+    window._smartScanTimer = setTimeout(() => {
+      if (pendingNodes.size === 0) return;
+      // ถ้า batch ใหญ่มาก (>30) → fallback scan ทั้ง document — เร็วกว่า iterate
+      if (pendingNodes.size > 30) {
+        scan();
+      } else {
+        pendingNodes.forEach(n => { try { scan(n); } catch {} });
+      }
+      pendingNodes.clear();
+    }, 400);
   });
   observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
 
