@@ -7,6 +7,10 @@ namespace Accounting.Services.Interfaces;
 public interface IWithholdingTaxCertService
 {
     Task<WithholdingTaxCertResponse> CreateAsync(Guid companyId, CreateWithholdingTaxCertRequest request, string createdBy);
+    /// <summary>แก้ไขหนังสือรับรอง — เฉพาะ cert ที่เป็น Draft + สร้างเอง
+    /// (ไม่ได้อ้างอิงใบสำคัญจ่าย/payroll: DocumentId + SourcePayrollRunId
+    /// = null). ป้องกันการแก้ตัวเลขที่ผูกกับเอกสารต้นทาง ทำให้ยอดไม่ตรงกัน.</summary>
+    Task<WithholdingTaxCertResponse> UpdateAsync(Guid companyId, Guid certId, CreateWithholdingTaxCertRequest request, string updatedBy);
     Task<WithholdingTaxCertResponse> GetByIdAsync(Guid companyId, Guid certId);
     Task<PagedResponse<WithholdingTaxCertResponse>> GetAllAsync(Guid companyId, TaxType? taxFormType, int? year, int? month, PagedRequest request);
     Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId);

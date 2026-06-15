@@ -337,6 +337,7 @@ const API = {
       getWhtCerts: (q = '') => API.get(`${base}/withholding-tax-certs${q}`),
       getWhtCert: (id) => API.get(`${base}/withholding-tax-certs/${id}`),
       createWhtCert: (d) => API.post(`${base}/withholding-tax-certs`, d),
+      updateWhtCert: (id, d) => API.put(`${base}/withholding-tax-certs/${id}`, d),
       issueWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/issue`),
       voidWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/void`),
       deleteWhtCert: (id) => API.del(`${base}/withholding-tax-certs/${id}`),

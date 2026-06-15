@@ -155,6 +155,61 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         return await GetByIdAsync(companyId, cert.Id);
     }
 
+    public async Task<WithholdingTaxCertResponse> UpdateAsync(Guid companyId, Guid certId,
+        CreateWithholdingTaxCertRequest request, string updatedBy)
+    {
+        var cert = await _db.WithholdingTaxCerts
+            .Include(w => w.Lines)
+            .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+
+        // แก้ได้เฉพาะ Draft — Issued/Voided ห้ามแก้ (immutable หลังออก)
+        if (cert.Status != WithholdingTaxCertStatus.Draft)
+            throw new InvalidOperationException("แก้ไขได้เฉพาะหนังสือรับรองที่เป็นฉบับร่าง (Draft) เท่านั้น");
+
+        // แก้ได้เฉพาะ cert ที่สร้างเอง — ไม่อ้างอิงใบสำคัญจ่าย/payroll.
+        // cert ที่ผูกเอกสารต้นทาง ตัวเลขต้องตรงกับต้นทาง ห้ามแก้มือ
+        // (ถ้าจะแก้ ต้องไปแก้ที่เอกสารต้นทางแล้ว regenerate).
+        if (cert.DocumentId.HasValue)
+            throw new InvalidOperationException("หนังสือรับรองนี้อ้างอิงใบสำคัญจ่าย — แก้ไม่ได้ กรุณาแก้ที่เอกสารต้นทางแล้วสร้างใหม่");
+        if (cert.SourcePayrollRunId.HasValue)
+            throw new InvalidOperationException("หนังสือรับรองนี้สร้างจากรอบเงินเดือน — แก้ไม่ได้ กรุณาแก้ที่ payroll แล้วสร้างใหม่");
+
+        // อัปเดต header fields (CertificateNumber + TaxYear sequence ไม่แตะ)
+        cert.PayeeContactId = request.PayeeContactId;
+        if (request.TaxFormType.HasValue) cert.TaxFormType = request.TaxFormType.Value;
+        cert.TaxYear = request.TaxYear;
+        cert.TaxMonth = request.TaxMonth;
+        cert.CertificateType = request.CertificateType;
+        cert.UpdatedBy = updatedBy;
+        cert.UpdatedAt = DateTime.UtcNow;
+
+        // แทนที่ lines ทั้งหมด
+        _db.WithholdingTaxCertLines.RemoveRange(cert.Lines);
+        cert.Lines.Clear();
+        var order = 1;
+        foreach (var line in request.Lines)
+        {
+            cert.Lines.Add(new WithholdingTaxCertLine
+            {
+                WithholdingTaxCertId = cert.Id,
+                LineOrder = order++,
+                IncomeTypeCode = line.IncomeTypeCode,
+                IncomeDescription = line.IncomeDescription,
+                PaymentDate = line.PaymentDate,
+                IncomeAmount = line.IncomeAmount,
+                TaxRate = line.TaxRate,
+                TaxAmount = line.TaxAmount,
+                Condition = line.Condition
+            });
+        }
+        cert.TotalIncomeAmount = cert.Lines.Sum(l => l.IncomeAmount);
+        cert.TotalTaxAmount = cert.Lines.Sum(l => l.TaxAmount);
+
+        await _db.SaveChangesAsync();
+        return await GetByIdAsync(companyId, cert.Id);
+    }
+
     public async Task<WithholdingTaxCertResponse> GetByIdAsync(Guid companyId, Guid certId)
     {
         var cert = await _db.WithholdingTaxCerts
@@ -565,5 +620,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             l.Id, l.IncomeTypeCode, GetIncomeTypeName(l.IncomeTypeCode),
             l.IncomeDescription, l.PaymentDate, l.IncomeAmount, l.TaxRate, l.TaxAmount, l.Condition)).ToList(),
         w.IssuedDate, w.CreatedAt,
-        w.DocumentId, w.Document?.DocumentNumber);
+        w.DocumentId, w.Document?.DocumentNumber,
+        w.SourcePayrollRunId,
+        // แก้ไขได้ = Draft + สร้างเอง (ไม่ผูกเอกสาร/payroll)
+        IsEditable: w.Status == WithholdingTaxCertStatus.Draft
+                    && !w.DocumentId.HasValue && !w.SourcePayrollRunId.HasValue);
 }
