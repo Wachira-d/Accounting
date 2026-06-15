@@ -238,10 +238,21 @@ public class AiFeedbackTrainingJob : BackgroundService
         nameof(AiFeatureKey.DocumentConversionSuggestion),
         nameof(AiFeatureKey.WhtCategoryInference),
         nameof(AiFeatureKey.BankStatementMatch),
+        nameof(AiFeatureKey.BulkBankStatementMatch),
         nameof(AiFeatureKey.ApprovalWarningFixSuggestion),
         nameof(AiFeatureKey.AnomalyExplanation),
         nameof(AiFeatureKey.StockMovementValidation),
         nameof(AiFeatureKey.AgingExplanation),
+        // ── Reserved consume-only slots ─────────────────────────────
+        // 4 features ที่ enum มีอยู่แต่ยังไม่ wire เข้า orchestrator —
+        // เมื่อมี code เรียกในอนาคต (พร้อม prompt builder + feedback
+        // endpoint) feedback rows จะถูก mark "TRAINED" อัตโนมัติ + นับเข้า
+        // LocalModelHealth ทันที โดยไม่ต้องแก้ TrainSingleAsync. การ
+        // เปลี่ยนเป็น writer ตารางจริงทำได้ภายหลังโดยแก้ case ใน switch.
+        nameof(AiFeatureKey.LineItemStructuredParse),
+        nameof(AiFeatureKey.ManualJournalSuggestion),
+        nameof(AiFeatureKey.ForecastNarrative),
+        nameof(AiFeatureKey.DocumentRoleInference),
     };
 
     /// <summary>
@@ -272,10 +283,19 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.DocumentConversionSuggestion) => true,
             nameof(AiFeatureKey.WhtCategoryInference) => true,
             nameof(AiFeatureKey.BankStatementMatch) => true,
+            nameof(AiFeatureKey.BulkBankStatementMatch) => true,
             nameof(AiFeatureKey.ApprovalWarningFixSuggestion) => true,
             nameof(AiFeatureKey.AnomalyExplanation) => true,
             nameof(AiFeatureKey.StockMovementValidation) => true,
             nameof(AiFeatureKey.AgingExplanation) => true,
+            // Reserved consume-only slots for features ที่จะ wire ในอนาคต —
+            // mark consumed เพื่อเก็บ accuracy ใน LocalModelHealth พร้อมรับ
+            // signal วันที่เริ่มเรียกจริง. เปลี่ยนเป็น writer ตารางจริงได้
+            // ภายหลังโดยไม่กระทบ backfill (rows เก่ายังคงนับเข้า health).
+            nameof(AiFeatureKey.LineItemStructuredParse) => true,
+            nameof(AiFeatureKey.ManualJournalSuggestion) => true,
+            nameof(AiFeatureKey.ForecastNarrative) => true,
+            nameof(AiFeatureKey.DocumentRoleInference) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in
