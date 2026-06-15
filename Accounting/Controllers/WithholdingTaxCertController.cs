@@ -40,6 +40,17 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result));
     }
 
+    /// <summary>แก้ไขหนังสือรับรอง — เฉพาะ Draft + สร้างเอง (ไม่อ้างอิง
+    /// ใบสำคัญจ่าย/payroll). Service throw ถ้าไม่เข้าเงื่อนไข.</summary>
+    [HttpPut("{certId:guid}")]
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> Update(
+        Guid companyId, Guid certId, [FromBody] CreateWithholdingTaxCertRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _whtService.UpdateAsync(companyId, certId, request, userId);
+        return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result, "แก้ไขหนังสือรับรองสำเร็จ"));
+    }
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<WithholdingTaxCertResponse>>>> GetAll(
         Guid companyId,

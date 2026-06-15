@@ -177,9 +177,13 @@ const ProductLookup = {
       if (el != null && val != null && val !== '') el.value = val;
     };
     set('desc', product.name);
+    set('unit', product.unit || product.baseUnit);
     if (opts.overwriteQty !== false) set('qty', 1);
     if (opts.overwritePrice !== false) {
-      const side = row.closest('table')?.dataset.docSide || 'revenue';
+      // docSide อยู่บน container (#linesTable) — รองรับทั้ง table เดิม
+      // + card layout ใหม่ ผ่าน [data-doc-side] selector.
+      const side = row.closest('[data-doc-side]')?.dataset.docSide
+                || row.closest('table')?.dataset.docSide || 'revenue';
       const price = side === 'expense'
         ? (product.costPrice ?? product.sellingPrice ?? 0)
         : (product.sellingPrice ?? product.costPrice ?? 0);
@@ -206,7 +210,9 @@ const ProductLookup = {
       chip = document.createElement('div');
       chip.className = 'product-chip';
       chip.style.cssText = 'font-size:10px;color:#0369a1;margin-top:2px;display:flex;align-items:center;gap:4px';
-      const descCell = row.querySelector('[data-f="desc"]')?.closest('td');
+      // รองรับทั้ง table layout เดิม (td) + card layout ใหม่ (.lc-desc-wrap)
+      const descInput = row.querySelector('[data-f="desc"]');
+      const descCell = descInput?.closest('td') || descInput?.closest('.lc-desc-wrap') || descInput?.parentElement;
       if (!descCell) return;
       descCell.appendChild(chip);
     }

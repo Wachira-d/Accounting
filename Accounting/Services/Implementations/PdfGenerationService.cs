@@ -47,36 +47,17 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
-        // PDF/A-3 with embedded e-Tax XML — เป็น default ของทุกเอกสาร
-        // ที่ผ่าน e-Tax flow แล้ว (มี EtaxInvoice + XmlContent). ผู้ใช้
-        // กดดาวน์โหลด PDF ครั้งเดียวได้ไฟล์เดียวที่ใช้:
-        //   - แสดงเอกสารปกติให้ลูกค้าดู (PDF view)
-        //   - ส่งให้สรรพากร / ยื่นภาษีได้ (XML ฝังในไฟล์ตามมาตรฐาน ETDA)
-        // เอกสารที่ยังไม่ได้สร้าง e-Tax XML (Quotation / PO / PV / ฯลฯ
-        // หรือ TaxInvoice ที่ยังไม่ generate XML) → fall ไปใช้ render
-        // ปกติ (QuestPDF native).
+        // e-Tax check — ถ้าเอกสารผ่าน e-Tax flow แล้ว (มี EtaxInvoice +
+        // XmlContent) → download จะเป็น PDF/A-3 ฝัง XML. แต่ใช้ layout
+        // เดียวกับ template (สีส้ม/ดีไซน์ที่ตั้งค่า) — ไม่ใช่ layout ขาวดำ
+        // คนละแบบ. ETDA ไม่บังคับ layout — แค่ embed XML + PDF/A metadata.
+        // เก็บ etax ไว้ inject XML หลัง render (ด้านล่าง).
         var etax = await _db.EtaxInvoices.AsNoTracking()
             .Where(e => e.DocumentId == document.Id && e.CompanyId == companyId
                         && e.Status != EtaxStatus.Voided
                         && e.XmlContent != null && e.XmlContent != "")
             .OrderByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
-        if (etax != null)
-        {
-            try
-            {
-                var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
-                var pdfA3Bytes = BuildEtaxPdfA3WithEmbeddedXml(etax.XmlContent, metadata);
-                var pdfA3FileName = $"{etax.EtaxRefNumber}.pdf";
-                return new GeneratePdfResponse(document.Id, document.DocumentNumber, pdfA3FileName,
-                    "application/pdf", pdfA3Bytes.Length, pdfA3Bytes, DateTime.UtcNow);
-            }
-            catch
-            {
-                // ถ้าสร้าง PDF/A-3 ไม่ผ่าน (XML format / metadata edge case) —
-                // fall ไป render ปกติ ดีกว่าค้าง.
-            }
-        }
 
         // Get template
         DocumentTemplate template;
@@ -108,6 +89,36 @@ public partial class PdfGenerationService : IPdfGenerationService
         // server PDF/HTML never showed it — this wires it into both renderers.
         var gl = settings?.ShowGlEntryOnDocument == true
             ? await LoadGlPostingAsync(companyId, document.Id) : null;
+
+        // e-Tax path: render template-styled (สีส้ม) + PDF/A conformance →
+        // inject XML. ผลลัพธ์ = หน้าตาเหมือน preview + ฝัง XML ยื่นภาษีได้.
+        if (etax != null)
+        {
+            try
+            {
+                var etaxPdf = RenderDocumentPdfNative(document, company, settings, template,
+                    request.WatermarkOverride, request.Language, signers, gl,
+                    pdfA: true,
+                    pdfTitle: $"{GetDocumentTitle(document.DocumentType, request.Language ?? template.Language ?? "th")} {document.DocumentNumber}",
+                    pdfAuthor: company.Name);
+                var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
+                var xmlFileName = $"{etax.EtaxRefNumber}.xml";
+                var xmlBytes = System.Text.Encoding.UTF8.GetBytes(etax.XmlContent);
+                var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName);
+                var withXml = PdfAttachmentInjector.AttachXml(etaxPdf, xmlFileName, xmlBytes,
+                    "e-Tax XML data per ETDA Recommendation 3-2560 v2.0", etdaXmpMetadata: etdaXmp);
+                var etaxFileName = $"{etax.EtaxRefNumber}.pdf";
+                return new GeneratePdfResponse(document.Id, document.DocumentNumber, etaxFileName,
+                    "application/pdf", withXml.Length, withXml, DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                // ถ้า inject XML ไม่ผ่าน (PDF/A edge case) → fall ไป render
+                // ปกติ ดีกว่าค้าง. ผู้ใช้ยังได้ PDF สวย แค่ไม่ฝัง XML รอบนี้.
+                System.Diagnostics.Trace.TraceWarning(
+                    $"e-Tax PDF/A-3 (template-styled) failed doc={document.Id}: {ex.Message} — fallback plain");
+            }
+        }
 
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
@@ -540,8 +551,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // plain class selectors, but the STRUCTURE didn't).
         sb.AppendLine($"<div class='doc-root layout-{layout}'>");
 
-        // Watermark
-        if (template.ShowWatermark || watermark != null)
+        // เอกสารยกเลิก → ลายน้ำ "ยกเลิก" สีแดงเด่น (priority เหนือ watermark ปกติ)
+        if (doc.Status == DocumentStatus.Voided)
+        {
+            sb.AppendLine("<div class='watermark watermark-void'>ยกเลิก</div>");
+        }
+        else if (template.ShowWatermark || watermark != null)
         {
             var wmText = watermark ?? template.WatermarkText ?? "";
             sb.AppendLine($"<div class='watermark'>{wmText}</div>");
@@ -1190,6 +1205,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             @page {{ size: {t.PaperSize} {t.Orientation.ToLower()}; margin: {t.MarginTop}mm {t.MarginRight}mm {t.MarginBottom}mm {t.MarginLeft}mm; }}
             body {{ font-family: '{t.FontFamily}', sans-serif; font-size: {t.BodyFontSize}px; color: {t.PrimaryColor}; line-height: 1.45; margin: 0; }}
             .watermark {{ position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 90px; color: rgba(0,0,0,{t.WatermarkOpacity}); z-index: -1; white-space: nowrap; }}
+            .watermark-void {{ color: rgba(220,38,38,0.20); font-weight: 800; font-size: 120px; letter-spacing: 10px; z-index: 999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 
             /* Header: logo left, company details fill remaining width */
             .header {{ display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:12px;border-radius:6px;" : "")} }}
@@ -1750,21 +1766,34 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     {
         static bool IsGeneric(string? s) =>
             string.IsNullOrWhiteSpace(s) || s is "ผู้รับ" or "ผู้จ่าย" or "Receiver" or "Payer";
-        // Both slots still generic → safe to apply per-type defaults.
-        // If either was customised, respect the user's full choice.
+
+        // 3rd-box logic เป็น "additive" — apply ก่อน early-return เสมอ
+        // (ไม่ขึ้นกับว่า Label1/Label2 customized มั้ย) เพราะกล่องที่ 3
+        // เป็นช่องเพิ่ม ไม่ทับ Label1/2 ของ user. เงื่อนไข: ยังไม่มี Label3
+        // + SignatureCount ≤ 2 (ไม่ย่อ layout custom ที่ใหญ่กว่า).
+        if (t.SignatureCount <= 2 && string.IsNullOrWhiteSpace(t.SignatureLabel3))
+        {
+            // Quotation → ช่องลูกค้าอนุมัติ (external-approval flow เติม slot 2)
+            if (docType == DocumentType.Quotation)
+            {
+                t.SignatureCount = 3;
+                t.SignatureLabel3 = "ลูกค้าอนุมัติ";
+                t.SignatureLabel3En = "Customer approval";
+            }
+            // ใบสำคัญจ่าย → ช่อง "ผู้รับเงิน" ให้ vendor/พนักงานเซ็นรับเงิน
+            // ตอนจ่ายจริง เป็นหลักฐานการรับเงิน (ปล่อยว่างเซ็นมือ).
+            else if (docType == DocumentType.PaymentVoucher)
+            {
+                t.SignatureCount = 3;
+                t.SignatureLabel3 = "ผู้รับเงิน";
+                t.SignatureLabel3En = "Received by";
+            }
+        }
+
+        // Label1/Label2 defaults — apply เฉพาะเมื่อยัง generic
+        // (ถ้า user customize ไว้ → เคารพ ไม่ทับ).
         if (!IsGeneric(t.SignatureLabel1) || !IsGeneric(t.SignatureLabel2))
             return;
-
-        // Quotation gets a THIRD box for the customer's acceptance signature,
-        // which the external-approval flow captures and ResolveSignersAsync
-        // now fills (slot 2). Only bump the count when the template still
-        // carries the default 2 — never shrink a user's larger custom layout.
-        if (docType == DocumentType.Quotation && t.SignatureCount <= 2)
-        {
-            t.SignatureCount = 3;
-            t.SignatureLabel3 = "ลูกค้าอนุมัติ";
-            t.SignatureLabel3En = "Customer approval";
-        }
 
         var (th1, th2, en1, en2) = docType switch
         {

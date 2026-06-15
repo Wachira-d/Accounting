@@ -45,7 +45,10 @@ public record WithholdingTaxCertResponse(
     DateTime? IssuedDate,
     DateTime CreatedAt,
     Guid? DocumentId = null,
-    string? DocumentNumber = null);
+    string? DocumentNumber = null,
+    Guid? SourcePayrollRunId = null,
+    // true เมื่อแก้ไขได้ = Draft + สร้างเอง (ไม่ผูกเอกสาร/payroll)
+    bool IsEditable = false);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,

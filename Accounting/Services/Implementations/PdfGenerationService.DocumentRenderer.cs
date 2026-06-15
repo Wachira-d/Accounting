@@ -28,7 +28,8 @@ public partial class PdfGenerationService
 {
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
-        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
+        IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
+        bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null)
     {
         EnsureThaiFontsRegistered();
         var lang = langOverride ?? template.Language ?? "th";
@@ -61,11 +62,23 @@ public partial class PdfGenerationService
                     var bodyFont = float.TryParse(template.BodyFontSize, out var bf) ? bf : 10f;
                     page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(bodyFont).FontColor(primary));
 
+                    // เอกสารที่ถูกยกเลิก (Voided) — ประทับลายน้ำ "ยกเลิก"
+                    // สีแดงเด่นชัด priority สูงสุด (ทับ watermark ปกติ).
+                    // ยังพิมพ์เนื้อหาได้เหมือนเดิม เก็บเป็นหลักฐาน/audit.
+                    if (doc.Status == Models.Enums.DocumentStatus.Voided)
+                    {
+                        try
+                        {
+                            page.Background().AlignCenter().AlignMiddle()
+                                .Text("ยกเลิก").FontSize(96).FontColor("#33DC2626").Bold();
+                        }
+                        catch { }
+                    }
                     // Watermark behind everything. ค่า opacity (0..1) จาก
                     // template.WatermarkOpacity แปลงเป็น hex 8-digit ARGB
                     // (เดิม hard-code Colors.Grey.Lighten3) — HTML CSS
                     // BuildCss line 1160 ก็เคารพค่านี้.
-                    if (!string.IsNullOrWhiteSpace(b.WatermarkText))
+                    else if (!string.IsNullOrWhiteSpace(b.WatermarkText))
                     {
                         try
                         {
@@ -102,6 +115,25 @@ public partial class PdfGenerationService
                     });
                 });
             });
+            // PDF/A-3 conformance (สำหรับ e-Tax ที่ฝัง XML) — ใช้ layout
+            // เดียวกับ preview (template-styled สีส้ม) แต่ mark PdfA + ใส่
+            // metadata. ETDA ไม่บังคับ layout — แค่ต้อง embed XML +
+            // PDF/A metadata. ผลคือ download e-Tax = หน้าตาเหมือน preview.
+            if (pdfA)
+            {
+                pdf.WithMetadata(new QuestPDF.Infrastructure.DocumentMetadata
+                {
+                    Title = pdfTitle ?? $"{GetDocumentTitle(doc.DocumentType, lang)} {doc.DocumentNumber}",
+                    Author = pdfAuthor ?? company.Name,
+                    Subject = "e-Tax Invoice (PDF/A-3)",
+                    Keywords = "e-Tax, ETDA, Thailand, PDF/A-3",
+                    Producer = "NextAcc e-Tax PDF/A-3 Generator (QuestPDF)",
+                    Creator = "NextAcc",
+                    CreationDate = DateTime.UtcNow,
+                    ModifiedDate = DateTime.UtcNow
+                });
+                pdf.WithSettings(new QuestPDF.Infrastructure.DocumentSettings { PdfA = true });
+            }
             return pdf.GeneratePdf();
         }
         catch (Exception ex)
