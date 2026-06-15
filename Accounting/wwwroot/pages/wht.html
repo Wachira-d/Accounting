@@ -207,7 +207,7 @@
           <td>${w.documentNumber ? `<a href="/pages/documents.html" onclick="event.preventDefault();window.location='/pages/documents.html?search=${w.documentNumber}'">${w.documentNumber}</a>` : '-'}</td>
           <td class="flex gap-1">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${w.id}')" data-i18n="common.view">ดู</button>
-            ${w.status === 'Issued' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" title="พิมพ์ หรือบันทึกเป็น PDF (ฟอร์มเดียวกับที่ใช้ยื่นสรรพากร)">🖨 พิมพ์ / PDF</button>` : ''}
+            ${w.status === 'Issued' || w.status === 'Voided' ? `<button class="btn btn-sm btn-secondary" onclick="Page.printCert('${w.id}')" title="${w.status === 'Voided' ? 'พิมพ์เอกสารที่ยกเลิก (มีลายน้ำ ยกเลิก)' : 'พิมพ์ หรือบันทึกเป็น PDF (ฟอร์มเดียวกับที่ใช้ยื่นสรรพากร)'}">🖨 พิมพ์${w.status === 'Voided' ? ' (ยกเลิก)' : ' / PDF'}</button>` : ''}
             ${w.status === 'Draft' || w.status === 'Issued' ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.voidCert('${w.id}')" title="ยกเลิกหนังสือรับรอง">ยกเลิก</button>` : ''}
             <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();Page.deleteCert('${w.id}','${(w.certificateNumber||'').replace(/'/g,"\\'")}')" title="ลบหนังสือรับรองถาวร (Owner เท่านั้น)" style="background:var(--red-700)">ลบ</button>
           </td>
@@ -256,6 +256,9 @@
           } else if (d.status === 'Issued') {
             footer = `<button class="btn btn-success" onclick="Page.printCert('${d.id}')" title="พิมพ์ หรือบันทึกเป็น PDF — ฟอร์มเดียวกับที่ใช้ยื่นสรรพากร">🖨 พิมพ์ / บันทึก PDF</button>
               <button class="btn btn-danger" onclick="Page.voidCert('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>` + footer;
+          } else if (d.status === 'Voided') {
+            // เอกสารยกเลิก — ยังพิมพ์ได้ (มีลายน้ำ "ยกเลิก" บนเอกสาร)
+            footer = `<button class="btn btn-secondary" onclick="Page.printCert('${d.id}')" title="พิมพ์เอกสารที่ยกเลิก — มีลายน้ำ ยกเลิก ประทับบนเอกสาร">🖨 พิมพ์ (ยกเลิก)</button>` + footer;
           }
           const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
@@ -433,9 +436,14 @@
           ).join('<span class="ts">-</span>');
         };
 
+        // เอกสารที่ถูกยกเลิก → ประทับลายน้ำ "ยกเลิก / CANCELLED" บนทุกฉบับ
+        const voidMark = (d.status === 'Voided')
+          ? `<div class="void-watermark">ยกเลิก<small>CANCELLED</small></div>`
+          : '';
         const buildCopy = (copyNum) => {
           return `
           <div class="wht-page">
+            ${voidMark}
             <!-- COPY LABELS - top-left, OUTSIDE frame -->
             <div class="copy-labels">
               <div${copyNum===1?' class="copy-active"':''}><b>ฉบับที่ 1</b> <i>(สำหรับผู้ถูกหักภาษี ณ ที่จ่าย ใช้แนบพร้อมกับแบบแสดงรายการภาษี)</i></div>
@@ -804,6 +812,17 @@
     .noprint button { padding:10px 32px; font-size:16px; font-family:inherit; background:#1d4ed8; color:#fff; border:none; border-radius:6px; cursor:pointer; }
     .noprint button:hover { background:#1e40af; }
   }
+  /* ===== ลายน้ำ "ยกเลิก" สำหรับเอกสารที่ถูก void ===== */
+  .wht-page { position: relative; }
+  .void-watermark {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-30deg);
+    font-size: 100px; font-weight: 800; color: rgba(220, 38, 38, 0.18);
+    letter-spacing: 8px; white-space: nowrap; pointer-events: none;
+    z-index: 50; text-align: center; line-height: 1.1;
+  }
+  .void-watermark small { display:block; font-size:34px; letter-spacing:14px; }
+  @media print { .void-watermark { color: rgba(220, 38, 38, 0.22); -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 </style>
 </head>
 <body>

@@ -61,6 +61,21 @@ public partial class PdfGenerationService
                     page.Margin(10, Unit.Millimetre);
                     page.PageColor(Colors.White);
                     page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(9.5f));
+                    // เอกสารที่ถูกยกเลิก (Voided) — ประทับลายน้ำ "ยกเลิก /
+                    // CANCELLED" สีแดงเฉียงกลางหน้า ให้เห็นเด่นชัด แต่ยัง
+                    // พิมพ์เนื้อหาเอกสารได้เหมือนเดิม (เก็บเป็นหลักฐาน/audit).
+                    if (cert.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Voided)
+                    {
+                        try
+                        {
+                            page.Background().AlignCenter().AlignMiddle().Text(t =>
+                            {
+                                t.Span("ยกเลิก\nCANCELLED").FontSize(80).Bold()
+                                    .FontColor("#33DC2626");   // แดง ~20% opacity (ARGB)
+                            });
+                        }
+                        catch { /* watermark เป็นของตกแต่ง — ห้าม block เอกสาร */ }
+                    }
                     page.Content().Column(col =>
                     {
                         BuildCopyHeader(col, copyNum);

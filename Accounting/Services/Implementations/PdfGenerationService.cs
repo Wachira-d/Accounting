@@ -551,8 +551,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // plain class selectors, but the STRUCTURE didn't).
         sb.AppendLine($"<div class='doc-root layout-{layout}'>");
 
-        // Watermark
-        if (template.ShowWatermark || watermark != null)
+        // เอกสารยกเลิก → ลายน้ำ "ยกเลิก" สีแดงเด่น (priority เหนือ watermark ปกติ)
+        if (doc.Status == DocumentStatus.Voided)
+        {
+            sb.AppendLine("<div class='watermark watermark-void'>ยกเลิก</div>");
+        }
+        else if (template.ShowWatermark || watermark != null)
         {
             var wmText = watermark ?? template.WatermarkText ?? "";
             sb.AppendLine($"<div class='watermark'>{wmText}</div>");
@@ -1201,6 +1205,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             @page {{ size: {t.PaperSize} {t.Orientation.ToLower()}; margin: {t.MarginTop}mm {t.MarginRight}mm {t.MarginBottom}mm {t.MarginLeft}mm; }}
             body {{ font-family: '{t.FontFamily}', sans-serif; font-size: {t.BodyFontSize}px; color: {t.PrimaryColor}; line-height: 1.45; margin: 0; }}
             .watermark {{ position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 90px; color: rgba(0,0,0,{t.WatermarkOpacity}); z-index: -1; white-space: nowrap; }}
+            .watermark-void {{ color: rgba(220,38,38,0.20); font-weight: 800; font-size: 120px; letter-spacing: 10px; z-index: 999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 
             /* Header: logo left, company details fill remaining width */
             .header {{ display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:12px;border-radius:6px;" : "")} }}
