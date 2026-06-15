@@ -1766,21 +1766,34 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     {
         static bool IsGeneric(string? s) =>
             string.IsNullOrWhiteSpace(s) || s is "ผู้รับ" or "ผู้จ่าย" or "Receiver" or "Payer";
-        // Both slots still generic → safe to apply per-type defaults.
-        // If either was customised, respect the user's full choice.
+
+        // 3rd-box logic เป็น "additive" — apply ก่อน early-return เสมอ
+        // (ไม่ขึ้นกับว่า Label1/Label2 customized มั้ย) เพราะกล่องที่ 3
+        // เป็นช่องเพิ่ม ไม่ทับ Label1/2 ของ user. เงื่อนไข: ยังไม่มี Label3
+        // + SignatureCount ≤ 2 (ไม่ย่อ layout custom ที่ใหญ่กว่า).
+        if (t.SignatureCount <= 2 && string.IsNullOrWhiteSpace(t.SignatureLabel3))
+        {
+            // Quotation → ช่องลูกค้าอนุมัติ (external-approval flow เติม slot 2)
+            if (docType == DocumentType.Quotation)
+            {
+                t.SignatureCount = 3;
+                t.SignatureLabel3 = "ลูกค้าอนุมัติ";
+                t.SignatureLabel3En = "Customer approval";
+            }
+            // ใบสำคัญจ่าย → ช่อง "ผู้รับเงิน" ให้ vendor/พนักงานเซ็นรับเงิน
+            // ตอนจ่ายจริง เป็นหลักฐานการรับเงิน (ปล่อยว่างเซ็นมือ).
+            else if (docType == DocumentType.PaymentVoucher)
+            {
+                t.SignatureCount = 3;
+                t.SignatureLabel3 = "ผู้รับเงิน";
+                t.SignatureLabel3En = "Received by";
+            }
+        }
+
+        // Label1/Label2 defaults — apply เฉพาะเมื่อยัง generic
+        // (ถ้า user customize ไว้ → เคารพ ไม่ทับ).
         if (!IsGeneric(t.SignatureLabel1) || !IsGeneric(t.SignatureLabel2))
             return;
-
-        // Quotation gets a THIRD box for the customer's acceptance signature,
-        // which the external-approval flow captures and ResolveSignersAsync
-        // now fills (slot 2). Only bump the count when the template still
-        // carries the default 2 — never shrink a user's larger custom layout.
-        if (docType == DocumentType.Quotation && t.SignatureCount <= 2)
-        {
-            t.SignatureCount = 3;
-            t.SignatureLabel3 = "ลูกค้าอนุมัติ";
-            t.SignatureLabel3En = "Customer approval";
-        }
 
         var (th1, th2, en1, en2) = docType switch
         {
