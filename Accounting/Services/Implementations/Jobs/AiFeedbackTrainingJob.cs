@@ -259,6 +259,10 @@ public class AiFeedbackTrainingJob : BackgroundService
         nameof(AiFeatureKey.PaymentTermsSuggestion),
         // Sprint-2 feature
         nameof(AiFeatureKey.PaymentChannelSuggestion),
+        // Sprint-3 features
+        nameof(AiFeatureKey.ProjectAllocationSuggestion),
+        nameof(AiFeatureKey.ContactFuzzyMatch),
+        nameof(AiFeatureKey.ManualJeAccountSuggestion),
     };
 
     /// <summary>
@@ -308,6 +312,9 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.VatTypeInference) => true,
             nameof(AiFeatureKey.PaymentTermsSuggestion) => true,
             nameof(AiFeatureKey.PaymentChannelSuggestion) => true,
+            nameof(AiFeatureKey.ProjectAllocationSuggestion) => true,
+            nameof(AiFeatureKey.ContactFuzzyMatch) => true,
+            nameof(AiFeatureKey.ManualJeAccountSuggestion) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

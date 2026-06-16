@@ -1349,6 +1349,32 @@ public enum AiFeatureKey
     /// from one channel.</summary>
     PaymentChannelSuggestion = 32,
 
+    /// <summary>Project allocation per document line — suggests the
+    /// project this line should be tagged with, based on (a) which
+    /// project the supplier was most recently linked to within the
+    /// same fiscal period, and (b) project-vendor history (which
+    /// project usually buys from this supplier). Cold-starts from
+    /// the active-project picker; ML version eventually consumes
+    /// the OcrProjectMatch feedback corpus.</summary>
+    ProjectAllocationSuggestion = 33,
+
+    /// <summary>Fuzzy contact match — when the operator types a name
+    /// on a new document or contact form, surface the top 5 existing
+    /// contacts that match by name + tax-id. Uses the existing
+    /// SimilarityIndex / CharNgramSimilarity helpers. Avoids duplicate
+    /// contact creation (the #1 source of long-term data hygiene
+    /// problems in SMB accounting).</summary>
+    ContactFuzzyMatch = 34,
+
+    /// <summary>Manual Journal Entry account suggestion — for each
+    /// JE line, AI proposes the Dr/Cr account + amount split based on
+    /// (a) the JE description / memo, (b) historical similar JEs
+    /// (same type + similar memo), (c) the company's chart of accounts
+    /// shape. Power-user feature; reuses the GlAccountDistillation
+    /// pattern from OCR. Per-line suggestion (not per-JE) so a single
+    /// JE can mix categories.</summary>
+    ManualJeAccountSuggestion = 35,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

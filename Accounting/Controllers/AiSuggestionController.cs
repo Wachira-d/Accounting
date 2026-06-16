@@ -529,6 +529,302 @@ public class AiSuggestionController : ControllerBase
     }
 
     // ────────────────────────────────────────────────────────────────
+    //  Project allocation per document line — picks the active
+    //  project this supplier was most recently linked to. Falls back
+    //  to the project whose Contact matches the supplier.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("project-allocation/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestProjectAllocation(
+        Guid companyId, [FromQuery] Guid contactId, [FromQuery] string? lineDescription, CancellationToken ct)
+    {
+        if (contactId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        // Tier 1: latest DocumentLine.ProjectId attached to a doc with this contact
+        var recent = await _db.Set<DocumentLine>().AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.ProjectId != null
+                && l.Document.ContactId == contactId && !l.Document.IsDeleted)
+            .OrderByDescending(l => l.Document.DocumentDate)
+            .Take(12)
+            .Select(l => l.ProjectId!.Value)
+            .ToListAsync(ct);
+
+        Guid? pickedId = null; string? pickedName = null; string source; decimal confidence;
+        if (recent.Count >= 2)
+        {
+            pickedId = recent.GroupBy(p => p).OrderByDescending(g => g.Count())
+                .ThenByDescending(g => g.Max()).First().Key;
+            source = "DocumentLineHistory"; confidence = recent.Count >= 5 ? 0.90m : 0.70m;
+        }
+        else
+        {
+            // Tier 2: project whose Contact = this contact, status Active
+            var byContact = await _db.Set<Project>().AsNoTracking()
+                .Where(p => p.CompanyId == companyId && p.ContactId == contactId && p.Status == "Active" && !p.IsDeleted)
+                .OrderByDescending(p => p.StartDate)
+                .Select(p => p.Id)
+                .FirstOrDefaultAsync(ct);
+            if (byContact != Guid.Empty)
+            {
+                pickedId = byContact; source = "ProjectContactLink"; confidence = 0.65m;
+            }
+            else { source = "NoSignal"; confidence = 0.0m; }
+        }
+
+        if (pickedId.HasValue)
+        {
+            pickedName = await _db.Set<Project>().AsNoTracking()
+                .Where(p => p.Id == pickedId.Value && p.CompanyId == companyId)
+                .Select(p => p.Code + " - " + p.Name)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { contactId, lineDescription, sampleSize = recent.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.ProjectAllocationSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: pickedId?.ToString() ?? "", AiConfidence: confidence,
+                LocalModelAnswer: pickedId?.ToString() ?? "", LocalModelConfidence: confidence,
+                LocalModelVersion: "history-mode-v1",
+                SourceEntityType: "Contact", SourceEntityId: contactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            projectId = pickedId,
+            projectLabel = pickedName,
+            confidence,
+            source,
+            reasoning = source switch
+            {
+                "DocumentLineHistory" => $"จากเอกสาร {recent.Count} ใบล่าสุดของผู้ขายรายนี้: ใช้ {pickedName} บ่อยสุด",
+                "ProjectContactLink" => $"ผู้ขายผูกกับโครงการ {pickedName} (ยังไม่มีประวัติเอกสาร)",
+                _ => "ยังไม่มีข้อมูลพอจะแนะนำ",
+            },
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Contact fuzzy match — find existing contacts similar to a
+    //  typed name + tax-id. Prevents duplicate contact creation.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record FuzzyContactRequest(
+        string Name,
+        string? TaxId,
+        bool? IsCustomer,
+        bool? IsSupplier,
+        int? Limit);
+
+    [HttpPost("contact/fuzzy-match")]
+    public async Task<ActionResult<ApiResponse<object>>> FuzzyMatchContact(
+        Guid companyId, [FromBody] FuzzyContactRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Name) || req.Name.Trim().Length < 2)
+            return Ok(new ApiResponse<object>(true, new { matches = new object[0] }));
+
+        var limit = Math.Clamp(req.Limit ?? 5, 1, 20);
+        var nameLower = req.Name.Trim().ToLowerInvariant();
+        var taxIdDigits = string.IsNullOrWhiteSpace(req.TaxId)
+            ? null : new string(req.TaxId.Where(char.IsDigit).ToArray());
+
+        // Stage 1: exact TaxId hit wins (perfect signal — same legal entity)
+        if (!string.IsNullOrEmpty(taxIdDigits) && taxIdDigits.Length >= 10)
+        {
+            var byTaxId = await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.TaxId != null && c.TaxId == taxIdDigits)
+                .Select(c => new { c.Id, c.Name, c.TaxId, c.IsCustomer, c.IsSupplier })
+                .Take(5)
+                .ToListAsync(ct);
+            if (byTaxId.Count > 0)
+            {
+                return Ok(new ApiResponse<object>(true, new
+                {
+                    matches = byTaxId.Select(c => new
+                    {
+                        id = c.Id, name = c.Name, taxId = c.TaxId,
+                        isCustomer = c.IsCustomer, isSupplier = c.IsSupplier,
+                        confidence = 1.00m, reason = "TaxId ตรง — เป็นนิติบุคคลเดียวกัน",
+                    }),
+                    feedbackId = (Guid?)null,
+                }));
+            }
+        }
+
+        // Stage 2: fuzzy on Name — server-side LIKE + Levenshtein-style ranking
+        // ดึงผู้สมัครจาก DB (กรอง role + LIKE) แล้ว rank ด้วย similarity ratio
+        var candidates = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                && (req.IsCustomer != true || c.IsCustomer)
+                && (req.IsSupplier != true || c.IsSupplier)
+                && (c.Name.ToLower().Contains(nameLower) || EF.Functions.ILike(c.Name, nameLower.Substring(0, Math.Min(3, nameLower.Length)) + "%")))
+            .Select(c => new { c.Id, c.Name, c.TaxId, c.IsCustomer, c.IsSupplier })
+            .Take(50)
+            .ToListAsync(ct);
+
+        // Ranking: bigram overlap × inverse-length-diff. Pure C# (no DB ext required).
+        decimal Similarity(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return 0m;
+            var al = a.ToLowerInvariant(); var bl = b.ToLowerInvariant();
+            if (al == bl) return 1m;
+            var bigramsA = new HashSet<string>();
+            for (int i = 0; i + 1 < al.Length; i++) bigramsA.Add(al.Substring(i, 2));
+            var bigramsB = new HashSet<string>();
+            for (int i = 0; i + 1 < bl.Length; i++) bigramsB.Add(bl.Substring(i, 2));
+            if (bigramsA.Count == 0 || bigramsB.Count == 0) return 0m;
+            var overlap = bigramsA.Intersect(bigramsB).Count();
+            return (decimal)(2.0 * overlap) / (bigramsA.Count + bigramsB.Count);
+        }
+
+        var ranked = candidates
+            .Select(c => new
+            {
+                c.Id, c.Name, c.TaxId, c.IsCustomer, c.IsSupplier,
+                Score = Similarity(c.Name, req.Name),
+            })
+            .Where(c => c.Score >= 0.30m)
+            .OrderByDescending(c => c.Score)
+            .Take(limit)
+            .ToList();
+
+        var inputJson = JsonSerializer.Serialize(new { req.Name, req.TaxId, candidatesCount = ranked.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.ContactFuzzyMatch,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: ranked.FirstOrDefault()?.Id.ToString() ?? "",
+                AiConfidence: ranked.FirstOrDefault()?.Score ?? 0m,
+                LocalModelAnswer: ranked.FirstOrDefault()?.Id.ToString() ?? "",
+                LocalModelConfidence: ranked.FirstOrDefault()?.Score ?? 0m,
+                LocalModelVersion: "bigram-v1",
+                SourceEntityType: "Contact", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "bigram", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            matches = ranked.Select(c => new
+            {
+                id = c.Id, name = c.Name, taxId = c.TaxId,
+                isCustomer = c.IsCustomer, isSupplier = c.IsSupplier,
+                confidence = c.Score,
+                reason = c.Score >= 0.85m ? "ชื่อคล้ายมาก — น่าจะเป็นรายเดียวกัน"
+                       : c.Score >= 0.60m ? "ชื่อใกล้เคียง — ตรวจสอบก่อนสร้างซ้ำ"
+                       : "ชื่อมีส่วนตรงกัน",
+            }),
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Manual Journal Entry — suggest Dr/Cr account per line from
+    //  similar JE descriptions in history.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record SuggestJeAccountRequest(
+        string Description,
+        decimal? Amount,
+        string? EntryType,        // "JV" / "RV" / "PV" / etc.
+        string? Side);            // "Debit" | "Credit"
+
+    [HttpPost("manual-je/suggest-account")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestManualJeAccount(
+        Guid companyId, [FromBody] SuggestJeAccountRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Description) || req.Description.Trim().Length < 3)
+            return Ok(new ApiResponse<object>(true, new { suggestions = new object[0] }));
+
+        // Mine prior JournalEntryLine.Description that contains the same
+        // keyword and pick the most frequently used AccountId for that side.
+        var descLower = req.Description.Trim().ToLowerInvariant();
+        var keyword = descLower.Length > 25 ? descLower.Substring(0, 25) : descLower;
+        var wantDebit = string.Equals(req.Side, "Credit", StringComparison.OrdinalIgnoreCase) ? false : true;
+
+        var history = await (from l in _db.Set<JournalEntryLine>().AsNoTracking()
+                             join e in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals e.Id
+                             where e.CompanyId == companyId
+                                && l.AccountId != null
+                                && l.Description != null
+                                && l.Description.ToLower().Contains(keyword)
+                                && ((wantDebit && l.DebitAmount > 0) || (!wantDebit && l.CreditAmount > 0))
+                             orderby e.EntryDate descending
+                             select new { l.AccountId, l.Description })
+            .Take(50)
+            .ToListAsync(ct);
+
+        var grouped = history
+            .Where(h => h.AccountId.HasValue)
+            .GroupBy(h => h.AccountId!.Value)
+            .Select(g => new { AccountId = g.Key, Count = g.Count() })
+            .OrderByDescending(g => g.Count)
+            .Take(3)
+            .ToList();
+
+        if (grouped.Count == 0)
+            return Ok(new ApiResponse<object>(true, new { suggestions = new object[0], feedbackId = (Guid?)null }));
+
+        var ids = grouped.Select(g => g.AccountId).ToList();
+        var accts = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => ids.Contains(a.Id) && a.CompanyId == companyId)
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .ToListAsync(ct);
+        var byId = accts.ToDictionary(a => a.Id);
+        var total = grouped.Sum(g => g.Count);
+
+        var suggestions = grouped
+            .Where(g => byId.ContainsKey(g.AccountId))
+            .Select(g => new
+            {
+                accountId = g.AccountId,
+                accountCode = byId[g.AccountId].AccountCode,
+                accountName = byId[g.AccountId].AccountName,
+                confidence = total > 0 ? Math.Round((decimal)g.Count / total, 2) : 0m,
+                supportingSamples = g.Count,
+            })
+            .ToList();
+
+        var inputJson = JsonSerializer.Serialize(new
+        {
+            req.Description, req.Amount, req.EntryType, req.Side,
+            sampleSize = history.Count,
+        });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.ManualJeAccountSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: suggestions.FirstOrDefault()?.accountId.ToString() ?? "",
+                AiConfidence: suggestions.FirstOrDefault()?.confidence ?? 0m,
+                LocalModelAnswer: suggestions.FirstOrDefault()?.accountId.ToString() ?? "",
+                LocalModelConfidence: suggestions.FirstOrDefault()?.confidence ?? 0m,
+                LocalModelVersion: "history-mode-v1",
+                SourceEntityType: "JournalEntryLine", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new { suggestions, feedbackId }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Credit-note reason classification — when user creates a CN
     //  from an invoice, AI proposes Return / Discount / Adjustment /
     //  Writeoff before they pick from the dropdown.
