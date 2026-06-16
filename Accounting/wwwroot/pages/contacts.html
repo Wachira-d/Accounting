@@ -61,6 +61,12 @@
             </select>
           </div>
           <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
+          <!-- AI fuzzy-match suggestion: เด้งเตือนเมื่อชื่อ/TaxId คล้ายกับ
+               contact ที่มีอยู่แล้ว — ป้องกัน duplicate (data hygiene #1) -->
+          <div id="fuzzyMatchBox" style="display:none;margin:-8px 0 12px;padding:10px 12px;background:#fef3c7;border-left:4px solid #f59e0b;border-radius:4px;font-size:13px">
+            <div style="font-weight:600;color:#92400e;margin-bottom:6px">⚠️ อาจซ้ำกับผู้ติดต่อในระบบ:</div>
+            <div id="fuzzyMatchList"></div>
+          </div>
           <div class="form-row" id="taxIdRow">
             <div class="form-group" style="flex:2"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
             <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
@@ -217,6 +223,7 @@
         if (!Layout.init('contacts')) return;
         Layout.setTitle('ผู้ติดต่อ');
         this._attachDbd();
+        this._attachFuzzyMatch();
         // Preload chart of accounts so the GL-override dropdowns are
         // populated on first modal open. Filter to AR/AP/clearing-style
         // accounts only to keep the dropdown manageable — anything
@@ -316,6 +323,65 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+
+      // AI fuzzy-match: debounced lookup ตอนพิมพ์ชื่อ/TaxId — เด้งกล่อง
+      // เตือน contact ที่คล้ายกัน. หลีกเลี่ยง duplicate (data hygiene #1).
+      _fuzzyDebounce: null,
+      _attachFuzzyMatch() {
+        const nameEl = document.getElementById('fName');
+        const taxIdEl = document.getElementById('fTaxId');
+        const trigger = () => {
+          clearTimeout(this._fuzzyDebounce);
+          this._fuzzyDebounce = setTimeout(() => this._runFuzzyMatch(), 400);
+        };
+        if (nameEl) nameEl.addEventListener('input', trigger);
+        if (taxIdEl) taxIdEl.addEventListener('input', trigger);
+      },
+      async _runFuzzyMatch() {
+        const box = document.getElementById('fuzzyMatchBox');
+        const list = document.getElementById('fuzzyMatchList');
+        if (!box || !list) return;
+        // Hide เมื่อเป็นการ edit ของเดิม (มี contact id) หรือ ชื่อสั้นเกินไป
+        const editingId = document.getElementById('fId')?.value;
+        if (editingId) { box.style.display = 'none'; return; }
+        const name = document.getElementById('fName')?.value?.trim() || '';
+        const taxId = document.getElementById('fTaxId')?.value?.trim() || '';
+        if (name.length < 2 && taxId.length < 10) { box.style.display = 'none'; return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/contact/fuzzy-match`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, taxId, limit: 5 })
+          });
+          const j = await r.json();
+          const matches = j?.data?.matches || [];
+          if (matches.length === 0) { box.style.display = 'none'; return; }
+          list.innerHTML = matches.map(m => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #fde68a">
+              <div>
+                <strong>${Layout.esc ? Layout.esc(m.name) : m.name}</strong>
+                ${m.taxId ? `<span style="color:#92400e;font-size:11px;margin-left:6px">[${m.taxId}]</span>` : ''}
+                <div style="font-size:11px;color:#92400e">${m.reason} (${Math.round((m.confidence || 0) * 100)}%)</div>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page._useExistingContact('${m.id}')">ใช้รายนี้</button>
+            </div>
+          `).join('');
+          box.style.display = 'block';
+        } catch { box.style.display = 'none'; }
+      },
+      _useExistingContact(id) {
+        // คืนค่ากลับให้ caller (documents.html flow) ถ้าเปิดจากที่นั่น
+        // หรือปิด modal + เลื่อนไปแก้ contact เดิม
+        const cb = window.opener?.Page?.onContactCreated || window.parent?.Page?.onContactCreated;
+        if (typeof cb === 'function') { cb({ id }); }
+        document.getElementById('fuzzyMatchBox').style.display = 'none';
+        if (typeof Layout.toast === 'function') Layout.toast('เลือกผู้ติดต่อรายเดิมแล้ว');
+        // refresh เพื่อโชว์รายการที่ highlight
+        this.load();
+      },
+
       _dbdAttached: false,
       _attachDbd() {
         if (this._dbdAttached) return;

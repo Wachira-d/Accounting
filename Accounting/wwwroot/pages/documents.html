@@ -934,7 +934,49 @@
         // Auto-suggest payment terms (Net X) จาก history ของผู้ติดต่อรายนี้
         // — ไม่เกี่ยวกับ doc type, ใช้ได้ทั้ง sales (Invoice/Quotation) +
         // purchase (PurchaseInvoice). ไม่ override ถ้า user เคย touch แล้ว.
-        if (contactId) this.suggestPaymentTerms(contactId);
+        if (contactId) {
+          this.suggestPaymentTerms(contactId);
+          // Project allocation: เลือกโครงการให้ทุกบรรทัดที่ยังว่าง
+          this.suggestProjectAllocation(contactId);
+        }
+      },
+
+      async suggestProjectAllocation(contactId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/project-allocation/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data?.projectId) return;
+          const pid = j.data.projectId;
+          const fbId = j.data.feedbackId || '';
+          // Fill ทุก data-f="project" ที่ยังว่าง + เก็บ feedback id ติดไว้
+          document.querySelectorAll('#linesBody .line-card [data-f="project"]').forEach(sel => {
+            if (sel.value || sel.dataset.userTouched === '1') return;
+            const optionExists = Array.from(sel.options).some(o => o.value === pid);
+            if (optionExists) {
+              sel.value = pid;
+              sel.dataset.aiFeedbackId = fbId;
+              sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+              sel.addEventListener('change', () => {
+                sel.dataset.userTouched = '1';
+                if (!sel.dataset.aiFeedbackId) return;
+                try {
+                  fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      feedbackId: sel.dataset.aiFeedbackId,
+                      chosenAnswer: sel.value,
+                      acceptedAi: sel.value === pid,
+                    })
+                  }).catch(() => {});
+                } catch {}
+              }, { once: true });
+            }
+          });
+        } catch { /* best-effort */ }
       },
 
       async suggestPaymentChannel(contactId) {
