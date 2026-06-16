@@ -278,6 +278,9 @@ public class AiFeedbackTrainingJob : BackgroundService
         nameof(AiFeatureKey.BadDebtRiskDetection),
         nameof(AiFeatureKey.DiscountSuggestion),
         nameof(AiFeatureKey.ApprovalRoutingSuggestion),
+        // Sprint-8 features
+        nameof(AiFeatureKey.InventoryReorderPointSuggestion),
+        nameof(AiFeatureKey.PeriodCloseAnomalyCheck),
     };
 
     /// <summary>
@@ -341,6 +344,8 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.BadDebtRiskDetection) => true,
             nameof(AiFeatureKey.DiscountSuggestion) => true,
             nameof(AiFeatureKey.ApprovalRoutingSuggestion) => true,
+            nameof(AiFeatureKey.InventoryReorderPointSuggestion) => true,
+            nameof(AiFeatureKey.PeriodCloseAnomalyCheck) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

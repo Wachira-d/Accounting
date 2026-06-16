@@ -88,7 +88,12 @@
           </div>
           <div class="form-row">
             <div class="form-group form-checkbox"><input type="checkbox" id="fTrackStock" checked><label for="fTrackStock">ติดตามสต็อก</label></div>
-            <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ</label><input type="number" class="form-input" id="fMinStock" value="0"></div>
+            <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestReorderPoint()" title="คำนวณจากการใช้งาน 90 วันล่าสุด">🤖 ให้ AI คำนวณ</button>
+              </label>
+              <input type="number" class="form-input" id="fMinStock" value="0" step="0.01">
+              <div id="reorderHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
           <div class="form-group">
@@ -301,6 +306,30 @@
         } catch(e) { Layout.toast(e.message,'error'); }
       },
       goPage(p) { Page.page=p; Page.load(); },
+
+      async suggestReorderPoint() {
+        try {
+          const id = document.getElementById('editId')?.value;
+          if (!id) {
+            if (typeof Layout.toast === 'function') Layout.toast('บันทึกสินค้าก่อนแล้วค่อยให้ AI คำนวณ', 'warning');
+            return;
+          }
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/inventory/reorder-point/suggest?productId=${id}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) return;
+          const inputEl = document.getElementById('fMinStock');
+          const hintEl = document.getElementById('reorderHint');
+          if (d.reorderPoint > 0 && inputEl) inputEl.value = d.reorderPoint;
+          if (hintEl) {
+            const warn = d.needsReorderNow ? '<strong style="color:#dc2626"> ⚠️ สต็อกปัจจุบันต่ำกว่าจุดสั่งซื้อ — ควรสั่งซื้อทันที</strong>' : '';
+            hintEl.innerHTML = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)${warn}`;
+          }
+        } catch { /* best-effort */ }
+      },
 
       async suggestProductCategory() {
         try {

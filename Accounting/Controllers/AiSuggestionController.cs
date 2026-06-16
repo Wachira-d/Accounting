@@ -1081,6 +1081,182 @@ public class AiSuggestionController : ControllerBase
         => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     // ────────────────────────────────────────────────────────────────
+    //  Inventory reorder point per product — avg daily consumption
+    //  over last 90 days × lead time + safety stock buffer.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("inventory/reorder-point/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestReorderPoint(
+        Guid companyId, [FromQuery] Guid productId, [FromQuery] int? leadTimeDays, CancellationToken ct)
+    {
+        if (productId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "productId ห้ามว่าง"));
+
+        var since = DateTime.UtcNow.AddDays(-90);
+        var outMoves = await _db.Set<StockMovement>().AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.ProductId == productId
+                && (m.MovementType == "OUT" || m.MovementType == "TRANSFER_OUT")
+                && m.MovementDate >= since && !m.IsDeleted)
+            .Select(m => new { m.Quantity, m.MovementDate })
+            .ToListAsync(ct);
+
+        // Lead time default 14 วัน (SMB Thai typical for local supplier;
+        // imports use 30+). Safety stock buffer 1.5× lead-time demand.
+        var lt = leadTimeDays ?? 14;
+        var totalOut = outMoves.Sum(m => Math.Abs(m.Quantity));
+        var daysCovered = outMoves.Count > 0
+            ? Math.Max(1, (DateTime.UtcNow - outMoves.Min(m => m.MovementDate)).Days)
+            : 90;
+        var avgDaily = daysCovered > 0 ? totalOut / daysCovered : 0m;
+        var leadTimeDemand = avgDaily * lt;
+        var safetyStock = leadTimeDemand * 0.5m;
+        var reorderPoint = Math.Round(leadTimeDemand + safetyStock, 2);
+        var maxStock = Math.Round(reorderPoint * 2m, 2);  // 1 lead time worth of cushion
+
+        decimal confidence = outMoves.Count >= 20 ? 0.90m
+                          : outMoves.Count >= 10 ? 0.75m
+                          : outMoves.Count >= 3 ? 0.55m : 0.30m;
+
+        var product = await _db.Set<Product>().AsNoTracking()
+            .Where(p => p.Id == productId && p.CompanyId == companyId)
+            .Select(p => new { p.Code, p.Name, p.CurrentStock, p.MinimumStock })
+            .FirstOrDefaultAsync(ct);
+
+        var inputJson = JsonSerializer.Serialize(new { productId, leadTime = lt, sampleSize = outMoves.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.InventoryReorderPointSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: reorderPoint.ToString("0.##"),
+                AiConfidence: confidence,
+                LocalModelAnswer: reorderPoint.ToString("0.##"),
+                LocalModelConfidence: confidence,
+                LocalModelVersion: "stats-v1",
+                SourceEntityType: "Product", SourceEntityId: productId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        var needsReorderNow = product != null && product.CurrentStock <= reorderPoint && reorderPoint > 0;
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            reorderPoint, maxStock,
+            avgDailyConsumption = Math.Round(avgDaily, 4),
+            leadTimeDays = lt,
+            sampleSize = outMoves.Count,
+            confidence,
+            currentStock = product?.CurrentStock,
+            needsReorderNow,
+            reasoning = outMoves.Count == 0
+                ? "ยังไม่มีประวัติการเบิก/ขาย — ไม่สามารถคำนวณ"
+                : $"จาก {outMoves.Count} ครั้งเบิก/ขาย ใช้เฉลี่ย {avgDaily:N3}/วัน × lead time {lt} วัน + safety = {reorderPoint:N2}",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Period-close anomaly check — scan checklist before closing.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("period-close/anomaly-check")]
+    public async Task<ActionResult<ApiResponse<object>>> CheckPeriodCloseAnomaly(
+        Guid companyId, [FromQuery] int year, [FromQuery] int month, CancellationToken ct)
+    {
+        if (year < 2000 || year > 2200 || month < 1 || month > 12)
+            return BadRequest(new ApiResponse<object>(false, null, "year/month ไม่ถูกต้อง"));
+
+        var start = new DateTime(year, month, 1);
+        var end = start.AddMonths(1).AddDays(-1);
+
+        var issues = new List<object>();
+
+        // 1) Draft JEs in period
+        var draftJes = await _db.JournalEntries.AsNoTracking()
+            .CountAsync(j => j.CompanyId == companyId && !j.IsDeleted
+                && j.EntryDate >= start && j.EntryDate <= end
+                && j.Status == JournalEntryStatus.Draft, ct);
+        if (draftJes > 0)
+            issues.Add(new { severity = "Warning", code = "DRAFT_JE",
+                title = $"JE ร่างค้าง {draftJes} ใบ",
+                fix = "อนุมัติหรือลบก่อนปิดงวด" });
+
+        // 2) Approved Documents without posted JE (auto-post should have created one)
+        var docsNoJe = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.DocumentDate >= start && d.DocumentDate <= end
+                && d.Status == DocumentStatus.Approved
+                && !_db.JournalEntries.Any(j => j.SourceDocumentId == d.Id && !j.IsDeleted))
+            .CountAsync(ct);
+        if (docsNoJe > 0)
+            issues.Add(new { severity = "High", code = "DOC_NO_JE",
+                title = $"เอกสารอนุมัติ {docsNoJe} ใบยังไม่ลงบัญชี",
+                fix = "Re-post หรือสร้าง JE manual" });
+
+        // 3) Trial balance non-zero (sum of approved JE Dr vs Cr)
+        var (totalDr, totalCr) = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && !j.IsDeleted
+                && j.EntryDate >= start && j.EntryDate <= end
+                && j.Status == JournalEntryStatus.Posted)
+            .GroupBy(j => 1)
+            .Select(g => new ValueTuple<decimal, decimal>(g.Sum(x => x.TotalDebit), g.Sum(x => x.TotalCredit)))
+            .FirstOrDefaultAsync(ct);
+        var imbalance = Math.Abs(totalDr - totalCr);
+        if (imbalance > 0.01m)
+            issues.Add(new { severity = "Critical", code = "TRIAL_IMBALANCE",
+                title = $"Trial balance ไม่สมดุล — Dr {totalDr:N2} vs Cr {totalCr:N2} (ห่าง {imbalance:N2})",
+                fix = "ตรวจ JE ที่ Dr ≠ Cr ในเดือนนี้" });
+
+        // 4) Missing monthly depreciation — fixed assets active แต่ไม่มี JE depreciation
+        var hasFixedAssets = await _db.Set<FixedAsset>().AsNoTracking()
+            .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted
+                && a.Status == AssetStatus.Active
+                && a.PurchaseDate <= end, ct);
+        if (hasFixedAssets)
+        {
+            var depJeCount = await _db.JournalEntries.AsNoTracking()
+                .CountAsync(j => j.CompanyId == companyId && !j.IsDeleted
+                    && j.EntryDate >= start && j.EntryDate <= end
+                    && (j.Description != null && j.Description.Contains("ค่าเสื่อมราคา")), ct);
+            if (depJeCount == 0)
+                issues.Add(new { severity = "Warning", code = "MISSING_DEPRECIATION",
+                    title = "ยังไม่ได้ลงค่าเสื่อมราคาประจำเดือน",
+                    fix = "รัน Background depreciation หรือสร้าง JE manual" });
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { companyId, year, month });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.PeriodCloseAnomalyCheck,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: issues.Count.ToString(),
+                AiConfidence: 0.95m, LocalModelAnswer: issues.Count.ToString(),
+                LocalModelConfidence: 0.95m, LocalModelVersion: "rules-v1",
+                SourceEntityType: "FiscalPeriod", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "rules", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            period = $"{year}-{month:D2}",
+            issueCount = issues.Count,
+            canClose = issues.Count == 0
+                || !issues.Any(i => ((dynamic)i).severity == "Critical"
+                                  || ((dynamic)i).severity == "High"),
+            issues, feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Bad-debt risk score per customer.
     //   - daysOverdueMax: latest unpaid invoice days past due
     //   - overdueRatio: overdue / open invoices

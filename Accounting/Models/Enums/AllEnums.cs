@@ -1459,6 +1459,22 @@ public enum AiFeatureKey
     /// in larger companies with multiple approvers.</summary>
     ApprovalRoutingSuggestion = 46,
 
+    /// <summary>Inventory reorder point per product — calculates
+    /// minimum stock level from (a) average daily consumption over
+    /// last 90 days, (b) typical lead time (configurable, defaults
+    /// to 14 days), (c) safety stock buffer (default 1.5× lead-time
+    /// demand). Lets the operator avoid stockouts without manually
+    /// computing min levels for every SKU.</summary>
+    InventoryReorderPointSuggestion = 47,
+
+    /// <summary>Period-close anomaly detection — scans the period
+    /// being closed for: (a) Draft JEs still open, (b) Document.
+    /// Approved without posted JE, (c) trial-balance not zero,
+    /// (d) missing monthly depreciation, (e) AR/AP aging not
+    /// reconciled to GL. Returns a checklist of issues + suggested
+    /// fix. Pure rule scan; AI cloud not used.</summary>
+    PeriodCloseAnomalyCheck = 48,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }
