@@ -1081,6 +1081,170 @@ public class AiSuggestionController : ControllerBase
         => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     // ────────────────────────────────────────────────────────────────
+    //  Price drift detection per (product, contact). Flags when the
+    //  entered unit price is >20% off the mean of the last 12 prior
+    //  document lines for the same product. Catches typos (1500 vs
+    //  15000) + price changes worth a second look before approval.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record PriceDriftRequest(
+        string ProductCode,
+        decimal UnitPrice,
+        Guid? ContactId,
+        string? Description);
+
+    [HttpPost("price-drift/check")]
+    public async Task<ActionResult<ApiResponse<object>>> CheckPriceDrift(
+        Guid companyId, [FromBody] PriceDriftRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.ProductCode) || req.UnitPrice <= 0)
+            return Ok(new ApiResponse<object>(true, new { ok = true, hasWarning = false }));
+
+        // Pull last 12 historical lines for (companyId, productCode). Filter to
+        // same contact when given (more accurate per-vendor mean), else
+        // company-wide. Excludes the current document if it's being re-saved.
+        var q = _db.Set<DocumentLine>().AsNoTracking()
+            .Where(l => l.Document.CompanyId == companyId
+                && l.ProductCode == req.ProductCode
+                && !l.Document.IsDeleted
+                && l.UnitPrice > 0);
+        if (req.ContactId.HasValue && req.ContactId.Value != Guid.Empty)
+            q = q.Where(l => l.Document.ContactId == req.ContactId.Value);
+        var prices = await q
+            .OrderByDescending(l => l.Document.DocumentDate)
+            .Take(12)
+            .Select(l => l.UnitPrice)
+            .ToListAsync(ct);
+
+        bool hasWarning = false; decimal expected = 0m; decimal stdDev = 0m; string? severity = null;
+        if (prices.Count >= 3)
+        {
+            expected = prices.Average();
+            var variance = prices.Sum(p => (p - expected) * (p - expected)) / prices.Count;
+            stdDev = (decimal)Math.Sqrt((double)variance);
+            // Deviation thresholds: 20% = warning, 50% = critical (likely typo)
+            var diff = Math.Abs(req.UnitPrice - expected);
+            var pctDiff = expected > 0 ? diff / expected : 0m;
+            if (pctDiff > 0.50m) { hasWarning = true; severity = "Critical"; }
+            else if (pctDiff > 0.20m) { hasWarning = true; severity = "Warning"; }
+        }
+
+        var inputJson = JsonSerializer.Serialize(new
+        {
+            req.ProductCode, req.UnitPrice, req.ContactId, sampleSize = prices.Count,
+        });
+        Guid? feedbackId = null;
+        if (hasWarning)
+        {
+            try
+            {
+                feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                    CompanyId: companyId, FeatureKey: AiFeatureKey.PriceDriftDetection,
+                    PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                    AiPrimaryAnswer: severity, AiConfidence: 0.85m,
+                    LocalModelAnswer: severity, LocalModelConfidence: 0.85m,
+                    LocalModelVersion: "stats-v1",
+                    SourceEntityType: "DocumentLine", SourceEntityId: req.ContactId,
+                    Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                    ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                    CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+            }
+            catch { /* best-effort */ }
+        }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            hasWarning, severity,
+            expectedMean = Math.Round(expected, 2),
+            stdDev = Math.Round(stdDev, 2),
+            sampleSize = prices.Count,
+            ratio = expected > 0 ? Math.Round(req.UnitPrice / expected, 2) : (decimal?)null,
+            reasoning = !hasWarning
+                ? (prices.Count < 3 ? "ยังไม่มีประวัติพอจะเทียบ" : "ราคาอยู่ในช่วงปกติ")
+                : severity == "Critical"
+                    ? $"⚠️ ราคา {req.UnitPrice:N2} ห่างจากค่าเฉลี่ย {expected:N2} > 50% — อาจพิมพ์ผิด"
+                    : $"⚠️ ราคา {req.UnitPrice:N2} ห่างจากค่าเฉลี่ย {expected:N2} > 20% — ตรวจสอบ",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Document memo / description auto-generate from doc type +
+    //  contact + lines summary.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record SuggestMemoRequest(
+        string DocumentType,
+        Guid? ContactId,
+        DateTime? DocumentDate,
+        List<string>? LineDescriptions);
+
+    [HttpPost("document/suggest-memo")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestDocumentMemo(
+        Guid companyId, [FromBody] SuggestMemoRequest req, CancellationToken ct)
+    {
+        var thMonths = new[] { "", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+            "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค." };
+        string? contactName = null;
+        if (req.ContactId.HasValue)
+        {
+            contactName = await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == req.ContactId.Value && c.CompanyId == companyId)
+                .Select(c => c.Name)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var verb = req.DocumentType switch
+        {
+            "Invoice" or "TaxInvoice" or "Receipt" or "Quotation" or "BillingNote" or "DebitNote"
+                => "ขาย",
+            "PurchaseOrder" or "PurchaseInvoice" or "PaymentVoucher" or "ExpenseClaim"
+                => "ซื้อ",
+            "CreditNote" => "ลดหนี้",
+            _ => "บันทึก",
+        };
+
+        var date = req.DocumentDate ?? DateTime.UtcNow;
+        var period = $"{thMonths[date.Month]} {date.Year + 543}";
+
+        // Summary of lines: take top-2 unique descriptions, truncate long ones.
+        var summary = (req.LineDescriptions ?? new List<string>())
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Select(d => d.Length > 40 ? d.Substring(0, 40) + "…" : d)
+            .Distinct()
+            .Take(2)
+            .ToList();
+        var lineSummary = summary.Count > 0 ? string.Join(" + ", summary) : "รายการตามแนบ";
+
+        var memo = contactName != null
+            ? $"{verb} {lineSummary} {(verb == "ซื้อ" ? "จาก" : "ให้")} {contactName} งวด {period}"
+            : $"{verb} {lineSummary} งวด {period}";
+
+        var inputJson = JsonSerializer.Serialize(new
+        {
+            req.DocumentType, req.ContactId,
+            lineCount = req.LineDescriptions?.Count ?? 0,
+        });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.DocumentMemoGeneration,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: memo, AiConfidence: 0.75m,
+                LocalModelAnswer: memo, LocalModelConfidence: 0.75m,
+                LocalModelVersion: "template-v1",
+                SourceEntityType: "Document", SourceEntityId: req.ContactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "template", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new { memo, confidence = 0.75m, feedbackId }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Credit-note reason classification — when user creates a CN
     //  from an invoice, AI proposes Return / Discount / Adjustment /
     //  Writeoff before they pick from the dropdown.

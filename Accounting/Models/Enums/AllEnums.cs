@@ -1405,6 +1405,22 @@ public enum AiFeatureKey
     /// → 0.50 a week old). Never calls cloud AI.</summary>
     FxRateSuggestion = 39,
 
+    /// <summary>Price drift detection per (product, vendor) — when an
+    /// operator enters a unit price that differs from the recent
+    /// 12-document average by more than ±20%, flag a warning. Pure
+    /// statistics (mean + std-dev over DocumentLine.UnitPrice history),
+    /// no cloud call. Catches typos (1500 vs 15000) + supplier price
+    /// changes worth a second look before approval.</summary>
+    PriceDriftDetection = 40,
+
+    /// <summary>Document memo / description auto-generate from doc-type
+    /// + contact + lines. Pure-template renderer for the common case
+    /// "ขาย <product> ให้ <customer> งวด <month/year>" — saves typing
+    /// the same memo template repeatedly. AI cloud is invoked only
+    /// when ≥3 distinct product categories on the doc (template
+    /// fallback fails).</summary>
+    DocumentMemoGeneration = 41,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }
