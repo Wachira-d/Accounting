@@ -112,7 +112,10 @@ public class NotificationEngine : INotificationEngine
                     .Where(u => userIds.Contains(u.Id) && u.Status != UserStatus.Inactive)
                     .Select(u => new { u.Id, u.Email, u.FullName, u.LineUserId })
                     .ToListAsync())
-                    .ToDictionary(u => u.Id, u => ((string?)u.Email, (string?)u.FullName, u.LineUserId));
+                    .ToDictionary(u => u.Id, u => (
+                        Email: (string?)u.Email,
+                        FullName: (string?)u.FullName,
+                        LineUserId: u.LineUserId));
 
             foreach (var (_, e) in effective)
             {
