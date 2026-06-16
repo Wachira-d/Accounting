@@ -343,7 +343,17 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, request.DocumentType);
+            // Defer real sequence number to Approve — Draft uses a temporary
+            // placeholder ("DRAFT-{guid8}") instead of pulling from the
+            // company's running counter. That eliminates the gap-on-delete
+            // problem entirely: deleting a Draft never leaves a missing
+            // sequence number because none was issued. The real number is
+            // assigned atomically inside ApproveDocumentAsync. Indexes built
+            // on DocumentNumber stay valid because placeholders are unique
+            // (guid suffix). Compliance for TaxInvoice/Receipt is satisfied
+            // since they only get a real number when they enter the books.
+            var draftMarker = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
+            var docNumber = draftMarker;
 
             // Resolve FX up front so the rate the user sees on the document
             // is exactly what posts to the GL on Approve. THB → always 1.
@@ -1215,6 +1225,20 @@ public class DocumentService : IDocumentService
                     {
                         _logger.LogWarning(ex, "Credit check failed Doc={Doc} — proceeding without block", documentId);
                     }
+                }
+
+                // Issue the real running number NOW (transition Draft → Approved).
+                // Draft sat with a "DRAFT-xxx" placeholder so deleting it never
+                // created a sequence gap. We're inside the approve transaction
+                // and DocumentNumberGenerator.NextAsync takes a pg_advisory_xact_
+                // _lock per (company, prefix) so concurrent approves can't issue
+                // duplicates. Documents that already carry a real number (idem-
+                // potent re-approve, or those created by OCR/integration with a
+                // number already stamped) keep the existing number.
+                if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
+                {
+                    doc.DocumentNumber = await Helpers.DocumentNumberGenerator.NextAsync(
+                        _db, companyId, doc.DocumentType);
                 }
 
                 // A cash-settled document (จ่ายทันที) is already fully paid the

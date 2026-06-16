@@ -881,11 +881,21 @@ public class CmsCommerceService : ICmsCommerceService
 
     private async Task RecalculateCartTotals(Guid cartId)
     {
-        var cart = await _db.SiteCarts.Include(c => c.Items).FirstOrDefaultAsync(c => c.Id == cartId);
+        // โหลด VatRate ต่อสินค้า เพื่อรองรับตะกร้าที่มีของหลายอัตรา VAT
+        // (บางชิ้น 7%, บางชิ้น 0%/ยกเว้น เช่น หนังสือ/อาหารสด). เดิมใช้
+        // flat SubTotal × 7/107 ซึ่งคิด VAT ทับของยกเว้น — ผิด.
+        var cart = await _db.SiteCarts
+            .Include(c => c.Items).ThenInclude(i => i.SiteProduct).ThenInclude(sp => sp.Product)
+            .FirstOrDefaultAsync(c => c.Id == cartId);
         if (cart == null) return;
 
         cart.SubTotal = cart.Items.Sum(i => i.TotalPrice);
-        cart.VatAmount = cart.SubTotal * 7m / 107m;
+        // ราคา CMS เป็นแบบรวม VAT — แยก VAT ออกต่อชิ้นตามอัตราของสินค้านั้น
+        cart.VatAmount = Math.Round(cart.Items.Sum(i =>
+        {
+            var rate = i.SiteProduct?.Product?.VatRate ?? 7m;
+            return rate > 0 ? i.TotalPrice * rate / (100m + rate) : 0m;
+        }), 2, MidpointRounding.AwayFromZero);
         cart.TotalAmount = cart.SubTotal - cart.DiscountAmount;
         await _db.SaveChangesAsync();
     }

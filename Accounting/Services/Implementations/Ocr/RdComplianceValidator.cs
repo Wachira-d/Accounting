@@ -143,16 +143,25 @@ public class RdComplianceValidator
                 : $"วันที่ถูกต้อง ({o.ExtractedDate:yyyy-MM-dd})"),
             o.ExtractedDate?.ToString("yyyy-MM-dd")));
 
-        // Rule 6: VAT breakdown balances (subtotal * 0.07 ≈ vat, ±1 THB tolerance)
+        // Rule 6: VAT plausibility — รองรับใบกำกับที่มีหลายรายการและบางรายการ
+        // ยกเว้น/0% (mixed VAT). VAT ที่ถูกต้องอยู่ในช่วง 0..(ฐานเต็ม × 7%):
+        // ถ้า vat < sub×7% แปลว่ามีบางรายการไม่คิด VAT (ปกติ) — ไม่ใช่ error.
+        // เตือนเฉพาะเมื่อ vat เกินเพดาน (มากกว่าฐานเต็ม×7%) หรือ ติดลบ —
+        // ซึ่งเป็นไปไม่ได้ทางบัญชี. แสดงฐานที่คิด VAT จริง (vat/7%) เพื่ออ้างอิง.
         var sub = o.ExtractedSubTotal ?? 0m;
         var vat = o.ExtractedVatAmount ?? 0m;
-        var expectedVat = Math.Round(sub * 0.07m, 2);
-        var vatOk = sub == 0 || Math.Abs(vat - expectedVat) <= 1m;
+        var maxVat = Math.Round(sub * 0.07m, 2);          // เพดาน: ทุกบาทคิด 7%
+        var impliedBase = vat > 0 ? Math.Round(vat / 0.07m, 2) : 0m;  // ฐานที่คิด VAT จริง
+        var vatOk = sub == 0 || (vat >= -0.01m && vat <= maxVat + 1m);
+        var isMixed = vatOk && sub > 0 && vat > 0 && vat < maxVat - 1m;
         results.Add(new("VAT_BREAKDOWN_BALANCE", vatOk,
             vatOk ? "Info" : "Warning",
-            vatOk ? "ยอด VAT สมดุลกับฐานภาษี"
-                  : $"ยอด VAT ไม่ตรง — ฐาน {sub:N2} × 7% = {expectedVat:N2} แต่ได้ {vat:N2} (ห่าง {Math.Abs(vat - expectedVat):N2})",
-            $"sub={sub:N2}, vat={vat:N2}, expected={expectedVat:N2}"));
+            !vatOk
+                ? $"ยอด VAT ผิดปกติ — VAT {vat:N2} เกินเพดาน 7% ของฐาน {sub:N2} ({maxVat:N2}) หรือ ติดลบ"
+                : isMixed
+                    ? $"VAT {vat:N2} คิดจากฐาน ~{impliedBase:N2} (มีรายการยกเว้น/0% ~{sub - impliedBase:N2}) — ปกติสำหรับใบหลายรายการ"
+                    : "ยอด VAT สมดุลกับฐานภาษี",
+            $"sub={sub:N2}, vat={vat:N2}, maxVat={maxVat:N2}, impliedBase={impliedBase:N2}"));
 
         // Rule 7: Tenant cross-check — extracted buyer should match this company.
         // Only meaningful when there IS a buyer tax id on the document.

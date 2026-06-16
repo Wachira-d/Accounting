@@ -1865,7 +1865,7 @@
             }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
@@ -2645,7 +2645,8 @@
           const res = await api.getDocument(id);
           const d = res.data;
           this._currentDoc = d;
-          document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${d.documentNumber}`;
+          const displayNum = (d.documentNumber || '').startsWith('DRAFT-') ? '(ยังไม่ออกเลข)' : d.documentNumber;
+          document.getElementById('detailTitle').textContent = `${Layout.docTypeLabel(d.documentType)} ${displayNum}`;
           // ERP upgrade banners — surface RD compliance + aging + VAT defer at top
           let banners = '';
           if (d.ocrTenantMismatchFlag) {
@@ -2704,7 +2705,7 @@
                 const fg = ({Done:'#15803d',PartiallyDone:'#92400e',Cancelled:'#64748b',Open:'#1e40af'}[d.lifecycleStatus]||'#475569');
                 return ` <span style="margin-left:6px;padding:2px 8px;background:${bg};color:${fg};border-radius:8px;font-size:11px;font-weight:700">${this.escapeHtml(lr)}</span>`;
               })()}</div></div>
-              <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${d.documentNumber}</div></div>
+              <div><div class="text-xs text-gray-500">เลขที่</div><div class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400">— ยังไม่ออกเลข (รออนุมัติ) —</span>' : d.documentNumber}</div></div>
               <div><div class="text-xs text-gray-500">วันที่เอกสาร</div><div>${Layout.date(d.documentDate)}</div></div>
               <div><div class="text-xs text-gray-500">วันครบกำหนด</div><div>${Layout.date(d.dueDate)}</div></div>
               <div><div class="text-xs text-gray-500">ผู้ติดต่อ</div><div>${d.contact ? `<a href="/pages/contacts.html?id=${d.contactId}" style="color:var(--primary)">${d.contact.name}</a>` : '-'}</div></div>
