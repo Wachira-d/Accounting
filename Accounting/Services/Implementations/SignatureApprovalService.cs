@@ -380,7 +380,10 @@ public class SignatureApprovalService : ISignatureApprovalService
             IpAddress = ipAddress
         });
 
-        // Update document
+        // Update document — promote Draft placeholder to real running number now.
+        if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
+            doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
+                _db, doc.CompanyId, doc.DocumentType);
         doc.Status = DocumentStatus.Approved;
         await _db.SaveChangesAsync();
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
@@ -450,6 +453,10 @@ public class SignatureApprovalService : ISignatureApprovalService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
         if (doc == null) return;
 
+        // Promote Draft placeholder to real running number on approval.
+        if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
+            doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
+                _db, doc.CompanyId, doc.DocumentType);
         doc.Status = DocumentStatus.Approved;
         await _db.SaveChangesAsync();
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
