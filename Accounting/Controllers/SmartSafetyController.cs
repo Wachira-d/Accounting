@@ -96,26 +96,53 @@ public class SmartSafetyController : ControllerBase
         }));
     }
 
-    /// <summary>VAT validation (#9) — เช็คว่า VatAmount = SubTotal × VatRate.
-    /// ตรวจตอน frontend หลังกรอกแล้ว — flag mismatch + back-calc suggestion.</summary>
+    /// <summary>VAT validation (#9) — รองรับใบกำกับหลายรายการที่บางรายการ
+    /// ยกเว้น/0% (mixed VAT). ถ้าส่ง taxableBase (ผลรวมเฉพาะรายการที่คิด VAT)
+    /// มา → ตรวจ VAT = taxableBase × rate ตรง ๆ. ถ้าไม่ส่ง → ตรวจแบบช่วง:
+    /// VAT ที่ถูกต้องอยู่ใน 0..(subTotal × rate); น้อยกว่าเพดาน = มีรายการ
+    /// ยกเว้น (ปกติ ไม่ flag), เกินเพดาน/ติดลบ = ผิดแน่นอน.</summary>
     [HttpGet("validate-vat")]
     public ActionResult<ApiResponse<object>> ValidateVat(
         [FromQuery] decimal subTotal,
         [FromQuery] decimal vatAmount,
-        [FromQuery] decimal vatRate = 7)
+        [FromQuery] decimal vatRate = 7,
+        [FromQuery] decimal? taxableBase = null)
     {
-        var expected = Math.Round(subTotal * vatRate / 100m, 2);
-        var diff = Math.Abs(expected - vatAmount);
-        var isMismatch = diff > 0.05m;     // tolerate rounding 5 satang
+        var maxVat = Math.Round(subTotal * vatRate / 100m, 2);   // เพดาน: ทุกบาทคิด VAT
+        var impliedBase = vatAmount > 0 && vatRate > 0
+            ? Math.Round(vatAmount / (vatRate / 100m), 2) : 0m;    // ฐานที่คิด VAT จริง
+
+        if (taxableBase.HasValue)
+        {
+            // มีฐานภาษีจริง (ผลรวมเฉพาะ line ที่คิด VAT) → ตรวจตรง ๆ
+            var expected = Math.Round(taxableBase.Value * vatRate / 100m, 2);
+            var diff = Math.Abs(expected - vatAmount);
+            var mismatch = diff > 0.05m;
+            return Ok(new ApiResponse<object>(true, new
+            {
+                expectedVat = expected, actualVat = vatAmount, diff, isMismatch = mismatch,
+                taxableBase = taxableBase.Value, exemptBase = subTotal - taxableBase.Value,
+                suggestion = mismatch
+                    ? $"⚠️ VAT ไม่ตรง: ฐานคิดภาษี {taxableBase.Value:N2} × {vatRate}% = {expected:N2} แต่ได้ {vatAmount:N2}"
+                    : null
+            }));
+        }
+
+        // ไม่มี taxableBase → ตรวจแบบช่วง (รองรับ mixed VAT)
+        var overCap = vatAmount > maxVat + 0.05m;     // เกินเพดาน = ผิดแน่
+        var negative = vatAmount < -0.01m;
+        var isMismatch = overCap || negative;
+        var isMixed = !isMismatch && vatAmount > 0 && vatAmount < maxVat - 0.05m;
         return Ok(new ApiResponse<object>(true, new
         {
-            expectedVat = expected,
-            actualVat = vatAmount,
-            diff,
-            isMismatch,
+            maxVat, actualVat = vatAmount, impliedBase,
+            exemptBaseEstimate = isMixed ? Math.Round(subTotal - impliedBase, 2) : 0m,
+            isMismatch, isMixed,
             suggestion = isMismatch
-                ? $"⚠️ VAT ไม่ตรง: ควรเป็น {expected:N2} ({vatRate}% ของ {subTotal:N2}). ปัจจุบัน {vatAmount:N2}"
-                : null
+                ? $"⚠️ VAT ผิดปกติ: {vatAmount:N2} เกินเพดาน {vatRate}% ของ {subTotal:N2} ({maxVat:N2}) หรือติดลบ"
+                : isMixed
+                    ? $"ℹ️ VAT {vatAmount:N2} คิดจากฐาน ~{impliedBase:N2} (มีรายการยกเว้น/0% ~{subTotal - impliedBase:N2}) — ปกติสำหรับใบหลายรายการ"
+                    : null
         }));
     }
 
