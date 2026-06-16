@@ -1436,6 +1436,29 @@ public enum AiFeatureKey
     /// scrolling the category dropdown.</summary>
     ProductCategoryTagging = 43,
 
+    /// <summary>Bad-debt risk score per customer — combines (a) max
+    /// days-overdue across open invoices, (b) overdue/total invoice
+    /// ratio, (c) historical write-offs. Returns 0-100 score + Low /
+    /// Medium / High classification. Used in the contact list and
+    /// in invoice-creation review to flag risky customers BEFORE
+    /// extending more credit.</summary>
+    BadDebtRiskDetection = 44,
+
+    /// <summary>Discount % suggestion when creating a Quotation /
+    /// Invoice — based on (a) the contact's lifetime sales value
+    /// (volume customer), (b) repeat-customer count, (c) the
+    /// company-wide median discount given. Heuristic only; surfaces
+    /// "give 5% — repeat customer with ฿2M lifetime" type guidance.</summary>
+    DiscountSuggestion = 45,
+
+    /// <summary>Approver routing suggestion — when an operator submits
+    /// a document for approval, pick the approver who most often
+    /// approved similar (doc type + amount band) documents in the past
+    /// 90 days. Falls back to ApprovalRule + DirectManager when no
+    /// learned signal. Reduces "which manager handles this?" indecision
+    /// in larger companies with multiple approvers.</summary>
+    ApprovalRoutingSuggestion = 46,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

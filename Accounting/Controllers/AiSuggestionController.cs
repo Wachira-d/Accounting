@@ -1081,6 +1081,261 @@ public class AiSuggestionController : ControllerBase
         => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     // ────────────────────────────────────────────────────────────────
+    //  Bad-debt risk score per customer.
+    //   - daysOverdueMax: latest unpaid invoice days past due
+    //   - overdueRatio: overdue / open invoices
+    //   - writeOffRate: historical write-off / total invoices
+    //  Compose into 0-100 score → Low / Medium / High band.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("bad-debt/check")]
+    public async Task<ActionResult<ApiResponse<object>>> CheckBadDebtRisk(
+        Guid companyId, [FromQuery] Guid contactId, CancellationToken ct)
+    {
+        if (contactId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var today = DateTime.UtcNow.Date;
+        var openInvoices = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted
+                && (d.DocumentType == DocumentType.Invoice
+                    || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.BillingNote)
+                && d.BalanceDue > 0
+                && (d.Status == DocumentStatus.Approved
+                    || d.Status == DocumentStatus.PartiallyPaid
+                    || d.Status == DocumentStatus.Sent
+                    || d.Status == DocumentStatus.Overdue))
+            .Select(d => new { d.Id, d.DueDate, d.DocumentDate, d.BalanceDue, d.TotalAmount })
+            .ToListAsync(ct);
+        var totalInvoices = await _db.Documents.AsNoTracking()
+            .CountAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted
+                && (d.DocumentType == DocumentType.Invoice
+                    || d.DocumentType == DocumentType.TaxInvoice), ct);
+        var writeOffs = await _db.Documents.AsNoTracking()
+            .CountAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted
+                && d.Status == DocumentStatus.WrittenOff, ct);
+
+        int daysOverdueMax = 0;
+        decimal overdueAmount = 0m;
+        decimal openAmount = openInvoices.Sum(i => i.BalanceDue);
+        foreach (var inv in openInvoices)
+        {
+            var due = inv.DueDate ?? inv.DocumentDate.AddDays(30);
+            var days = (today - due.Date).Days;
+            if (days > daysOverdueMax) daysOverdueMax = days;
+            if (days > 0) overdueAmount += inv.BalanceDue;
+        }
+        var overdueRatio = openAmount > 0 ? overdueAmount / openAmount : 0m;
+        var writeOffRate = totalInvoices > 0 ? (decimal)writeOffs / totalInvoices : 0m;
+
+        // Score 0-100:
+        //  daysOverdueMax 0-180+ → 0-50 pts (clamped at 180 = 50pts)
+        //  overdueRatio 0-1 → 0-30 pts
+        //  writeOffRate 0-1 → 0-20 pts
+        var score = Math.Min(50m, daysOverdueMax / 180m * 50m)
+                  + overdueRatio * 30m
+                  + writeOffRate * 20m;
+        score = Math.Round(Math.Clamp(score, 0m, 100m), 1);
+
+        string band; string color;
+        if (score >= 60m) { band = "High"; color = "#dc2626"; }
+        else if (score >= 30m) { band = "Medium"; color = "#f59e0b"; }
+        else { band = "Low"; color = "#10b981"; }
+
+        var inputJson = JsonSerializer.Serialize(new
+        {
+            contactId, openInvoices = openInvoices.Count, totalInvoices, writeOffs,
+            daysOverdueMax, overdueRatio, writeOffRate, score,
+        });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.BadDebtRiskDetection,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: band, AiConfidence: 0.85m,
+                LocalModelAnswer: band, LocalModelConfidence: 0.85m,
+                LocalModelVersion: "stats-v1",
+                SourceEntityType: "Contact", SourceEntityId: contactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            score, band, color,
+            metrics = new {
+                openInvoices = openInvoices.Count, openAmount,
+                overdueAmount, daysOverdueMax,
+                overdueRatio = Math.Round(overdueRatio, 2),
+                writeOffs, writeOffRate = Math.Round(writeOffRate, 2),
+            },
+            reasoning = band switch
+            {
+                "High" => $"⚠️ ความเสี่ยงสูง — มี {openInvoices.Count} ใบค้าง สูงสุด {daysOverdueMax} วัน (เคยตัดหนี้สูญ {writeOffs} ใบ)",
+                "Medium" => $"ความเสี่ยงกลาง — มี {openInvoices.Count} ใบค้าง สูงสุด {daysOverdueMax} วัน",
+                _ => $"ความเสี่ยงต่ำ — จ่ายปกติ ({openInvoices.Count} ใบค้าง)",
+            },
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Discount % suggestion when creating a sales document.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("discount/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestDiscount(
+        Guid companyId, [FromQuery] Guid contactId, [FromQuery] decimal? amount, CancellationToken ct)
+    {
+        if (contactId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        // Lifetime sales (paid invoices) + repeat count
+        var sales = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted
+                && (d.DocumentType == DocumentType.Invoice
+                    || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.Receipt))
+            .Select(d => new { d.TotalAmount, d.DocumentDate, d.DiscountAmount })
+            .ToListAsync(ct);
+
+        var lifetimeValue = sales.Sum(s => s.TotalAmount);
+        var docCount = sales.Count;
+        var avgDiscountGiven = sales.Count > 0 && lifetimeValue > 0
+            ? Math.Round(sales.Sum(s => s.DiscountAmount) / Math.Max(lifetimeValue, 1m) * 100m, 2)
+            : 0m;
+
+        // Suggest tier:
+        //  Lifetime ≥1M + 10+ docs → 7%
+        //  Lifetime ≥300K + 5+ docs → 5%
+        //  Lifetime ≥100K + 3+ docs → 3%
+        //  Lifetime ≥30K + 2+ docs → 2%
+        //  else → 0%
+        decimal suggested; string tier;
+        if (lifetimeValue >= 1_000_000m && docCount >= 10) { suggested = 7m; tier = "Diamond"; }
+        else if (lifetimeValue >= 300_000m && docCount >= 5) { suggested = 5m; tier = "Gold"; }
+        else if (lifetimeValue >= 100_000m && docCount >= 3) { suggested = 3m; tier = "Silver"; }
+        else if (lifetimeValue >= 30_000m && docCount >= 2) { suggested = 2m; tier = "Bronze"; }
+        else { suggested = 0m; tier = "New"; }
+
+        // Cap at avgDiscountGiven + 2% so we never recommend wildly above
+        // what this customer historically received.
+        if (avgDiscountGiven > 0 && suggested > avgDiscountGiven + 2m)
+            suggested = Math.Round(avgDiscountGiven + 2m, 2);
+
+        var inputJson = JsonSerializer.Serialize(new { contactId, amount, lifetimeValue, docCount });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.DiscountSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: suggested.ToString("0.##"), AiConfidence: 0.75m,
+                LocalModelAnswer: suggested.ToString("0.##"), LocalModelConfidence: 0.75m,
+                LocalModelVersion: "tier-v1",
+                SourceEntityType: "Contact", SourceEntityId: contactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "tier", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            discountPercent = suggested,
+            tier, confidence = 0.75m,
+            metrics = new { lifetimeValue, docCount, avgDiscountGiven },
+            reasoning = tier switch
+            {
+                "Diamond" => $"💎 ลูกค้า Diamond — ซื้อ {docCount} ครั้ง รวม {lifetimeValue:N0} บาท → แนะนำ 7%",
+                "Gold" => $"🥇 ลูกค้า Gold — ซื้อ {docCount} ครั้ง รวม {lifetimeValue:N0} บาท → แนะนำ 5%",
+                "Silver" => $"🥈 ลูกค้า Silver — ซื้อ {docCount} ครั้ง รวม {lifetimeValue:N0} บาท → แนะนำ 3%",
+                "Bronze" => $"🥉 ลูกค้า Bronze — ซื้อ {docCount} ครั้ง รวม {lifetimeValue:N0} บาท → แนะนำ 2%",
+                _ => "ลูกค้าใหม่ — ยังไม่มีประวัติพอจะลด — แนะนำ 0%",
+            },
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Approval routing suggestion — who should approve this doc?
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("approval-routing/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestApprovalRouting(
+        Guid companyId, [FromQuery] string documentType, [FromQuery] decimal amount, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(documentType))
+            return BadRequest(new ApiResponse<object>(false, null, "documentType ห้ามว่าง"));
+
+        // Find approvers who approved similar (doc type + amount band ±30%)
+        // documents in the last 90 days. Pick the most frequent one.
+        var lo = amount * 0.7m;
+        var hi = amount * 1.3m;
+        var since = DateTime.UtcNow.AddDays(-90);
+        var docType = Enum.TryParse<DocumentType>(documentType, true, out var dt) ? dt : DocumentType.Invoice;
+
+        var approvers = await (
+            from a in _db.Set<DocumentApproval>().AsNoTracking()
+            join d in _db.Documents.AsNoTracking() on a.DocumentId equals d.Id
+            where a.CompanyId == companyId && a.Status == ApprovalStatus.Approved
+               && a.ApproverUserId != null
+               && d.DocumentType == docType
+               && d.TotalAmount >= lo && d.TotalAmount <= hi
+               && a.ApprovedAt != null && a.ApprovedAt > since
+            select a.ApproverUserId!.Value
+        ).ToListAsync(ct);
+
+        Guid? pickedUserId = null; string? pickedName = null; int supporting = 0;
+        if (approvers.Count >= 2)
+        {
+            var top = approvers.GroupBy(u => u).OrderByDescending(g => g.Count()).First();
+            pickedUserId = top.Key;
+            supporting = top.Count();
+            pickedName = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == pickedUserId.Value)
+                .Select(u => u.FullName)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        decimal confidence = approvers.Count >= 5 ? 0.85m
+                           : approvers.Count >= 2 ? 0.65m : 0m;
+        var inputJson = JsonSerializer.Serialize(new { documentType, amount, sampleSize = approvers.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.ApprovalRoutingSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: pickedUserId?.ToString() ?? "",
+                AiConfidence: confidence,
+                LocalModelAnswer: pickedUserId?.ToString() ?? "",
+                LocalModelConfidence: confidence,
+                LocalModelVersion: "history-mode-v1",
+                SourceEntityType: "Document", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            approverUserId = pickedUserId,
+            approverName = pickedName,
+            confidence, supportingSamples = supporting,
+            reasoning = pickedUserId.HasValue
+                ? $"📋 {pickedName} อนุมัติเอกสารแบบเดียวกัน {supporting} ใน {approvers.Count} ครั้งล่าสุด"
+                : "ยังไม่มีประวัติการอนุมัติพอจะแนะนำ — ใช้กฎ ApprovalRule เดิม",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Credit limit suggestion for a new customer — from p75 of
     //  existing customers' peak AR balance (sum of unpaid Invoice
     //  balances). Cold-starts to 50,000 THB for the very first

@@ -963,7 +963,52 @@
           this.suggestPaymentTerms(contactId);
           // Project allocation: เลือกโครงการให้ทุกบรรทัดที่ยังว่าง
           this.suggestProjectAllocation(contactId);
+          // Sales-side: bad-debt risk warning + discount tier suggest
+          const docType = document.getElementById('fDocType')?.value || '';
+          const isSales = ['Invoice','TaxInvoice','Receipt','Quotation','BillingNote'].includes(docType);
+          if (isSales) {
+            this.checkBadDebtRisk(contactId);
+            this.suggestDiscount(contactId);
+          }
         }
+      },
+
+      async checkBadDebtRisk(contactId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/bad-debt/check?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          document.getElementById('badDebtBox')?.remove();
+          if (!d || d.band === 'Low') return;
+          const box = document.createElement('div');
+          box.id = 'badDebtBox';
+          box.style.cssText = `margin:8px 0;padding:10px 12px;border-radius:6px;font-size:13px;border-left:4px solid ${d.color}`;
+          box.style.background = d.band === 'High' ? '#fee2e2' : '#fef3c7';
+          box.style.color = d.band === 'High' ? '#7f1d1d' : '#92400e';
+          box.innerHTML = `<strong>${d.reasoning}</strong><br>
+            <span style="font-size:11px">ยอดค้าง ${(d.metrics.openAmount || 0).toLocaleString()} บาท จาก ${d.metrics.openInvoices} ใบ (เกินกำหนด ${(d.metrics.overdueAmount || 0).toLocaleString()} บาท)</span>`;
+          const contactRow = document.getElementById('fContactId')?.closest('.form-row');
+          contactRow?.parentNode?.insertBefore(box, contactRow.nextSibling);
+        } catch { /* best-effort */ }
+      },
+
+      async suggestDiscount(contactId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/discount/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d || d.discountPercent <= 0) return;
+          // โชว์เป็น hint เท่านั้น — ผู้ใช้ตัดสินใจกรอกเอง (line discount)
+          if (typeof Layout.toast === 'function') {
+            Layout.toast(`💡 ${d.reasoning}`, 'info');
+          }
+        } catch { /* best-effort */ }
       },
 
       // FX rate auto-fill เมื่อสกุลเงิน ≠ THB หรือ date เปลี่ยน

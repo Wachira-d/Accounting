@@ -274,6 +274,10 @@ public class AiFeedbackTrainingJob : BackgroundService
         // Sprint-6 features
         nameof(AiFeatureKey.CreditLimitSuggestion),
         nameof(AiFeatureKey.ProductCategoryTagging),
+        // Sprint-7 features
+        nameof(AiFeatureKey.BadDebtRiskDetection),
+        nameof(AiFeatureKey.DiscountSuggestion),
+        nameof(AiFeatureKey.ApprovalRoutingSuggestion),
     };
 
     /// <summary>
@@ -334,6 +338,9 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.DocumentMemoGeneration) => true,
             nameof(AiFeatureKey.CreditLimitSuggestion) => true,
             nameof(AiFeatureKey.ProductCategoryTagging) => true,
+            nameof(AiFeatureKey.BadDebtRiskDetection) => true,
+            nameof(AiFeatureKey.DiscountSuggestion) => true,
+            nameof(AiFeatureKey.ApprovalRoutingSuggestion) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in
