@@ -358,10 +358,12 @@ public class AiSuggestionController : ControllerBase
         else if (prefix == "5")
         {
             // Expense slots: most-used expense account company-wide.
-            var used = await _db.Set<JournalEntryLine>().AsNoTracking()
-                .Where(l => l.CompanyId == companyId && l.DebitAmount > 0
-                    && l.Account.AccountCode.StartsWith("5"))
-                .Select(l => l.AccountId).Take(500).ToListAsync(ct);
+            // JournalEntryLine has no CompanyId — scope via the parent JE.
+            var used = await (from l in _db.Set<JournalEntryLine>().AsNoTracking()
+                              join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                              where j.CompanyId == companyId && l.DebitAmount > 0
+                                 && l.Account.AccountCode.StartsWith("5")
+                              select l.AccountId).Take(500).ToListAsync(ct);
             if (used.Count > 0)
             {
                 pickedId = used.GroupBy(x => x).OrderByDescending(g => g.Count()).First().Key;
@@ -859,7 +861,7 @@ public class AiSuggestionController : ControllerBase
 
         // Tier 1: latest DocumentLine.ProjectId attached to a doc with this contact
         var recent = await _db.Set<DocumentLine>().AsNoTracking()
-            .Where(l => l.CompanyId == companyId && l.ProjectId != null
+            .Where(l => l.Document.CompanyId == companyId && l.ProjectId != null
                 && l.Document.ContactId == contactId && !l.Document.IsDeleted)
             .OrderByDescending(l => l.Document.DocumentDate)
             .Take(12)
@@ -1095,7 +1097,7 @@ public class AiSuggestionController : ControllerBase
         var history = await (from l in _db.Set<JournalEntryLine>().AsNoTracking()
                              join e in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals e.Id
                              where e.CompanyId == companyId
-                                && l.AccountId != null
+                                && l.AccountId != Guid.Empty
                                 && l.Description != null
                                 && l.Description.ToLower().Contains(keyword)
                                 && ((wantDebit && l.DebitAmount > 0) || (!wantDebit && l.CreditAmount > 0))
@@ -1105,8 +1107,7 @@ public class AiSuggestionController : ControllerBase
             .ToListAsync(ct);
 
         var grouped = history
-            .Where(h => h.AccountId.HasValue)
-            .GroupBy(h => h.AccountId!.Value)
+            .GroupBy(h => h.AccountId)
             .Select(g => new { AccountId = g.Key, Count = g.Count() })
             .OrderByDescending(g => g.Count)
             .Take(3)
@@ -1538,7 +1539,7 @@ public class AiSuggestionController : ControllerBase
         var today = DateTime.UtcNow.Date;
 
         var sales = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.ContactId != null
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.ContactId != Guid.Empty
                 && (d.DocumentType == DocumentType.Invoice
                     || d.DocumentType == DocumentType.TaxInvoice
                     || d.DocumentType == DocumentType.Receipt)
@@ -1547,7 +1548,7 @@ public class AiSuggestionController : ControllerBase
             .ToListAsync(ct);
 
         var perCustomer = sales
-            .GroupBy(s => s.ContactId!.Value)
+            .GroupBy(s => s.ContactId)
             .Select(g => new
             {
                 ContactId = g.Key,
@@ -1965,7 +1966,7 @@ public class AiSuggestionController : ControllerBase
                               && d.DocumentDate >= start && d.DocumentDate <= end
                               && (d.DocumentType == DocumentType.PaymentVoucher
                                   || d.DocumentType == DocumentType.PurchaseInvoice
-                                  || d.DocumentType == DocumentType.ExpenseClaim)
+                                  || d.DocumentType == DocumentType.Expense)
                               && d.Status != DocumentStatus.Rejected
                               && d.Status != DocumentStatus.Voided
                            select new { l.Description, l.Amount, d.DocumentNumber, d.Id }
@@ -2236,9 +2237,12 @@ public class AiSuggestionController : ControllerBase
             .CountAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted
                 && (d.DocumentType == DocumentType.Invoice
                     || d.DocumentType == DocumentType.TaxInvoice), ct);
+        // ระบบไม่มีสถานะ "ตัดหนี้สูญ" แยก — ใช้เอกสารที่ถูก Void เป็น proxy
+        // ของการตัดหนี้ (ยกเลิกใบแจ้งหนี้ที่เก็บไม่ได้). 0 = ไม่เคยมี.
         var writeOffs = await _db.Documents.AsNoTracking()
             .CountAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted
-                && d.Status == DocumentStatus.WrittenOff, ct);
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                && d.Status == DocumentStatus.Voided, ct);
 
         int daysOverdueMax = 0;
         decimal overdueAmount = 0m;
@@ -2477,7 +2481,7 @@ public class AiSuggestionController : ControllerBase
         var since = DateTime.UtcNow.AddDays(-90);
         var customerBalances = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.ContactId != null
+                && d.ContactId != Guid.Empty
                 && (d.DocumentType == DocumentType.Invoice
                     || d.DocumentType == DocumentType.TaxInvoice
                     || d.DocumentType == DocumentType.BillingNote)

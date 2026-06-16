@@ -418,7 +418,7 @@ public partial class PdfGenerationService
         Accounting.Models.Enums.DocumentType.PaymentVoucher => "ผู้รับเงิน",
         Accounting.Models.Enums.DocumentType.PurchaseOrder => "ผู้ขาย",
         Accounting.Models.Enums.DocumentType.PurchaseInvoice => "ผู้ขาย",
-        Accounting.Models.Enums.DocumentType.ExpenseClaim => "ผู้ขาย/ผู้รับเงิน",
+        Accounting.Models.Enums.DocumentType.Expense => "ผู้ขาย/ผู้รับเงิน",
         _ => "ลูกค้า",
     };
 
