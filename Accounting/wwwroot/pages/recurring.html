@@ -72,8 +72,11 @@
             <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
               <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
             </div>
-            <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></label>
+            <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')">🤖</button>
+            </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
+              <div id="fExpenseCatHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
             </div>
           </div>
           <div class="form-row">
@@ -195,6 +198,37 @@ const Page = {
     Layout.openModal('formModal');
   },
 
+  async aiSuggestAccount(slot, selectId, hintId) {
+    try {
+      const cid = Layout.getCompanyId();
+      const token = localStorage.getItem('token');
+      const r = await fetch(`/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`,
+        { headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      const d = j?.data;
+      const sel = document.getElementById(selectId);
+      const hint = hintId ? document.getElementById(hintId) : null;
+      if (!d || !d.accountId) { if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'); return; }
+      if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+        const opt = document.createElement('option');
+        opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+        sel.appendChild(opt);
+      }
+      if (sel) sel.value = d.accountId;
+      if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+      if (sel && d.feedbackId) {
+        sel.addEventListener('change', () => {
+          try {
+            fetch(`/api/companies/${cid}/ai-feedback/record`, {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+            }).catch(() => {});
+          } catch {}
+        }, { once: true });
+      }
+    } catch { /* best-effort */ }
+  },
   async loadFormData() {
     const api = Layout.api(); if (!api) return;
     if (!this._contactAC) {

@@ -99,7 +99,10 @@
             <div class="form-group"><label class="form-label">Cost Center (Dimension)</label><select class="form-select" id="dDim"><option value="">— ไม่ระบุ —</option></select>
               <div style="font-size:11px;color:#94a3b8;margin-top:3px">ผูกแผนกกับ cost center ที่มีอยู่ — Payroll/Benefit voucher จะลงบัญชีไปที่ dimension นี้อัตโนมัติ</div>
             </div>
-            <div class="form-group"><label class="form-label">บัญชีค่าใช้จ่ายเริ่มต้น</label><select class="form-select" id="dAcct"><option value="">— ไม่ระบุ —</option></select></div>
+            <div class="form-group"><label class="form-label">บัญชีค่าใช้จ่ายเริ่มต้น
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('DeptExpense','dAcct','dAcctHint')">🤖</button>
+            </label><select class="form-select" id="dAcct"><option value="">— ไม่ระบุ —</option></select>
+            <div id="dAcctHint" style="font-size:11px;color:#64748b;margin-top:4px"></div></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">หัวหน้าแผนก</label><select class="form-select" id="dManager"><option value="">— ไม่ระบุ —</option></select></div>
@@ -231,6 +234,39 @@
         document.getElementById('dManager').innerHTML = empOpts;
         document.getElementById('dParent').innerHTML = parentOpts;
       },
+      // AI suggest GL account ต่อช่อง (generic slot endpoint) — เรียนต่อบริษัท
+      async aiSuggestAccount(slot, selectId, hintId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          const sel = document.getElementById(selectId);
+          const hint = hintId ? document.getElementById(hintId) : null;
+          if (!d || !d.accountId) { if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'); return; }
+          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+            const opt = document.createElement('option');
+            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+            sel.appendChild(opt);
+          }
+          if (sel) sel.value = d.accountId;
+          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+          if (sel && d.feedbackId) {
+            sel.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
+      },
+
       openCreateDept() {
         document.getElementById('deptModalTitle').textContent = 'เพิ่มแผนก';
         document.getElementById('dActiveRow').style.display = 'none';
