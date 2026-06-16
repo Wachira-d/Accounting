@@ -209,10 +209,70 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             row.UserChosenAt = DateTime.UtcNow;
             row.UserAcceptedAi = acceptedAi;
             await _db.SaveChangesAsync(ct);
+
+            // ── ONLINE LEARNING (train ไปเลย) ───────────────────────────
+            // The moment a user confirms or overrides, fold the ground
+            // truth into AiSuggestionMemory so the very next suggestion for
+            // the same input returns the learned answer — no nightly job,
+            // no manual "train" click. Keyed by the feedback row's
+            // PromptHash, which suggestion endpoints set to a stable
+            // business key (contactId, normalised name, …). Skipped when
+            // the key is empty (legacy rows) or the answer is blank.
+            await LearnInlineAsync(row.CompanyId, row.FeatureKey, row.PromptHash, chosenAnswer, ct);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AiFeedback user-choice update failed for {Id}", feedbackId);
+        }
+    }
+
+    /// <summary>Upsert the per-(company, feature, input) learned answer.
+    /// First confirmation already counts — a single explicit user choice
+    /// for an exact input is authoritative, so the model "learns ไปเลย".
+    /// A persistent override (Override &gt; Accept) flips the stored answer
+    /// to the new value. Confidence = Accept / (Accept + Override).</summary>
+    private async Task LearnInlineAsync(Guid companyId, string featureKey, string inputKey, string chosenAnswer, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(inputKey) || string.IsNullOrWhiteSpace(chosenAnswer)) return;
+        if (inputKey.Length > 256) inputKey = inputKey[..256];
+        try
+        {
+            var mem = await _db.AiSuggestionMemories.FirstOrDefaultAsync(
+                m => m.CompanyId == companyId && m.FeatureKey == featureKey && m.InputKey == inputKey, ct);
+            if (mem == null)
+            {
+                mem = new AiSuggestionMemory
+                {
+                    CompanyId = companyId, FeatureKey = featureKey, InputKey = inputKey,
+                    LearnedAnswer = chosenAnswer, AcceptCount = 1, OverrideCount = 0,
+                    Confidence = 1m, LastLearnedAt = DateTime.UtcNow,
+                };
+                _db.AiSuggestionMemories.Add(mem);
+            }
+            else if (string.Equals(mem.LearnedAnswer, chosenAnswer, StringComparison.Ordinal))
+            {
+                mem.AcceptCount++;
+            }
+            else
+            {
+                mem.OverrideCount++;
+                // A challenger that has now out-voted the incumbent takes over.
+                if (mem.OverrideCount > mem.AcceptCount)
+                {
+                    mem.LearnedAnswer = chosenAnswer;
+                    mem.AcceptCount = 1;
+                    mem.OverrideCount = 0;
+                }
+            }
+            var total = mem.AcceptCount + mem.OverrideCount;
+            mem.Confidence = total > 0 ? Math.Round((decimal)mem.AcceptCount / total, 4) : 1m;
+            mem.LastLearnedAt = DateTime.UtcNow;
+            mem.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Online-learning upsert failed feature={Feature} key={Key}", featureKey, inputKey);
         }
     }
 

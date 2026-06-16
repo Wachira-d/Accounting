@@ -336,6 +336,7 @@ public class AccountingDbContext : DbContext
     public DbSet<LocalModelHealth> LocalModelHealths => Set<LocalModelHealth>();
     public DbSet<AiFeatureRoutingConfig> AiFeatureRoutingConfigs => Set<AiFeatureRoutingConfig>();
     public DbSet<AiUsageDaily> AiUsageDailies => Set<AiUsageDaily>();
+    public DbSet<AiSuggestionMemory> AiSuggestionMemories => Set<AiSuggestionMemory>();
 
     // External Integration
     public DbSet<ExternalIntegration> ExternalIntegrations => Set<ExternalIntegration>();
@@ -2351,6 +2352,17 @@ public class AccountingDbContext : DbContext
                 .IsUnique();
             e.HasIndex(u => u.UsageDate).HasDatabaseName("IX_AiUsageDailies_UsageDate");
             e.HasQueryFilter(u => !u.IsDeleted);
+        });
+
+        modelBuilder.Entity<AiSuggestionMemory>(e =>
+        {
+            // One learned answer per (company, feature, input) — the
+            // online-learning chokepoint. Unique so LearnAsync can upsert.
+            e.HasIndex(m => new { m.CompanyId, m.FeatureKey, m.InputKey })
+                .HasDatabaseName("IX_AiSuggestionMemories_Company_Feature_Input")
+                .IsUnique();
+            e.Property(m => m.Confidence).HasPrecision(5, 4);
+            e.HasQueryFilter(m => !m.IsDeleted);
         });
 
         // External Integration

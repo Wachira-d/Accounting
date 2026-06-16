@@ -372,10 +372,27 @@
           if (!d) return;
           const catEl = document.getElementById('fCategory');
           const hintEl = document.getElementById('categoryHint');
-          if (catEl) catEl.value = d.existingCategoryName || d.category;
+          const suggested = d.existingCategoryName || d.category;
+          if (catEl) catEl.value = suggested;
           if (hintEl) {
             hintEl.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
             hintEl.dataset.aiFeedbackId = d.feedbackId || '';
+          }
+          // เรียนตอน user แก้หมวด → ส่ง ground-truth กลับ (train ไปเลย)
+          if (catEl && d.feedbackId) {
+            catEl.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    feedbackId: d.feedbackId,
+                    chosenAnswer: catEl.value,
+                    acceptedAi: catEl.value === suggested,
+                  })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
           }
         } catch { /* best-effort */ }
       },

@@ -282,6 +282,49 @@ public class LocalModelHealth : BaseEntity
 }
 
 /// <summary>
+/// Online-learning memory — the "train ไปเลย" store. Unlike the nightly
+/// distillation job, this table is upserted INLINE the moment a user
+/// confirms or overrides a suggestion (via RecordUserChoiceAsync). One
+/// row per (Company, Feature, InputKey) holds the answer the company's
+/// own users have settled on for that exact input, so the very next
+/// suggestion for the same input returns the learned value with no
+/// provider call and no batch wait.
+///
+/// InputKey is a stable, feature-defined key (contactId, normalised
+/// product name, description-keyword + side, …) carried in the feedback
+/// row's PromptHash. AcceptCount / OverrideCount track agreement so
+/// Confidence = Accept / (Accept + Override) and a single accidental
+/// override doesn't immediately flip a well-established mapping.
+/// </summary>
+public class AiSuggestionMemory : TenantEntity
+{
+    public string FeatureKey { get; set; } = "";
+
+    /// <summary>Stable per-feature input key (lowercased). Together with
+    /// CompanyId + FeatureKey this uniquely identifies "the same question
+    /// asked again". Indexed for O(1) lookup at suggestion time.</summary>
+    public string InputKey { get; set; } = "";
+
+    /// <summary>The answer the company's users have converged on for this
+    /// input — an account code / contactId / rate / category string. Read
+    /// back verbatim by the suggestion endpoint.</summary>
+    public string LearnedAnswer { get; set; } = "";
+
+    /// <summary>Times a user confirmed (kept) this learned answer.</summary>
+    public int AcceptCount { get; set; }
+
+    /// <summary>Times a user overrode it with something else. When an
+    /// override wins repeatedly, LearnedAnswer flips to the new value.</summary>
+    public int OverrideCount { get; set; }
+
+    /// <summary>Accept / (Accept + Override). Suggestion endpoints only
+    /// trust the memory above a threshold (e.g. ≥0.6 with ≥2 samples).</summary>
+    public decimal Confidence { get; set; }
+
+    public DateTime LastLearnedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
 /// Per-feature routing policy — admin sets this; AiOrchestrator reads
 /// it on every call. Separate from LocalModelHealth (which is nightly-
 /// recomputed STATS) because this is admin INTENT and lives across

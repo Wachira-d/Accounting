@@ -47,6 +47,67 @@ public class AiSuggestionController : ControllerBase
       _localModels = localModels; _feedback = feedback; }
 
     // ────────────────────────────────────────────────────────────────
+    //  ONLINE-LEARNING MEMORY — "train ไปเลย"
+    //  Every suggestion endpoint calls MemoryLookupAsync FIRST with a
+    //  stable per-feature input key. If the company's users have already
+    //  settled on an answer for that exact input (learned inline by
+    //  AiFeedbackRecorder.RecordUserChoiceAsync the moment they last
+    //  confirmed/overrode), it's returned immediately — no heuristic, no
+    //  provider call, no batch wait. The same key is stamped onto the
+    //  feedback row's PromptHash so the next confirmation updates the
+    //  same memory bucket.
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>Learned answer for (company, feature, key) when the
+    /// company has confirmed it at least once and net agreement is ≥50%.
+    /// Returns null to fall through to the heuristic.</summary>
+    private async Task<(string Answer, decimal Confidence, int Samples)?> MemoryLookupAsync(
+        Guid companyId, AiFeatureKey feature, string inputKey, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(inputKey)) return null;
+        if (inputKey.Length > 256) inputKey = inputKey[..256];
+        var m = await _db.AiSuggestionMemories.AsNoTracking().FirstOrDefaultAsync(
+            x => x.CompanyId == companyId && x.FeatureKey == feature.ToString() && x.InputKey == inputKey, ct);
+        if (m == null) return null;
+        if (m.Confidence < 0.50m) return null;          // contested — let heuristic decide
+        var samples = m.AcceptCount + m.OverrideCount;
+        return (m.LearnedAnswer, m.Confidence, samples);
+    }
+
+    /// <summary>Normalise a free-text input into a stable memory key —
+    /// lowercased, collapsed whitespace, first 60 chars. Used for
+    /// name/description-keyed features (product name, asset name, JE memo).</summary>
+    private static string NormKey(params string?[] parts)
+    {
+        var joined = string.Join("|", parts.Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => System.Text.RegularExpressions.Regex.Replace(p!.Trim().ToLowerInvariant(), @"\s+", " ")));
+        return joined.Length > 200 ? joined[..200] : joined;
+    }
+
+    /// <summary>Record a feedback row for a memory-served answer, stamping
+    /// the same memory key onto PromptHash so a subsequent user override
+    /// updates the same bucket. Returns the feedbackId for the UI to pair
+    /// its /ai-feedback/record call to.</summary>
+    private async Task<Guid?> RecordLearnedAsync(Guid companyId, AiFeatureKey feature, string memKey,
+        string answer, decimal confidence, string entityType, Guid? entityId, CancellationToken ct)
+    {
+        try
+        {
+            return await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: feature,
+                PromptHash: memKey, PromptJson: JsonSerializer.Serialize(new { memKey, source = "Learned" }),
+                ResponseJson: null, AiPrimaryAnswer: answer, AiConfidence: confidence,
+                LocalModelAnswer: answer, LocalModelConfidence: confidence,
+                LocalModelVersion: "memory-v1",
+                SourceEntityType: entityType, SourceEntityId: entityId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "memory", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { return null; }
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Payment Voucher: suggest the settlement basis (Cash จ่ายทันที vs
     //  Credit เครดิต) for a supplier. Served by the local
     //  PaymentTypeDistillationModel — confirmed history when it has
@@ -60,6 +121,21 @@ public class AiSuggestionController : ControllerBase
     {
         if (contactId == Guid.Empty)
             return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var ptMemKey = contactId.ToString();
+        var ptMem = await MemoryLookupAsync(companyId, AiFeatureKey.PaymentTypeSuggestion, ptMemKey, ct);
+        if (ptMem.HasValue)
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.PaymentTypeSuggestion, ptMemKey,
+                ptMem.Value.Answer, ptMem.Value.Confidence, "Contact", contactId, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                paymentType = ptMem.Value.Answer, confidence = ptMem.Value.Confidence,
+                supportingSamples = ptMem.Value.Samples,
+                reasoning = $"🧠 เรียนรู้จากที่ทีมคุณเลือกไว้กับผู้ขายรายนี้ ({ptMem.Value.Samples} ครั้ง)",
+                feedbackId = fid0,
+            }));
+        }
 
         var model = _localModels.FirstOrDefault(m => m.FeatureKey == AiFeatureKey.PaymentTypeSuggestion);
         if (model == null)
@@ -77,7 +153,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.PaymentTypeSuggestion,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: ptMemKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: answer, AiConfidence: confidence,
                 LocalModelAnswer: answer, LocalModelConfidence: confidence,
                 LocalModelVersion: pred?.ModelVersion ?? model.Version,
@@ -224,6 +300,22 @@ public class AiSuggestionController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.LineDescription))
             return BadRequest(new ApiResponse<object>(false, null, "LineDescription ห้ามว่าง"));
 
+        // Memory key = (contact, normalised description). VAT treatment is
+        // stable per vendor+item, so once the team confirms it once it's learned.
+        var vatMemKey = NormKey(req.ContactId?.ToString(), req.LineDescription);
+        var vatMem = await MemoryLookupAsync(companyId, AiFeatureKey.VatTypeInference, vatMemKey, ct);
+        if (vatMem.HasValue)
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.VatTypeInference, vatMemKey,
+                vatMem.Value.Answer, vatMem.Value.Confidence, "DocumentLine", req.ContactId, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                vatType = vatMem.Value.Answer, confidence = vatMem.Value.Confidence,
+                reasoning = $"🧠 เรียนรู้จากที่ทีมคุณเคยตั้งไว้กับรายการนี้ ({vatMem.Value.Samples} ครั้ง)",
+                feedbackId = fid0,
+            }));
+        }
+
         // 1) Vendor-side check: ผู้ขายต่างประเทศ → export rule (0% ฝั่งขาย,
         //    หรือ ภ.พ.36 ฝั่งซื้อ). ใช้ทั้ง explicit country และเทียบ TaxId
         //    ที่ไม่ใช่รูปแบบไทย (13 หลัก เริ่ม 0–9).
@@ -282,7 +374,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.VatTypeInference,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: vatMemKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: suggestion, AiConfidence: isExempt || isForeign ? 0.85m : 0.95m,
                 LocalModelAnswer: suggestion, LocalModelConfidence: 0.85m,
                 LocalModelVersion: "heuristic-v1",
@@ -319,6 +411,22 @@ public class AiSuggestionController : ControllerBase
     {
         if (contactId == Guid.Empty)
             return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var memKey = contactId.ToString();
+        // Learned-first: ถ้าผู้ใช้บริษัทนี้เคยยืนยันเทอมของผู้ติดต่อรายนี้
+        // แล้ว → คืนค่านั้นเลย (online learning) ไม่ต้องคำนวณ heuristic ใหม่.
+        var learnedMem = await MemoryLookupAsync(companyId, AiFeatureKey.PaymentTermsSuggestion, memKey, ct);
+        if (learnedMem.HasValue && int.TryParse(learnedMem.Value.Answer, out var learnedDays) && learnedDays > 0)
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.PaymentTermsSuggestion, memKey,
+                learnedMem.Value.Answer, learnedMem.Value.Confidence, "Contact", contactId, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                creditDays = learnedDays, source = "Learned", confidence = learnedMem.Value.Confidence,
+                reasoning = $"🧠 เรียนรู้จากที่ทีมคุณยืนยันไว้: Net {learnedDays} วัน ({learnedMem.Value.Samples} ครั้ง)",
+                feedbackId = fid0,
+            }));
+        }
 
         var contact = await _db.Contacts.AsNoTracking()
             .Where(c => c.Id == contactId && c.CompanyId == companyId)
@@ -376,7 +484,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.PaymentTermsSuggestion,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: memKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: days.ToString(), AiConfidence: confidence,
                 LocalModelAnswer: days.ToString(), LocalModelConfidence: confidence,
                 LocalModelVersion: "lookup-v1",
@@ -415,6 +523,21 @@ public class AiSuggestionController : ControllerBase
     {
         if (contactId == Guid.Empty)
             return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var memKey = contactId.ToString();
+        var learnedMem = await MemoryLookupAsync(companyId, AiFeatureKey.PaymentChannelSuggestion, memKey, ct);
+        if (learnedMem.HasValue)
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.PaymentChannelSuggestion, memKey,
+                learnedMem.Value.Answer, learnedMem.Value.Confidence, "Contact", contactId, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                paymentChannel = learnedMem.Value.Answer, label = (string?)null,
+                source = "Learned", confidence = learnedMem.Value.Confidence,
+                reasoning = $"🧠 เรียนรู้จากที่ทีมคุณเลือกไว้ ({learnedMem.Value.Samples} ครั้ง)",
+                feedbackId = fid0,
+            }));
+        }
 
         // Find recent payments to documents belonging to this contact.
         // Each payment has BankAccountId (bank) or OverridePaymentAccountId
@@ -501,7 +624,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.PaymentChannelSuggestion,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: memKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: channelValue, AiConfidence: confidence,
                 LocalModelAnswer: channelValue, LocalModelConfidence: confidence,
                 LocalModelVersion: "history-mode-v1",
@@ -540,6 +663,24 @@ public class AiSuggestionController : ControllerBase
     {
         if (contactId == Guid.Empty)
             return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var projMemKey = contactId.ToString();
+        var projMem = await MemoryLookupAsync(companyId, AiFeatureKey.ProjectAllocationSuggestion, projMemKey, ct);
+        if (projMem.HasValue && Guid.TryParse(projMem.Value.Answer, out var learnedProj))
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.ProjectAllocationSuggestion, projMemKey,
+                projMem.Value.Answer, projMem.Value.Confidence, "Contact", contactId, ct);
+            var pName = await _db.Set<Project>().AsNoTracking()
+                .Where(p => p.Id == learnedProj && p.CompanyId == companyId)
+                .Select(p => p.Code + " - " + p.Name).FirstOrDefaultAsync(ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                projectId = (Guid?)learnedProj, projectLabel = pName,
+                confidence = projMem.Value.Confidence, source = "Learned",
+                reasoning = $"🧠 เรียนรู้จากที่ทีมคุณผูกโครงการให้ผู้ขายรายนี้ ({projMem.Value.Samples} ครั้ง)",
+                feedbackId = fid0,
+            }));
+        }
 
         // Tier 1: latest DocumentLine.ProjectId attached to a doc with this contact
         var recent = await _db.Set<DocumentLine>().AsNoTracking()
@@ -586,7 +727,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.ProjectAllocationSuggestion,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: projMemKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: pickedId?.ToString() ?? "", AiConfidence: confidence,
                 LocalModelAnswer: pickedId?.ToString() ?? "", LocalModelConfidence: confidence,
                 LocalModelVersion: "history-mode-v1",
@@ -749,6 +890,27 @@ public class AiSuggestionController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Description) || req.Description.Trim().Length < 3)
             return Ok(new ApiResponse<object>(true, new { suggestions = new object[0] }));
 
+        // Memory key = description keyword + side. JE coding for a recurring
+        // memo (e.g. "ค่าน้ำประปา" Debit) is stable, so it learns fast.
+        var jeMemKey = NormKey(req.Description, req.Side ?? "Debit");
+        var jeMem = await MemoryLookupAsync(companyId, AiFeatureKey.ManualJeAccountSuggestion, jeMemKey, ct);
+        if (jeMem.HasValue && Guid.TryParse(jeMem.Value.Answer, out var learnedAcct))
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.ManualJeAccountSuggestion, jeMemKey,
+                jeMem.Value.Answer, jeMem.Value.Confidence, "JournalEntryLine", null, ct);
+            var acc = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == learnedAcct && a.CompanyId == companyId)
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName }).FirstOrDefaultAsync(ct);
+            if (acc != null)
+                return Ok(new ApiResponse<object>(true, new
+                {
+                    suggestions = new[] { new {
+                        accountId = acc.Id, accountCode = acc.AccountCode, accountName = acc.AccountName,
+                        confidence = jeMem.Value.Confidence, supportingSamples = jeMem.Value.Samples } },
+                    learned = true, feedbackId = fid0,
+                }));
+        }
+
         // Mine prior JournalEntryLine.Description that contains the same
         // keyword and pick the most frequently used AccountId for that side.
         var descLower = req.Description.Trim().ToLowerInvariant();
@@ -808,7 +970,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.ManualJeAccountSuggestion,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: jeMemKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: suggestions.FirstOrDefault()?.accountId.ToString() ?? "",
                 AiConfidence: suggestions.FirstOrDefault()?.confidence ?? 0m,
                 LocalModelAnswer: suggestions.FirstOrDefault()?.accountId.ToString() ?? "",
@@ -835,6 +997,24 @@ public class AiSuggestionController : ControllerBase
     {
         if (contactId == Guid.Empty)
             return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        var dimMemKey = contactId.ToString();
+        var dimMem = await MemoryLookupAsync(companyId, AiFeatureKey.DimensionAllocationSuggestion, dimMemKey, ct);
+        if (dimMem.HasValue && Guid.TryParse(dimMem.Value.Answer, out var learnedDim))
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.DimensionAllocationSuggestion, dimMemKey,
+                dimMem.Value.Answer, dimMem.Value.Confidence, "Contact", contactId, ct);
+            var dLabel = await _db.Set<AccountingDimension>().AsNoTracking()
+                .Where(x => x.Id == learnedDim && x.CompanyId == companyId)
+                .Select(x => x.Code + " - " + x.Name).FirstOrDefaultAsync(ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                dimensionId = (Guid?)learnedDim, dimensionLabel = dLabel,
+                confidence = dimMem.Value.Confidence, source = "Learned",
+                reasoning = $"🧠 เรียนรู้จากที่ทีมคุณลงศูนย์ต้นทุนให้ผู้ขายรายนี้ ({dimMem.Value.Samples} ครั้ง)",
+                feedbackId = fid0,
+            }));
+        }
 
         // DocumentLine ไม่มี DimensionId — ดึงผ่าน JE ที่ระบบ post จาก
         // เอกสารของ contact นี้ (SourceDocumentId เป็น Document.Id).
@@ -882,7 +1062,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.DimensionAllocationSuggestion,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: dimMemKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: pickedId?.ToString() ?? "", AiConfidence: confidence,
                 LocalModelAnswer: pickedId?.ToString() ?? "", LocalModelConfidence: confidence,
                 LocalModelVersion: "history-mode-v1",
@@ -921,6 +1101,7 @@ public class AiSuggestionController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.AssetName))
             return BadRequest(new ApiResponse<object>(false, null, "AssetName ห้ามว่าง"));
 
+        var assetMemKey = NormKey(req.AssetName);  // capture key — learning สะสมต่อชื่อสินทรัพย์
         var name = req.AssetName.ToLowerInvariant();
         string category; int usefulLifeMonths; string depMethod = "StraightLine"; string reasoning;
 
@@ -951,7 +1132,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.AssetCategorySuggestion,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: assetMemKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: category, AiConfidence: 0.80m,
                 LocalModelAnswer: category, LocalModelConfidence: 0.80m,
                 LocalModelVersion: "keyword-v1",
@@ -2198,6 +2379,26 @@ public class AiSuggestionController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.ProductName))
             return BadRequest(new ApiResponse<object>(false, null, "ProductName ห้ามว่าง"));
 
+        var catMemKey = NormKey(req.ProductName);
+        var catMem = await MemoryLookupAsync(companyId, AiFeatureKey.ProductCategoryTagging, catMemKey, ct);
+        if (catMem.HasValue)
+        {
+            var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.ProductCategoryTagging, catMemKey,
+                catMem.Value.Answer, catMem.Value.Confidence, "Product", null, ct);
+            // Answer อาจเป็น category name หรือ ProductCategory id — ส่งทั้งคู่
+            var existingMatch = await _db.Set<ProductCategory>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                    && (c.Id.ToString() == catMem.Value.Answer || c.Name == catMem.Value.Answer))
+                .Select(c => new { c.Id, c.Name }).FirstOrDefaultAsync(ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                category = existingMatch?.Name ?? catMem.Value.Answer,
+                reasoning = $"🧠 เรียนรู้จากที่ทีมคุณเคยจัดสินค้าชื่อคล้ายกัน ({catMem.Value.Samples} ครั้ง)",
+                existingCategoryId = existingMatch?.Id, existingCategoryName = existingMatch?.Name,
+                confidence = catMem.Value.Confidence, feedbackId = fid0,
+            }));
+        }
+
         var text = (req.ProductName + " " + (req.Description ?? "")).ToLowerInvariant();
         string category; string reasoning;
 
@@ -2234,7 +2435,7 @@ public class AiSuggestionController : ControllerBase
         {
             feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
                 CompanyId: companyId, FeatureKey: AiFeatureKey.ProductCategoryTagging,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                PromptHash: catMemKey, PromptJson: inputJson, ResponseJson: null,
                 AiPrimaryAnswer: matched?.Id.ToString() ?? category, AiConfidence: 0.75m,
                 LocalModelAnswer: matched?.Id.ToString() ?? category, LocalModelConfidence: 0.75m,
                 LocalModelVersion: "keyword-v1",

@@ -3950,6 +3950,28 @@ public static class DatabaseMigrationHelper
             // null = ไม่จำกัด (เดิม). ใช้ดู AR เทียบเตือนตอนสร้าง Invoice ใหม่.
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "CreditLimit" numeric(18,2) NULL;""",
 
+            // ===== AiSuggestionMemory — online-learning store (train ไปเลย) =====
+            // upsert ทันทีเมื่อ user ยืนยัน/แก้ suggestion; suggestion ครั้งถัด
+            // อ่านค่าที่เรียนแล้วก่อน ไม่ต้องรอ nightly job / ไม่ต้องกดปุ่ม.
+            """
+            CREATE TABLE IF NOT EXISTS "AiSuggestionMemories" (
+                "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "FeatureKey" varchar(64) NOT NULL,
+                "InputKey" varchar(256) NOT NULL,
+                "LearnedAnswer" varchar(512) NOT NULL DEFAULT '',
+                "AcceptCount" integer NOT NULL DEFAULT 0,
+                "OverrideCount" integer NOT NULL DEFAULT 0,
+                "Confidence" numeric(5,4) NOT NULL DEFAULT 0,
+                "LastLearnedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamp with time zone NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false,
+                "Version" integer NOT NULL DEFAULT 0
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_AiSuggestionMemories_Company_Feature_Input" ON "AiSuggestionMemories" ("CompanyId", "FeatureKey", "InputKey") WHERE "IsDeleted" = false;""",
+
             // ===== LINE Messaging API per-company (was global in appsettings) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineChannelAccessToken" varchar(2000) NULL;""",
