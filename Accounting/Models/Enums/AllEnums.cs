@@ -1502,6 +1502,15 @@ public enum AiFeatureKey
     /// SMB owners focus inventory management effort.</summary>
     InventoryAbcAnalysis = 52,
 
+    /// <summary>Generic GL-account-slot suggestion — fills any
+    /// chart-of-accounts dropdown (contact AR/AP/GR, fixed-asset
+    /// asset/dep/accum, department/budget/petty-cash expense) from
+    /// (a) per-tenant learned memory keyed by slot+context, then
+    /// (b) the most-used account for that slot in history, then
+    /// (c) the standard code-prefix default. One feature key serves
+    /// every slot so all COA pickers learn through the same loop.</summary>
+    GlAccountSlotSuggestion = 53,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

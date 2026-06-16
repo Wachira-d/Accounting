@@ -152,25 +152,32 @@
             <div style="font-weight:600;color:#1e293b;margin-bottom:10px">⚙️ ตั้งค่าการบันทึกบัญชี</div>
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี</label>
+                <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAR','fDefaultArAccount','arHint')">🤖</button>
+                </label>
                 <select class="form-input" id="fDefaultArAccount">
                   <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
                 </select>
-                <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 113xxx — ลูกหนี้การค้า</div>
+                <div class="hint" id="arHint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 113xxx — ลูกหนี้การค้า</div>
               </div>
               <div class="form-group">
-                <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี</label>
+                <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAP','fDefaultApAccount','apHint')">🤖</button>
+                </label>
                 <select class="form-input" id="fDefaultApAccount">
                   <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
                 </select>
-                <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212xxx — เจ้าหนี้การค้า</div>
+                <div class="hint" id="apHint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212xxx — เจ้าหนี้การค้า</div>
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)</label>
+              <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)
+                <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactIrGr','fDefaultIrGrAccount','grHint')">🤖</button>
+              </label>
               <select class="form-input" id="fDefaultIrGrAccount">
                 <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
               </select>
+              <div class="hint" id="grHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
               <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212305 — ค่าใช้จ่ายค้างจ่ายอื่น (Invoice/Goods Received-Not-Invoiced clearing)</div>
             </div>
           </div>
@@ -499,6 +506,47 @@
         document.getElementById('fNameHint').style.display = isJuristic ? '' : 'none';
         document.getElementById('fName').placeholder = isJuristic ? 'พิมพ์ชื่อบริษัทเพื่อค้นหา...' : isGov ? 'ชื่อหน่วยงานราชการ' : 'ชื่อ-นามสกุล';
         document.getElementById('taxIdLabel').textContent = isJuristic ? 'เลขผู้เสียภาษี (13 หลัก)' : isGov ? 'เลขประจำตัวผู้เสียภาษี' : 'เลขบัตรประชาชน (13 หลัก)';
+      },
+
+      // AI suggest GL account ต่อช่อง (AR/AP/GR) — generic endpoint
+      // เรียนรู้ต่อบริษัทผ่าน memory; แสดงเหตุผล + บันทึก override feedback
+      async suggestGlSlot(slot, selectId, hintId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const contactId = document.getElementById('editId')?.value || '';
+          const url = `/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`
+            + (contactId ? `&contactId=${contactId}` : '');
+          const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          const sel = document.getElementById(selectId);
+          const hint = document.getElementById(hintId);
+          if (!d || !d.accountId) {
+            if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ');
+            return;
+          }
+          // option อาจยังไม่อยู่ใน dropdown (filter) — เพิ่มถ้าไม่มี
+          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+            const opt = document.createElement('option');
+            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+            sel.appendChild(opt);
+          }
+          if (sel) sel.value = d.accountId;
+          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+          // เรียนตอน user เปลี่ยน → ส่ง ground-truth กลับ (train ไปเลย)
+          if (sel && d.feedbackId) {
+            sel.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
       },
 
       // Show/hide credit-limit field — เห็นเฉพาะ contact ที่เป็น "ลูกค้า"

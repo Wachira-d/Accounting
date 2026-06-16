@@ -121,7 +121,10 @@
             <div class="form-group"><label class="form-label">หมายเลขเครื่อง</label><input type="text" class="form-input" id="fSerial"></div>
           </div>
           <div style="border-top:1px solid var(--gray-200);margin:10px 0 4px;padding-top:10px">
-            <div class="text-xs text-gray-500" style="margin-bottom:8px;font-weight:600">การบันทึกบัญชี (ผังบัญชี)</div>
+            <div class="text-xs text-gray-500" style="margin-bottom:8px;font-weight:600">การบันทึกบัญชี (ผังบัญชี)
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestAssetAccounts()">🤖 ให้ AI เลือกบัญชีให้</button>
+            </div>
+            <div id="assetAcctHint" style="font-size:11px;color:#64748b;margin-bottom:6px"></div>
             <div class="form-row">
               <div class="form-group"><label class="form-label">บัญชีสินทรัพย์</label>
                 <select class="form-select" id="fAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
@@ -289,6 +292,52 @@
         // auto-opens the detail modal.
         const deepId = new URLSearchParams(location.search).get('id');
         if (deepId) await this.viewDetail(deepId);
+      },
+
+      // AI เลือกบัญชีทั้ง 3 ช่อง (สินทรัพย์ / ค่าเสื่อม / ค่าเสื่อมสะสม)
+      // จากสินทรัพย์หมวดเดียวกันที่เคยตั้งไว้ → memory เรียนต่อบริษัท
+      async suggestAssetAccounts() {
+        const category = document.getElementById('fCategory')?.value?.trim() || '';
+        const slots = [
+          ['AssetAccount', 'fAssetAcct'],
+          ['AssetDepExpense', 'fDepExpAcct'],
+          ['AssetAccumDep', 'fAccumAcct'],
+        ];
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        const hint = document.getElementById('assetAcctHint');
+        let filled = 0;
+        for (const [slot, selId] of slots) {
+          try {
+            const url = `/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`
+              + (category ? `&assetCategory=${encodeURIComponent(category)}` : '');
+            const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+            const j = await r.json();
+            const d = j?.data;
+            if (!d || !d.accountId) continue;
+            const sel = document.getElementById(selId);
+            if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+              const opt = document.createElement('option');
+              opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+              sel.appendChild(opt);
+            }
+            if (sel && !sel.value) { sel.value = d.accountId; filled++; }
+            if (sel && d.feedbackId) {
+              sel.addEventListener('change', () => {
+                try {
+                  fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                  }).catch(() => {});
+                } catch {}
+              }, { once: true });
+            }
+          } catch { /* per-slot best-effort */ }
+        }
+        if (hint) hint.textContent = filled > 0
+          ? `🤖 เติมบัญชีให้ ${filled} ช่องจากสินทรัพย์หมวด "${category || 'ทั่วไป'}" — แก้ไขได้`
+          : '🤖 ยังไม่มีสินทรัพย์หมวดนี้ให้อ้างอิง — เลือกเองหรือใช้ค่าเริ่มต้นผังบัญชี';
       },
 
       async suggestAssetCategory() {

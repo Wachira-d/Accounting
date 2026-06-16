@@ -248,6 +248,181 @@ public class AiSuggestionController : ControllerBase
     }
 
     // ────────────────────────────────────────────────────────────────
+    //  GENERIC GL-account-slot suggestion — fills any chart-of-accounts
+    //  dropdown across the app (contact AR/AP/GR, fixed-asset
+    //  asset/dep/accum, department/budget/petty-cash expense). One
+    //  endpoint, one learning loop. Resolution:
+    //    1. AiSuggestionMemory (slot|context) — what this company settled on
+    //    2. Most-used account for the slot in posting/asset history
+    //    3. Standard code-prefix default (lowest code in the family)
+    //  Returns accountId + code + name + reasoning + feedbackId.
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>Code-prefix family per slot — the COA convention this
+    /// app seeds (113x AR, 211/212 AP, 212305 GR-clearing, 15/16 asset,
+    /// 156x accum-dep contra, 5x expense).</summary>
+    private static string SlotPrefix(string slot) => slot switch
+    {
+        "ContactAR" => "113",
+        "ContactAP" => "212",
+        "ContactIrGr" => "212305",
+        "AssetAccount" => "16",
+        "AssetDepExpense" => "5",
+        "AssetAccumDep" => "166",
+        "DeptExpense" or "BudgetExpense" or "PettyExpense" or "RecurringExpense" => "5",
+        _ => "",
+    };
+
+    [HttpGet("gl-account/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestGlAccountSlot(
+        Guid companyId,
+        [FromQuery] string slot,
+        [FromQuery] Guid? contactId,
+        [FromQuery] string? assetCategory,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(slot))
+            return BadRequest(new ApiResponse<object>(false, null, "slot ห้ามว่าง"));
+
+        // Context key — narrows the learned answer to the right scope.
+        var context = contactId.HasValue && contactId.Value != Guid.Empty
+            ? contactId.Value.ToString()
+            : !string.IsNullOrWhiteSpace(assetCategory) ? NormKey(assetCategory) : "global";
+        var memKey = $"{slot}|{context}";
+
+        // 1) Learned memory wins.
+        var mem = await MemoryLookupAsync(companyId, AiFeatureKey.GlAccountSlotSuggestion, memKey, ct);
+        if (mem.HasValue && Guid.TryParse(mem.Value.Answer, out var learnedAcc))
+        {
+            var a = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.Id == learnedAcc && x.CompanyId == companyId && !x.IsDeleted)
+                .Select(x => new { x.Id, x.AccountCode, x.AccountName }).FirstOrDefaultAsync(ct);
+            if (a != null)
+            {
+                var fid0 = await RecordLearnedAsync(companyId, AiFeatureKey.GlAccountSlotSuggestion, memKey,
+                    mem.Value.Answer, mem.Value.Confidence, "ChartOfAccount", a.Id, ct);
+                return Ok(new ApiResponse<object>(true, new
+                {
+                    accountId = a.Id, accountCode = a.AccountCode, accountName = a.AccountName,
+                    confidence = mem.Value.Confidence, source = "Learned",
+                    reasoning = $"🧠 เรียนรู้จากที่ทีมคุณเลือกไว้สำหรับช่องนี้ ({mem.Value.Samples} ครั้ง)",
+                    feedbackId = fid0,
+                }));
+            }
+        }
+
+        // 2) Most-used account for the slot in history.
+        Guid? pickedId = null; string source = ""; decimal confidence = 0.40m;
+        var prefix = SlotPrefix(slot);
+
+        if ((slot == "ContactAR" || slot == "ContactAP") && contactId.HasValue && contactId.Value != Guid.Empty)
+        {
+            // Mode of AccountId on JE lines posted from this contact's docs,
+            // restricted to the slot's code family.
+            var docIds = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.ContactId == contactId.Value && !d.IsDeleted)
+                .Select(d => d.Id).Take(50).ToListAsync(ct);
+            if (docIds.Count > 0)
+            {
+                var used = await (from l in _db.Set<JournalEntryLine>().AsNoTracking()
+                                  join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                                  where j.CompanyId == companyId && j.SourceDocumentId != null
+                                     && docIds.Contains(j.SourceDocumentId!.Value)
+                                     && l.Account.AccountCode.StartsWith(prefix)
+                                  select l.AccountId).ToListAsync(ct);
+                if (used.Count > 0)
+                {
+                    pickedId = used.GroupBy(x => x).OrderByDescending(g => g.Count()).First().Key;
+                    source = "ContactHistory"; confidence = used.Count >= 4 ? 0.85m : 0.65m;
+                }
+            }
+        }
+        else if ((slot == "AssetAccount" || slot == "AssetDepExpense" || slot == "AssetAccumDep")
+                 && !string.IsNullOrWhiteSpace(assetCategory))
+        {
+            // Mode of the matching account across other assets of the same category.
+            var sameCat = _db.Set<FixedAsset>().AsNoTracking()
+                .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.Category == assetCategory);
+            var ids = slot switch
+            {
+                "AssetAccount" => await sameCat.Where(x => x.AssetAccountId != null).Select(x => x.AssetAccountId!.Value).ToListAsync(ct),
+                "AssetDepExpense" => await sameCat.Where(x => x.DepreciationExpenseAccountId != null).Select(x => x.DepreciationExpenseAccountId!.Value).ToListAsync(ct),
+                _ => await sameCat.Where(x => x.AccumulatedDepreciationAccountId != null).Select(x => x.AccumulatedDepreciationAccountId!.Value).ToListAsync(ct),
+            };
+            if (ids.Count > 0)
+            {
+                pickedId = ids.GroupBy(x => x).OrderByDescending(g => g.Count()).First().Key;
+                source = "AssetCategoryHistory"; confidence = ids.Count >= 3 ? 0.85m : 0.65m;
+            }
+        }
+        else if (prefix == "5")
+        {
+            // Expense slots: most-used expense account company-wide.
+            var used = await _db.Set<JournalEntryLine>().AsNoTracking()
+                .Where(l => l.CompanyId == companyId && l.DebitAmount > 0
+                    && l.Account.AccountCode.StartsWith("5"))
+                .Select(l => l.AccountId).Take(500).ToListAsync(ct);
+            if (used.Count > 0)
+            {
+                pickedId = used.GroupBy(x => x).OrderByDescending(g => g.Count()).First().Key;
+                source = "ExpenseHistory"; confidence = 0.60m;
+            }
+        }
+
+        // 3) Code-prefix default — lowest code in the family.
+        if (pickedId == null && !string.IsNullOrEmpty(prefix))
+        {
+            var def = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.AccountCode.StartsWith(prefix))
+                .OrderBy(x => x.AccountCode)
+                .Select(x => x.Id).FirstOrDefaultAsync(ct);
+            if (def != Guid.Empty) { pickedId = def; source = "PrefixDefault"; confidence = 0.45m; }
+        }
+
+        if (pickedId == null)
+            return Ok(new ApiResponse<object>(true, new { accountId = (Guid?)null,
+                reasoning = "ยังไม่มีข้อมูลพอจะแนะนำบัญชีช่องนี้", feedbackId = (Guid?)null }));
+
+        var acct = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(x => x.Id == pickedId.Value && x.CompanyId == companyId)
+            .Select(x => new { x.Id, x.AccountCode, x.AccountName }).FirstOrDefaultAsync(ct);
+        if (acct == null)
+            return Ok(new ApiResponse<object>(true, new { accountId = (Guid?)null,
+                reasoning = "บัญชีที่แนะนำถูกลบไปแล้ว", feedbackId = (Guid?)null }));
+
+        var inputJson = JsonSerializer.Serialize(new { slot, contactId, assetCategory, source });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.GlAccountSlotSuggestion,
+                PromptHash: memKey, PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: acct.Id.ToString(), AiConfidence: confidence,
+                LocalModelAnswer: acct.Id.ToString(), LocalModelConfidence: confidence,
+                LocalModelVersion: "slot-heuristic-v1",
+                SourceEntityType: "ChartOfAccount", SourceEntityId: acct.Id,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "slot-heuristic", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            accountId = acct.Id, accountCode = acct.AccountCode, accountName = acct.AccountName,
+            confidence, source,
+            reasoning = source switch
+            {
+                "ContactHistory" => $"จากประวัติการลงบัญชีของผู้ติดต่อรายนี้: {acct.AccountCode} {acct.AccountName}",
+                "AssetCategoryHistory" => $"จากสินทรัพย์หมวดเดียวกัน: {acct.AccountCode} {acct.AccountName}",
+                "ExpenseHistory" => $"บัญชีค่าใช้จ่ายที่ใช้บ่อยสุด: {acct.AccountCode} {acct.AccountName}",
+                _ => $"ค่าเริ่มต้นตามผังบัญชี: {acct.AccountCode} {acct.AccountName}",
+            },
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  WHT category inference — when user is about to set the WHT
     //  rate on a payment line. AI proposes code + rate based on
     //  vendor type + line description.
