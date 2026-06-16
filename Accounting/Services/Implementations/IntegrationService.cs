@@ -37,12 +37,14 @@ public class IntegrationService : IIntegrationService
     private readonly IDocumentService? _documentService;
     private readonly IWithholdingTaxCertService? _whtCertService;
     private readonly ISecretProtector _secrets;
+    private readonly Accounting.Services.Interfaces.IDbdLookupService? _dbd;
 
     public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
         ISecretProtector secrets,
         IDocumentService? documentService = null,
-        IWithholdingTaxCertService? whtCertService = null)
+        IWithholdingTaxCertService? whtCertService = null,
+        Accounting.Services.Interfaces.IDbdLookupService? dbd = null)
     {
         _db = db;
         _settingsService = settingsService;
@@ -51,6 +53,7 @@ public class IntegrationService : IIntegrationService
         _secrets = secrets;
         _documentService = documentService;
         _whtCertService = whtCertService;
+        _dbd = dbd;
     }
 
     // ===== Helper: Atomic Journal Entry Number =====
@@ -954,13 +957,47 @@ public class IntegrationService : IIntegrationService
 
         if (contact == null)
         {
+            // ── Auto-enrich from DBD/RD เมื่อ API ส่งมาแค่เลขผู้เสียภาษี ──
+            // ระบบภายนอกบางตัวยิงมาแค่ taxId (name ว่าง/= taxId) — ก่อนบันทึก
+            // ลองดึงชื่อจริง + ที่อยู่จากกรมพัฒนาธุรกิจการค้า/สรรพากร เพื่อให้
+            // ผู้ติดต่อในระบบมีข้อมูลครบ (ชื่อ, ที่อยู่ ใช้ทำ e-Tax / เอกสาร).
+            // Best-effort — ถ้า DBD ล่ม/ไม่พบ ใช้ค่าที่ส่งมาตามเดิม.
+            string resolvedName = name ?? "";
+            string? resolvedAddress = null, resolvedNameEn = null;
+            var looksLikeJuristic = !string.IsNullOrWhiteSpace(taxId)
+                && taxId.Length == 13 && taxId.All(char.IsDigit);
+            var nameMissing = string.IsNullOrWhiteSpace(name) || name.Trim() == taxId;
+            if (_dbd != null && looksLikeJuristic && nameMissing)
+            {
+                try
+                {
+                    var dbd = await _dbd.GetByJuristicIdAsync(taxId!);
+                    if (dbd != null && !string.IsNullOrWhiteSpace(dbd.NameTh))
+                    {
+                        resolvedName = dbd.NameTh;
+                        resolvedNameEn = dbd.NameEn;
+                        resolvedAddress = dbd.Address;
+                        _logger.LogInformation("DBD enrich: taxId {TaxId} → {Name}", taxId, dbd.NameTh);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "DBD enrich failed for taxId {TaxId} — ใช้ข้อมูลที่ API ส่งมา", taxId);
+                }
+            }
+
             contact = new Contact
             {
                 CompanyId = companyId,
-                Name = name ?? "ลูกค้าทั่วไป",
+                Name = !string.IsNullOrWhiteSpace(resolvedName) ? resolvedName
+                     : (name ?? (looksLikeJuristic ? $"นิติบุคคล {taxId}" : "ลูกค้าทั่วไป")),
                 TaxId = taxId,
                 IsCustomer = true,
-                IsActive = true
+                IsActive = true,
+                Address = resolvedAddress,
+                // นิติบุคคลขึ้นต้น "0" → ContactType.Juristic; ถ้าได้ชื่ออังกฤษมาเก็บด้วย
+                ContactType = looksLikeJuristic && taxId!.StartsWith("0")
+                    ? ContactType.JuristicPerson : ContactType.Individual,
             };
             _db.Set<Contact>().Add(contact);
             await _db.SaveChangesAsync();
@@ -996,6 +1033,98 @@ public class IntegrationService : IIntegrationService
             _logger.LogWarning(ex, "WHT auto-generate failed for synced document {DocId}", document.Id);
             return " (ออกหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติไม่สำเร็จ — กรุณาออกในระบบ)";
         }
+    }
+
+    /// <summary>Resolve the correct VAT GL account with TYPE validation so
+    /// VAT can never land on an unrelated account again. The old code used
+    /// AccountCode.StartsWith("1140") for input VAT — which collides with
+    /// "11400 เงินให้กู้ยืมระยะสั้น" (short-term loans) and silently posted
+    /// ภาษีซื้อ there. Correct Thai-COA codes: input VAT = 11610 (ภาษีซื้อ
+    /// ภ.พ.30) under 116; output VAT = 21911 (ภาษีขาย ภ.พ.30) under 2191.
+    ///   isInput=true  → Asset account, prefer 11610 → 116 → name "ภาษีซื้อ"
+    ///   isInput=false → Liability account, prefer 21911 → 2191 → "ภาษีขาย"
+    /// Returns null when no account of the RIGHT TYPE exists — caller then
+    /// refuses to post rather than guessing.</summary>
+    private async Task<ChartOfAccount?> ResolveVatAccountAsync(Guid companyId, bool isInput)
+    {
+        var wantType = isInput ? AccountType.Asset : AccountType.Liability;
+        // 1) Exact standard code.
+        var exact = isInput ? "11610" : "21911";
+        var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode == exact && a.IsActive && a.AccountType == wantType);
+        if (acc != null) return acc;
+        // 2) Code family (116x input / 2191x output) — strictly typed.
+        var family = isInput ? "116" : "2191";
+        acc = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.IsActive && a.AccountType == wantType
+                && a.AccountCode.StartsWith(family)
+                && a.AccountCode != "21919")              // 21919 = VAT payable pending, not output-VAT
+            .OrderBy(a => a.AccountCode)
+            .FirstOrDefaultAsync();
+        if (acc != null) return acc;
+        // 3) Name match, still type-guarded — handles custom charts.
+        var namePart = isInput ? "ภาษีซื้อ" : "ภาษีขาย";
+        acc = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.IsActive && a.AccountType == wantType
+                && a.AccountName.Contains(namePart))
+            .OrderBy(a => a.AccountCode)
+            .FirstOrDefaultAsync();
+        return acc;   // may be null → caller refuses to post
+    }
+
+    /// <summary>Sanity-check every JE line before it hits the ledger and
+    /// auto-correct what's safely correctable. Catches the class of bug the
+    /// partner sent ("VAT debited to a loan account"): when a line is clearly
+    /// a VAT line (description ภาษีซื้อ/ภาษีขาย) but its resolved account is
+    /// NOT a VAT account, reroute it to the proper VAT account. Returns false
+    /// only for errors we can't fix (missing/inactive account, unfixable
+    /// mismatch) so the caller refuses to post and leaves the doc for review.
+    /// "ถ้าอันไหนผิดแน่นอน ต้องไม่ปล่อยผ่าน".</summary>
+    private async Task<bool> ValidateAndAutofixJournalAsync(
+        Guid companyId, List<JournalEntryLine> lines, Document document)
+    {
+        var acctIds = lines.Select(l => l.AccountId).Distinct().ToList();
+        var accts = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && acctIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id);
+
+        foreach (var line in lines)
+        {
+            // 1) บัญชีต้องมีจริง + active
+            if (!accts.TryGetValue(line.AccountId, out var acc) || !acc.IsActive)
+            {
+                _logger.LogWarning("JE line ใช้บัญชีที่ไม่พบ/ปิดใช้งาน (Acc {Acc}) — เอกสาร {Doc}, ไม่โพสต์",
+                    line.AccountId, document.DocumentNumber);
+                return false;
+            }
+
+            var desc = line.Description ?? "";
+            var isVatInputLine = desc.Contains("ภาษีซื้อ");
+            var isVatOutputLine = desc.Contains("ภาษีขาย");
+            if (!isVatInputLine && !isVatOutputLine) continue;
+
+            // 2) VAT line ต้องอยู่บัญชีภาษีที่ถูกต้อง (input=116x Asset,
+            //    output=2191x Liability). ถ้าไม่ → reroute อัตโนมัติ.
+            var wantInput = isVatInputLine;
+            var codeOk = wantInput
+                ? acc.AccountCode.StartsWith("116") && acc.AccountType == AccountType.Asset
+                : acc.AccountCode.StartsWith("2191") && acc.AccountType == AccountType.Liability;
+            if (codeOk) continue;
+
+            var correct = await ResolveVatAccountAsync(companyId, wantInput);
+            if (correct == null)
+            {
+                _logger.LogWarning("VAT line ({Kind}) ลงบัญชีผิด ({BadCode} {BadName}) และหาบัญชีภาษีที่ถูกต้อง" +
+                    "ไม่ได้ — เอกสาร {Doc}, ไม่โพสต์เพื่อกันลงผิด",
+                    wantInput ? "ซื้อ" : "ขาย", acc.AccountCode, acc.AccountName, document.DocumentNumber);
+                return false;
+            }
+            _logger.LogWarning("แก้บัญชี VAT อัตโนมัติ: {Kind} เคยลง {BadCode} {BadName} → {GoodCode} {GoodName} " +
+                "(เอกสาร {Doc})", wantInput ? "ซื้อ" : "ขาย", acc.AccountCode, acc.AccountName,
+                correct.AccountCode, correct.AccountName, document.DocumentNumber);
+            line.AccountId = correct.Id;   // reroute to the right VAT account
+        }
+        return true;
     }
 
     private async Task<List<DocumentLine>> BuildDocumentLinesAsync(
@@ -1127,9 +1256,9 @@ public class IntegrationService : IIntegrationService
                 var totalCr = journalLines.Sum(l => l.CreditAmount);
                 if (totalDr != totalCr)
                 {
-                    var vatAccountCode = isRevenue ? "2151" : "1140"; // ภาษีขาย / ภาษีซื้อ
-                    var vatAccount = await _db.ChartOfAccounts
-                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(vatAccountCode) && a.IsActive);
+                    // Type-validated: output VAT (21911) for revenue, input VAT
+                    // (11610) for purchase — never the old 2151/1140 prefixes.
+                    var vatAccount = await ResolveVatAccountAsync(companyId, isInput: !isRevenue);
                     if (vatAccount != null)
                     {
                         var diff = totalDr - totalCr;
@@ -1161,7 +1290,7 @@ public class IntegrationService : IIntegrationService
                 var revenueAccount = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive);
                 var vatAccount = document.VatAmount > 0
-                    ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("2151") && a.IsActive)
+                    ? await ResolveVatAccountAsync(companyId, isInput: false)
                     : null;
 
                 if (arAccount == null || revenueAccount == null)
@@ -1233,12 +1362,18 @@ public class IntegrationService : IIntegrationService
                 var expenseAccount = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive);
                 var vatAccount = document.VatAmount > 0
-                    ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("1140") && a.IsActive)
+                    ? await ResolveVatAccountAsync(companyId, isInput: true)
                     : null;
 
                 if (apAccount == null || expenseAccount == null)
                 {
                     _logger.LogWarning("ไม่พบผังบัญชีเจ้าหนี้/ค่าใช้จ่าย สำหรับ company {CompanyId} — ไม่สร้าง journal", companyId);
+                    return null;
+                }
+                if (document.VatAmount > 0 && vatAccount == null)
+                {
+                    _logger.LogWarning("ไม่พบบัญชีภาษีซื้อที่ถูกต้องสำหรับ company {CompanyId} — ไม่โพสต์ JE (เอกสาร {DocNo})",
+                        companyId, document.DocumentNumber);
                     return null;
                 }
 
@@ -1456,7 +1591,7 @@ public class IntegrationService : IIntegrationService
         var revenueAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive);
         var vatAccount = document.VatAmount > 0
-            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("2151") && a.IsActive)
+            ? await ResolveVatAccountAsync(companyId, isInput: false)
             : null;
 
         if (arAccount == null || revenueAccount == null)
@@ -1538,7 +1673,7 @@ public class IntegrationService : IIntegrationService
         var revenueAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive);
         var vatAccount = document.VatAmount > 0
-            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("2151") && a.IsActive)
+            ? await ResolveVatAccountAsync(companyId, isInput: false)
             : null;
 
         if (arAccount == null || revenueAccount == null)
@@ -2014,16 +2149,22 @@ public class IntegrationService : IIntegrationService
 
         if (document.VatAmount > 0)
         {
-            var vatAccount = await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("1140") && a.IsActive);
-            if (vatAccount != null)
-                journalLines.Add(new JournalEntryLine
-                {
-                    AccountId = vatAccount.Id,
-                    DebitAmount = document.VatAmount,
-                    Description = $"ภาษีซื้อ - {document.DocumentNumber}",
-                    LineOrder = lineOrder++
-                });
+            // Type-validated input-VAT account (11610/116) — never the old
+            // "1140" prefix that hit 11400 เงินให้กู้ยืม.
+            var vatAccount = await ResolveVatAccountAsync(companyId, isInput: true);
+            if (vatAccount == null)
+            {
+                _logger.LogWarning("ไม่พบบัญชีภาษีซื้อ (116/11610) ที่ถูกต้องสำหรับ company {CompanyId} — " +
+                    "ไม่โพสต์ JE เพื่อกันลงบัญชีผิด (เอกสาร {DocNo})", companyId, document.DocumentNumber);
+                return null;   // refuse to post rather than guess wrong account
+            }
+            journalLines.Add(new JournalEntryLine
+            {
+                AccountId = vatAccount.Id,
+                DebitAmount = document.VatAmount,
+                Description = $"ภาษีซื้อ - {document.DocumentNumber}",
+                LineOrder = lineOrder++
+            });
         }
 
         journalLines.Add(new JournalEntryLine
@@ -2062,6 +2203,13 @@ public class IntegrationService : IIntegrationService
                 // balances (logged for the admin to fix the chart).
                 _logger.LogWarning("ไม่พบบัญชีภาษีหัก ณ ที่จ่ายค้างจ่าย (2191x) สำหรับ company {CompanyId}", companyId);
         }
+
+        // ── Posting sanity guard: กันลงบัญชีผิดแน่ ๆ ก่อน post เข้าแยกบัญชี ──
+        // ตรวจทุกบรรทัด: VAT line ต้องอยู่บัญชีภาษี, บัญชีต้องมีจริง+active.
+        // คืน false = พบ error ที่แก้ไม่ได้ → ไม่โพสต์ (เอกสารยังซิงค์ แต่รอ
+        // ตรวจ). แก้อัตโนมัติได้ (เช่น VAT line บัญชีผิด) จะ reroute ให้.
+        if (!await ValidateAndAutofixJournalAsync(companyId, journalLines, document))
+            return null;
 
         var totalDebit = journalLines.Sum(l => l.DebitAmount);
         var totalCredit = journalLines.Sum(l => l.CreditAmount);
@@ -2299,12 +2447,10 @@ public class IntegrationService : IIntegrationService
                     throw new InvalidOperationException($"ยอดเดบิต ({totalDr:N2}) ไม่เท่ากับยอดเครดิต ({totalCr:N2}) — ส่ง AutoBalanceVat=true เพื่อเพิ่มรายการภาษีอัตโนมัติ");
 
                 var isExpenseSide = journalType is JournalType.CashPayments or JournalType.Purchase;
-                var vatAccountCode = isExpenseSide ? "1140" : "2151";
-                var vatAccount = await _db.ChartOfAccounts
-                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(vatAccountCode) && a.IsActive);
+                var vatAccount = await ResolveVatAccountAsync(companyId, isInput: isExpenseSide);
 
                 if (vatAccount == null)
-                    throw new InvalidOperationException($"ยอดเดบิต ({totalDr:N2}) ไม่เท่ากับยอดเครดิต ({totalCr:N2}) และไม่พบบัญชีภาษี ({vatAccountCode}) สำหรับปรับยอด");
+                    throw new InvalidOperationException($"ยอดเดบิต ({totalDr:N2}) ไม่เท่ากับยอดเครดิต ({totalCr:N2}) และไม่พบบัญชีภาษี{(isExpenseSide ? "ซื้อ (116)" : "ขาย (2191)")} สำหรับปรับยอด");
 
                 var diff = totalCr - totalDr;
                 journalLines.Add(new JournalEntryLine
