@@ -1081,6 +1081,156 @@ public class AiSuggestionController : ControllerBase
         => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     // ────────────────────────────────────────────────────────────────
+    //  Dead-stock detection — products with stock > 0 but no OUT
+    //  movement in N days (default 90).
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("inventory/dead-stock")]
+    public async Task<ActionResult<ApiResponse<object>>> CheckDeadStock(
+        Guid companyId, [FromQuery] int days = 90, CancellationToken ct = default)
+    {
+        days = Math.Clamp(days, 30, 365);
+        var threshold = DateTime.UtcNow.AddDays(-days);
+
+        // ผลิตภัณฑ์ที่ trackStock = true + currentStock > 0 +
+        // ไม่มี OUT movement หลัง threshold (= no movement in last N days)
+        var trackedWithStock = await _db.Set<Product>().AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                && p.TrackStock && p.CurrentStock > 0)
+            .Select(p => new { p.Id, p.Code, p.Name, p.CurrentStock, p.CostPrice })
+            .ToListAsync(ct);
+
+        var recentMoves = await _db.Set<StockMovement>().AsNoTracking()
+            .Where(m => m.CompanyId == companyId && !m.IsDeleted
+                && (m.MovementType == "OUT" || m.MovementType == "TRANSFER_OUT")
+                && m.MovementDate >= threshold)
+            .Select(m => m.ProductId)
+            .Distinct()
+            .ToListAsync(ct);
+        var movedSet = new HashSet<Guid>(recentMoves);
+        var dead = trackedWithStock.Where(p => !movedSet.Contains(p.Id)).ToList();
+        var deadValue = dead.Sum(p => p.CurrentStock * p.CostPrice);
+
+        var inputJson = JsonSerializer.Serialize(new { days, deadCount = dead.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.DeadStockDetection,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: dead.Count.ToString(),
+                AiConfidence: 0.95m, LocalModelAnswer: dead.Count.ToString(),
+                LocalModelConfidence: 0.95m, LocalModelVersion: "stats-v1",
+                SourceEntityType: "Product", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            thresholdDays = days,
+            deadStockCount = dead.Count,
+            deadStockValue = Math.Round(deadValue, 2),
+            items = dead.Take(50).Select(p => new
+            {
+                productId = p.Id, code = p.Code, name = p.Name,
+                currentStock = p.CurrentStock,
+                tiedUpCapital = Math.Round(p.CurrentStock * p.CostPrice, 2),
+            }),
+            reasoning = dead.Count == 0
+                ? $"ไม่มีสินค้าที่ไม่เคลื่อนไหวใน {days} วันที่ผ่านมา"
+                : $"พบ {dead.Count} สินค้าไม่เคลื่อนไหว {days} วัน — เงินทุนจม {deadValue:N0} บาท",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Book-tax difference detection — non-deductible expenses
+    //  per §65ตรี: รับรอง, น้ำมันรถส่วนตัว, ค่าปรับ, บริจาคเกิน.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("tax-adjustment/book-tax-diff")]
+    public async Task<ActionResult<ApiResponse<object>>> CheckBookTaxDifference(
+        Guid companyId, [FromQuery] int year, CancellationToken ct)
+    {
+        if (year < 2000 || year > 2200)
+            return BadRequest(new ApiResponse<object>(false, null, "year ไม่ถูกต้อง"));
+
+        var start = new DateTime(year, 1, 1);
+        var end = new DateTime(year, 12, 31);
+
+        var lines = await (from l in _db.Set<DocumentLine>().AsNoTracking()
+                           join d in _db.Documents.AsNoTracking() on l.DocumentId equals d.Id
+                           where d.CompanyId == companyId && !d.IsDeleted
+                              && d.DocumentDate >= start && d.DocumentDate <= end
+                              && (d.DocumentType == DocumentType.PaymentVoucher
+                                  || d.DocumentType == DocumentType.PurchaseInvoice
+                                  || d.DocumentType == DocumentType.ExpenseClaim)
+                              && d.Status != DocumentStatus.Rejected
+                              && d.Status != DocumentStatus.Voided
+                           select new { l.Description, l.Amount, d.DocumentNumber, d.Id }
+                          ).ToListAsync(ct);
+
+        // §65ตรี — non-deductible categories (สำคัญสำหรับ SMB ไทย)
+        var categories = new Dictionary<string, (string[] Keywords, string Label, decimal AddbackPct)>
+        {
+            ["Entertainment"] = (new[] { "รับรอง", "เลี้ยง", "ของขวัญ", "ของฝาก", "entertain", "gift" }, "ค่ารับรอง (เกิน 0.3% ของรายได้)", 1.0m),
+            ["PenaltyFine"] = (new[] { "ค่าปรับ", "ปรับ", "penalty", "fine" }, "ค่าปรับ (เพิ่ม VAT/ภาษีล่าช้า)", 1.0m),
+            ["PersonalCar"] = (new[] { "น้ำมัน", "รถส่วนตัว", "ค่าน้ำมัน", "fuel" }, "ค่าน้ำมันรถส่วนตัว (ไม่หักทั้งจำนวน)", 1.0m),
+            ["DonationOver"] = (new[] { "บริจาค", "donation" }, "เงินบริจาค (ตรวจไม่เกิน 2% NIBD)", 0.5m),
+        };
+
+        var hits = new List<object>();
+        decimal totalAddback = 0m;
+        foreach (var cat in categories)
+        {
+            var matched = lines.Where(l => !string.IsNullOrWhiteSpace(l.Description)
+                && cat.Value.Keywords.Any(k => l.Description.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (matched.Count == 0) continue;
+            var amount = matched.Sum(m => m.Amount);
+            var addback = Math.Round(amount * cat.Value.AddbackPct, 2);
+            totalAddback += addback;
+            hits.Add(new
+            {
+                category = cat.Key, label = cat.Value.Label,
+                amount = Math.Round(amount, 2), addback,
+                lineCount = matched.Count,
+                examples = matched.Take(3).Select(m => new { m.DocumentNumber, m.Description, m.Amount }),
+            });
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { companyId, year, hitCount = hits.Count, totalAddback });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.BookTaxDifferenceDetection,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: totalAddback.ToString("0.##"),
+                AiConfidence: 0.80m, LocalModelAnswer: totalAddback.ToString("0.##"),
+                LocalModelConfidence: 0.80m, LocalModelVersion: "rules-v1",
+                SourceEntityType: "FiscalYear", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "rules", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            year, totalAddback,
+            categories = hits,
+            reasoning = hits.Count == 0
+                ? $"ไม่พบค่าใช้จ่ายต้องห้ามตาม §65ตรี ในปี {year}"
+                : $"พบ {hits.Count} หมวดต้องเพิ่มกลับ — รวม {totalAddback:N0} บาท สำหรับภาษีเงินได้นิติบุคคล",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Inventory reorder point per product — avg daily consumption
     //  over last 90 days × lead time + safety stock buffer.
     // ────────────────────────────────────────────────────────────────

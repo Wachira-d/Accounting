@@ -267,6 +267,9 @@
         if (!Layout.init('products')) return;
         Layout.setTitle('สินค้า/บริการ');
         await this.load();
+        // Dead-stock alert ขึ้นด้านบนทันทีถ้ามีสินค้าจม > 30 รายการ
+        // หรือเงินทุนจม > 100K บาท — แสดง 1 ครั้งต่อ session
+        this.checkDeadStock();
         // Deep-link support — when the OCR import-result table (or any
         // other page) links here with ?id={productId}, auto-open the
         // detail modal so the user lands on the right product without
@@ -306,6 +309,24 @@
         } catch(e) { Layout.toast(e.message,'error'); }
       },
       goPage(p) { Page.page=p; Page.load(); },
+
+      async checkDeadStock() {
+        try {
+          if (sessionStorage.getItem('deadStockAlertShown')) return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/inventory/dead-stock?days=90`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d || d.deadStockCount === 0) return;
+          if (d.deadStockCount < 5 && d.deadStockValue < 50000) return;  // ไม่กวนถ้าน้อย
+          sessionStorage.setItem('deadStockAlertShown', '1');
+          if (typeof Layout.toast === 'function') {
+            Layout.toast(`📦 ${d.reasoning}`, 'warning');
+          }
+        } catch { /* best-effort */ }
+      },
 
       async suggestReorderPoint() {
         try {

@@ -1475,6 +1475,19 @@ public enum AiFeatureKey
     /// fix. Pure rule scan; AI cloud not used.</summary>
     PeriodCloseAnomalyCheck = 48,
 
+    /// <summary>Dead-stock detection — surfaces products with positive
+    /// stock balance but no OUT movement in N days (default 90). Lets
+    /// the operator clear slow-moving SKUs before they tie up working
+    /// capital. Pure statistics; runs over StockMovement history.</summary>
+    DeadStockDetection = 49,
+
+    /// <summary>Book-tax difference detection — scans approved
+    /// expense documents in the period for line descriptions matching
+    /// non-deductible categories per §65ตรี (รับรอง / น้ำมันรถส่วนตัว /
+    /// ค่าปรับ / เงินบริจาคเกิน) and calculates the tax-adjustment
+    /// addback. Used to feed the corporate income-tax filing.</summary>
+    BookTaxDifferenceDetection = 50,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }
