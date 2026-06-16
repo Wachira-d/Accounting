@@ -311,6 +311,29 @@
             { label: 'งบทดลองสมดุล', value: tbBalanced, detail: tbBalanced ? `Dr ${Layout.money(tb?.totalDebit)} = Cr ${Layout.money(tb?.totalCredit)}` : `Dr ${Layout.money(tb?.totalDebit)} ≠ Cr ${Layout.money(tb?.totalCredit)}` },
           ];
 
+          // AI anomaly check — เพิ่มรายการตรวจที่ checklist เดิมไม่มี
+          // (Approved doc ไม่มี JE post + missing monthly depreciation)
+          try {
+            const pStartDate = new Date(pStart);
+            const yr = pStartDate.getUTCFullYear();
+            const mo = pStartDate.getUTCMonth() + 1;
+            const cid = Layout.getCompanyId();
+            const token = localStorage.getItem('token');
+            const aiRes = await fetch(`/api/companies/${cid}/ai/period-close/anomaly-check?year=${yr}&month=${mo}`,
+              { headers: { 'Authorization': 'Bearer ' + token } });
+            const aiJ = await aiRes.json();
+            const aiD = aiJ?.data;
+            if (aiD && Array.isArray(aiD.issues)) {
+              aiD.issues.forEach(iss => {
+                checks.push({
+                  label: `🤖 ${iss.title}`,
+                  value: false,
+                  detail: `${iss.severity} — ${iss.fix}`,
+                });
+              });
+            }
+          } catch { /* AI check is supplementary — original 3 checks already gate */ }
+
           const allPassed = checks.every(c => c.value);
 
           content.innerHTML = `
