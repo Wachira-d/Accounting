@@ -46,29 +46,6 @@ public class AiOrchestrator : IAiOrchestrator
     /// in .NET 6+.</summary>
     private static readonly Random _sampling = Random.Shared;
 
-    /// <summary>FeatureKey ที่เคย log warning "ไม่อยู่ใน enum AiFeatureKey"
-    /// ไปแล้ว — ใช้กัน log spam (warn ครั้งเดียวต่อ key ต่อ process). อนาคต
-    /// ถ้ามีคนตั้งชื่อ feature ใหม่ใน AskAsync แต่ลืม append เข้า enum →
-    /// log บอกทันทีในรอบแรกที่เรียก, รอบถัด ๆ ไม่สแปม.</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte>
-        _warnedUnknownFeatures = new();
-
-    /// <summary>เตือน 1 ครั้งต่อ FeatureKey ที่ไม่อยู่ใน enum AiFeatureKey —
-    /// เป็น early-warning ว่า downstream (AiFeedbackTrainingJob, LocalModel
-    /// Health, admin UI) จะไม่รู้จัก key นี้ ทำให้ feedback ที่เก็บมาเรียน
-    /// ต่อยาก. ไม่ block call — แค่ log + เก็บใน health row.</summary>
-    private void GuardFeatureKey(string featureKey)
-    {
-        if (string.IsNullOrEmpty(featureKey)) return;
-        if (Enum.TryParse<AiFeatureKey>(featureKey, ignoreCase: false, out _)) return;
-        if (!_warnedUnknownFeatures.TryAdd(featureKey, 0)) return;
-        _logger.LogWarning(
-            "AiOrchestrator: FeatureKey '{Key}' is not in AiFeatureKey enum. " +
-            "Feedback rows will be recorded but TrainLocalModelsAsync won't find a writer, " +
-            "and LocalModelHealth won't categorise them. Add to enum + KnownTrainerFeatures.",
-            featureKey);
-    }
-
     /// <summary>Resolve the per-feature local model + run prediction.
     /// Returns null when no model is registered, not ready, or threw.
     /// Caller decides what to DO with the prediction based on routing.</summary>
@@ -127,7 +104,6 @@ public class AiOrchestrator : IAiOrchestrator
         // circumstances may the caller see an exception from here. The
         // local model's prediction is always returned in the response
         // so call sites can use PrimaryAnswer unconditionally.
-        GuardFeatureKey(request.FeatureKey);
         try
         {
             return await AskInternalAsync(request, ct);
