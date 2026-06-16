@@ -1375,6 +1375,36 @@ public enum AiFeatureKey
     /// JE can mix categories.</summary>
     ManualJeAccountSuggestion = 35,
 
+    /// <summary>Cost center / Branch dimension allocation per document
+    /// line. Resolves the AccountingDimension this supplier is usually
+    /// charged to (Mode of DocumentLine.DimensionId across recent
+    /// docs). Mirrors the Project-allocation flow but for
+    /// org / cost-centre dimensions instead of project dimensions.</summary>
+    DimensionAllocationSuggestion = 36,
+
+    /// <summary>Asset category + useful-life-months + depreciation
+    /// method suggestion when an operator creates a FixedAsset. Pure
+    /// keyword heuristic over the asset name + cost (e.g. "รถยนต์" →
+    /// Vehicles, 60mo, StraightLine; "Computer" → IT Equipment, 36mo).
+    /// Aligned with the Thai Revenue-Department-accepted standard
+    /// useful-life table.</summary>
+    AssetCategorySuggestion = 37,
+
+    /// <summary>Payroll component → §40 income-type code mapping —
+    /// salary/wage → 40(1), service-fee → 40(2), royalty → 40(3),
+    /// interest → 40(4), rental → 40(5), professional → 40(6),
+    /// contractor → 40(7), business → 40(8). Drives the ภ.ง.ด.1
+    /// per-employee withholding cert categorisation. Pure keyword
+    /// heuristic over PayrollItem.Name on creation.</summary>
+    PayrollIncomeTypeSuggestion = 38,
+
+    /// <summary>FX rate auto-fill on multi-currency document creation —
+    /// returns the latest CurrencyRate.MidRate for (from, THB) closest
+    /// to the document date. Falls back to today's rate. Pure lookup;
+    /// confidence reflects how stale the latest rate is (1.00 same day
+    /// → 0.50 a week old). Never calls cloud AI.</summary>
+    FxRateSuggestion = 39,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

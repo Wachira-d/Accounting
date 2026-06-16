@@ -263,6 +263,11 @@ public class AiFeedbackTrainingJob : BackgroundService
         nameof(AiFeatureKey.ProjectAllocationSuggestion),
         nameof(AiFeatureKey.ContactFuzzyMatch),
         nameof(AiFeatureKey.ManualJeAccountSuggestion),
+        // Sprint-4 features
+        nameof(AiFeatureKey.DimensionAllocationSuggestion),
+        nameof(AiFeatureKey.AssetCategorySuggestion),
+        nameof(AiFeatureKey.PayrollIncomeTypeSuggestion),
+        nameof(AiFeatureKey.FxRateSuggestion),
     };
 
     /// <summary>
@@ -315,6 +320,10 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.ProjectAllocationSuggestion) => true,
             nameof(AiFeatureKey.ContactFuzzyMatch) => true,
             nameof(AiFeatureKey.ManualJeAccountSuggestion) => true,
+            nameof(AiFeatureKey.DimensionAllocationSuggestion) => true,
+            nameof(AiFeatureKey.AssetCategorySuggestion) => true,
+            nameof(AiFeatureKey.PayrollIncomeTypeSuggestion) => true,
+            nameof(AiFeatureKey.FxRateSuggestion) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

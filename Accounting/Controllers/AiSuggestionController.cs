@@ -825,6 +825,262 @@ public class AiSuggestionController : ControllerBase
     }
 
     // ────────────────────────────────────────────────────────────────
+    //  Cost-centre / Branch dimension allocation per line.
+    //  Mirrors project allocation but for AccountingDimension.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("dimension-allocation/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestDimensionAllocation(
+        Guid companyId, [FromQuery] Guid contactId, CancellationToken ct)
+    {
+        if (contactId == Guid.Empty)
+            return BadRequest(new ApiResponse<object>(false, null, "contactId ห้ามว่าง"));
+
+        // DocumentLine ไม่มี DimensionId — ดึงผ่าน JE ที่ระบบ post จาก
+        // เอกสารของ contact นี้ (SourceDocumentId เป็น Document.Id).
+        // ใช้ DimensionId ที่ header หรือ ที่ line ก็ได้ (รวมเป็น union).
+        var recentDocIds = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted)
+            .OrderByDescending(d => d.DocumentDate)
+            .Take(20)
+            .Select(d => d.Id)
+            .ToListAsync(ct);
+
+        var fromHeader = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId != null
+                && recentDocIds.Contains(j.SourceDocumentId!.Value) && j.DimensionId != null)
+            .Select(j => j.DimensionId!.Value).ToListAsync(ct);
+        var fromLine = await (from l in _db.Set<JournalEntryLine>().AsNoTracking()
+                              join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                              where j.CompanyId == companyId && j.SourceDocumentId != null
+                                 && recentDocIds.Contains(j.SourceDocumentId!.Value)
+                                 && l.DimensionId != null
+                              select l.DimensionId!.Value).ToListAsync(ct);
+        var recent = fromHeader.Concat(fromLine).ToList();
+
+        Guid? pickedId = null; string? pickedLabel = null;
+        string source; decimal confidence;
+        if (recent.Count >= 2)
+        {
+            pickedId = recent.GroupBy(p => p).OrderByDescending(g => g.Count())
+                .ThenByDescending(g => g.Max()).First().Key;
+            source = "DocumentLineHistory"; confidence = recent.Count >= 5 ? 0.90m : 0.70m;
+        }
+        else { source = "NoSignal"; confidence = 0.0m; }
+
+        if (pickedId.HasValue)
+        {
+            pickedLabel = await _db.Set<AccountingDimension>().AsNoTracking()
+                .Where(d => d.Id == pickedId.Value && d.CompanyId == companyId)
+                .Select(d => d.Code + " - " + d.Name)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { contactId, sampleSize = recent.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.DimensionAllocationSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: pickedId?.ToString() ?? "", AiConfidence: confidence,
+                LocalModelAnswer: pickedId?.ToString() ?? "", LocalModelConfidence: confidence,
+                LocalModelVersion: "history-mode-v1",
+                SourceEntityType: "Contact", SourceEntityId: contactId,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "history-mode", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            dimensionId = pickedId,
+            dimensionLabel = pickedLabel,
+            confidence, source,
+            reasoning = pickedId.HasValue
+                ? $"ผู้ขายรายนี้มักลงที่ศูนย์ต้นทุน {pickedLabel} ({recent.Count} ครั้งล่าสุด)"
+                : "ยังไม่มีข้อมูลพอจะแนะนำ",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Fixed asset category + useful-life + depreciation method
+    //  suggestion from asset name. Keyword-based per Thai practice.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record SuggestAssetCategoryRequest(
+        string AssetName,
+        decimal? PurchaseCost);
+
+    [HttpPost("asset/suggest-category")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestAssetCategory(
+        Guid companyId, [FromBody] SuggestAssetCategoryRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.AssetName))
+            return BadRequest(new ApiResponse<object>(false, null, "AssetName ห้ามว่าง"));
+
+        var name = req.AssetName.ToLowerInvariant();
+        string category; int usefulLifeMonths; string depMethod = "StraightLine"; string reasoning;
+
+        // Thai-RD-accepted useful life table (พระราชกฤษฎีกา §3, 145):
+        //   อาคาร 20 ปี / รถยนต์ 5 ปี / เครื่องจักร 5-10 ปี / IT 3-5 ปี / เฟอร์ฯ 5 ปี
+        if (Contains(name, "อาคาร", "building", "warehouse", "โรงงาน", "โกดัง"))
+        { category = "Buildings"; usefulLifeMonths = 240; reasoning = "อาคาร — 20 ปี (พรฎ.145)"; }
+        else if (Contains(name, "รถยนต์", "vehicle", "car", "รถ", "truck", "รถบรรทุก", "มอเตอร์ไซค์"))
+        { category = "Vehicles"; usefulLifeMonths = 60; reasoning = "ยานพาหนะ — 5 ปี"; }
+        else if (Contains(name, "computer", "คอมพิวเตอร์", "laptop", "notebook", "server", "เซิร์ฟเวอร์", "พีซี"))
+        { category = "ITEquipment"; usefulLifeMonths = 36; reasoning = "อุปกรณ์ IT — 3 ปี"; }
+        else if (Contains(name, "ปริ๊น", "printer", "scanner", "monitor", "จอ", "router", "switch", "เครื่องพิมพ์"))
+        { category = "ITEquipment"; usefulLifeMonths = 36; reasoning = "อุปกรณ์ IT รอบนอก — 3 ปี"; }
+        else if (Contains(name, "เครื่องจักร", "machine", "machinery", "เครื่องผลิต"))
+        { category = "Machinery"; usefulLifeMonths = 120; reasoning = "เครื่องจักร — 10 ปี"; }
+        else if (Contains(name, "เฟอร์", "furniture", "โต๊ะ", "เก้าอี้", "ตู้", "ชั้น"))
+        { category = "Furniture"; usefulLifeMonths = 60; reasoning = "เฟอร์นิเจอร์ — 5 ปี"; }
+        else if (Contains(name, "software", "license", "ซอฟต์แวร์", "ไลเซนส์"))
+        { category = "Intangible"; usefulLifeMonths = 36; depMethod = "StraightLine"; reasoning = "Intangible — 3 ปี"; }
+        else if (Contains(name, "เครื่องปรับอากาศ", "air condition", "แอร์", "พัดลม"))
+        { category = "OfficeEquipment"; usefulLifeMonths = 60; reasoning = "อุปกรณ์สำนักงาน — 5 ปี"; }
+        else
+        { category = "OfficeEquipment"; usefulLifeMonths = 60; reasoning = "ค่าเริ่มต้น — 5 ปี (ตรวจสอบประเภทอีกครั้ง)"; }
+
+        var inputJson = JsonSerializer.Serialize(new { req.AssetName, req.PurchaseCost });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.AssetCategorySuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: category, AiConfidence: 0.80m,
+                LocalModelAnswer: category, LocalModelConfidence: 0.80m,
+                LocalModelVersion: "keyword-v1",
+                SourceEntityType: "FixedAsset", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "keyword", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            category, usefulLifeMonths, depreciationMethod = depMethod,
+            confidence = 0.80m, reasoning, feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Payroll item → §40 income-type code mapping.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record SuggestIncomeTypeRequest(string ComponentName, string? ItemType);
+
+    [HttpPost("payroll/suggest-income-type")]
+    public ActionResult<ApiResponse<object>> SuggestIncomeType(
+        Guid companyId, [FromBody] SuggestIncomeTypeRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.ComponentName))
+            return BadRequest(new ApiResponse<object>(false, null, "ComponentName ห้ามว่าง"));
+
+        var n = req.ComponentName.ToLowerInvariant();
+        string code; string label; string reasoning;
+        if (Contains(n, "เงินเดือน", "ค่าจ้าง", "salary", "wage", "โอที", "ot", "ล่วงเวลา",
+                      "เบี้ยขยัน", "ค่าตำแหน่ง", "โบนัส", "bonus", "ค่าครองชีพ", "ค่าน้ำมัน", "ค่าเดินทาง"))
+        { code = "40(1)"; label = "เงินได้จากการจ้างแรงงาน"; reasoning = "เงินที่นายจ้างจ่ายให้ลูกจ้าง"; }
+        else if (Contains(n, "ค่าบริการ", "ที่ปรึกษา", "ค่าจ้างทำของ", "freelance", "consultant"))
+        { code = "40(2)"; label = "เงินได้จากหน้าที่/ตำแหน่งงานหรือบริการ"; reasoning = "การให้บริการนอกการจ้างแรงงาน"; }
+        else if (Contains(n, "royalty", "ค่าลิขสิทธิ์", "ค่าสิทธิ์"))
+        { code = "40(3)"; label = "ค่าลิขสิทธิ์ / ค่ากู๊ดวิลล์"; reasoning = "ค่าสิทธิ์ทรัพย์สินทางปัญญา"; }
+        else if (Contains(n, "ดอกเบี้ย", "interest", "เงินปันผล", "dividend"))
+        { code = "40(4)"; label = "ดอกเบี้ย / เงินปันผล"; reasoning = "ผลตอบแทนจากการลงทุน"; }
+        else if (Contains(n, "ค่าเช่า", "rental", "rent"))
+        { code = "40(5)"; label = "ค่าเช่า / ค่าทรัพย์สิน"; reasoning = "การให้ใช้ทรัพย์สิน"; }
+        else if (Contains(n, "วิชาชีพ", "professional", "หมอ", "ทันตแพทย์", "ทนาย", "วิศวกร", "บัญชี"))
+        { code = "40(6)"; label = "วิชาชีพอิสระ"; reasoning = "ผู้ประกอบวิชาชีพอิสระตามกฎหมาย"; }
+        else if (Contains(n, "รับเหมา", "contractor", "ค่าก่อสร้าง", "งานเหมา"))
+        { code = "40(7)"; label = "รับเหมา"; reasoning = "การรับเหมาที่ผู้ทำพร้อมวัสดุสำคัญ"; }
+        else
+        { code = "40(8)"; label = "ธุรกิจ / การเกษตร / อุตสาหกรรม / อื่น ๆ"; reasoning = "ค่าเริ่มต้น — ตรวจสอบประเภทอีกครั้ง"; }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            incomeTypeCode = code, label, reasoning, confidence = 0.85m,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  FX rate suggest — latest CurrencyRate row for (from, THB) on
+    //  or before document date.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("fx-rate/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestFxRate(
+        Guid companyId,
+        [FromQuery] string currency,
+        [FromQuery] DateTime? date,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(currency))
+            return BadRequest(new ApiResponse<object>(false, null, "currency ห้ามว่าง"));
+        var asOf = (date ?? DateTime.UtcNow).Date;
+        var ccy = currency.ToUpperInvariant();
+        if (ccy == "THB")
+            return Ok(new ApiResponse<object>(true, new { rate = 1m, asOf, confidence = 1m, source = "Identity" }));
+
+        var row = await _db.Set<CurrencyRate>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.FromCurrency == ccy && r.ToCurrency == "THB"
+                && r.EffectiveDate <= asOf)
+            .OrderByDescending(r => r.EffectiveDate)
+            .Select(r => new { r.MidRate, r.BuyRate, r.SellRate, r.EffectiveDate, r.Source })
+            .FirstOrDefaultAsync(ct);
+
+        decimal rate; DateTime effective; string source; decimal confidence;
+        if (row != null)
+        {
+            rate = row.MidRate > 0 ? row.MidRate : (row.BuyRate + row.SellRate) / 2m;
+            effective = row.EffectiveDate;
+            source = row.Source ?? "CurrencyRateHistory";
+            var ageDays = (asOf - effective).Days;
+            confidence = ageDays <= 0 ? 1.00m : ageDays <= 1 ? 0.95m
+                       : ageDays <= 7 ? 0.80m : ageDays <= 30 ? 0.65m : 0.45m;
+        }
+        else
+        {
+            rate = 0m; effective = asOf; source = "NoRateAvailable"; confidence = 0m;
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { ccy, asOf });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.FxRateSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: rate.ToString("0.######"), AiConfidence: confidence,
+                LocalModelAnswer: rate.ToString("0.######"), LocalModelConfidence: confidence,
+                LocalModelVersion: "lookup-v1",
+                SourceEntityType: "CurrencyRate", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "lookup", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            rate, asOf = effective, source, confidence,
+            ageDays = (asOf - effective).Days,
+            reasoning = row != null
+                ? $"อัตรา {ccy}→THB ล่าสุด {rate:N4} ณ {effective:yyyy-MM-dd}"
+                : $"ยังไม่มีอัตราของ {ccy} ในระบบ — กรุณาเพิ่มที่หน้า Currency",
+            feedbackId,
+        }));
+    }
+
+    private static bool Contains(string source, params string[] keywords)
+        => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+    // ────────────────────────────────────────────────────────────────
     //  Credit-note reason classification — when user creates a CN
     //  from an invoice, AI proposes Return / Discount / Adjustment /
     //  Writeoff before they pick from the dropdown.
