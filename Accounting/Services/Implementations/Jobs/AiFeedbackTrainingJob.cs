@@ -284,6 +284,9 @@ public class AiFeedbackTrainingJob : BackgroundService
         // Sprint-9 features
         nameof(AiFeatureKey.DeadStockDetection),
         nameof(AiFeatureKey.BookTaxDifferenceDetection),
+        // Sprint-10 features
+        nameof(AiFeatureKey.CustomerRfmSegmentation),
+        nameof(AiFeatureKey.InventoryAbcAnalysis),
     };
 
     /// <summary>
@@ -351,6 +354,8 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.PeriodCloseAnomalyCheck) => true,
             nameof(AiFeatureKey.DeadStockDetection) => true,
             nameof(AiFeatureKey.BookTaxDifferenceDetection) => true,
+            nameof(AiFeatureKey.CustomerRfmSegmentation) => true,
+            nameof(AiFeatureKey.InventoryAbcAnalysis) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

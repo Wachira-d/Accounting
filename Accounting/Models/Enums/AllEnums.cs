@@ -1488,6 +1488,20 @@ public enum AiFeatureKey
     /// addback. Used to feed the corporate income-tax filing.</summary>
     BookTaxDifferenceDetection = 50,
 
+    /// <summary>Customer segmentation by RFM (Recency / Frequency /
+    /// Monetary value) — scores each customer 1-5 on each axis and
+    /// classifies into actionable segments: Champion / Loyal /
+    /// AtRisk / Lost / NewCustomer. Drives targeted marketing +
+    /// credit-limit reviews. Pure stats; no AI cloud.</summary>
+    CustomerRfmSegmentation = 51,
+
+    /// <summary>Inventory ABC analysis — Pareto classification of
+    /// SKUs by revenue contribution. A-class (top 70-80% revenue) =
+    /// stockout watch. B-class (15-20%) = normal review.
+    /// C-class (5-10%) = candidate for SKU rationalisation. Helps
+    /// SMB owners focus inventory management effort.</summary>
+    InventoryAbcAnalysis = 52,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

@@ -1081,6 +1081,363 @@ public class AiSuggestionController : ControllerBase
         => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     // ────────────────────────────────────────────────────────────────
+    //  Customer RFM segmentation
+    //   Recency  — days since last invoice (lower = better)
+    //   Frequency — count of invoices in window
+    //   Monetary  — total sales value
+    //  Each scored 1-5 by quintile → 125 combinations → 5 segments.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("customer/rfm-segmentation")]
+    public async Task<ActionResult<ApiResponse<object>>> GetRfmSegmentation(
+        Guid companyId, [FromQuery] int windowDays = 365, CancellationToken ct = default)
+    {
+        windowDays = Math.Clamp(windowDays, 90, 1825);
+        var since = DateTime.UtcNow.AddDays(-windowDays);
+        var today = DateTime.UtcNow.Date;
+
+        var sales = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.ContactId != null
+                && (d.DocumentType == DocumentType.Invoice
+                    || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.Receipt)
+                && d.DocumentDate >= since)
+            .Select(d => new { d.ContactId, d.DocumentDate, d.TotalAmount })
+            .ToListAsync(ct);
+
+        var perCustomer = sales
+            .GroupBy(s => s.ContactId!.Value)
+            .Select(g => new
+            {
+                ContactId = g.Key,
+                Recency = (today - g.Max(s => s.DocumentDate).Date).Days,
+                Frequency = g.Count(),
+                Monetary = g.Sum(s => s.TotalAmount),
+            })
+            .ToList();
+
+        if (perCustomer.Count == 0)
+        {
+            return Ok(new ApiResponse<object>(true, new
+            {
+                windowDays, customerCount = 0, segments = Array.Empty<object>(),
+                reasoning = $"ไม่มีลูกค้าที่มีการซื้อใน {windowDays} วัน",
+            }));
+        }
+
+        // Quintile boundaries — recency lower=better (reversed); freq/monetary higher=better
+        int Quintile(decimal value, List<decimal> sorted, bool higherIsBetter)
+        {
+            if (sorted.Count == 0) return 3;
+            var pos = sorted.BinarySearch(value);
+            if (pos < 0) pos = ~pos;
+            var pct = (double)pos / sorted.Count;
+            var score = pct switch
+            {
+                <= 0.20 => 1,
+                <= 0.40 => 2,
+                <= 0.60 => 3,
+                <= 0.80 => 4,
+                _ => 5,
+            };
+            return higherIsBetter ? score : 6 - score;
+        }
+
+        var recSorted = perCustomer.Select(c => (decimal)c.Recency).OrderBy(x => x).ToList();
+        var freqSorted = perCustomer.Select(c => (decimal)c.Frequency).OrderBy(x => x).ToList();
+        var monSorted = perCustomer.Select(c => c.Monetary).OrderBy(x => x).ToList();
+
+        var contactIds = perCustomer.Select(c => c.ContactId).ToList();
+        var contactNames = await _db.Contacts.AsNoTracking()
+            .Where(c => contactIds.Contains(c.Id) && c.CompanyId == companyId)
+            .Select(c => new { c.Id, c.Name })
+            .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+
+        string Classify(int r, int f, int m)
+        {
+            var total = r + f + m;
+            if (r >= 4 && f >= 4 && m >= 4) return "Champion";
+            if (f >= 4 && m >= 4) return "Loyal";
+            if (r >= 4 && f <= 2) return "NewCustomer";
+            if (r <= 2 && (f >= 3 || m >= 3)) return "AtRisk";
+            if (r <= 2 && f <= 2 && m <= 2) return "Lost";
+            if (m >= 4) return "BigSpender";
+            return "Regular";
+        }
+
+        var scored = perCustomer.Select(c =>
+        {
+            var r = Quintile(c.Recency, recSorted, higherIsBetter: false);
+            var f = Quintile(c.Frequency, freqSorted, higherIsBetter: true);
+            var m = Quintile(c.Monetary, monSorted, higherIsBetter: true);
+            return new
+            {
+                contactId = c.ContactId,
+                name = contactNames.GetValueOrDefault(c.ContactId, "(ไม่ระบุ)"),
+                recency = c.Recency, frequency = c.Frequency, monetary = c.Monetary,
+                rScore = r, fScore = f, mScore = m,
+                segment = Classify(r, f, m),
+            };
+        }).OrderByDescending(s => s.rScore + s.fScore + s.mScore).ToList();
+
+        var bySegment = scored.GroupBy(s => s.segment)
+            .Select(g => new { segment = g.Key, count = g.Count(),
+                totalValue = g.Sum(s => s.monetary) })
+            .OrderByDescending(g => g.count)
+            .ToList();
+
+        var inputJson = JsonSerializer.Serialize(new { windowDays, customerCount = perCustomer.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.CustomerRfmSegmentation,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: perCustomer.Count.ToString(),
+                AiConfidence: 0.90m, LocalModelAnswer: perCustomer.Count.ToString(),
+                LocalModelConfidence: 0.90m, LocalModelVersion: "rfm-v1",
+                SourceEntityType: "Contact", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "rfm", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            windowDays,
+            customerCount = perCustomer.Count,
+            summary = bySegment,
+            top20 = scored.Take(20),
+            reasoning = $"แบ่ง {perCustomer.Count} ลูกค้าเป็น {bySegment.Count} กลุ่ม " +
+                $"— Champion {bySegment.FirstOrDefault(s => s.segment == "Champion")?.count ?? 0} ราย, " +
+                $"AtRisk {bySegment.FirstOrDefault(s => s.segment == "AtRisk")?.count ?? 0} ราย",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Inventory ABC analysis — Pareto by revenue.
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("inventory/abc-analysis")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAbcAnalysis(
+        Guid companyId, [FromQuery] int windowDays = 365, CancellationToken ct = default)
+    {
+        windowDays = Math.Clamp(windowDays, 90, 1825);
+        var since = DateTime.UtcNow.AddDays(-windowDays);
+
+        // Revenue per product = sum of DocumentLine.Amount where parent doc
+        // is a sales doc (Invoice/TaxInvoice/Receipt) in window.
+        var perProduct = await (from l in _db.Set<DocumentLine>().AsNoTracking()
+                                join d in _db.Documents.AsNoTracking() on l.DocumentId equals d.Id
+                                where d.CompanyId == companyId && !d.IsDeleted
+                                   && l.ProductCode != null
+                                   && (d.DocumentType == DocumentType.Invoice
+                                       || d.DocumentType == DocumentType.TaxInvoice
+                                       || d.DocumentType == DocumentType.Receipt)
+                                   && d.DocumentDate >= since
+                                   && d.Status != DocumentStatus.Rejected
+                                   && d.Status != DocumentStatus.Voided
+                                group l by l.ProductCode into g
+                                select new { ProductCode = g.Key, Revenue = g.Sum(x => x.Amount) }
+                               ).ToListAsync(ct);
+
+        if (perProduct.Count == 0)
+        {
+            return Ok(new ApiResponse<object>(true, new
+            {
+                windowDays, totalRevenue = 0m, classification = Array.Empty<object>(),
+                reasoning = $"ไม่มีข้อมูลการขายใน {windowDays} วัน",
+            }));
+        }
+
+        var sorted = perProduct.OrderByDescending(p => p.Revenue).ToList();
+        var totalRevenue = sorted.Sum(p => p.Revenue);
+
+        var classified = new List<object>();
+        decimal cumulative = 0m;
+        foreach (var p in sorted)
+        {
+            cumulative += p.Revenue;
+            var cumPct = totalRevenue > 0 ? cumulative / totalRevenue : 0m;
+            string cls = cumPct <= 0.75m ? "A" : cumPct <= 0.95m ? "B" : "C";
+            classified.Add(new
+            {
+                productCode = p.ProductCode,
+                revenue = Math.Round(p.Revenue, 2),
+                revenuePct = totalRevenue > 0 ? Math.Round(p.Revenue / totalRevenue * 100m, 2) : 0m,
+                cumulativePct = Math.Round(cumPct * 100m, 2),
+                classification = cls,
+            });
+        }
+
+        var counts = classified.GroupBy(o => ((dynamic)o).classification as string)
+            .Select(g => new { cls = g.Key!, count = g.Count() })
+            .ToList();
+        var aCount = counts.FirstOrDefault(c => c.cls == "A")?.count ?? 0;
+        var bCount = counts.FirstOrDefault(c => c.cls == "B")?.count ?? 0;
+        var cCount = counts.FirstOrDefault(c => c.cls == "C")?.count ?? 0;
+
+        var inputJson = JsonSerializer.Serialize(new { windowDays, productCount = perProduct.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.InventoryAbcAnalysis,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: aCount.ToString(),
+                AiConfidence: 0.90m, LocalModelAnswer: aCount.ToString(),
+                LocalModelConfidence: 0.90m, LocalModelVersion: "pareto-v1",
+                SourceEntityType: "Product", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "pareto", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            windowDays,
+            totalRevenue = Math.Round(totalRevenue, 2),
+            classCounts = new { A = aCount, B = bCount, C = cCount },
+            items = classified.Take(100),
+            reasoning = $"แบ่ง {perProduct.Count} SKUs: A-class {aCount} (75% revenue), " +
+                $"B-class {bCount} (15%), C-class {cCount} (5%). A-class ต้อง stockout watch — " +
+                $"C-class พิจารณาตัดทิ้งหรือลด stock.",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Smart CSV column-mapping suggestion — match headers to schema.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record SmartImportRequest(
+        string EntityType,            // "Contact" | "Product" | "Invoice" | "JournalEntry"
+        List<string> Headers,
+        List<List<string>>? SampleRows);
+
+    [HttpPost("import/suggest-mapping")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestImportMapping(
+        Guid companyId, [FromBody] SmartImportRequest req, CancellationToken ct)
+    {
+        if (req.Headers == null || req.Headers.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "Headers ห้ามว่าง"));
+
+        // Schema dictionary — target field → keyword set
+        var contactSchema = new Dictionary<string, string[]>
+        {
+            ["name"] = new[] { "ชื่อ", "ลูกค้า", "ผู้ขาย", "name", "customer", "vendor", "supplier" },
+            ["taxId"] = new[] { "เลขผู้เสียภาษี", "เลขประจำ", "taxid", "tax_id", "tax id", "vat number" },
+            ["address"] = new[] { "ที่อยู่", "address" },
+            ["phone"] = new[] { "โทร", "เบอร์", "phone", "tel", "mobile" },
+            ["email"] = new[] { "อีเมล", "email", "e-mail" },
+            ["isCustomer"] = new[] { "ลูกค้า", "customer" },
+            ["isSupplier"] = new[] { "ผู้จำหน่าย", "ผู้ขาย", "supplier", "vendor" },
+        };
+        var productSchema = new Dictionary<string, string[]>
+        {
+            ["code"] = new[] { "รหัส", "รหัสสินค้า", "code", "sku", "product code" },
+            ["name"] = new[] { "ชื่อ", "ชื่อสินค้า", "name", "product" },
+            ["sellingPrice"] = new[] { "ราคาขาย", "ราคา", "price", "selling" },
+            ["costPrice"] = new[] { "ต้นทุน", "cost" },
+            ["currentStock"] = new[] { "คงคลัง", "stock", "qty", "quantity" },
+            ["vatRate"] = new[] { "vat", "ภาษีมูลค่า" },
+            ["unit"] = new[] { "หน่วย", "unit" },
+            ["category"] = new[] { "หมวด", "category" },
+        };
+        var jeSchema = new Dictionary<string, string[]>
+        {
+            ["entryDate"] = new[] { "วันที่", "date", "entry date" },
+            ["description"] = new[] { "คำอธิบาย", "description", "memo", "narrative" },
+            ["accountCode"] = new[] { "รหัสบัญชี", "account code", "account" },
+            ["debitAmount"] = new[] { "เดบิต", "debit", "dr" },
+            ["creditAmount"] = new[] { "เครดิต", "credit", "cr" },
+        };
+        var schema = req.EntityType?.ToLowerInvariant() switch
+        {
+            "contact" => contactSchema,
+            "product" => productSchema,
+            "journalentry" or "je" => jeSchema,
+            _ => contactSchema,
+        };
+
+        decimal Bigram(string a, string b)
+        {
+            var al = a.ToLowerInvariant(); var bl = b.ToLowerInvariant();
+            if (al == bl) return 1m;
+            if (string.IsNullOrEmpty(al) || string.IsNullOrEmpty(bl)) return 0m;
+            var aSet = new HashSet<string>(); for (int i = 0; i + 1 < al.Length; i++) aSet.Add(al.Substring(i, 2));
+            var bSet = new HashSet<string>(); for (int i = 0; i + 1 < bl.Length; i++) bSet.Add(bl.Substring(i, 2));
+            if (aSet.Count == 0 || bSet.Count == 0) return 0m;
+            var overlap = aSet.Intersect(bSet).Count();
+            return (decimal)(2.0 * overlap) / (aSet.Count + bSet.Count);
+        }
+
+        var mappings = new List<object>();
+        foreach (var header in req.Headers)
+        {
+            var hLower = header.Trim().ToLowerInvariant();
+            string? best = null; decimal bestScore = 0m;
+            foreach (var (target, keywords) in schema)
+            {
+                // Exact keyword contains → high score
+                if (keywords.Any(k => hLower.Contains(k.ToLowerInvariant())))
+                {
+                    if (1m > bestScore) { best = target; bestScore = 1m; }
+                    continue;
+                }
+                // Otherwise rank by bigram similarity max
+                var maxSim = keywords.Max(k => Bigram(hLower, k));
+                if (maxSim > bestScore && maxSim >= 0.40m)
+                {
+                    best = target; bestScore = maxSim;
+                }
+            }
+            mappings.Add(new
+            {
+                header,
+                suggestedField = best,
+                confidence = bestScore,
+                isMapped = best != null,
+            });
+        }
+
+        var mappedCount = mappings.Count(m => ((dynamic)m).isMapped);
+        var inputJson = JsonSerializer.Serialize(new
+        {
+            req.EntityType, headerCount = req.Headers.Count, mappedCount,
+        });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.ImportColumnMatch,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: mappedCount.ToString(),
+                AiConfidence: 0.80m, LocalModelAnswer: mappedCount.ToString(),
+                LocalModelConfidence: 0.80m, LocalModelVersion: "bigram-keyword-v1",
+                SourceEntityType: req.EntityType, SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "bigram-keyword", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            entityType = req.EntityType,
+            mappings,
+            mappedCount,
+            unmappedCount = req.Headers.Count - mappedCount,
+            reasoning = $"ตอบ {mappedCount}/{req.Headers.Count} columns. " +
+                "ที่ตอบไม่ได้ user เลือก mapping เอง — feedback บันทึกเพื่อปรับ schema ครั้งถัดไป.",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Dead-stock detection — products with stock > 0 but no OUT
     //  movement in N days (default 90).
     // ────────────────────────────────────────────────────────────────
