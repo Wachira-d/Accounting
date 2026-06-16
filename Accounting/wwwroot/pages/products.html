@@ -65,7 +65,12 @@
           <div class="form-group"><label class="form-label">ชื่อสินค้า (ไทย) *</label><input type="text" class="form-input" id="fName"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ชื่อ (อังกฤษ)</label><input type="text" class="form-input" id="fNameEn"></div>
-            <div class="form-group"><label class="form-label">หมวดหมู่</label><input type="text" class="form-input" id="fCategory"></div>
+            <div class="form-group"><label class="form-label">หมวดหมู่
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestProductCategory()">🤖 ให้ AI เลือก</button>
+              </label>
+              <input type="text" class="form-input" id="fCategory" placeholder="พิมพ์เอง หรือกด AI">
+              <div id="categoryHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">หน่วยหลัก *</label><input type="text" class="form-input" id="fUnit" value="ชิ้น"></div>
@@ -296,6 +301,35 @@
         } catch(e) { Layout.toast(e.message,'error'); }
       },
       goPage(p) { Page.page=p; Page.load(); },
+
+      async suggestProductCategory() {
+        try {
+          const name = document.getElementById('fName')?.value?.trim() || '';
+          const desc = document.getElementById('fDesc')?.value?.trim() || '';
+          if (name.length < 2) {
+            if (typeof Layout.toast === 'function') Layout.toast('กรุณากรอกชื่อสินค้าก่อน', 'warning');
+            return;
+          }
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/product/suggest-category`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productName: name, description: desc })
+          });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) return;
+          const catEl = document.getElementById('fCategory');
+          const hintEl = document.getElementById('categoryHint');
+          if (catEl) catEl.value = d.existingCategoryName || d.category;
+          if (hintEl) {
+            hintEl.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+            hintEl.dataset.aiFeedbackId = d.feedbackId || '';
+          }
+        } catch { /* best-effort */ }
+      },
+
       openCreate() {
         document.getElementById('formTitle').textContent='เพิ่มสินค้า';
         document.getElementById('editId').value='';

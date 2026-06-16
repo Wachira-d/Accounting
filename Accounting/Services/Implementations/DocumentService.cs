@@ -2858,6 +2858,7 @@ public class DocumentService : IDocumentService
             DefaultArAccountId = request.DefaultArAccountId,
             DefaultApAccountId = request.DefaultApAccountId,
             DefaultIrGrAccountId = request.DefaultIrGrAccountId,
+            CreditLimit = request.CreditLimit,
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -2990,6 +2991,8 @@ public class DocumentService : IDocumentService
             contact.DefaultApAccountId = request.DefaultApAccountId == Guid.Empty ? null : request.DefaultApAccountId;
         if (request.DefaultIrGrAccountId.HasValue)
             contact.DefaultIrGrAccountId = request.DefaultIrGrAccountId == Guid.Empty ? null : request.DefaultIrGrAccountId;
+        if (request.CreditLimit.HasValue)
+            contact.CreditLimit = request.CreditLimit.Value <= 0 ? null : request.CreditLimit.Value;
 
         await _db.SaveChangesAsync();
         // Reload with nav properties so MapContactToResponse can emit
@@ -4888,7 +4891,8 @@ public class DocumentService : IDocumentService
         DefaultApAccountName: c.DefaultApAccount?.AccountName,
         DefaultIrGrAccountId: c.DefaultIrGrAccountId,
         DefaultIrGrAccountCode: c.DefaultIrGrAccount?.AccountCode,
-        DefaultIrGrAccountName: c.DefaultIrGrAccount?.AccountName);
+        DefaultIrGrAccountName: c.DefaultIrGrAccount?.AccountName,
+        CreditLimit: c.CreditLimit);
 
     // ==================== Smart Defaults ====================
 

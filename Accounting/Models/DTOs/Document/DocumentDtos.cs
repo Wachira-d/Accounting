@@ -381,7 +381,8 @@ public record CreateContactRequest(
     // system default in effect (FindAccountAsync "113" / "212" prefix).
     Guid? DefaultArAccountId = null,
     Guid? DefaultApAccountId = null,
-    Guid? DefaultIrGrAccountId = null);
+    Guid? DefaultIrGrAccountId = null,
+    decimal? CreditLimit = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -407,7 +408,8 @@ public record UpdateContactRequest(
     string? CountryCode = null,
     Guid? DefaultArAccountId = null,
     Guid? DefaultApAccountId = null,
-    Guid? DefaultIrGrAccountId = null);
+    Guid? DefaultIrGrAccountId = null,
+    decimal? CreditLimit = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -456,7 +458,8 @@ public record ContactResponse(
     string? DefaultApAccountName = null,
     Guid? DefaultIrGrAccountId = null,
     string? DefaultIrGrAccountCode = null,
-    string? DefaultIrGrAccountName = null);
+    string? DefaultIrGrAccountName = null,
+    decimal? CreditLimit = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);
