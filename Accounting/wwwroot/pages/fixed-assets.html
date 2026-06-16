@@ -282,10 +282,49 @@
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('ทะเบียนสินทรัพย์');
         await Promise.all([this.load(), this.loadAccounts(), this.loadProjects()]);
+        // AI auto-suggest category + useful life + dep method ตอน blur ของชื่อ
+        const nameEl = document.getElementById('fName');
+        if (nameEl) nameEl.addEventListener('blur', () => this.suggestAssetCategory());
         // Deep-link from the OCR import-result table — ?id={assetId}
         // auto-opens the detail modal.
         const deepId = new URLSearchParams(location.search).get('id');
         if (deepId) await this.viewDetail(deepId);
+      },
+
+      async suggestAssetCategory() {
+        try {
+          const name = document.getElementById('fName')?.value?.trim() || '';
+          if (name.length < 3) return;
+          // ไม่ทับค่าที่ user กรอกแล้ว
+          const catEl = document.getElementById('fCategory');
+          const lifeEl = document.getElementById('fLife');
+          const methodEl = document.getElementById('fMethod');
+          if (catEl?.value && lifeEl?.dataset.userTouched === '1') return;
+          const cost = parseFloat(document.getElementById('fCost')?.value || '0') || 0;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/asset/suggest-category`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assetName: name, purchaseCost: cost })
+          });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) return;
+          if (catEl && !catEl.value) {
+            catEl.value = d.category;
+            catEl.title = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+          }
+          if (lifeEl && lifeEl.dataset.userTouched !== '1') {
+            lifeEl.value = d.usefulLifeMonths;
+            lifeEl.title = `🤖 ${d.reasoning}`;
+            lifeEl.addEventListener('input', () => lifeEl.dataset.userTouched = '1', { once: true });
+          }
+          if (methodEl && methodEl.dataset.userTouched !== '1') {
+            methodEl.value = d.depreciationMethod;
+            methodEl.addEventListener('change', () => methodEl.dataset.userTouched = '1', { once: true });
+          }
+        } catch { /* best-effort */ }
       },
       async loadAccounts() {
         const api = Layout.api(); if (!api) return;
