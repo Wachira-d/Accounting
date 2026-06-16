@@ -1081,6 +1081,91 @@ public class AiSuggestionController : ControllerBase
         => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     // ────────────────────────────────────────────────────────────────
+    //  Cash flow forecast narrative — Thai prose summary from KPIs.
+    //  Template-based; AI cloud not used. Surfaces actionable
+    //  suggestions in plain language for non-finance owners.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record CashForecastNarrativeRequest(
+        decimal CashIn,
+        decimal CashOut,
+        decimal CurrentBalance,
+        decimal LowestBalance,
+        DateTime? LowestBalanceDate,
+        int? Days,
+        int? OverdueArCount,
+        decimal? OverdueArAmount);
+
+    [HttpPost("cash-forecast/narrative")]
+    public async Task<ActionResult<ApiResponse<object>>> GenerateForecastNarrative(
+        Guid companyId, [FromBody] CashForecastNarrativeRequest req, CancellationToken ct)
+    {
+        var horizon = req.Days ?? 30;
+        var net = req.CashIn - req.CashOut;
+        var endBalance = req.CurrentBalance + net;
+        var parts = new List<string>();
+
+        if (net >= 0)
+            parts.Add($"📈 ใน {horizon} วันข้างหน้า กระแสเงินสดสุทธิ +{net:N0} บาท (เข้า {req.CashIn:N0} − ออก {req.CashOut:N0})");
+        else
+            parts.Add($"📉 ใน {horizon} วันข้างหน้า กระแสเงินสดสุทธิ {net:N0} บาท (เข้า {req.CashIn:N0} − ออก {req.CashOut:N0}) — เงินจ่ายมากกว่าเงินรับ");
+
+        if (req.LowestBalance < 0)
+            parts.Add($"🚨 ยอดคงเหลือจะติดลบสูงสุด {req.LowestBalance:N0} บาท" +
+                (req.LowestBalanceDate.HasValue ? $" ราววันที่ {req.LowestBalanceDate.Value:dd/MM/yyyy}" : "") +
+                " — ต้องเร่งทวงหนี้ หรือเลื่อนชำระค่าใช้จ่ายที่ไม่จำเป็น");
+        else if (req.LowestBalance < req.CurrentBalance * 0.30m)
+            parts.Add($"⚠️ ยอดคงเหลือต่ำสุด {req.LowestBalance:N0} บาท (เหลือ <30% ของวันนี้) — ติดตามใกล้ชิด");
+        else
+            parts.Add($"✅ ยอดคงเหลือต่ำสุดอยู่ที่ {req.LowestBalance:N0} บาท — สภาพคล่องเพียงพอ");
+
+        if (req.OverdueArCount.HasValue && req.OverdueArCount.Value > 0)
+            parts.Add($"📑 มีลูกหนี้ค้าง {req.OverdueArCount} ราย รวม {req.OverdueArAmount ?? 0:N0} บาท — เร่งทวงเพื่อเสริมสภาพคล่อง");
+
+        // Suggested actions
+        var actions = new List<string>();
+        if (net < 0)
+        {
+            actions.Add("เร่งเก็บเงินจากลูกหนี้รายใหญ่ที่เกินกำหนด");
+            actions.Add("เจรจาขยายเทอมจ่ายกับผู้จำหน่ายหลัก");
+            actions.Add("ตรวจค่าใช้จ่ายที่เลื่อนชำระได้ใน 1-2 สัปดาห์");
+        }
+        if (req.LowestBalance < 0)
+        {
+            actions.Add("เตรียม OD/วงเงินสำรอง เพื่อกัน cashflow gap");
+        }
+        if (req.OverdueArCount > 5)
+            actions.Add("รวบรวมรายชื่อลูกหนี้ค้าง > 30 วัน ส่งให้ฝ่ายเก็บเงิน");
+
+        var inputJson = JsonSerializer.Serialize(req);
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.ForecastNarrative,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: net.ToString("0"),
+                AiConfidence: 0.80m, LocalModelAnswer: net.ToString("0"),
+                LocalModelConfidence: 0.80m, LocalModelVersion: "template-v1",
+                SourceEntityType: "CashFlowForecast", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "template", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            narrative = string.Join("\n", parts),
+            actions,
+            netCashFlow = net, endBalance,
+            severity = req.LowestBalance < 0 ? "Critical"
+                     : net < 0 ? "Warning" : "Healthy",
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Customer RFM segmentation
     //   Recency  — days since last invoice (lower = better)
     //   Frequency — count of invoices in window

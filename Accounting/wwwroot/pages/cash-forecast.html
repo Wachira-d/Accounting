@@ -57,6 +57,17 @@
     <!-- Risk alerts -->
     <div id="riskBox" style="margin-bottom:18px"></div>
 
+    <!-- AI narrative panel — slot สำหรับ /ai/cash-forecast/narrative (Sprint 13) -->
+    <div id="aiNarrative" style="margin-bottom:18px;padding:14px 16px;background:linear-gradient(135deg,#eff6ff,#f0fdf4);border-left:4px solid #4F46E5;border-radius:6px;display:none">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <div style="font-size:12px;color:#4F46E5;font-weight:600">🤖 สรุปจาก AI</div>
+          <div id="narrativeText" style="font-size:14px;color:#1e3a8a;margin-top:4px"></div>
+        </div>
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('aiNarrative').style.display='none'">×</button>
+      </div>
+    </div>
+
     <div class="grid gap-4" style="grid-template-columns:2fr 1fr">
       <!-- Day-by-day forecast -->
       <div class="card">
@@ -157,9 +168,46 @@
           if (floor > 0) params.push(`minimumCashFloor=${floor}`);
           const r = await API.get(`/api/companies/${cid}/cash-forecast?${params.join('&')}`);
           this.render(r.data);
+          this.loadAiNarrative(r.data, days);
         } catch (e) {
           Layout.toast(e.message, 'error');
         }
+      },
+
+      async loadAiNarrative(d, days) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const body = {
+            cashIn: d.totalExpectedIn || 0,
+            cashOut: d.totalExpectedOut || 0,
+            currentBalance: d.openingCash || 0,
+            lowestBalance: d.minimumCashInPeriod || 0,
+            lowestBalanceDate: d.firstNegativeDate || null,
+            days,
+            overdueArCount: d.overdueArCount || (d.topDebtors?.length || 0),
+            overdueArAmount: d.overdueArAmount || (d.topDebtors?.reduce((s, x) => s + (x.balance || 0), 0) || 0),
+          };
+          const r = await fetch(`/api/companies/${cid}/ai/cash-forecast/narrative`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          const dd = j?.data;
+          if (!dd) return;
+          const box = document.getElementById('aiNarrative');
+          const txt = document.getElementById('narrativeText');
+          if (!box || !txt) return;
+          let html = dd.narrative.replace(/\n/g, '<br>');
+          if (dd.actions?.length > 0) {
+            html += `<div style="margin-top:8px;font-size:12px"><strong>คำแนะนำ:</strong><ul style="margin:4px 0 0 18px;padding:0">${
+              dd.actions.map(a => `<li>${a}</li>`).join('')
+            }</ul></div>`;
+          }
+          txt.innerHTML = html;
+          box.style.display = '';
+        } catch { /* best-effort */ }
       },
       render(d) {
         const closeNeg = d.projectedClosingCash < 0;
