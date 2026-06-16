@@ -288,7 +288,12 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
+            <div class="form-group" style="flex:1">
+              <label class="form-label" data-i18n="common.note">หมายเหตุ
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
+              </label>
+              <input type="text" class="form-input" id="fNotes">
+            </div>
           </div>
 
           <!-- File attachments — queued at create time, flushed via the
@@ -1133,6 +1138,38 @@
             } catch {}
           }, { once: true });
         } catch { /* best-effort */ }
+      },
+
+      async generateMemo() {
+        try {
+          const docType = document.getElementById('fDocType')?.value || 'Invoice';
+          const contactId = document.getElementById('fContactId')?.value || null;
+          const date = document.getElementById('fDate')?.value || null;
+          const lineDescriptions = Array.from(
+            document.querySelectorAll('#linesBody [data-f="desc"]')
+          ).map(el => (el.value || '').trim()).filter(d => d.length > 0);
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/document/suggest-memo`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              documentType: docType, contactId,
+              documentDate: date, lineDescriptions,
+            })
+          });
+          const j = await r.json();
+          if (!j?.success || !j.data?.memo) return;
+          const notesEl = document.getElementById('fNotes');
+          if (notesEl) {
+            notesEl.value = j.data.memo;
+            notesEl.dataset.aiFeedbackId = j.data.feedbackId || '';
+            notesEl.title = `🤖 (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            if (typeof Layout.toast === 'function') Layout.toast('AI สร้างหมายเหตุแล้ว — แก้ไขได้ตามต้องการ');
+          }
+        } catch (e) {
+          if (typeof Layout.toast === 'function') Layout.toast('AI memo generation failed', 'error');
+        }
       },
 
       async checkPriceDrift(row) {

@@ -271,6 +271,9 @@ public class AiFeedbackTrainingJob : BackgroundService
         // Sprint-5 features
         nameof(AiFeatureKey.PriceDriftDetection),
         nameof(AiFeatureKey.DocumentMemoGeneration),
+        // Sprint-6 features
+        nameof(AiFeatureKey.CreditLimitSuggestion),
+        nameof(AiFeatureKey.ProductCategoryTagging),
     };
 
     /// <summary>
@@ -329,6 +332,8 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.FxRateSuggestion) => true,
             nameof(AiFeatureKey.PriceDriftDetection) => true,
             nameof(AiFeatureKey.DocumentMemoGeneration) => true,
+            nameof(AiFeatureKey.CreditLimitSuggestion) => true,
+            nameof(AiFeatureKey.ProductCategoryTagging) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

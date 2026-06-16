@@ -1421,6 +1421,21 @@ public enum AiFeatureKey
     /// fallback fails).</summary>
     DocumentMemoGeneration = 41,
 
+    /// <summary>Credit-limit suggestion for a new customer Contact —
+    /// statistical: median + p75 of the company's existing customers'
+    /// peak AR balance. Cold-starts to 50,000 THB (SMB Thai default).
+    /// Helps avoid both under-limit (lost sales) and over-limit (bad
+    /// debt) on day-one customer setup.</summary>
+    CreditLimitSuggestion = 42,
+
+    /// <summary>Product category tagging when creating a new Product —
+    /// keyword heuristic over the product name + description. Maps to
+    /// any existing ProductCategory the company has, or surfaces the
+    /// closest standard Thai SMB category ("เสื้อผ้า/อาหาร/วัสดุ/
+    /// บริการ/อิเล็กทรอนิกส์" + more). Saves the operator from
+    /// scrolling the category dropdown.</summary>
+    ProductCategoryTagging = 43,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

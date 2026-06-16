@@ -1081,6 +1081,157 @@ public class AiSuggestionController : ControllerBase
         => keywords.Any(k => source.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     // ────────────────────────────────────────────────────────────────
+    //  Credit limit suggestion for a new customer — from p75 of
+    //  existing customers' peak AR balance (sum of unpaid Invoice
+    //  balances). Cold-starts to 50,000 THB for the very first
+    //  customer (SMB Thai default).
+    // ────────────────────────────────────────────────────────────────
+
+    [HttpGet("credit-limit/suggest")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestCreditLimit(
+        Guid companyId, CancellationToken ct)
+    {
+        // Compute per-customer max outstanding AR balance from the last
+        // 90 days of Invoice / TaxInvoice documents. Cap small samples to
+        // a safe default (50K) so a brand-new tenant doesn't get a
+        // misleading limit from 1 outlier.
+        var since = DateTime.UtcNow.AddDays(-90);
+        var customerBalances = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.ContactId != null
+                && (d.DocumentType == DocumentType.Invoice
+                    || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.BillingNote)
+                && d.DocumentDate >= since)
+            .GroupBy(d => d.ContactId)
+            .Select(g => new { ContactId = g.Key, Peak = g.Sum(x => x.TotalAmount) })
+            .ToListAsync(ct);
+
+        decimal suggested; string source; decimal confidence;
+        if (customerBalances.Count >= 5)
+        {
+            var sorted = customerBalances.Select(c => c.Peak).OrderBy(p => p).ToList();
+            // 75th percentile peak — generous-but-not-reckless default
+            var p75Index = (int)Math.Ceiling(sorted.Count * 0.75) - 1;
+            p75Index = Math.Clamp(p75Index, 0, sorted.Count - 1);
+            suggested = Math.Round(sorted[p75Index] / 1000m) * 1000m;  // round to 1000s
+            if (suggested < 10000m) suggested = 10000m;
+            source = "P75PeakBalance"; confidence = 0.80m;
+        }
+        else if (customerBalances.Count > 0)
+        {
+            suggested = Math.Round(customerBalances.Average(c => c.Peak) / 1000m) * 1000m;
+            if (suggested < 10000m) suggested = 10000m;
+            source = "MeanPeakBalance"; confidence = 0.55m;
+        }
+        else
+        {
+            suggested = 50000m; source = "SmbDefault"; confidence = 0.30m;
+        }
+
+        var inputJson = JsonSerializer.Serialize(new { sampleSize = customerBalances.Count });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.CreditLimitSuggestion,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: suggested.ToString("0"), AiConfidence: confidence,
+                LocalModelAnswer: suggested.ToString("0"), LocalModelConfidence: confidence,
+                LocalModelVersion: "stats-v1",
+                SourceEntityType: "Contact", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "stats", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            creditLimit = suggested, source, confidence,
+            sampleSize = customerBalances.Count,
+            reasoning = source switch
+            {
+                "P75PeakBalance" => $"จากลูกค้าปัจจุบัน {customerBalances.Count} ราย: P75 ของยอดค้างสูงสุด = {suggested:N0} บาท",
+                "MeanPeakBalance" => $"จากลูกค้า {customerBalances.Count} ราย (น้อย): ค่าเฉลี่ย = {suggested:N0} บาท",
+                _ => "ลูกค้าใหม่ของบริษัท — ใช้ค่าเริ่มต้น 50,000 บาท (ปรับได้ภายหลัง)",
+            },
+            feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Product category tagging from name + description.
+    // ────────────────────────────────────────────────────────────────
+
+    public sealed record SuggestProductCategoryRequest(
+        string ProductName,
+        string? Description);
+
+    [HttpPost("product/suggest-category")]
+    public async Task<ActionResult<ApiResponse<object>>> SuggestProductCategory(
+        Guid companyId, [FromBody] SuggestProductCategoryRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.ProductName))
+            return BadRequest(new ApiResponse<object>(false, null, "ProductName ห้ามว่าง"));
+
+        var text = (req.ProductName + " " + (req.Description ?? "")).ToLowerInvariant();
+        string category; string reasoning;
+
+        // Map ตามหมวดที่นิยมใน SMB ไทย
+        if (Contains(text, "เสื้อ", "กางเกง", "กระโปรง", "ผ้า", "ชุด", "ปกเสื้อ", "shirt", "pants", "skirt", "fabric"))
+        { category = "เสื้อผ้า"; reasoning = "ตรงกับหมวด เสื้อผ้า/เครื่องแต่งกาย"; }
+        else if (Contains(text, "อาหาร", "เครื่องดื่ม", "ผลไม้", "ขนม", "เบเกอรี่", "food", "snack", "beverage"))
+        { category = "อาหารและเครื่องดื่ม"; reasoning = "ตรงกับหมวด อาหาร/เครื่องดื่ม"; }
+        else if (Contains(text, "ปูน", "เหล็ก", "ทราย", "อิฐ", "ไม้", "ท่อ", "วัสดุ", "construction", "cement", "steel"))
+        { category = "วัสดุก่อสร้าง"; reasoning = "ตรงกับหมวด วัสดุก่อสร้าง"; }
+        else if (Contains(text, "บริการ", "ค่าบริการ", "ค่าแรง", "service", "fee", "consulting"))
+        { category = "บริการ"; reasoning = "ตรงกับหมวด บริการ"; }
+        else if (Contains(text, "computer", "คอมพิวเตอร์", "laptop", "เครื่อง", "อิเล็กทรอนิกส์", "phone", "มือถือ"))
+        { category = "อิเล็กทรอนิกส์"; reasoning = "ตรงกับหมวด อิเล็กทรอนิกส์/IT"; }
+        else if (Contains(text, "ยา", "วิตามิน", "อาหารเสริม", "medicine", "supplement", "เครื่องสำอาง", "cosmetic"))
+        { category = "สุขภาพและความงาม"; reasoning = "ตรงกับหมวด สุขภาพ/ความงาม"; }
+        else if (Contains(text, "เฟอร์", "โต๊ะ", "เก้าอี้", "ตู้", "ชั้น", "furniture", "office"))
+        { category = "เฟอร์นิเจอร์"; reasoning = "ตรงกับหมวด เฟอร์นิเจอร์/สำนักงาน"; }
+        else
+        { category = "ทั่วไป"; reasoning = "ค่าเริ่มต้น — ตรวจสอบประเภทอีกครั้ง"; }
+
+        // Match กับ ProductCategory ที่บริษัทมีอยู่ (ถ้ามี)
+        var existing = await _db.Set<ProductCategory>().AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new { c.Id, c.Code, c.Name })
+            .ToListAsync(ct);
+        var matched = existing.FirstOrDefault(c =>
+            c.Name.Equals(category, StringComparison.OrdinalIgnoreCase)
+            || c.Name.Contains(category, StringComparison.OrdinalIgnoreCase));
+
+        var inputJson = JsonSerializer.Serialize(new { req.ProductName, req.Description });
+        Guid? feedbackId = null;
+        try
+        {
+            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
+                CompanyId: companyId, FeatureKey: AiFeatureKey.ProductCategoryTagging,
+                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
+                AiPrimaryAnswer: matched?.Id.ToString() ?? category, AiConfidence: 0.75m,
+                LocalModelAnswer: matched?.Id.ToString() ?? category, LocalModelConfidence: 0.75m,
+                LocalModelVersion: "keyword-v1",
+                SourceEntityType: "Product", SourceEntityId: null,
+                Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+                ModelVersion: "keyword", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
+                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+        }
+        catch { /* best-effort */ }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            category, reasoning,
+            existingCategoryId = matched?.Id,
+            existingCategoryName = matched?.Name,
+            confidence = 0.75m, feedbackId,
+        }));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     //  Price drift detection per (product, contact). Flags when the
     //  entered unit price is >20% off the mean of the last 12 prior
     //  document lines for the same product. Catches typos (1500 vs
