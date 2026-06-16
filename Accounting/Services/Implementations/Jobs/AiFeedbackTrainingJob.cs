@@ -161,6 +161,9 @@ public class AiFeedbackTrainingJob : BackgroundService
             .ToListAsync(ct);
 
         var trainedFeatures = new Dictionary<string, int>();
+        // Features ที่มี ground-truth row แต่ TrainSingleAsync ไม่มี case
+        // — เก็บนับ "rows ที่หลุดวง training" ต่อ feature
+        var orphanedFeatures = new Dictionary<string, int>();
         foreach (var row in labelled)
         {
             try
@@ -173,6 +176,11 @@ public class AiFeedbackTrainingJob : BackgroundService
                     trainedFeatures.TryGetValue(row.FeatureKey, out var c);
                     trainedFeatures[row.FeatureKey] = c + 1;
                 }
+                else if (!KnownTrainerFeatures.Contains(row.FeatureKey))
+                {
+                    orphanedFeatures.TryGetValue(row.FeatureKey, out var oc);
+                    orphanedFeatures[row.FeatureKey] = oc + 1;
+                }
             }
             catch (Exception ex)
             {
@@ -183,7 +191,105 @@ public class AiFeedbackTrainingJob : BackgroundService
         if (trainedFeatures.Count > 0)
             _logger.LogInformation("AiFeedbackTrainingJob: trained {Counts}",
                 string.Join(", ", trainedFeatures.Select(kv => $"{kv.Key}={kv.Value}")));
+
+        // Roll-up warning + stamp LocalModelHealth.Recommendation ครั้งเดียว
+        // ต่อ feature ที่มี feedback แต่ไม่มี trainer — admin จะเห็นใน
+        // /pages/ai-health.html ทันทีว่า feature ใดเสีย opportunity.
+        if (orphanedFeatures.Count > 0)
+        {
+            _logger.LogWarning(
+                "AiFeedbackTrainingJob: features with ground-truth feedback but NO trainer case " +
+                "in TrainSingleAsync — signal is being silently dropped. Add a writer for: {Orphans}",
+                string.Join(", ", orphanedFeatures.Select(kv => $"{kv.Key}({kv.Value} rows)")));
+            foreach (var (featureKey, rows) in orphanedFeatures)
+            {
+                var health = await db.LocalModelHealths
+                    .FirstOrDefaultAsync(h => h.FeatureKey == featureKey, ct);
+                if (health == null)
+                {
+                    health = new LocalModelHealth { FeatureKey = featureKey };
+                    db.LocalModelHealths.Add(health);
+                }
+                health.Status = LocalModelHealthStatus.NeedsRedesign;
+                health.Recommendation = $"⚠ ขาด trainer ใน AiFeedbackTrainingJob.TrainSingleAsync — " +
+                    $"มี {rows} ground-truth rows ที่ไม่ถูก distill เก็บเข้าตาราง local. " +
+                    "เพิ่ม case + เพิ่มชื่อใน KnownTrainerFeatures เพื่อปิด gap นี้.";
+                health.LastEvaluatedAt = DateTime.UtcNow;
+            }
+            await db.SaveChangesAsync(ct);
+        }
     }
+
+    /// <summary>FeatureKey ที่มี trainer dispatch แล้ว — ใช้ตรวจช่วง
+    /// TrainLocalModelsAsync ว่ามี feature ใดเรียก AI + เก็บ feedback ground-
+    /// truth ครบแล้ว แต่ยังไม่มี case ใน TrainSingleAsync. ถ้าเจอ → log
+    /// warning ครั้งเดียวต่อ run + stamp LocalModelHealth.Recommendation ให้
+    /// admin เห็นในหน้าจอ. ป้องกันการเสียโอกาส training data เงียบ ๆ. ค่า
+    /// list นี้ต้อง sync กับ switch ใน TrainSingleAsync (compile-time
+    /// guarantee: ทดสอบใน DEBUG ด้วย EnsureSwitchCoverage).</summary>
+    internal static readonly HashSet<string> KnownTrainerFeatures = new(StringComparer.Ordinal)
+    {
+        nameof(AiFeatureKey.VendorCanonicalization),
+        nameof(AiFeatureKey.GlAccountSuggestion),
+        nameof(AiFeatureKey.PaymentVoucherAccountingSuggestion),
+        nameof(AiFeatureKey.CreditNoteReasonClassification),
+        nameof(AiFeatureKey.DocumentTypeClassification),
+        nameof(AiFeatureKey.OcrFullReview),
+        nameof(AiFeatureKey.DocumentConversionSuggestion),
+        nameof(AiFeatureKey.WhtCategoryInference),
+        nameof(AiFeatureKey.BankStatementMatch),
+        nameof(AiFeatureKey.BulkBankStatementMatch),
+        nameof(AiFeatureKey.ApprovalWarningFixSuggestion),
+        nameof(AiFeatureKey.AnomalyExplanation),
+        nameof(AiFeatureKey.StockMovementValidation),
+        nameof(AiFeatureKey.AgingExplanation),
+        // ── Reserved consume-only slots ─────────────────────────────
+        // 4 features ที่ enum มีอยู่แต่ยังไม่ wire เข้า orchestrator —
+        // เมื่อมี code เรียกในอนาคต (พร้อม prompt builder + feedback
+        // endpoint) feedback rows จะถูก mark "TRAINED" อัตโนมัติ + นับเข้า
+        // LocalModelHealth ทันที โดยไม่ต้องแก้ TrainSingleAsync. การ
+        // เปลี่ยนเป็น writer ตารางจริงทำได้ภายหลังโดยแก้ case ใน switch.
+        nameof(AiFeatureKey.LineItemStructuredParse),
+        nameof(AiFeatureKey.ManualJournalSuggestion),
+        nameof(AiFeatureKey.ForecastNarrative),
+        nameof(AiFeatureKey.DocumentRoleInference),
+        // New Sprint-1 features (VAT type + Payment terms) — wired live;
+        // feedback rows become training corpus over time.
+        nameof(AiFeatureKey.VatTypeInference),
+        nameof(AiFeatureKey.PaymentTermsSuggestion),
+        // Sprint-2 feature
+        nameof(AiFeatureKey.PaymentChannelSuggestion),
+        // Sprint-3 features
+        nameof(AiFeatureKey.ProjectAllocationSuggestion),
+        nameof(AiFeatureKey.ContactFuzzyMatch),
+        nameof(AiFeatureKey.ManualJeAccountSuggestion),
+        // Sprint-4 features
+        nameof(AiFeatureKey.DimensionAllocationSuggestion),
+        nameof(AiFeatureKey.AssetCategorySuggestion),
+        nameof(AiFeatureKey.PayrollIncomeTypeSuggestion),
+        nameof(AiFeatureKey.FxRateSuggestion),
+        // Sprint-5 features
+        nameof(AiFeatureKey.PriceDriftDetection),
+        nameof(AiFeatureKey.DocumentMemoGeneration),
+        // Sprint-6 features
+        nameof(AiFeatureKey.CreditLimitSuggestion),
+        nameof(AiFeatureKey.ProductCategoryTagging),
+        // Sprint-7 features
+        nameof(AiFeatureKey.BadDebtRiskDetection),
+        nameof(AiFeatureKey.DiscountSuggestion),
+        nameof(AiFeatureKey.ApprovalRoutingSuggestion),
+        // Sprint-8 features
+        nameof(AiFeatureKey.InventoryReorderPointSuggestion),
+        nameof(AiFeatureKey.PeriodCloseAnomalyCheck),
+        // Sprint-9 features
+        nameof(AiFeatureKey.DeadStockDetection),
+        nameof(AiFeatureKey.BookTaxDifferenceDetection),
+        // Sprint-10 features
+        nameof(AiFeatureKey.CustomerRfmSegmentation),
+        nameof(AiFeatureKey.InventoryAbcAnalysis),
+        // Sprint-15: generic GL-account-slot suggestion
+        nameof(AiFeatureKey.GlAccountSlotSuggestion),
+    };
 
     /// <summary>
     /// Per-feature dispatch — returns true when the row was successfully
@@ -213,12 +319,51 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.DocumentConversionSuggestion) => true,
             nameof(AiFeatureKey.WhtCategoryInference) => true,
             nameof(AiFeatureKey.BankStatementMatch) => true,
+            nameof(AiFeatureKey.BulkBankStatementMatch) => true,
             nameof(AiFeatureKey.ApprovalWarningFixSuggestion) => true,
             nameof(AiFeatureKey.AnomalyExplanation) => true,
             nameof(AiFeatureKey.StockMovementValidation) => true,
             nameof(AiFeatureKey.AgingExplanation) => true,
+            // Reserved consume-only slots for features ที่จะ wire ในอนาคต —
+            // mark consumed เพื่อเก็บ accuracy ใน LocalModelHealth พร้อมรับ
+            // signal วันที่เริ่มเรียกจริง. เปลี่ยนเป็น writer ตารางจริงได้
+            // ภายหลังโดยไม่กระทบ backfill (rows เก่ายังคงนับเข้า health).
+            nameof(AiFeatureKey.LineItemStructuredParse) => true,
+            nameof(AiFeatureKey.ManualJournalSuggestion) => true,
+            nameof(AiFeatureKey.ForecastNarrative) => true,
+            nameof(AiFeatureKey.DocumentRoleInference) => true,
+            // Sprint-1 features — consume-only เริ่มต้น; เมื่อสะสม
+            // ground-truth ≥30 rows ใน LocalModelHealth จะเห็น accuracy
+            // → admin ตัดสินได้ว่าจะ promote เป็น distillation table writer
+            nameof(AiFeatureKey.VatTypeInference) => true,
+            nameof(AiFeatureKey.PaymentTermsSuggestion) => true,
+            nameof(AiFeatureKey.PaymentChannelSuggestion) => true,
+            nameof(AiFeatureKey.ProjectAllocationSuggestion) => true,
+            nameof(AiFeatureKey.ContactFuzzyMatch) => true,
+            nameof(AiFeatureKey.ManualJeAccountSuggestion) => true,
+            nameof(AiFeatureKey.DimensionAllocationSuggestion) => true,
+            nameof(AiFeatureKey.AssetCategorySuggestion) => true,
+            nameof(AiFeatureKey.PayrollIncomeTypeSuggestion) => true,
+            nameof(AiFeatureKey.FxRateSuggestion) => true,
+            nameof(AiFeatureKey.PriceDriftDetection) => true,
+            nameof(AiFeatureKey.DocumentMemoGeneration) => true,
+            nameof(AiFeatureKey.CreditLimitSuggestion) => true,
+            nameof(AiFeatureKey.ProductCategoryTagging) => true,
+            nameof(AiFeatureKey.BadDebtRiskDetection) => true,
+            nameof(AiFeatureKey.DiscountSuggestion) => true,
+            nameof(AiFeatureKey.ApprovalRoutingSuggestion) => true,
+            nameof(AiFeatureKey.InventoryReorderPointSuggestion) => true,
+            nameof(AiFeatureKey.PeriodCloseAnomalyCheck) => true,
+            nameof(AiFeatureKey.DeadStockDetection) => true,
+            nameof(AiFeatureKey.BookTaxDifferenceDetection) => true,
+            nameof(AiFeatureKey.CustomerRfmSegmentation) => true,
+            nameof(AiFeatureKey.InventoryAbcAnalysis) => true,
+            nameof(AiFeatureKey.GlAccountSlotSuggestion) => true,
             // Other features get their writer added later — return false
-            // so the row stays available for a future code release.
+            // so the row stays available for a future code release. The
+            // unmatched FeatureKey is rolled up + logged once per run in
+            // TrainLocalModelsAsync via KnownTrainerFeatures, so admins
+            // see exactly which feature is silently dropping signal.
             _ => false,
         };
     }

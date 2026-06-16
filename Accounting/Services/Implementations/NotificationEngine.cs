@@ -16,13 +16,11 @@ namespace Accounting.Services.Implementations;
 /// for the contract. Lookup ordering:
 ///   1. NotificationSettings rows for (company, event) — gives the
 ///      set of (recipient role × enabled channels).
-///   2. Resolve each role → list of UserIds (via OrganizationService
-///      for DirectManager / DepartmentHead, CompanyUser / CompanyRole
-///      for Owner / HrAdmin / Accounting).
-///   3. For each (userId, channels) pair, apply that user's
-///      NotificationPreference suppressions, then fire each enabled
-///      channel. The actor (event trigger) is always excluded — no
-///      self-notifications.
+///   2. Resolve each role → list of Recipient (UserId-bound users +
+///      direct Employee.LineId/Email for staff that aren't system users).
+///   3. For each recipient, apply NotificationPreference suppressions
+///      (only for user-bound recipients), then fire each enabled
+///      channel. The actor (event trigger) is always excluded.
 ///
 /// Every dispatch is wrapped in catch-all logging so a notification
 /// failure can never roll back the surrounding business transaction.
@@ -46,6 +44,15 @@ public class NotificationEngine : INotificationEngine
         _secrets = secrets;
     }
 
+    /// <summary>Unified target — UserId เมื่อปลายทางเป็น user ในระบบ,
+    /// หรือ direct Email/LineUserId เมื่อปลายทางเป็นพนักงาน "ตรง" ที่ไม่ได้
+    /// ผูกบัญชี user (เช่นพนักงานทั่วไปที่มีแค่ LINE ID ในระบบ HR).</summary>
+    private sealed record Recipient(
+        Guid? UserId,
+        string? Email,
+        string? LineUserId,
+        string? FullName);
+
     public async Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context)
     {
         try
@@ -57,17 +64,27 @@ public class NotificationEngine : INotificationEngine
                 .ToListAsync();
             if (settings.Count == 0) return;
 
-            // recipientUserId → effective channels (after merging multiple roles).
-            var effective = new Dictionary<Guid, (bool Sys, bool Email, bool Line)>();
+            // recipientKey → effective (channels + Recipient). Key combines
+            // UserId.ToString() for system users, or "email:" / "line:"
+            // prefixes for direct-employee targets — so the same employee
+            // resolved by multiple roles dedupes correctly.
+            var effective = new Dictionary<string, (Recipient R, bool Sys, bool Email, bool Line)>();
 
             foreach (var s in settings)
             {
-                var userIds = await ResolveRoleAsync(companyId, s.RecipientRole, context);
-                foreach (var uid in userIds)
+                var recipients = await ResolveRoleAsync(companyId, s.RecipientRole, context);
+                foreach (var r in recipients)
                 {
-                    if (context.ActorUserId == uid) continue;  // never notify the actor
-                    var prev = effective.TryGetValue(uid, out var v) ? v : (Sys: false, Email: false, Line: false);
-                    effective[uid] = (
+                    if (r.UserId.HasValue && context.ActorUserId == r.UserId) continue;
+                    var key = r.UserId?.ToString()
+                        ?? (r.LineUserId != null ? $"line:{r.LineUserId}" : null)
+                        ?? (r.Email != null ? $"email:{r.Email}" : null);
+                    if (key == null) continue;
+                    var prev = effective.TryGetValue(key, out var v)
+                        ? v
+                        : (R: r, Sys: false, Email: false, Line: false);
+                    effective[key] = (
+                        prev.R,
                         prev.Sys   || s.EnableSystem,
                         prev.Email || s.EnableEmail,
                         prev.Line  || s.EnableLine);
@@ -75,38 +92,58 @@ public class NotificationEngine : INotificationEngine
             }
             if (effective.Count == 0) return;
 
-            // Personal suppressions: a row in NotificationPreferences
-            // for (company, user, event) flips off the matching channels.
-            var prefs = await _db.NotificationPreferences
-                .AsNoTracking()
-                .Where(p => p.CompanyId == companyId && p.EventKey == eventKey
-                    && effective.Keys.Contains(p.UserId))
-                .ToListAsync();
-            var prefMap = prefs.ToDictionary(p => p.UserId);
+            // Personal suppressions only apply to user-bound recipients.
+            var userIds = effective.Values
+                .Where(v => v.R.UserId.HasValue)
+                .Select(v => v.R.UserId!.Value)
+                .ToList();
+            var prefMap = userIds.Count == 0
+                ? new Dictionary<Guid, NotificationPreference>()
+                : (await _db.NotificationPreferences
+                    .AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && p.EventKey == eventKey
+                        && userIds.Contains(p.UserId))
+                    .ToListAsync()).ToDictionary(p => p.UserId);
 
-            // Pre-load each recipient's Email / LineUserId in one query.
-            var userIdsList = effective.Keys.ToList();
-            var users = await _db.Users
-                .AsNoTracking()
-                .Where(u => userIdsList.Contains(u.Id) && u.Status != UserStatus.Inactive)
-                .Select(u => new { u.Id, u.Email, u.FullName, u.LineUserId })
-                .ToDictionaryAsync(u => u.Id);
+            // Refresh user contact info (email/LineUserId can change after roles resolved).
+            var users = userIds.Count == 0
+                ? new Dictionary<Guid, (string? Email, string? FullName, string? LineUserId)>()
+                : (await _db.Users.AsNoTracking()
+                    .Where(u => userIds.Contains(u.Id) && u.Status != UserStatus.Inactive)
+                    .Select(u => new { u.Id, u.Email, u.FullName, u.LineUserId })
+                    .ToListAsync())
+                    .ToDictionary(u => u.Id, u => (u.Email, u.FullName, u.LineUserId));
 
-            foreach (var (userId, ch) in effective)
+            foreach (var (_, e) in effective)
             {
-                if (!users.TryGetValue(userId, out var u)) continue;  // inactive / deleted
-                var supSys   = prefMap.TryGetValue(userId, out var pp) && pp.SuppressSystem;
-                var supEmail = pp != null && pp.SuppressEmail;
-                var supLine  = pp != null && pp.SuppressLine;
+                var r = e.R;
+                string? email = r.Email;
+                string? lineUserId = r.LineUserId;
+                string? fullName = r.FullName;
+                if (r.UserId.HasValue)
+                {
+                    if (!users.TryGetValue(r.UserId.Value, out var u)) continue;
+                    email = u.Email ?? email;
+                    lineUserId = u.LineUserId ?? lineUserId;
+                    fullName = u.FullName ?? fullName;
+                }
 
-                if (ch.Sys && !supSys)
-                    await DispatchSystemAsync(userId, companyId, context);
+                var supSys = false; var supEmail = false; var supLine = false;
+                if (r.UserId.HasValue && prefMap.TryGetValue(r.UserId.Value, out var pp))
+                {
+                    supSys = pp.SuppressSystem;
+                    supEmail = pp.SuppressEmail;
+                    supLine = pp.SuppressLine;
+                }
 
-                if (ch.Email && !supEmail && !string.IsNullOrWhiteSpace(u.Email))
-                    await DispatchEmailAsync(companyId, u.Email!, u.FullName, context);
+                if (e.Sys && !supSys && r.UserId.HasValue)
+                    await DispatchSystemAsync(r.UserId.Value, companyId, context);
 
-                if (ch.Line && !supLine && !string.IsNullOrWhiteSpace(u.LineUserId))
-                    await DispatchLineAsync(u.LineUserId!, context);
+                if (e.Email && !supEmail && !string.IsNullOrWhiteSpace(email))
+                    await DispatchEmailAsync(companyId, email!, fullName, context);
+
+                if (e.Line && !supLine && !string.IsNullOrWhiteSpace(lineUserId))
+                    await DispatchLineAsync(companyId, lineUserId!, context);
             }
         }
         catch (Exception ex)
@@ -116,11 +153,12 @@ public class NotificationEngine : INotificationEngine
         }
     }
 
-    /// <summary>Resolve a logical recipient role to concrete user IDs.
+    /// <summary>Resolve a logical recipient role to concrete recipients.
     /// Empty list means "no one is registered for that role" — engine
     /// silently skips. Errors are logged and swallowed so one bad role
-    /// doesn't block the others.</summary>
-    private async Task<List<Guid>> ResolveRoleAsync(Guid companyId, string role, NotificationContext ctx)
+    /// doesn't block the others. Returns Recipient objects so we can
+    /// notify employees who have Email/LineId but no system User account.</summary>
+    private async Task<List<Recipient>> ResolveRoleAsync(Guid companyId, string role, NotificationContext ctx)
     {
         try
         {
@@ -128,42 +166,41 @@ public class NotificationEngine : INotificationEngine
             {
                 case NotificationRecipientRoles.Requester:
                     if (!ctx.RequesterEmployeeId.HasValue) return new();
-                    var requesterUserId = await _db.Employees
+                    var emp = await _db.Set<Employee>()
                         .Where(e => e.Id == ctx.RequesterEmployeeId.Value && e.CompanyId == companyId)
-                        .Select(e => e.UserId)
+                        .Select(e => new { e.UserId, e.Email, e.LineId,
+                            FullName = (e.TitleTh ?? "") + e.FirstNameTh + " " + e.LastNameTh })
                         .FirstOrDefaultAsync();
-                    return requesterUserId.HasValue ? new List<Guid> { requesterUserId.Value } : new();
+                    if (emp == null) return new();
+                    return new List<Recipient> { new(emp.UserId, emp.Email, emp.LineId, emp.FullName.Trim()) };
 
                 case NotificationRecipientRoles.DirectManager:
                     if (!ctx.RequesterEmployeeId.HasValue) return new();
                     var info = await _organization.GetDirectManagerInfoAsync(companyId, ctx.RequesterEmployeeId.Value);
-                    return info.ManagerUserId.HasValue ? new List<Guid> { info.ManagerUserId.Value } : new();
+                    return await ResolveManagerEmployeeAsync(companyId, info.ManagerUserId, info.ManagerEmployeeId);
 
                 case NotificationRecipientRoles.DepartmentHead:
                     if (!ctx.RequesterEmployeeId.HasValue) return new();
                     var head = await _organization.GetDirectManagerInfoAsync(companyId, ctx.RequesterEmployeeId.Value);
-                    if (!head.DepartmentHeadEmployeeId.HasValue) return new();
-                    var headUserId = await _db.Employees
-                        .Where(e => e.Id == head.DepartmentHeadEmployeeId.Value)
-                        .Select(e => e.UserId)
-                        .FirstOrDefaultAsync();
-                    return headUserId.HasValue ? new List<Guid> { headUserId.Value } : new();
+                    return await ResolveManagerEmployeeAsync(companyId, null, head.DepartmentHeadEmployeeId);
 
                 case NotificationRecipientRoles.Owner:
-                    return await _db.Set<CompanyUser>()
+                    return (await _db.Set<CompanyUser>()
                         .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
                         .Select(cu => cu.UserId)
-                        .ToListAsync();
+                        .ToListAsync())
+                        .Select(uid => new Recipient(uid, null, null, null))
+                        .ToList();
 
                 case NotificationRecipientRoles.HrAdmin:
-                    // Granted via a CompanyRolePermission row with perm:HR.Admin,
-                    // or anyone with UserRole.SystemAdmin in this tenant.
-                    return await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.HrAdmin,
-                        UserRole.SystemAdmin);
+                    return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.HrAdmin, UserRole.SystemAdmin))
+                        .Select(uid => new Recipient(uid, null, null, null))
+                        .ToList();
 
                 case NotificationRecipientRoles.Accounting:
-                    return await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.AccountingView,
-                        UserRole.Accountant);
+                    return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.AccountingView, UserRole.Accountant))
+                        .Select(uid => new Recipient(uid, null, null, null))
+                        .ToList();
 
                 default:
                     _logger.LogWarning("Unknown recipient role '{Role}'", role);
@@ -177,11 +214,27 @@ public class NotificationEngine : INotificationEngine
         }
     }
 
+    /// <summary>Resolve manager — preferring system User (so they get bell)
+    /// but falling back to direct Employee.Email/LineId when manager has
+    /// no user account.</summary>
+    private async Task<List<Recipient>> ResolveManagerEmployeeAsync(Guid companyId, Guid? userId, Guid? employeeId)
+    {
+        if (!employeeId.HasValue && !userId.HasValue) return new();
+        if (employeeId.HasValue)
+        {
+            var mgr = await _db.Set<Employee>()
+                .Where(e => e.Id == employeeId.Value && e.CompanyId == companyId)
+                .Select(e => new { e.UserId, e.Email, e.LineId,
+                    FullName = (e.TitleTh ?? "") + e.FirstNameTh + " " + e.LastNameTh })
+                .FirstOrDefaultAsync();
+            if (mgr != null)
+                return new List<Recipient> { new(mgr.UserId ?? userId, mgr.Email, mgr.LineId, mgr.FullName.Trim()) };
+        }
+        return new List<Recipient> { new(userId, null, null, null) };
+    }
+
     private async Task<List<Guid>> ResolveByPermissionOrRoleAsync(Guid companyId, string permissionKey, UserRole role)
     {
-        // Union of:
-        //   (a) users with companyRole that has the permission key granted
-        //   (b) users whose system UserRole matches
         var byPermission = await _db.Set<CompanyUser>()
             .Where(cu => cu.CompanyId == companyId
                 && cu.CompanyRoleId != null
@@ -218,7 +271,7 @@ public class NotificationEngine : INotificationEngine
         await _db.SaveChangesAsync();
     }
 
-    private async Task DispatchEmailAsync(Guid companyId, string toEmail, string toName, NotificationContext context)
+    private async Task DispatchEmailAsync(Guid companyId, string toEmail, string? toName, NotificationContext context)
     {
         try
         {
@@ -246,7 +299,7 @@ public class NotificationEngine : INotificationEngine
                 Body = body,
                 IsBodyHtml = true,
             };
-            msg.To.Add(new MailAddress(toEmail, toName));
+            msg.To.Add(new MailAddress(toEmail, toName ?? toEmail));
             using var client = new SmtpClient(s.EmailSmtpHost, s.EmailSmtpPort)
             {
                 EnableSsl = s.EmailSmtpUseSsl,
@@ -259,12 +312,12 @@ public class NotificationEngine : INotificationEngine
         catch (Exception ex) { _logger.LogError(ex, "Email dispatch to {Email} failed", toEmail); }
     }
 
-    private async Task DispatchLineAsync(string lineUserId, NotificationContext context)
+    private async Task DispatchLineAsync(Guid companyId, string lineUserId, NotificationContext context)
     {
         var text = $"{context.Title}\n\n{context.Message}";
         if (!string.IsNullOrEmpty(context.ActionUrl))
             text += $"\n\n🔗 {context.ActionUrl}";
-        await _line.PushToUserAsync(lineUserId, text);
+        await _line.PushToUserAsync(companyId, lineUserId, text);
     }
 
     private static string WebUtilityEncode(string s) =>

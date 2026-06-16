@@ -30,6 +30,22 @@
       <div class="tab" data-type="CorporateIncomeTax" onclick="Page.setType(this)">ภาษีนิติบุคคล</div>
     </div>
 
+    <!-- AI book-tax difference helper — โผล่เฉพาะตอนเลือก CorporateIncomeTax tab -->
+    <div id="bookTaxPanel" style="display:none;margin-bottom:16px;padding:16px;background:linear-gradient(135deg,#fef3c7,#fef9c3);border-left:4px solid #f59e0b;border-radius:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:600;color:#92400e">🤖 ตรวจค่าใช้จ่ายต้องห้าม (§65ตรี)</div>
+          <div style="font-size:12px;color:#78350f">สแกนเอกสาร PV/PI/Expense ทั้งปี — ค่ารับรอง / น้ำมันรถส่วนตัว / ค่าปรับ / บริจาคเกิน</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="number" id="bookTaxYear" class="form-input" style="width:100px" placeholder="ปี ค.ศ."
+                 value="" min="2000" max="2200">
+          <button class="btn btn-warning" onclick="Page.runBookTaxCheck()">ตรวจ</button>
+        </div>
+      </div>
+      <div id="bookTaxResult" style="margin-top:12px"></div>
+    </div>
+
     <!-- Filters -->
     <div class="toolbar" style="margin-bottom:16px">
       <select class="filter-select" id="yearFilter" onchange="Page.load()">
@@ -218,7 +234,53 @@
         el.classList.add('active');
         this.taxType = el.dataset.type;
         this.page = 1;
+        // Book-tax panel แสดงเฉพาะตอนเลือกภาษีนิติบุคคล (ภ.ง.ด.50/51)
+        const panel = document.getElementById('bookTaxPanel');
+        if (panel) panel.style.display = this.taxType === 'CorporateIncomeTax' ? '' : 'none';
+        const yrEl = document.getElementById('bookTaxYear');
+        if (yrEl && !yrEl.value) yrEl.value = new Date().getFullYear();
         this.load();
+      },
+
+      async runBookTaxCheck() {
+        const yr = parseInt(document.getElementById('bookTaxYear')?.value, 10);
+        const out = document.getElementById('bookTaxResult');
+        if (!yr || yr < 2000) { Layout.toast('กรุณาระบุปี ค.ศ.', 'error'); return; }
+        out.innerHTML = '<div style="color:#64748b;font-size:12px">กำลังตรวจ...</div>';
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/tax-adjustment/book-tax-diff?year=${yr}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) { out.innerHTML = '<div style="color:#dc2626">โหลดผลไม่สำเร็จ</div>'; return; }
+          if (!d.categories || d.categories.length === 0) {
+            out.innerHTML = `<div style="color:#15803d;font-weight:600">✅ ${d.reasoning}</div>`;
+            return;
+          }
+          out.innerHTML = `<div style="margin-bottom:8px;font-weight:600;color:#7f1d1d">
+              📋 ต้องเพิ่มกลับเงินได้ทั้งหมด: ${(d.totalAddback || 0).toLocaleString()} บาท
+            </div>
+            <table class="data-table" style="font-size:13px;width:100%">
+              <thead><tr>
+                <th>หมวด</th>
+                <th class="text-right">จำนวนที่บันทึก</th>
+                <th class="text-right">ต้องเพิ่มกลับ</th>
+                <th class="text-center">รายการ</th>
+              </tr></thead>
+              <tbody>${d.categories.map(c => `
+                <tr>
+                  <td><strong>${Layout.esc ? Layout.esc(c.label) : c.label}</strong></td>
+                  <td class="text-right">${(c.amount || 0).toLocaleString()}</td>
+                  <td class="text-right" style="color:#dc2626;font-weight:600">${(c.addback || 0).toLocaleString()}</td>
+                  <td class="text-center">${c.lineCount}</td>
+                </tr>`).join('')}</tbody>
+            </table>
+            <p style="font-size:11px;color:#78350f;margin-top:8px">นำตัวเลขนี้ไปกรอกใน ภ.ง.ด.50/51 ส่วน "รายการเพิ่ม" — ระบบยังไม่ส่งอัตโนมัติ</p>`;
+        } catch (e) {
+          out.innerHTML = `<div style="color:#dc2626">${e.message}</div>`;
+        }
       },
       async load() {
         const api = Layout.api(); if (!api) return;
@@ -634,13 +696,25 @@
         try {
           const res = await fetch(`/api/companies/${cid}/tax/${reportId}/export-xlsx`,
             { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-          if (!res.ok) throw new Error(`ส่งออก Excel ล้มเหลว (${res.status})`);
+          if (!res.ok) {
+            // อ่าน server message (ApiResponse.message) เพื่อให้ผู้ใช้รู้ว่า
+            // 404 มาจาก "ไม่พบรายงาน" (อาจถูกลบ/บริษัทเปลี่ยน) ไม่ใช่ endpoint หาย,
+            // 403 คือสิทธิ์, 401 คือ token หมดอายุ.
+            let detail = '';
+            try { const j = await res.clone().json(); detail = j?.message || ''; } catch {}
+            const reasons = {
+              401: 'เซสชันหมดอายุ — กรุณา login ใหม่',
+              403: detail || 'ไม่มีสิทธิ์เข้าถึงรายงานในบริษัทนี้',
+              404: detail || 'ไม่พบรายงานนี้ (อาจถูกลบ หรือสลับบริษัทแล้ว — กรุณารีโหลดหน้า)',
+            };
+            throw new Error(reasons[res.status] || `ส่งออก Excel ล้มเหลว (${res.status}) ${detail}`);
+          }
           const blob = await res.blob();
           const cd = res.headers.get('content-disposition') || '';
-          const m = cd.match(/filename="?([^"]+)"?/);
+          const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = m ? m[1] : `TaxReport_${reportId}.xlsx`;
+          a.download = m ? decodeURIComponent(m[1]) : `TaxReport_${reportId}.xlsx`;
           a.click();
           URL.revokeObjectURL(a.href);
           Layout.toast('ส่งออก Excel สำเร็จ');

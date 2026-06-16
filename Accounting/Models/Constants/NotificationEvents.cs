@@ -33,6 +33,11 @@ public static class NotificationEvents
     public const string PayrollGenerated = "payroll.generated";   // run calculated
     public const string PayrollApproved  = "payroll.approved";
     public const string PayrollPaid      = "payroll.paid";
+    /// <summary>Fires once per employee when payroll moves to Paid —
+    /// recipient is the employee themselves (Requester role resolves to
+    /// Employee.UserId or Employee.LineId/Email). Used to broadcast
+    /// "เงินเดือนโอนแล้ว / ดาวน์โหลดสลิปที่นี่" via LINE/Email.</summary>
+    public const string PayrollSlipReady = "payroll.slip_ready";
 
     // ===== Accounting =====
     public const string OcrAssetDetected = "ocr.asset_detected";
@@ -65,6 +70,7 @@ public static class NotificationEvents
         ("Payroll",  PayrollGenerated, "คำนวณรอบเงินเดือน"),
         ("Payroll",  PayrollApproved,  "อนุมัติรอบเงินเดือน"),
         ("Payroll",  PayrollPaid,      "จ่ายเงินเดือน"),
+        ("Payroll",  PayrollSlipReady, "แจ้งพนักงาน: สลิปพร้อมรับ (LINE/Email)"),
         ("Accounting", OcrAssetDetected, "OCR พบสินทรัพย์น่าจะลงทะเบียน"),
         ("Accounting", PaymentVoucherGenerated, "สร้างใบสำคัญจ่ายอัตโนมัติ"),
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),

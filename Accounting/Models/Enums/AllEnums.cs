@@ -1322,6 +1322,195 @@ public enum AiFeatureKey
     /// first; AI only adjudicates lines that span ≥2 candidate projects.</summary>
     OcrProjectMatch = 29,
 
+    /// <summary>VAT type per document line: 7%, 0% (export / international
+    /// services), or Exempt (ยกเว้น — food, medicine, books per VAT-act §81).
+    /// Heuristic: line description keywords + vendor type (domestic /
+    /// foreign) cold-starts the picker; user override trains
+    /// OcrCategoryMapping per (vendor + keyword) → vat-rate so future
+    /// invoices auto-fill the same value. Per-line, not per-document.</summary>
+    VatTypeInference = 30,
+
+    /// <summary>Credit-term days (Net 7/15/30/60/90) auto-suggested when
+    /// the operator picks a contact on a new document. Resolution
+    /// priority: Contact.CreditDays (explicit per-contact setting) →
+    /// OcrVendorIntelligence.TypicalPaymentTermsDays (learned from doc
+    /// history) → CompanySettings.DefaultPaymentDueDays. Pure lookup,
+    /// no ML required for day one — but logged through the orchestrator
+    /// so per-vendor accuracy is tracked + drift detected.</summary>
+    PaymentTermsSuggestion = 31,
+
+    /// <summary>Bank account / payment channel suggestion for a new
+    /// PaymentVoucher — picks the bank account this supplier is most
+    /// commonly paid from based on the last 12 PVs to them. Falls
+    /// back to (a) the bank's LinkedAccount when a previous PV
+    /// touched a specific bank, or (b) the company's first active
+    /// bank account, or (c) generic cash. Helps avoid the operator
+    /// digging through the dropdown when a supplier always settles
+    /// from one channel.</summary>
+    PaymentChannelSuggestion = 32,
+
+    /// <summary>Project allocation per document line — suggests the
+    /// project this line should be tagged with, based on (a) which
+    /// project the supplier was most recently linked to within the
+    /// same fiscal period, and (b) project-vendor history (which
+    /// project usually buys from this supplier). Cold-starts from
+    /// the active-project picker; ML version eventually consumes
+    /// the OcrProjectMatch feedback corpus.</summary>
+    ProjectAllocationSuggestion = 33,
+
+    /// <summary>Fuzzy contact match — when the operator types a name
+    /// on a new document or contact form, surface the top 5 existing
+    /// contacts that match by name + tax-id. Uses the existing
+    /// SimilarityIndex / CharNgramSimilarity helpers. Avoids duplicate
+    /// contact creation (the #1 source of long-term data hygiene
+    /// problems in SMB accounting).</summary>
+    ContactFuzzyMatch = 34,
+
+    /// <summary>Manual Journal Entry account suggestion — for each
+    /// JE line, AI proposes the Dr/Cr account + amount split based on
+    /// (a) the JE description / memo, (b) historical similar JEs
+    /// (same type + similar memo), (c) the company's chart of accounts
+    /// shape. Power-user feature; reuses the GlAccountDistillation
+    /// pattern from OCR. Per-line suggestion (not per-JE) so a single
+    /// JE can mix categories.</summary>
+    ManualJeAccountSuggestion = 35,
+
+    /// <summary>Cost center / Branch dimension allocation per document
+    /// line. Resolves the AccountingDimension this supplier is usually
+    /// charged to (Mode of DocumentLine.DimensionId across recent
+    /// docs). Mirrors the Project-allocation flow but for
+    /// org / cost-centre dimensions instead of project dimensions.</summary>
+    DimensionAllocationSuggestion = 36,
+
+    /// <summary>Asset category + useful-life-months + depreciation
+    /// method suggestion when an operator creates a FixedAsset. Pure
+    /// keyword heuristic over the asset name + cost (e.g. "รถยนต์" →
+    /// Vehicles, 60mo, StraightLine; "Computer" → IT Equipment, 36mo).
+    /// Aligned with the Thai Revenue-Department-accepted standard
+    /// useful-life table.</summary>
+    AssetCategorySuggestion = 37,
+
+    /// <summary>Payroll component → §40 income-type code mapping —
+    /// salary/wage → 40(1), service-fee → 40(2), royalty → 40(3),
+    /// interest → 40(4), rental → 40(5), professional → 40(6),
+    /// contractor → 40(7), business → 40(8). Drives the ภ.ง.ด.1
+    /// per-employee withholding cert categorisation. Pure keyword
+    /// heuristic over PayrollItem.Name on creation.</summary>
+    PayrollIncomeTypeSuggestion = 38,
+
+    /// <summary>FX rate auto-fill on multi-currency document creation —
+    /// returns the latest CurrencyRate.MidRate for (from, THB) closest
+    /// to the document date. Falls back to today's rate. Pure lookup;
+    /// confidence reflects how stale the latest rate is (1.00 same day
+    /// → 0.50 a week old). Never calls cloud AI.</summary>
+    FxRateSuggestion = 39,
+
+    /// <summary>Price drift detection per (product, vendor) — when an
+    /// operator enters a unit price that differs from the recent
+    /// 12-document average by more than ±20%, flag a warning. Pure
+    /// statistics (mean + std-dev over DocumentLine.UnitPrice history),
+    /// no cloud call. Catches typos (1500 vs 15000) + supplier price
+    /// changes worth a second look before approval.</summary>
+    PriceDriftDetection = 40,
+
+    /// <summary>Document memo / description auto-generate from doc-type
+    /// + contact + lines. Pure-template renderer for the common case
+    /// "ขาย <product> ให้ <customer> งวด <month/year>" — saves typing
+    /// the same memo template repeatedly. AI cloud is invoked only
+    /// when ≥3 distinct product categories on the doc (template
+    /// fallback fails).</summary>
+    DocumentMemoGeneration = 41,
+
+    /// <summary>Credit-limit suggestion for a new customer Contact —
+    /// statistical: median + p75 of the company's existing customers'
+    /// peak AR balance. Cold-starts to 50,000 THB (SMB Thai default).
+    /// Helps avoid both under-limit (lost sales) and over-limit (bad
+    /// debt) on day-one customer setup.</summary>
+    CreditLimitSuggestion = 42,
+
+    /// <summary>Product category tagging when creating a new Product —
+    /// keyword heuristic over the product name + description. Maps to
+    /// any existing ProductCategory the company has, or surfaces the
+    /// closest standard Thai SMB category ("เสื้อผ้า/อาหาร/วัสดุ/
+    /// บริการ/อิเล็กทรอนิกส์" + more). Saves the operator from
+    /// scrolling the category dropdown.</summary>
+    ProductCategoryTagging = 43,
+
+    /// <summary>Bad-debt risk score per customer — combines (a) max
+    /// days-overdue across open invoices, (b) overdue/total invoice
+    /// ratio, (c) historical write-offs. Returns 0-100 score + Low /
+    /// Medium / High classification. Used in the contact list and
+    /// in invoice-creation review to flag risky customers BEFORE
+    /// extending more credit.</summary>
+    BadDebtRiskDetection = 44,
+
+    /// <summary>Discount % suggestion when creating a Quotation /
+    /// Invoice — based on (a) the contact's lifetime sales value
+    /// (volume customer), (b) repeat-customer count, (c) the
+    /// company-wide median discount given. Heuristic only; surfaces
+    /// "give 5% — repeat customer with ฿2M lifetime" type guidance.</summary>
+    DiscountSuggestion = 45,
+
+    /// <summary>Approver routing suggestion — when an operator submits
+    /// a document for approval, pick the approver who most often
+    /// approved similar (doc type + amount band) documents in the past
+    /// 90 days. Falls back to ApprovalRule + DirectManager when no
+    /// learned signal. Reduces "which manager handles this?" indecision
+    /// in larger companies with multiple approvers.</summary>
+    ApprovalRoutingSuggestion = 46,
+
+    /// <summary>Inventory reorder point per product — calculates
+    /// minimum stock level from (a) average daily consumption over
+    /// last 90 days, (b) typical lead time (configurable, defaults
+    /// to 14 days), (c) safety stock buffer (default 1.5× lead-time
+    /// demand). Lets the operator avoid stockouts without manually
+    /// computing min levels for every SKU.</summary>
+    InventoryReorderPointSuggestion = 47,
+
+    /// <summary>Period-close anomaly detection — scans the period
+    /// being closed for: (a) Draft JEs still open, (b) Document.
+    /// Approved without posted JE, (c) trial-balance not zero,
+    /// (d) missing monthly depreciation, (e) AR/AP aging not
+    /// reconciled to GL. Returns a checklist of issues + suggested
+    /// fix. Pure rule scan; AI cloud not used.</summary>
+    PeriodCloseAnomalyCheck = 48,
+
+    /// <summary>Dead-stock detection — surfaces products with positive
+    /// stock balance but no OUT movement in N days (default 90). Lets
+    /// the operator clear slow-moving SKUs before they tie up working
+    /// capital. Pure statistics; runs over StockMovement history.</summary>
+    DeadStockDetection = 49,
+
+    /// <summary>Book-tax difference detection — scans approved
+    /// expense documents in the period for line descriptions matching
+    /// non-deductible categories per §65ตรี (รับรอง / น้ำมันรถส่วนตัว /
+    /// ค่าปรับ / เงินบริจาคเกิน) and calculates the tax-adjustment
+    /// addback. Used to feed the corporate income-tax filing.</summary>
+    BookTaxDifferenceDetection = 50,
+
+    /// <summary>Customer segmentation by RFM (Recency / Frequency /
+    /// Monetary value) — scores each customer 1-5 on each axis and
+    /// classifies into actionable segments: Champion / Loyal /
+    /// AtRisk / Lost / NewCustomer. Drives targeted marketing +
+    /// credit-limit reviews. Pure stats; no AI cloud.</summary>
+    CustomerRfmSegmentation = 51,
+
+    /// <summary>Inventory ABC analysis — Pareto classification of
+    /// SKUs by revenue contribution. A-class (top 70-80% revenue) =
+    /// stockout watch. B-class (15-20%) = normal review.
+    /// C-class (5-10%) = candidate for SKU rationalisation. Helps
+    /// SMB owners focus inventory management effort.</summary>
+    InventoryAbcAnalysis = 52,
+
+    /// <summary>Generic GL-account-slot suggestion — fills any
+    /// chart-of-accounts dropdown (contact AR/AP/GR, fixed-asset
+    /// asset/dep/accum, department/budget/petty-cash expense) from
+    /// (a) per-tenant learned memory keyed by slot+context, then
+    /// (b) the most-used account for that slot in history, then
+    /// (c) the standard code-prefix default. One feature key serves
+    /// every slot so all COA pickers learn through the same loop.</summary>
+    GlAccountSlotSuggestion = 53,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

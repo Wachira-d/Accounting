@@ -65,7 +65,12 @@
           <div class="form-group"><label class="form-label">ชื่อสินค้า (ไทย) *</label><input type="text" class="form-input" id="fName"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ชื่อ (อังกฤษ)</label><input type="text" class="form-input" id="fNameEn"></div>
-            <div class="form-group"><label class="form-label">หมวดหมู่</label><input type="text" class="form-input" id="fCategory"></div>
+            <div class="form-group"><label class="form-label">หมวดหมู่
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestProductCategory()">🤖 ให้ AI เลือก</button>
+              </label>
+              <input type="text" class="form-input" id="fCategory" placeholder="พิมพ์เอง หรือกด AI">
+              <div id="categoryHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">หน่วยหลัก *</label><input type="text" class="form-input" id="fUnit" value="ชิ้น"></div>
@@ -83,7 +88,12 @@
           </div>
           <div class="form-row">
             <div class="form-group form-checkbox"><input type="checkbox" id="fTrackStock" checked><label for="fTrackStock">ติดตามสต็อก</label></div>
-            <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ</label><input type="number" class="form-input" id="fMinStock" value="0"></div>
+            <div class="form-group"><label class="form-label">สต็อกขั้นต่ำ
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestReorderPoint()" title="คำนวณจากการใช้งาน 90 วันล่าสุด">🤖 ให้ AI คำนวณ</button>
+              </label>
+              <input type="number" class="form-input" id="fMinStock" value="0" step="0.01">
+              <div id="reorderHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
           <div class="form-group">
@@ -257,6 +267,9 @@
         if (!Layout.init('products')) return;
         Layout.setTitle('สินค้า/บริการ');
         await this.load();
+        // Dead-stock alert ขึ้นด้านบนทันทีถ้ามีสินค้าจม > 30 รายการ
+        // หรือเงินทุนจม > 100K บาท — แสดง 1 ครั้งต่อ session
+        this.checkDeadStock();
         // Deep-link support — when the OCR import-result table (or any
         // other page) links here with ?id={productId}, auto-open the
         // detail modal so the user lands on the right product without
@@ -296,6 +309,94 @@
         } catch(e) { Layout.toast(e.message,'error'); }
       },
       goPage(p) { Page.page=p; Page.load(); },
+
+      async checkDeadStock() {
+        try {
+          if (sessionStorage.getItem('deadStockAlertShown')) return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/inventory/dead-stock?days=90`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d || d.deadStockCount === 0) return;
+          if (d.deadStockCount < 5 && d.deadStockValue < 50000) return;  // ไม่กวนถ้าน้อย
+          sessionStorage.setItem('deadStockAlertShown', '1');
+          if (typeof Layout.toast === 'function') {
+            Layout.toast(`📦 ${d.reasoning}`, 'warning');
+          }
+        } catch { /* best-effort */ }
+      },
+
+      async suggestReorderPoint() {
+        try {
+          const id = document.getElementById('editId')?.value;
+          if (!id) {
+            if (typeof Layout.toast === 'function') Layout.toast('บันทึกสินค้าก่อนแล้วค่อยให้ AI คำนวณ', 'warning');
+            return;
+          }
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/inventory/reorder-point/suggest?productId=${id}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) return;
+          const inputEl = document.getElementById('fMinStock');
+          const hintEl = document.getElementById('reorderHint');
+          if (d.reorderPoint > 0 && inputEl) inputEl.value = d.reorderPoint;
+          if (hintEl) {
+            const warn = d.needsReorderNow ? '<strong style="color:#dc2626"> ⚠️ สต็อกปัจจุบันต่ำกว่าจุดสั่งซื้อ — ควรสั่งซื้อทันที</strong>' : '';
+            hintEl.innerHTML = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)${warn}`;
+          }
+        } catch { /* best-effort */ }
+      },
+
+      async suggestProductCategory() {
+        try {
+          const name = document.getElementById('fName')?.value?.trim() || '';
+          const desc = document.getElementById('fDesc')?.value?.trim() || '';
+          if (name.length < 2) {
+            if (typeof Layout.toast === 'function') Layout.toast('กรุณากรอกชื่อสินค้าก่อน', 'warning');
+            return;
+          }
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/product/suggest-category`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productName: name, description: desc })
+          });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d) return;
+          const catEl = document.getElementById('fCategory');
+          const hintEl = document.getElementById('categoryHint');
+          const suggested = d.existingCategoryName || d.category;
+          if (catEl) catEl.value = suggested;
+          if (hintEl) {
+            hintEl.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+            hintEl.dataset.aiFeedbackId = d.feedbackId || '';
+          }
+          // เรียนตอน user แก้หมวด → ส่ง ground-truth กลับ (train ไปเลย)
+          if (catEl && d.feedbackId) {
+            catEl.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    feedbackId: d.feedbackId,
+                    chosenAnswer: catEl.value,
+                    acceptedAi: catEl.value === suggested,
+                  })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
+      },
+
       openCreate() {
         document.getElementById('formTitle').textContent='เพิ่มสินค้า';
         document.getElementById('editId').value='';

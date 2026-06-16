@@ -255,6 +255,7 @@ public class PayrollService : IPayrollService
             ExternalId = request.ExternalId,
             ExternalSystem = request.ExternalSystem,
             LastSyncedAt = request.ExternalId != null ? DateTime.UtcNow : null,
+            LineId = request.LineId,
         };
 
         _db.Set<Employee>().Add(employee);
@@ -359,6 +360,7 @@ public class PayrollService : IPayrollService
             employee.LastSyncedAt = DateTime.UtcNow;
         }
         if (request.ExternalSystem != null) employee.ExternalSystem = request.ExternalSystem;
+        if (request.LineId != null) employee.LineId = request.LineId;
         if (request.IsActive.HasValue)
         {
             employee.IsActive = request.IsActive.Value;
@@ -1673,6 +1675,25 @@ public class PayrollService : IPayrollService
             message: $"ดำเนินการโดย {processedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
             entityId: run.Id);
 
+        // แจ้งพนักงานแต่ละคนตรง ๆ ผ่าน LINE/Email — ใช้ Employee.LineId/Email
+        // ที่ NotificationEngine resolve อัตโนมัติเมื่อ role=Requester. ผู้ใช้
+        // เปิด/ปิด event นี้ได้จากหน้าตั้งค่าการแจ้งเตือน (กฎอยู่ที่ admin
+        // matrix). PDF สลิปแนบทาง Email ผ่าน EmailScheduleService ที่
+        // ถัดมาอยู่แล้ว — LINE จะแจ้งเป็นข้อความสั้น ๆ พร้อมลิงก์ดูสลิป.
+        var paidDetails = await _db.Set<PayrollDetail>().AsNoTracking()
+            .Where(d => d.PayrollRunId == run.Id && d.CompanyId == companyId)
+            .Select(d => new { d.EmployeeId, d.NetPay, d.Id })
+            .ToListAsync();
+        foreach (var det in paidDetails)
+        {
+            await NotifyHrAsync(companyId, NotificationEvents.PayrollSlipReady,
+                det.EmployeeId, actorUserId: null,
+                title: $"เงินเดือน {run.Month:D2}/{run.Year} โอนเรียบร้อยแล้ว",
+                message: $"ยอดสุทธิ {det.NetPay:N2} บาท เข้าบัญชีของท่านแล้ว\nดูสลิป: เข้าระบบ NextAcc แท็บเงินเดือน",
+                entityId: det.Id, entityType: "PayslipDetail",
+                actionUrl: $"/pages/payroll.html?run={run.Id}&emp={det.EmployeeId}");
+        }
+
         // ออก ภ.ง.ด.1 cert ต่อพนักงาน (idempotent) — ก่อน auto-generate
         // filings เพื่อให้ ภ.ง.ด.1 txt export อ่านค่า cert ที่เพิ่งออก
         // ได้ถ้าต้องการในอนาคต.
@@ -2711,7 +2732,8 @@ public class PayrollService : IPayrollService
                 : null,
             e.ContactId,
             e.CostBehavior,
-            e.ExternalId, e.ExternalSystem, e.LastSyncedAt);
+            e.ExternalId, e.ExternalSystem, e.LastSyncedAt,
+            e.Phone, e.Email, e.LineId);
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,

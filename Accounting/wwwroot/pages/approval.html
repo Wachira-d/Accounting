@@ -103,7 +103,13 @@
             <div class="form-group"><label class="form-label">จำนวนขั้นสูง (บาท)</label><input type="number" class="form-input" id="ruleMaxAmount" step="0.01"></div>
           </div>
           <div class="form-group"><label class="form-label">จำนวนขั้นตอนอนุมัติ</label><input type="number" class="form-input" id="ruleSteps" value="1" min="1" max="5"></div>
-          <div class="form-group"><label class="form-label">อีเมลผู้อนุมัติ (คั่นด้วย ,)</label><input type="text" class="form-input" id="ruleApprovers" placeholder="user1@email.com, user2@email.com"></div>
+          <div class="form-group">
+            <label class="form-label">อีเมลผู้อนุมัติ (คั่นด้วย ,)
+              <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestApprover()">🤖 ใครเคยอนุมัติแบบนี้</button>
+            </label>
+            <input type="text" class="form-input" id="ruleApprovers" placeholder="user1@email.com, user2@email.com">
+            <div id="approverHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('ruleModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -279,8 +285,47 @@
         document.getElementById('ruleMaxAmount').value = '';
         document.getElementById('ruleSteps').value = '1';
         document.getElementById('ruleApprovers').value = '';
+        const hint = document.getElementById('approverHint'); if (hint) hint.textContent = '';
         Layout.openModal('ruleModal');
       },
+
+      // AI suggest approver — ใครเคยอนุมัติเอกสารประเภท+ช่วงเงินคล้ายกัน
+      // บ่อยสุด 90 วันล่าสุด. ใช้ entityType=Document map → DocumentType
+      // (rule entityType เป็น generic — ส่ง Invoice เป็นตัวแทนกลุ่มเอกสาร)
+      async suggestApprover() {
+        const hint = document.getElementById('approverHint');
+        try {
+          const entityType = document.getElementById('ruleEntityType')?.value || 'Document';
+          const amount = parseFloat(document.getElementById('ruleMinAmount')?.value || '0') || 0;
+          // map generic rule entity → a representative DocumentType for the
+          // history query. The endpoint matches by amount band ±30% so even
+          // an approximate type surfaces the usual approver.
+          const docType = ({ Document: 'Invoice', Payment: 'PaymentVoucher',
+            ExpenseClaim: 'ExpenseClaim', Journal: 'Invoice', PayrollRun: 'PaymentVoucher' })[entityType] || 'Invoice';
+          if (hint) hint.textContent = 'กำลังค้นหา...';
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/approval-routing/suggest?documentType=${docType}&amount=${amount}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d || !d.approverUserId) {
+            if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีประวัติการอนุมัติพอจะแนะนำ');
+            return;
+          }
+          if (hint) hint.innerHTML = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%) ` +
+            `<button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page._applyApprover('${d.approverName || ''}')">ใช้</button>`;
+        } catch (e) {
+          if (hint) hint.textContent = 'ค้นหาไม่สำเร็จ';
+        }
+      },
+      _applyApprover(name) {
+        // ผู้ใช้ยืนยัน — แทรกชื่อเป็น placeholder ให้ผู้ใช้กรอกอีเมลที่ถูกต้อง
+        // (rule ใช้ email ไม่ใช่ user id — แสดงชื่อเพื่อให้รู้ว่าใคร)
+        const el = document.getElementById('ruleApprovers');
+        if (el && name && !el.value) el.placeholder = `(แนะนำ: ${name}) ใส่อีเมล…`;
+      },
+
       editRule(id) {
         const r = (this._rules || []).find(x => x.id === id);
         if (!r) return;

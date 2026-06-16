@@ -339,5 +339,12 @@ public class Contact : TenantEntity
     public DateTime? LastVisitAt { get; set; }
     public int TotalVisitCount { get; set; } = 0;
 
+    /// <summary>Credit limit (วงเงินเครดิต) สำหรับลูกค้า — null = ไม่จำกัด
+    /// (พฤติกรรมเดิม). ระบบใช้ดู AR ค้างต่อลูกค้าเทียบเทียบขีดจำกัด เพื่อ
+    /// เตือนตอนสร้าง Invoice ใหม่ที่จะทำให้ยอดค้างเกินวงเงิน. AI suggest
+    /// endpoint (/ai/credit-limit/suggest) คำนวณ P75 จากลูกค้าปัจจุบัน
+    /// เป็นค่าเริ่มต้น.</summary>
+    public decimal? CreditLimit { get; set; }
+
     public ICollection<Document> Documents { get; set; } = new List<Document>();
 }

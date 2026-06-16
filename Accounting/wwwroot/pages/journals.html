@@ -509,10 +509,61 @@
           <td>${this.accountSelect(`acc_${i}`)}</td>
           <td><input type="number" class="form-input text-right line-debit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
           <td><input type="number" class="form-input text-right line-credit" step="0.01" value="0" oninput="Page.calcTotals()"></td>
-          <td><input type="text" class="form-input" id="ldesc_${i}" style="font-size:13px"></td>
+          <td><input type="text" class="form-input" id="ldesc_${i}" style="font-size:13px" placeholder="พิมพ์เพื่อให้ AI แนะนำบัญชี"></td>
           <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcTotals()">&#10005;</button></td>
         `;
         document.getElementById('linesBody').appendChild(row);
+        // AI suggest-account ตอน blur description — ใช้ JE history ของ
+        // บริษัทนี้ที่ description คล้ายกัน (heuristic-only)
+        const descEl = row.querySelector(`#ldesc_${i}`);
+        if (descEl) descEl.addEventListener('blur', () => this.suggestLineAccount(row));
+      },
+
+      async suggestLineAccount(row) {
+        try {
+          const descEl = row.querySelector('input[id^="ldesc_"]');
+          const desc = (descEl?.value || '').trim();
+          if (desc.length < 3) return;
+          const accSel = row.querySelector('select');
+          if (!accSel || accSel.value || accSel.dataset.userTouched === '1') return;
+          const debit = parseFloat(row.querySelector('.line-debit')?.value || '0') || 0;
+          const credit = parseFloat(row.querySelector('.line-credit')?.value || '0') || 0;
+          const side = credit > debit ? 'Credit' : 'Debit';
+          const amount = side === 'Credit' ? credit : debit;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/manual-je/suggest-account`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              description: desc, amount, entryType: this.currentType || 'General', side,
+            })
+          });
+          const j = await r.json();
+          const top = (j?.data?.suggestions || [])[0];
+          if (!top) return;
+          const optionExists = Array.from(accSel.options).some(o => o.value === top.accountId);
+          if (optionExists) {
+            accSel.value = top.accountId;
+            accSel.dataset.aiFeedbackId = j.data.feedbackId || '';
+            accSel.title = `🤖 ${top.accountCode} - ${top.accountName} (${Math.round((top.confidence || 0) * 100)}% — ${top.supportingSamples} ครั้ง)`;
+            accSel.addEventListener('change', () => {
+              accSel.dataset.userTouched = '1';
+              if (!accSel.dataset.aiFeedbackId) return;
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    feedbackId: accSel.dataset.aiFeedbackId,
+                    chosenAnswer: accSel.value,
+                    acceptedAi: accSel.value === top.accountId,
+                  })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
       },
       calcTotals() {
         let d = 0, c = 0;

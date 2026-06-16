@@ -447,6 +447,30 @@ public partial class PdfGenerationService : IPdfGenerationService
         // (customer) keeps its index even when the approver hasn't signed.
         var signers = new List<DocumentSigner> { FromUser(creatorId), FromUser(approverId) };
 
+        // PV "ผู้จ่ายเงิน" SIGNATURE OVERRIDE (slot 0). PaymentVoucher allows
+        // the API caller to supply Payment.PayerSignatureBase64 per request —
+        // used when the integrating service account has no signature on file.
+        // Takes priority over the CreatedBy user's stored signature; merges
+        // PayerSignatureName when given. We read the LATEST Payment row
+        // linked to this PV (DocumentId).
+        if (doc.DocumentType == DocumentType.PaymentVoucher)
+        {
+            var pay = await _db.Payments.AsNoTracking()
+                .Where(p => p.DocumentId == doc.Id && p.CompanyId == doc.CompanyId)
+                .OrderByDescending(p => p.PaymentDate).ThenByDescending(p => p.CreatedAt)
+                .Select(p => new { p.PayerSignatureBase64, p.PayerSignatureName })
+                .FirstOrDefaultAsync();
+            if (pay != null && !string.IsNullOrWhiteSpace(pay.PayerSignatureBase64))
+            {
+                var raw = pay.PayerSignatureBase64!.Trim();
+                var dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? raw : "data:image/png;base64," + raw;
+                var name = !string.IsNullOrWhiteSpace(pay.PayerSignatureName)
+                    ? pay.PayerSignatureName : signers[0].Name;
+                signers[0] = new DocumentSigner(dataUri, TryDecodeBase64Image(raw), name, signers[0].Title);
+            }
+        }
+
         // EXTERNAL PREPARER OVERRIDE (slot 0 = ผู้จัดทำ). When an integrating
         // system supplied the preparer's name / signature inline, the real
         // preparer isn't a NextAcc User so the CreatedBy→User lookup above

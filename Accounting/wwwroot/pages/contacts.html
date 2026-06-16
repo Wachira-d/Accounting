@@ -61,6 +61,12 @@
             </select>
           </div>
           <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
+          <!-- AI fuzzy-match suggestion: เด้งเตือนเมื่อชื่อ/TaxId คล้ายกับ
+               contact ที่มีอยู่แล้ว — ป้องกัน duplicate (data hygiene #1) -->
+          <div id="fuzzyMatchBox" style="display:none;margin:-8px 0 12px;padding:10px 12px;background:#fef3c7;border-left:4px solid #f59e0b;border-radius:4px;font-size:13px">
+            <div style="font-weight:600;color:#92400e;margin-bottom:6px">⚠️ อาจซ้ำกับผู้ติดต่อในระบบ:</div>
+            <div id="fuzzyMatchList"></div>
+          </div>
           <div class="form-row" id="taxIdRow">
             <div class="form-group" style="flex:2"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
             <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
@@ -77,8 +83,18 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked><label for="fIsCustomer">ลูกค้า</label></div>
+            <div class="form-group form-checkbox"><input type="checkbox" id="fIsCustomer" checked onchange="Page.onCustomerToggle()"><label for="fIsCustomer">ลูกค้า</label></div>
             <div class="form-group form-checkbox"><input type="checkbox" id="fIsSupplier"><label for="fIsSupplier">ผู้จำหน่าย</label></div>
+          </div>
+          <div class="form-row" id="creditLimitRow">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">วงเงินเครดิต (THB)
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestCreditLimit()">🤖 ให้ AI แนะนำ</button>
+                <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ไม่จำกัด</span>
+              </label>
+              <input type="number" class="form-input" id="fCreditLimit" step="1000" min="0" placeholder="เช่น 100,000">
+              <div id="creditLimitHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+            </div>
           </div>
           <!-- วางที่อยู่เต็มเพื่อแยกอัตโนมัติ -->
           <div class="form-group">
@@ -136,25 +152,32 @@
             <div style="font-weight:600;color:#1e293b;margin-bottom:10px">⚙️ ตั้งค่าการบันทึกบัญชี</div>
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี</label>
+                <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAR','fDefaultArAccount','arHint')">🤖</button>
+                </label>
                 <select class="form-input" id="fDefaultArAccount">
                   <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
                 </select>
-                <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 113xxx — ลูกหนี้การค้า</div>
+                <div class="hint" id="arHint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 113xxx — ลูกหนี้การค้า</div>
               </div>
               <div class="form-group">
-                <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี</label>
+                <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAP','fDefaultApAccount','apHint')">🤖</button>
+                </label>
                 <select class="form-input" id="fDefaultApAccount">
                   <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
                 </select>
-                <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212xxx — เจ้าหนี้การค้า</div>
+                <div class="hint" id="apHint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212xxx — เจ้าหนี้การค้า</div>
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)</label>
+              <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)
+                <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactIrGr','fDefaultIrGrAccount','grHint')">🤖</button>
+              </label>
               <select class="form-input" id="fDefaultIrGrAccount">
                 <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
               </select>
+              <div class="hint" id="grHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
               <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212305 — ค่าใช้จ่ายค้างจ่ายอื่น (Invoice/Goods Received-Not-Invoiced clearing)</div>
             </div>
           </div>
@@ -217,6 +240,7 @@
         if (!Layout.init('contacts')) return;
         Layout.setTitle('ผู้ติดต่อ');
         this._attachDbd();
+        this._attachFuzzyMatch();
         // Preload chart of accounts so the GL-override dropdowns are
         // populated on first modal open. Filter to AR/AP/clearing-style
         // accounts only to keep the dropdown manageable — anything
@@ -316,6 +340,65 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+
+      // AI fuzzy-match: debounced lookup ตอนพิมพ์ชื่อ/TaxId — เด้งกล่อง
+      // เตือน contact ที่คล้ายกัน. หลีกเลี่ยง duplicate (data hygiene #1).
+      _fuzzyDebounce: null,
+      _attachFuzzyMatch() {
+        const nameEl = document.getElementById('fName');
+        const taxIdEl = document.getElementById('fTaxId');
+        const trigger = () => {
+          clearTimeout(this._fuzzyDebounce);
+          this._fuzzyDebounce = setTimeout(() => this._runFuzzyMatch(), 400);
+        };
+        if (nameEl) nameEl.addEventListener('input', trigger);
+        if (taxIdEl) taxIdEl.addEventListener('input', trigger);
+      },
+      async _runFuzzyMatch() {
+        const box = document.getElementById('fuzzyMatchBox');
+        const list = document.getElementById('fuzzyMatchList');
+        if (!box || !list) return;
+        // Hide เมื่อเป็นการ edit ของเดิม (มี contact id) หรือ ชื่อสั้นเกินไป
+        const editingId = document.getElementById('fId')?.value;
+        if (editingId) { box.style.display = 'none'; return; }
+        const name = document.getElementById('fName')?.value?.trim() || '';
+        const taxId = document.getElementById('fTaxId')?.value?.trim() || '';
+        if (name.length < 2 && taxId.length < 10) { box.style.display = 'none'; return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/contact/fuzzy-match`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, taxId, limit: 5 })
+          });
+          const j = await r.json();
+          const matches = j?.data?.matches || [];
+          if (matches.length === 0) { box.style.display = 'none'; return; }
+          list.innerHTML = matches.map(m => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #fde68a">
+              <div>
+                <strong>${Layout.esc ? Layout.esc(m.name) : m.name}</strong>
+                ${m.taxId ? `<span style="color:#92400e;font-size:11px;margin-left:6px">[${m.taxId}]</span>` : ''}
+                <div style="font-size:11px;color:#92400e">${m.reason} (${Math.round((m.confidence || 0) * 100)}%)</div>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page._useExistingContact('${m.id}')">ใช้รายนี้</button>
+            </div>
+          `).join('');
+          box.style.display = 'block';
+        } catch { box.style.display = 'none'; }
+      },
+      _useExistingContact(id) {
+        // คืนค่ากลับให้ caller (documents.html flow) ถ้าเปิดจากที่นั่น
+        // หรือปิด modal + เลื่อนไปแก้ contact เดิม
+        const cb = window.opener?.Page?.onContactCreated || window.parent?.Page?.onContactCreated;
+        if (typeof cb === 'function') { cb({ id }); }
+        document.getElementById('fuzzyMatchBox').style.display = 'none';
+        if (typeof Layout.toast === 'function') Layout.toast('เลือกผู้ติดต่อรายเดิมแล้ว');
+        // refresh เพื่อโชว์รายการที่ highlight
+        this.load();
+      },
+
       _dbdAttached: false,
       _attachDbd() {
         if (this._dbdAttached) return;
@@ -424,13 +507,81 @@
         document.getElementById('fName').placeholder = isJuristic ? 'พิมพ์ชื่อบริษัทเพื่อค้นหา...' : isGov ? 'ชื่อหน่วยงานราชการ' : 'ชื่อ-นามสกุล';
         document.getElementById('taxIdLabel').textContent = isJuristic ? 'เลขผู้เสียภาษี (13 หลัก)' : isGov ? 'เลขประจำตัวผู้เสียภาษี' : 'เลขบัตรประชาชน (13 หลัก)';
       },
+
+      // AI suggest GL account ต่อช่อง (AR/AP/GR) — generic endpoint
+      // เรียนรู้ต่อบริษัทผ่าน memory; แสดงเหตุผล + บันทึก override feedback
+      async suggestGlSlot(slot, selectId, hintId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const contactId = document.getElementById('editId')?.value || '';
+          const url = `/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`
+            + (contactId ? `&contactId=${contactId}` : '');
+          const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          const sel = document.getElementById(selectId);
+          const hint = document.getElementById(hintId);
+          if (!d || !d.accountId) {
+            if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ');
+            return;
+          }
+          // option อาจยังไม่อยู่ใน dropdown (filter) — เพิ่มถ้าไม่มี
+          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+            const opt = document.createElement('option');
+            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+            sel.appendChild(opt);
+          }
+          if (sel) sel.value = d.accountId;
+          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+          // เรียนตอน user เปลี่ยน → ส่ง ground-truth กลับ (train ไปเลย)
+          if (sel && d.feedbackId) {
+            sel.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
+      },
+
+      // Show/hide credit-limit field — เห็นเฉพาะ contact ที่เป็น "ลูกค้า"
+      onCustomerToggle() {
+        const isCust = document.getElementById('fIsCustomer')?.checked;
+        const row = document.getElementById('creditLimitRow');
+        if (row) row.style.display = isCust ? '' : 'none';
+      },
+
+      async suggestCreditLimit() {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/credit-limit/suggest`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j?.success || !j.data) return;
+          const inputEl = document.getElementById('fCreditLimit');
+          const hintEl = document.getElementById('creditLimitHint');
+          if (inputEl) inputEl.value = j.data.creditLimit;
+          if (hintEl) hintEl.textContent = `🤖 ${j.data.reasoning} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+        } catch (e) {
+          if (typeof Layout.toast === 'function') Layout.toast('แนะนำวงเงินไม่สำเร็จ', 'error');
+        }
+      },
       openCreate() {
         document.getElementById('formTitle').textContent = 'เพิ่มผู้ติดต่อ';
         document.getElementById('editId').value = '';
         this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+        const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
+        const ch = document.getElementById('creditLimitHint'); if (ch) ch.textContent = '';
         document.getElementById('fContactType').value = '2';
         document.getElementById('fIsCustomer').checked = true;
         document.getElementById('fIsSupplier').checked = false;
+        this.onCustomerToggle();
         // Reset GL override dropdowns to "ใช้ค่าเริ่มต้นของระบบ" — a
         // stale selection from a previous open would silently pin the
         // new contact to a specific account.
@@ -469,6 +620,8 @@
         document.getElementById('fBranchName').value = c.branchName || '';
         document.getElementById('fIsCustomer').checked = c.isCustomer;
         document.getElementById('fIsSupplier').checked = c.isSupplier;
+        document.getElementById('fCreditLimit').value = c.creditLimit ?? '';
+        this.onCustomerToggle();
         document.getElementById('fAddress').value = c.address || '';
         document.getElementById('fBuildingNumber').value = c.buildingNumber || '';
         document.getElementById('fBuildingName').value = c.buildingName || '';
@@ -574,6 +727,10 @@
           contactType: ct,
           isCustomer: document.getElementById('fIsCustomer').checked,
           isSupplier: document.getElementById('fIsSupplier').checked,
+          creditLimit: (() => {
+            const v = parseFloat(document.getElementById('fCreditLimit').value);
+            return isNaN(v) || v <= 0 ? null : v;
+          })(),
           address: this.composeAddress(),
           buildingNumber: document.getElementById('fBuildingNumber').value || null,
           buildingName: document.getElementById('fBuildingName').value || null,

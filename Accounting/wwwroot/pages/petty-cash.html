@@ -42,8 +42,11 @@
         <input id="dDesc" class="form-input">
         <label>เลขที่ใบเสร็จ (optional)</label>
         <input id="dReceipt" class="form-input">
-        <label>บัญชีค่าใช้จ่าย (ใส่เพื่อโพสต์ JE อัตโนมัติ)</label>
+        <label>บัญชีค่าใช้จ่าย (ใส่เพื่อโพสต์ JE อัตโนมัติ)
+          <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('PettyExpense','dExpense','dExpenseHint')">🤖</button>
+        </label>
         <select id="dExpense" class="form-input"><option value="">— ไม่โพสต์ JE —</option></select>
+        <div id="dExpenseHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
         <label>โครงการ (optional)</label>
         <select id="dProject" class="form-input"><option value="">— ไม่ระบุ —</option></select>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
@@ -67,6 +70,37 @@
         await this.loadProjects();
         await this.loadExpenseAccounts();
         await this.load();
+      },
+      async aiSuggestAccount(slot, selectId, hintId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          const sel = document.getElementById(selectId);
+          const hint = hintId ? document.getElementById(hintId) : null;
+          if (!d || !d.accountId) { if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'); return; }
+          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+            const opt = document.createElement('option');
+            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+            sel.appendChild(opt);
+          }
+          if (sel) sel.value = d.accountId;
+          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+          if (sel && d.feedbackId) {
+            sel.addEventListener('change', () => {
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          }
+        } catch { /* best-effort */ }
       },
       async loadExpenseAccounts() {
         try {

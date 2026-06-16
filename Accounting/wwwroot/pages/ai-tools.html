@@ -15,6 +15,8 @@
       <button class="tab" onclick="Page.switchTab('ocr')">OCR สแกนเอกสาร</button>
       <button class="tab" onclick="Page.switchTab('forecast')">พยากรณ์กระแสเงินสด</button>
       <button class="tab" onclick="Page.switchTab('arap')">🤖 วิเคราะห์ลูกหนี้/เจ้าหนี้</button>
+      <button class="tab" onclick="Page.switchTab('rfm')">📊 RFM ลูกค้า</button>
+      <button class="tab" onclick="Page.switchTab('abc')">📦 ABC สินค้า</button>
     </div>
 
     <!-- Auto-Categorize -->
@@ -102,6 +104,47 @@
       </div>
       <div id="arapContent" style="padding:20px;color:#94a3b8">กดปุ่ม "เริ่มวิเคราะห์" เพื่อให้ AI วิเคราะห์ AR/AP ของคุณ</div>
     </div>
+
+    <!-- ===== Customer RFM ===== -->
+    <div id="tab-rfm" style="display:none">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">📊 วิเคราะห์ลูกค้าด้วย RFM</h2>
+          <p class="page-subtitle">Recency / Frequency / Monetary — แบ่งลูกค้าเป็นกลุ่มตามพฤติกรรมการซื้อ</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="rfmWindow" class="form-select" style="width:auto">
+            <option value="365" selected>1 ปีย้อนหลัง</option>
+            <option value="180">6 เดือนย้อนหลัง</option>
+            <option value="90">3 เดือนย้อนหลัง</option>
+            <option value="730">2 ปีย้อนหลัง</option>
+          </select>
+          <button class="btn btn-primary" onclick="Page.loadRfm()">วิเคราะห์</button>
+        </div>
+      </div>
+      <div id="rfmSummary" style="margin-bottom:20px"></div>
+      <div id="rfmTop20"></div>
+    </div>
+
+    <!-- ===== Inventory ABC ===== -->
+    <div id="tab-abc" style="display:none">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">📦 วิเคราะห์สินค้าด้วย ABC (Pareto)</h2>
+          <p class="page-subtitle">A-class = top 75% รายได้, B = 15%, C = 10% — โฟกัสบริหารสต็อกที่จุดสำคัญ</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="abcWindow" class="form-select" style="width:auto">
+            <option value="365" selected>1 ปีย้อนหลัง</option>
+            <option value="180">6 เดือนย้อนหลัง</option>
+            <option value="90">3 เดือนย้อนหลัง</option>
+          </select>
+          <button class="btn btn-primary" onclick="Page.loadAbc()">วิเคราะห์</button>
+        </div>
+      </div>
+      <div id="abcSummary" style="margin-bottom:20px"></div>
+      <div id="abcTable"></div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -117,11 +160,135 @@ const Page = {
   },
 
   switchTab(tab) {
-    ['categorize','anomaly','ocr','forecast','arap'].forEach(t => { document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none'; });
-    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['categorize','anomaly','ocr','forecast','arap'][i] === tab));
+    const tabs = ['categorize','anomaly','ocr','forecast','arap','rfm','abc'];
+    tabs.forEach(t => { const el = document.getElementById('tab-'+t); if (el) el.style.display = t === tab ? '' : 'none'; });
+    document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', tabs[i] === tab));
     if (tab === 'anomaly') this.loadAnomalies();
     if (tab === 'ocr') this.loadOcrResults();
     if (tab === 'forecast') this.loadForecasts();
+    if (tab === 'rfm') this.loadRfm();
+    if (tab === 'abc') this.loadAbc();
+  },
+
+  // ===== Customer RFM =====
+  _segmentLabel(seg) {
+    return ({
+      Champion: { th: 'แชมเปี้ยน', color: '#10b981', emoji: '🏆' },
+      Loyal: { th: 'ลูกค้าประจำ', color: '#3b82f6', emoji: '💎' },
+      NewCustomer: { th: 'ลูกค้าใหม่', color: '#8b5cf6', emoji: '🆕' },
+      AtRisk: { th: 'เสี่ยงหายไป', color: '#f59e0b', emoji: '⚠️' },
+      Lost: { th: 'หายแล้ว', color: '#dc2626', emoji: '👋' },
+      BigSpender: { th: 'ยอดซื้อสูง', color: '#0891b2', emoji: '💰' },
+      Regular: { th: 'ปกติ', color: '#64748b', emoji: '👤' },
+    })[seg] || { th: seg, color: '#64748b', emoji: '•' };
+  },
+  async loadRfm() {
+    const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+    const days = document.getElementById('rfmWindow')?.value || 365;
+    const sumEl = document.getElementById('rfmSummary');
+    const topEl = document.getElementById('rfmTop20');
+    if (sumEl) sumEl.innerHTML = '<p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p>';
+    try {
+      const r = await fetch(`/api/companies/${cid}/ai/customer/rfm-segmentation?windowDays=${days}`,
+        { headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      const d = j?.data;
+      if (!d || d.customerCount === 0) {
+        sumEl.innerHTML = `<div class="card" style="padding:20px;text-align:center;color:#94a3b8">ไม่มีข้อมูลในช่วงนี้</div>`;
+        topEl.innerHTML = '';
+        return;
+      }
+      sumEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">${
+        (d.summary || []).map(s => {
+          const m = this._segmentLabel(s.segment);
+          return `<div class="card" style="padding:16px;border-left:4px solid ${m.color}">
+            <div style="font-size:20px">${m.emoji} <strong>${m.th}</strong></div>
+            <div style="font-size:28px;font-weight:700;margin-top:8px">${s.count}</div>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">ยอดรวม ${(s.totalValue || 0).toLocaleString()} บาท</div>
+          </div>`;
+        }).join('')
+      }</div>
+      <p style="font-size:12px;color:#64748b;margin-top:12px">${d.reasoning || ''}</p>`;
+
+      topEl.innerHTML = `<div class="card" style="padding:20px">
+        <h3 style="margin-bottom:12px">Top 20 ลูกค้า</h3>
+        <div class="table-container"><table class="table" style="font-size:13px">
+          <thead><tr><th>ชื่อ</th><th class="text-center">R</th><th class="text-center">F</th><th class="text-center">M</th><th>กลุ่ม</th><th class="text-right">ยอดซื้อ</th><th class="text-right">เคยซื้อล่าสุด (วัน)</th></tr></thead>
+          <tbody>${(d.top20 || []).map(s => {
+            const m = this._segmentLabel(s.segment);
+            return `<tr>
+              <td>${Layout.esc ? Layout.esc(s.name) : s.name}</td>
+              <td class="text-center">${s.rScore}</td>
+              <td class="text-center">${s.fScore}</td>
+              <td class="text-center">${s.mScore}</td>
+              <td><span style="color:${m.color};font-weight:600">${m.emoji} ${m.th}</span></td>
+              <td class="text-right">${(s.monetary || 0).toLocaleString()}</td>
+              <td class="text-right">${s.recency}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>
+      </div>`;
+    } catch (e) {
+      sumEl.innerHTML = `<div class="card" style="padding:20px;color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</div>`;
+    }
+  },
+
+  // ===== Inventory ABC =====
+  async loadAbc() {
+    const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+    const days = document.getElementById('abcWindow')?.value || 365;
+    const sumEl = document.getElementById('abcSummary');
+    const tabEl = document.getElementById('abcTable');
+    if (sumEl) sumEl.innerHTML = '<p class="text-gray-400 text-center" style="padding:20px">กำลังโหลด...</p>';
+    try {
+      const r = await fetch(`/api/companies/${cid}/ai/inventory/abc-analysis?windowDays=${days}`,
+        { headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      const d = j?.data;
+      if (!d || !d.classCounts) {
+        sumEl.innerHTML = `<div class="card" style="padding:20px;text-align:center;color:#94a3b8">ไม่มีข้อมูลในช่วงนี้</div>`;
+        tabEl.innerHTML = '';
+        return;
+      }
+      const c = d.classCounts;
+      sumEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="card" style="padding:16px;border-left:4px solid #10b981">
+          <div><strong>A-class (เพชร)</strong> <span style="font-size:11px;color:#64748b">75% รายได้</span></div>
+          <div style="font-size:28px;font-weight:700;margin-top:8px">${c.A} SKUs</div>
+          <div style="font-size:11px;color:#64748b">ต้อง stockout watch ใกล้ชิด</div>
+        </div>
+        <div class="card" style="padding:16px;border-left:4px solid #3b82f6">
+          <div><strong>B-class (ทอง)</strong> <span style="font-size:11px;color:#64748b">15% รายได้</span></div>
+          <div style="font-size:28px;font-weight:700;margin-top:8px">${c.B} SKUs</div>
+          <div style="font-size:11px;color:#64748b">ตรวจสอบรอบปกติ</div>
+        </div>
+        <div class="card" style="padding:16px;border-left:4px solid #f59e0b">
+          <div><strong>C-class (เงิน)</strong> <span style="font-size:11px;color:#64748b">10% รายได้</span></div>
+          <div style="font-size:28px;font-weight:700;margin-top:8px">${c.C} SKUs</div>
+          <div style="font-size:11px;color:#64748b">พิจารณาตัด/ลด stock</div>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#64748b;margin-top:12px">ยอดขายรวม ${(d.totalRevenue || 0).toLocaleString()} บาท · ${d.reasoning || ''}</p>`;
+
+      tabEl.innerHTML = `<div class="card" style="padding:20px">
+        <h3 style="margin-bottom:12px">รายการสินค้า (100 อันดับแรก)</h3>
+        <div class="table-container"><table class="table" style="font-size:13px">
+          <thead><tr><th>รหัส</th><th>กลุ่ม</th><th class="text-right">รายได้</th><th class="text-right">% รายได้</th><th class="text-right">ยอดสะสม %</th></tr></thead>
+          <tbody>${(d.items || []).map(it => {
+            const color = it.classification === 'A' ? '#10b981' : it.classification === 'B' ? '#3b82f6' : '#f59e0b';
+            return `<tr>
+              <td>${Layout.esc ? Layout.esc(it.productCode) : it.productCode}</td>
+              <td><span style="color:${color};font-weight:600">${it.classification}</span></td>
+              <td class="text-right">${(it.revenue || 0).toLocaleString()}</td>
+              <td class="text-right">${it.revenuePct}%</td>
+              <td class="text-right">${it.cumulativePct}%</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>
+      </div>`;
+    } catch (e) {
+      sumEl.innerHTML = `<div class="card" style="padding:20px;color:#dc2626">โหลดไม่สำเร็จ: ${e.message}</div>`;
+    }
   },
 
   // ===== Categorize =====

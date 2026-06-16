@@ -202,8 +202,28 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate()"></div>
+            <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
+          </div>
+          <!-- Currency + FX rate (auto-fill จาก CurrencyRate history) — ซ่อนค่า
+               default THB เพื่อไม่รบกวน flow ปกติ; เลือกสกุลอื่นแล้ว rate +
+               hint โผล่ -->
+          <div class="form-row" id="fxRow">
+            <div class="form-group"><label class="form-label">สกุลเงิน</label>
+              <select class="form-select" id="fCurrency" onchange="Page.onCurrencyOrDateChange()">
+                <option value="THB">THB - ไทย (฿)</option>
+                <option value="USD">USD - ดอลลาร์สหรัฐ ($)</option>
+                <option value="EUR">EUR - ยูโร (€)</option>
+                <option value="JPY">JPY - เยน (¥)</option>
+                <option value="CNY">CNY - หยวน (¥)</option>
+                <option value="SGD">SGD - ดอลลาร์สิงคโปร์</option>
+                <option value="GBP">GBP - ปอนด์</option>
+              </select>
+            </div>
+            <div class="form-group" id="fxRateGroup" style="display:none">
+              <label class="form-label">อัตราแลก → THB <span id="fxRateHint" style="font-weight:normal;color:#64748b;font-size:11px"></span></label>
+              <input type="number" step="0.000001" class="form-input" id="fExchangeRate" value="1" oninput="this.dataset.userTouched='1'">
+            </div>
           </div>
 
           <!-- Payment Voucher only: เครดิต vs จ่ายทันที. Cash → no due date,
@@ -268,7 +288,12 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group" style="flex:1"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="fNotes"></div>
+            <div class="form-group" style="flex:1">
+              <label class="form-label" data-i18n="common.note">หมายเหตุ
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
+              </label>
+              <input type="text" class="form-input" id="fNotes">
+            </div>
           </div>
 
           <!-- File attachments — queued at create time, flushed via the
@@ -928,7 +953,371 @@
         // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
           this.suggestPaymentType(contactId);
+          // PV-only — แนะนำ bank account/cash channel จาก payment history
+          this.suggestPaymentChannel(contactId);
         }
+        // Auto-suggest payment terms (Net X) จาก history ของผู้ติดต่อรายนี้
+        // — ไม่เกี่ยวกับ doc type, ใช้ได้ทั้ง sales (Invoice/Quotation) +
+        // purchase (PurchaseInvoice). ไม่ override ถ้า user เคย touch แล้ว.
+        if (contactId) {
+          this.suggestPaymentTerms(contactId);
+          // Project allocation: เลือกโครงการให้ทุกบรรทัดที่ยังว่าง
+          this.suggestProjectAllocation(contactId);
+          // Sales-side: bad-debt risk warning + discount tier suggest
+          const docType = document.getElementById('fDocType')?.value || '';
+          const isSales = ['Invoice','TaxInvoice','Receipt','Quotation','BillingNote'].includes(docType);
+          if (isSales) {
+            this.checkBadDebtRisk(contactId);
+            this.suggestDiscount(contactId);
+          }
+        }
+      },
+
+      async checkBadDebtRisk(contactId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/bad-debt/check?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          document.getElementById('badDebtBox')?.remove();
+          if (!d || d.band === 'Low') return;
+          const box = document.createElement('div');
+          box.id = 'badDebtBox';
+          box.style.cssText = `margin:8px 0;padding:10px 12px;border-radius:6px;font-size:13px;border-left:4px solid ${d.color}`;
+          box.style.background = d.band === 'High' ? '#fee2e2' : '#fef3c7';
+          box.style.color = d.band === 'High' ? '#7f1d1d' : '#92400e';
+          box.innerHTML = `<strong>${d.reasoning}</strong><br>
+            <span style="font-size:11px">ยอดค้าง ${(d.metrics.openAmount || 0).toLocaleString()} บาท จาก ${d.metrics.openInvoices} ใบ (เกินกำหนด ${(d.metrics.overdueAmount || 0).toLocaleString()} บาท)</span>`;
+          const contactRow = document.getElementById('fContactId')?.closest('.form-row');
+          contactRow?.parentNode?.insertBefore(box, contactRow.nextSibling);
+        } catch { /* best-effort */ }
+      },
+
+      async suggestDiscount(contactId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/discount/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          const d = j?.data;
+          if (!d || d.discountPercent <= 0) return;
+          // โชว์เป็น hint เท่านั้น — ผู้ใช้ตัดสินใจกรอกเอง (line discount)
+          if (typeof Layout.toast === 'function') {
+            Layout.toast(`💡 ${d.reasoning}`, 'info');
+          }
+        } catch { /* best-effort */ }
+      },
+
+      // FX rate auto-fill เมื่อสกุลเงิน ≠ THB หรือ date เปลี่ยน
+      async onCurrencyOrDateChange() {
+        const ccyEl = document.getElementById('fCurrency');
+        const grp = document.getElementById('fxRateGroup');
+        const rateEl = document.getElementById('fExchangeRate');
+        const hintEl = document.getElementById('fxRateHint');
+        if (!ccyEl || !grp || !rateEl) return;
+        const ccy = ccyEl.value || 'THB';
+        if (ccy === 'THB') {
+          grp.style.display = 'none';
+          rateEl.value = 1;
+          rateEl.dataset.userTouched = '';
+          if (hintEl) hintEl.textContent = '';
+          return;
+        }
+        grp.style.display = '';
+        if (rateEl.dataset.userTouched === '1') return;
+        const date = document.getElementById('fDate')?.value || '';
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const url = `/api/companies/${cid}/ai/fx-rate/suggest?currency=${ccy}${date ? '&date=' + date : ''}`;
+          const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j?.success || !j.data) return;
+          if (j.data.rate > 0) {
+            rateEl.value = j.data.rate;
+            rateEl.dataset.aiFeedbackId = j.data.feedbackId || '';
+            if (hintEl) hintEl.textContent = `🤖 ${j.data.reasoning} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            rateEl.title = j.data.reasoning;
+            rateEl.addEventListener('change', () => {
+              rateEl.dataset.userTouched = '1';
+              const fbId = rateEl.dataset.aiFeedbackId;
+              if (!fbId) return;
+              try {
+                fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    feedbackId: fbId,
+                    chosenAnswer: rateEl.value,
+                    acceptedAi: parseFloat(rateEl.value) === parseFloat(j.data.rate),
+                  })
+                }).catch(() => {});
+              } catch {}
+            }, { once: true });
+          } else if (hintEl) {
+            hintEl.textContent = `⚠️ ${j.data.reasoning}`;
+          }
+        } catch { /* best-effort */ }
+      },
+
+      async suggestProjectAllocation(contactId) {
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/project-allocation/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data?.projectId) return;
+          const pid = j.data.projectId;
+          const fbId = j.data.feedbackId || '';
+          // Fill ทุก data-f="project" ที่ยังว่าง + เก็บ feedback id ติดไว้
+          document.querySelectorAll('#linesBody .line-card [data-f="project"]').forEach(sel => {
+            if (sel.value || sel.dataset.userTouched === '1') return;
+            const optionExists = Array.from(sel.options).some(o => o.value === pid);
+            if (optionExists) {
+              sel.value = pid;
+              sel.dataset.aiFeedbackId = fbId;
+              sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+              sel.addEventListener('change', () => {
+                sel.dataset.userTouched = '1';
+                if (!sel.dataset.aiFeedbackId) return;
+                try {
+                  fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      feedbackId: sel.dataset.aiFeedbackId,
+                      chosenAnswer: sel.value,
+                      acceptedAi: sel.value === pid,
+                    })
+                  }).catch(() => {});
+                } catch {}
+              }, { once: true });
+            }
+          });
+        } catch { /* best-effort */ }
+      },
+
+      async suggestPaymentChannel(contactId) {
+        try {
+          const sel = document.getElementById('fPaymentChannel');
+          if (!sel || sel.dataset.userTouched === '1') return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/payment-channel/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          const suggested = j.data.paymentChannel || '';
+          // Apply only when (a) field is empty/default, AND (b) the suggested
+          // value exists in the dropdown (channels list may differ per company).
+          const optionExists = Array.from(sel.options).some(o => o.value === suggested);
+          if (!sel.value && optionExists) {
+            sel.value = suggested;
+            sel.dataset.aiFeedbackId = j.data.feedbackId || '';
+            sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            // mirror the change downstream — derives PaymentMethod for save
+            try { this._deriveMethodFromChannel?.(); } catch {}
+          }
+          // bind once: ถ้า user เปลี่ยน → ส่ง feedback กลับ + กัน override
+          sel.addEventListener('change', () => {
+            sel.dataset.userTouched = '1';
+            const fbId = sel.dataset.aiFeedbackId;
+            if (!fbId) return;
+            try {
+              fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  feedbackId: fbId,
+                  chosenAnswer: sel.value,
+                  acceptedAi: sel.value === suggested,
+                })
+              }).catch(() => {});
+            } catch {}
+          }, { once: true });
+        } catch { /* best-effort */ }
+      },
+
+      async suggestPaymentTerms(contactId) {
+        try {
+          const cdEl = document.getElementById('fCreditDays');
+          if (!cdEl || cdEl.dataset.userTouched === '1') return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/payment-terms/suggest?contactId=${contactId}`,
+            { headers: { 'Authorization': 'Bearer ' + token } });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          if (j.data.creditDays && !cdEl.value) {
+            cdEl.value = j.data.creditDays;
+            cdEl.dataset.aiFeedbackId = j.data.feedbackId || '';
+            cdEl.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            // อัปเดต fDueDate ถ้ามี + ยังว่าง
+            const dateEl = document.getElementById('fDate');
+            const dueEl = document.getElementById('fDueDate');
+            if (dateEl?.value && dueEl && !dueEl.value) {
+              const d = new Date(dateEl.value);
+              d.setDate(d.getDate() + parseInt(j.data.creditDays, 10));
+              dueEl.value = d.toISOString().slice(0, 10);
+            }
+          }
+          // mark touched bind — ถ้า user เปลี่ยน ส่ง feedback กลับ
+          cdEl.addEventListener('change', () => {
+            cdEl.dataset.userTouched = '1';
+            const fbId = cdEl.dataset.aiFeedbackId;
+            if (!fbId) return;
+            try {
+              fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  feedbackId: fbId,
+                  chosenAnswer: cdEl.value,
+                  acceptedAi: parseInt(cdEl.value, 10) === parseInt(j.data.creditDays, 10),
+                })
+              }).catch(() => {});
+            } catch {}
+          }, { once: true });
+        } catch { /* best-effort */ }
+      },
+
+      async generateMemo() {
+        try {
+          const docType = document.getElementById('fDocType')?.value || 'Invoice';
+          const contactId = document.getElementById('fContactId')?.value || null;
+          const date = document.getElementById('fDate')?.value || null;
+          const lineDescriptions = Array.from(
+            document.querySelectorAll('#linesBody [data-f="desc"]')
+          ).map(el => (el.value || '').trim()).filter(d => d.length > 0);
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/document/suggest-memo`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              documentType: docType, contactId,
+              documentDate: date, lineDescriptions,
+            })
+          });
+          const j = await r.json();
+          if (!j?.success || !j.data?.memo) return;
+          const notesEl = document.getElementById('fNotes');
+          if (notesEl) {
+            notesEl.value = j.data.memo;
+            notesEl.dataset.aiFeedbackId = j.data.feedbackId || '';
+            notesEl.title = `🤖 (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            if (typeof Layout.toast === 'function') Layout.toast('AI สร้างหมายเหตุแล้ว — แก้ไขได้ตามต้องการ');
+          }
+        } catch (e) {
+          if (typeof Layout.toast === 'function') Layout.toast('AI memo generation failed', 'error');
+        }
+      },
+
+      async checkPriceDrift(row) {
+        try {
+          const productCode = row.dataset.productCode || '';
+          const price = parseFloat(row.querySelector('[data-f="price"]')?.value || '0') || 0;
+          if (!productCode || price <= 0) return;
+          const contactId = document.getElementById('fContactId')?.value || null;
+          const desc = row.querySelector('[data-f="desc"]')?.value || '';
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/price-drift/check`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productCode, unitPrice: price, contactId, description: desc })
+          });
+          const j = await r.json();
+          const d = j?.data;
+          const priceEl = row.querySelector('[data-f="price"]');
+          if (!d || !priceEl) return;
+          if (d.hasWarning) {
+            priceEl.style.borderColor = d.severity === 'Critical' ? '#dc2626' : '#f59e0b';
+            priceEl.style.background = d.severity === 'Critical' ? '#fee2e2' : '#fef3c7';
+            priceEl.title = d.reasoning + ` (ค่าเฉลี่ย ${d.expectedMean} จาก ${d.sampleSize} ครั้ง)`;
+            // เด้ง inline warning ใต้ price ลูกบาศก์เล็ก
+            let warn = row.querySelector('.price-drift-warn');
+            if (!warn) {
+              warn = document.createElement('div');
+              warn.className = 'price-drift-warn';
+              warn.style.cssText = 'font-size:11px;margin-top:2px;font-weight:600';
+              priceEl.parentNode.appendChild(warn);
+            }
+            warn.style.color = d.severity === 'Critical' ? '#dc2626' : '#92400e';
+            warn.textContent = `${d.severity === 'Critical' ? '🚨' : '⚠️'} ${d.reasoning}`;
+          } else {
+            priceEl.style.borderColor = '';
+            priceEl.style.background = '';
+            priceEl.title = '';
+            row.querySelector('.price-drift-warn')?.remove();
+          }
+        } catch { /* best-effort */ }
+      },
+
+      // VAT-rate suggestion per line — heuristic AI endpoint.
+      // Don't override an explicit user pick (lc-vat-touched flag).
+      async suggestVatType(row) {
+        try {
+          const desc = (row.querySelector('[data-f="desc"]')?.value || '').trim();
+          if (desc.length < 3) return;
+          const vatSel = row.querySelector('[data-f="vat"]');
+          if (!vatSel || vatSel.dataset.userTouched === '1') return;
+
+          const cid = Layout.getCompanyId();
+          const contactId = document.getElementById('fContactId')?.value || null;
+          const amount = parseFloat(row.querySelector('[data-f="price"]')?.value || '0') || 0;
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/vat/infer-type`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contactId,
+              vendorName: this._selectedContact?.name,
+              vendorTaxId: this._selectedContact?.taxId,
+              vendorCountryCode: this._selectedContact?.countryCode,
+              lineDescription: desc,
+              amount,
+              currentRate: vatSel.value,
+            })
+          });
+          const j = await r.json();
+          if (!j.success || !j.data) return;
+          const suggested = j.data.vatType === 'Exempt' ? '-1' : String(j.data.vatType);
+          if (vatSel.value !== suggested) {
+            vatSel.value = suggested;
+            vatSel.dataset.aiFeedbackId = j.data.feedbackId || '';
+            vatSel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            this.calcSum();
+          }
+        } catch { /* best-effort */ }
+      },
+
+      // ผู้ใช้เปลี่ยน VAT ด้วยตัวเอง → mark touched + ส่ง override กลับ
+      // เป็น ground-truth ให้ AI เรียน
+      onVatTypeChange(sel) {
+        sel.dataset.userTouched = '1';
+        // Ground-truth feedback (best-effort).
+        const fbId = sel.dataset.aiFeedbackId;
+        if (fbId) {
+          try {
+            const cid = Layout.getCompanyId();
+            const token = localStorage.getItem('token');
+            fetch(`/api/companies/${cid}/ai-feedback/record`, {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                feedbackId: fbId,
+                chosenAnswer: sel.value === '-1' ? 'Exempt' : sel.value,
+                acceptedAi: false,
+              })
+            }).catch(() => {});
+          } catch {}
+        }
+        this.calcSum();
       },
 
       // Local-model suggestion for the PV settlement basis. Non-blocking:
@@ -1529,7 +1918,7 @@
             <div class="lc-field"><label>ส่วนลด %</label>
               <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></div>
             <div class="lc-field"><label>VAT %</label>
-              <select class="form-select" data-f="vat" onchange="Page.calcSum()"><option value="7">7%</option><option value="0">0%</option></select></div>
+              <select class="form-select" data-f="vat" onchange="Page.onVatTypeChange(this)"><option value="7">7%</option><option value="0">0%</option><option value="-1">ยกเว้น</option></select></div>
             <div class="lc-field lc-claim"><label title="VAT เคลม ภพ.30 ได้หรือไม่ (§82/5)">เคลม VAT</label>
               <span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;user-select:none">✓</span></div>
             <div class="lc-field"><label>หัก ณ ที่จ่าย %</label>
@@ -1550,6 +1939,15 @@
         // เท่านั้น (PurchaseInvoice / Expense / PaymentVoucher) — ฝั่งขาย
         // ไม่มี input VAT ให้เคลม ค่าจะถูก ignore โดย server.
         descInput.addEventListener('input', () => this.suggestVatClaim(row));
+        // AI VAT-type suggest บน blur ของ description (ไม่ทุก keystroke
+        // เพื่อลด API call) — heuristic-only endpoint ฟรี cloud cost.
+        // ค่ายัง override ได้ ไม่ผูกมัด.
+        descInput.addEventListener('blur', () => this.suggestVatType(row));
+        // Price drift warning ตอน blur ของราคา/หน่วย — เปรียบเทียบกับ
+        // history ของ product+vendor เดียวกัน. กัน typo (1500 vs 15000) +
+        // ช่วยจับการขึ้นราคาผิดปกติของ supplier
+        const priceInput = row.querySelector('[data-f="price"]');
+        if (priceInput) priceInput.addEventListener('blur', () => this.checkPriceDrift(row));
         if (window.ProductLookup) {
           ProductLookup.attach(descInput, (r, p) => ProductLookup.fillRow(r, p, { overwriteQty: false }));
         } else {
@@ -1574,7 +1972,10 @@
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
           const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
           const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
-          const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
+          // VAT sentinel: -1 = ยกเว้น (Exempt) — คำนวณเหมือน 0% แต่ flag
+          // isVatClaimable=false (handled ที่ฝั่ง save).
+          const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
+          const vatR = rawVat === -1 ? 0 : (rawVat || 0);
           const whtR = parseFloat(row.querySelector('[data-f="wht"]').value) || 0;
           const entered = qty * price * (1 - disc / 100);
           let net, lineVat;
@@ -1980,13 +2381,20 @@
           if (strict && desc && !row.dataset.productCode) {
             strictViolators.push({ idx: idx + 1, desc });
           }
+          // VAT sentinel: -1 = "ยกเว้น" (Exempt) — แปลงเป็น 0 ส่งให้
+          // backend เพราะ schema vatRate เป็น decimal ที่ 0-100 + ตั้ง
+          // isVatClaimable=false เพื่อ flag ว่าไม่นำเข้า ภพ.30. server
+          // จะอ่าน vatRate=0 + isVatClaimable=false เป็นกรณี Exempt
+          // (ต่างจาก 0% export ที่ isVatClaimable=true).
+          const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
+          const isVatExempt = rawVat === -1;
           const line = {
             description: desc,
             quantity: parseFloat(row.querySelector('[data-f="qty"]').value) || 1,
             unit: (row.querySelector('[data-f="unit"]')?.value || '').trim() || 'ชิ้น',
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
             discountPercent: parseFloat(row.querySelector('[data-f="disc"]').value) || 0,
-            vatRate: parseFloat(row.querySelector('[data-f="vat"]').value) || 0,
+            vatRate: isVatExempt ? 0 : (rawVat || 0),
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           };
           // Persist the product linkage when the user picked one via the typeahead.

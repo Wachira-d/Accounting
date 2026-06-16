@@ -1165,9 +1165,55 @@
           const list = wanted.length ? wanted : this._chartCache;
           sel.innerHTML = '<option value="">— เลือกบัญชี —</option>' +
             list.map(a => `<option value="${a.id}">${this.esc(a.accountCode)} - ${this.esc(a.accountName)}</option>`).join('');
+          // AI categorize: ใช้คำอธิบายรายการ → แนะนำบัญชีคู่ (manual-je
+          // endpoint รองรับ description + side; deposit=Credit รายได้,
+          // withdrawal=Debit ค่าใช้จ่าย). เรียนต่อบริษัทผ่าน memory.
+          this._aiSuggestJeAccount(txnId, isIn);
         } catch (e) {
           sel.innerHTML = '<option value="">โหลดผังบัญชีไม่สำเร็จ</option>';
         }
+      },
+
+      async _aiSuggestJeAccount(txnId, isIn) {
+        try {
+          const sel = document.getElementById('createJeAccount_' + txnId);
+          const desc = document.getElementById('createJeDesc_' + txnId)?.value?.trim() || '';
+          if (!sel || desc.length < 3) return;
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const r = await fetch(`/api/companies/${cid}/ai/manual-je/suggest-account`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description: desc, side: isIn ? 'Credit' : 'Debit', entryType: 'General' })
+          });
+          const j = await r.json();
+          const top = (j?.data?.suggestions || [])[0];
+          if (!top || !top.accountId) return;
+          if (!sel.value && Array.from(sel.options).some(o => o.value === top.accountId)) {
+            sel.value = top.accountId;
+            sel.title = `🤖 ${top.accountCode} - ${top.accountName} (${Math.round((top.confidence || 0) * 100)}%)`;
+            // hint บรรทัดเล็กใต้ dropdown
+            let hint = document.getElementById('createJeHint_' + txnId);
+            if (!hint) {
+              hint = document.createElement('div');
+              hint.id = 'createJeHint_' + txnId;
+              hint.style.cssText = 'font-size:11px;color:#0369a1;margin:-4px 0 6px';
+              sel.parentNode.insertBefore(hint, sel.nextSibling);
+            }
+            hint.textContent = `🤖 แนะนำ ${top.accountCode} - ${top.accountName} จากคำอธิบาย`;
+            if (j.data.feedbackId) {
+              sel.addEventListener('change', () => {
+                try {
+                  fetch(`/api/companies/${cid}/ai-feedback/record`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ feedbackId: j.data.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === top.accountId })
+                  }).catch(() => {});
+                } catch {}
+              }, { once: true });
+            }
+          }
+        } catch { /* best-effort */ }
       },
 
       async submitCreateJe(txnId) {

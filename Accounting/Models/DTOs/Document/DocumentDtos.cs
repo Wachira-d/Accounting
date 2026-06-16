@@ -381,7 +381,8 @@ public record CreateContactRequest(
     // system default in effect (FindAccountAsync "113" / "212" prefix).
     Guid? DefaultArAccountId = null,
     Guid? DefaultApAccountId = null,
-    Guid? DefaultIrGrAccountId = null);
+    Guid? DefaultIrGrAccountId = null,
+    decimal? CreditLimit = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -407,7 +408,8 @@ public record UpdateContactRequest(
     string? CountryCode = null,
     Guid? DefaultArAccountId = null,
     Guid? DefaultApAccountId = null,
-    Guid? DefaultIrGrAccountId = null);
+    Guid? DefaultIrGrAccountId = null,
+    decimal? CreditLimit = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -456,7 +458,8 @@ public record ContactResponse(
     string? DefaultApAccountName = null,
     Guid? DefaultIrGrAccountId = null,
     string? DefaultIrGrAccountCode = null,
-    string? DefaultIrGrAccountName = null);
+    string? DefaultIrGrAccountName = null,
+    decimal? CreditLimit = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);
@@ -523,7 +526,16 @@ public record CreatePaymentRequest(
     /// response. WHT is allocated proportionally when individual
     /// rows omit WithholdingTaxAmount. Each AllocatedAmount must be
     /// ≤ the target document's current BalanceDue.</summary>
-    List<PaymentAllocationRequest>? Allocations = null);
+    List<PaymentAllocationRequest>? Allocations = null,
+    /// <summary>Optional — base64 signature image (data-url or bare) to print
+    /// in the "ผู้จ่ายเงิน" slot of the PV PDF. Overrides the CreatedBy user's
+    /// stored signature for THIS payment. Used by integrations whose service
+    /// account has no signature on file. Null = use User.SignatureImageBase64
+    /// of CreatedBy.</summary>
+    string? PayerSignatureBase64 = null,
+    /// <summary>Optional — display name printed under the payer signature
+    /// image. Defaults to CreatedBy user's FullName when null.</summary>
+    string? PayerSignatureName = null);
 
 public record PaymentAllocationRequest(
     Guid DocumentId,
@@ -562,7 +574,13 @@ public record PaymentResponse(
     /// otherwise. Doesn't itself create a credit-note; the operator
     /// can later attach the unapplied amount to a new invoice via
     /// /payments/{id}/allocations.</summary>
-    decimal UnappliedCredit = 0);
+    decimal UnappliedCredit = 0,
+    /// <summary>True when this payment carries a per-request payer signature
+    /// override (Payment.PayerSignatureBase64). The blob itself isn't echoed
+    /// in the response — only its presence — to keep payloads compact and
+    /// avoid leaking signature images to clients that don't render them.</summary>
+    bool HasPayerSignature = false,
+    string? PayerSignatureName = null);
 
 
 public record WriteOffBadDebtRequest(string? Reason);

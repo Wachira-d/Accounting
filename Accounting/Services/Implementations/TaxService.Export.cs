@@ -62,7 +62,24 @@ public partial class TaxService
 
         using var ms = new MemoryStream();
         ms.SaveAs(sheets);
-        var fileName = $"TaxReport_{report.TaxType}_{report.Year}{report.Month:D2}.xlsx";
+        // Friendly RD-form-code filename — readable แม้บน Windows/Excel เก่า
+        // (เลี่ยง enum verbose ที่อ่านยาก เช่น WithholdingTax53). ASCII ล้วน
+        // ไม่มี Thai character → no RFC 5987 encoding issue บน browser เก่า.
+        var typeCode = report.TaxType switch
+        {
+            TaxType.VAT => "PP30",
+            TaxType.VatPp36 => "PP36",
+            TaxType.WithholdingTax1 => "PND1",
+            TaxType.WithholdingTax3 => "PND3",
+            TaxType.WithholdingTax53 => "PND53",
+            TaxType.WithholdingTax54 => "PND54",
+            TaxType.CorporateIncomeTax => "PND50",
+            TaxType.PersonalIncomeTax91 => "PND91",
+            TaxType.SocialSecurity => "SSO",
+            TaxType.StampDuty => "Stamp",
+            _ => report.TaxType.ToString()
+        };
+        var fileName = $"{typeCode}_{report.Year:D4}-{report.Month:D2}.xlsx";
         return (ms.ToArray(), fileName);
     }
 

@@ -40,6 +40,8 @@
       <div class="tab" onclick="Page.showTab('tax',this)">ภาษี</div>
       <div class="tab advanced-only" onclick="Page.showTab('etax',this)">e-Tax</div>
       <div class="tab" onclick="Page.showTab('email',this)" data-i18n="common.email">อีเมล</div>
+      <div class="tab" onclick="Page.showTab('line',this)">💬 LINE</div>
+      <div class="tab" onclick="Page.showTab('notify',this)">🔔 การแจ้งเตือน</div>
       <div class="tab advanced-only" onclick="Page.showTab('approval',this)">อนุมัติ</div>
       <div class="tab advanced-only" onclick="Page.showTab('numbering',this)">ลำดับเลขที่</div>
       <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
@@ -489,6 +491,76 @@
       </div>
     </div>
 
+    <!-- ===== LINE Messaging API Tab ===== -->
+    <div id="tabLine" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">💬 LINE Messaging API</h3>
+      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
+        ตั้งค่า Channel ของบริษัทคุณเอง — แจ้งเตือนจะส่งผ่าน LINE Official
+        Account ของคุณโดยตรง (แยกการเรียกเก็บ + แบรนด์). สมัครได้ที่
+        <a href="https://developers.line.biz/console/" target="_blank" rel="noopener" style="color:#06c755">LINE Developers Console</a>
+        → สร้าง Provider → Messaging API channel
+      </p>
+
+      <div class="form-group">
+        <label class="form-label">
+          <input type="checkbox" id="lineEnabled" /> เปิดใช้งานส่งแจ้งเตือนผ่าน LINE
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Channel Access Token (long-lived)</label>
+        <input type="password" class="form-input" id="lineToken"
+               placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
+        <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+          <span id="lineTokenStatus">—</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Channel Secret <span class="text-gray-400" style="font-size:12px">(สำหรับ webhook signature)</span></label>
+        <input type="password" class="form-input" id="lineSecret"
+               placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
+        <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+          <span id="lineSecretStatus">—</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Default Group/Room ID <span class="text-gray-400" style="font-size:12px">(optional — สำหรับแจ้งเตือนกลุ่ม เช่น "ทีมบัญชี")</span></label>
+        <input type="text" class="form-input" id="lineGroupId" placeholder="Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">📨 ทดสอบส่งข้อความ — LINE User ID / Group ID</label>
+        <input type="text" class="form-input" id="lineTestId" placeholder="U... หรือ C... ของผู้รับ" />
+        <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+          พนักงาน/ผู้ใช้ต้อง add Official Account ของคุณเป็นเพื่อนก่อน ระบบจึงจะส่งข้อความหาได้
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="Page.saveLineConfig()">บันทึกการตั้งค่า</button>
+        <button class="btn btn-outline" onclick="Page.testLineConfig()">ทดสอบส่งข้อความ</button>
+      </div>
+      <div id="lineTestResult" style="margin-top:12px"></div>
+    </div>
+
+    <!-- ===== Notification Matrix Tab ===== -->
+    <div id="tabNotify" class="card hidden">
+      <h3 class="card-title" style="margin-bottom:4px">🔔 ตั้งค่าการแจ้งเตือน</h3>
+      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
+        เลือกว่า <strong>เหตุการณ์ใด</strong> จะแจ้งใคร (Role) ผ่านช่องทาง
+        ใดบ้าง — กระดิ่งในแอป / อีเมล / LINE. ปิดทุกช่อง = ไม่แจ้ง.
+        การส่งสลิป PDF ทาง Email + แนบไฟล์เป็นค่าตั้งของกฎ EmailSchedule (แท็บอีเมลกำหนด).
+      </p>
+      <div id="notifyMatrixWrap">
+        <div class="text-gray-400 text-center" style="padding:30px">กำลังโหลด…</div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-primary" onclick="Page.saveNotifyMatrix()">บันทึก</button>
+      </div>
+    </div>
+
     <!-- ===== Approval Tab ===== -->
     <div id="tabApproval" class="card hidden">
       <h3 class="card-title" style="margin-bottom:16px">การอนุมัติและการเข้าถึง</h3>
@@ -520,8 +592,21 @@
         <label class="form-label">ตำแหน่ง</label>
         <input id="sigTitle" type="text" class="form-input" placeholder="เช่น ผู้จัดการ / กรรมการ" />
       </div>
+
+      <!-- วิธีที่ 1: วาดลายเซ็นบนระบบ (เผื่อไม่มีไฟล์ลายเซ็น) -->
       <div class="form-group">
-        <label class="form-label">รูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
+        <label class="form-label">✍️ วิธีที่ 1 — วาดลายเซ็นบนระบบ (เซ็นด้วยเมาส์ / นิ้ว / ปากกาสไตลัส)</label>
+        <canvas id="sigDrawCanvas" width="600" height="200"
+                style="border:2px dashed #94a3b8;border-radius:8px;cursor:crosshair;background:#fff;display:block;width:100%;max-width:600px;touch-action:none"></canvas>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" class="btn btn-secondary" onclick="Page.clearSignatureCanvas()">ล้างกระดาน</button>
+          <button type="button" class="btn btn-primary" onclick="Page.useDrawnSignature()">ใช้ลายเซ็นที่วาดนี้</button>
+          <span class="text-gray-400" style="font-size:12px">เซ็นในกรอบด้านบน แล้วกด "ใช้ลายเซ็นที่วาดนี้" → จากนั้นกด "บันทึกลายเซ็น"</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">📁 วิธีที่ 2 — อัพโหลดรูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
         <div style="display:flex;gap:12px;align-items:flex-start">
           <div style="flex:1">
             <input id="sigUpload" type="file" accept="image/png,image/jpeg" onchange="Page.onSignatureUpload(event)" />
@@ -647,7 +732,7 @@
         }, document.getElementById('cDbdBtn'));
       },
       showTab(tab, el) {
-        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+        ['tabCompany','tabLicense','tabGeneral','tabDocument','tabTax','tabEtax','tabEmail','tabLine','tabNotify','tabApproval','tabNumbering','tabSignature'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
         document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1))?.classList.remove('hidden');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
@@ -657,6 +742,8 @@
         if (tab === 'etax') this.loadEtaxConfig();
         if (tab === 'signature') this.loadSignature();
         if (tab === 'license') this.loadLicenseTab();
+        if (tab === 'line') this.loadLineConfig();
+        if (tab === 'notify') this.loadNotifyMatrix();
       },
 
       // ===== Signature Settings =====
@@ -721,9 +808,55 @@
           document.getElementById('sigTitle').value = p.signatureTitle || '';
           this._signatureBase64 = p.signatureImageBase64 || null;
           this._renderSignaturePreview();
+          this.setupSignatureCanvas();
         } catch (e) {
           Layout.toast(e.message || 'โหลดลายเซ็นไม่สำเร็จ', 'error');
         }
+      },
+
+      // ===== วาดลายเซ็นบน canvas (เผื่อผู้ใช้ไม่มีไฟล์) =====
+      setupSignatureCanvas() {
+        const canvas = document.getElementById('sigDrawCanvas');
+        if (!canvas || canvas._wired) return;
+        canvas._wired = true;
+        const ctx = canvas.getContext('2d');
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        this._sigCtx = ctx;
+        let drawing = false;
+        // แปลงพิกัด pointer → พิกัดภายใน canvas (รองรับ CSS scale + จอมือถือ)
+        const pos = (e) => {
+          const r = canvas.getBoundingClientRect();
+          const p = e.touches && e.touches[0] ? e.touches[0] : e;
+          return {
+            x: (p.clientX - r.left) * (canvas.width / r.width),
+            y: (p.clientY - r.top) * (canvas.height / r.height)
+          };
+        };
+        const start = (e) => { e.preventDefault(); drawing = true; const c = pos(e); ctx.beginPath(); ctx.moveTo(c.x, c.y); };
+        const move = (e) => { if (!drawing) return; e.preventDefault(); const c = pos(e); ctx.lineTo(c.x, c.y); ctx.stroke(); this._sigDrawn = true; };
+        const end = () => { drawing = false; };
+        canvas.addEventListener('mousedown', start);
+        canvas.addEventListener('mousemove', move);
+        canvas.addEventListener('mouseup', end);
+        canvas.addEventListener('mouseleave', end);
+        canvas.addEventListener('touchstart', start, { passive: false });
+        canvas.addEventListener('touchmove', move, { passive: false });
+        canvas.addEventListener('touchend', end);
+      },
+      clearSignatureCanvas() {
+        const canvas = document.getElementById('sigDrawCanvas');
+        if (canvas && this._sigCtx) this._sigCtx.clearRect(0, 0, canvas.width, canvas.height);
+        this._sigDrawn = false;
+      },
+      useDrawnSignature() {
+        if (!this._sigDrawn) { Layout.toast('กรุณาวาดลายเซ็นในกรอบก่อน', 'error'); return; }
+        const canvas = document.getElementById('sigDrawCanvas');
+        this._signatureBase64 = canvas.toDataURL('image/png');
+        this._renderSignaturePreview();
+        Layout.toast('ใช้ลายเซ็นที่วาดแล้ว — อย่าลืมกด "บันทึกลายเซ็น"');
       },
       onSignatureUpload(ev) {
         const file = ev.target.files && ev.target.files[0];
@@ -742,6 +875,7 @@
       clearSignature() {
         this._signatureBase64 = null;
         document.getElementById('sigUpload').value = '';
+        this.clearSignatureCanvas();
         this._renderSignaturePreview();
       },
       _renderSignaturePreview() {
@@ -770,6 +904,156 @@
         } catch (e) {
           Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
         }
+      },
+
+      // ===== LINE Messaging API Config =====
+      async loadLineConfig() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/line-config`, {
+            headers: { 'Authorization': 'Bearer ' + API.token }
+          });
+          const j = await r.json();
+          const c = j.data || {};
+          document.getElementById('lineEnabled').checked = !!c.enabled;
+          document.getElementById('lineGroupId').value = c.defaultGroupId || '';
+          document.getElementById('lineToken').value = '';
+          document.getElementById('lineSecret').value = '';
+          document.getElementById('lineTokenStatus').textContent = c.hasAccessToken
+            ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — ใส่เพื่อเปิดใช้';
+          document.getElementById('lineSecretStatus').textContent = c.hasChannelSecret
+            ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '— (จำเป็นเฉพาะถ้าจะใช้ webhook)';
+          if (c.lastTestedAt) {
+            document.getElementById('lineTestResult').innerHTML =
+              `<div style="font-size:12px;color:${c.configured ? '#16a34a' : '#dc2626'}">
+                 ทดสอบล่าสุด: ${new Date(c.lastTestedAt).toLocaleString()} — ${c.lastTestStatus || ''}
+               </div>`;
+          }
+        } catch (e) { Layout.toast('โหลดการตั้งค่า LINE ไม่สำเร็จ', 'error'); }
+      },
+      async saveLineConfig() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const body = {
+          enabled: document.getElementById('lineEnabled').checked,
+          channelAccessToken: document.getElementById('lineToken').value || null,
+          channelSecret: document.getElementById('lineSecret').value || null,
+          defaultGroupId: document.getElementById('lineGroupId').value || null,
+        };
+        try {
+          const r = await fetch(`/api/companies/${cid}/line-config`, {
+            method: 'PUT',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          Layout.toast('บันทึก LINE config สำเร็จ');
+          await this.loadLineConfig();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async testLineConfig() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const to = document.getElementById('lineTestId').value.trim();
+        if (!to) { Layout.toast('กรุณาระบุ LINE User ID หรือ Group ID ปลายทาง', 'error'); return; }
+        const out = document.getElementById('lineTestResult');
+        out.innerHTML = '<div style="font-size:12px;color:#64748b">กำลังส่ง…</div>';
+        try {
+          const r = await fetch(`/api/companies/${cid}/line-config/test`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ toLineId: to })
+          });
+          const j = await r.json();
+          out.innerHTML = `<div style="font-size:13px;color:${j.success ? '#16a34a' : '#dc2626'}">
+            ${j.success ? '✅' : '❌'} ${j.message || ''}</div>`;
+        } catch (e) { out.innerHTML = `<div style="color:#dc2626">${e.message}</div>`; }
+      },
+
+      // ===== Notification Matrix =====
+      _notifyCatalog: null,
+      _notifySettings: [],
+      async loadNotifyMatrix() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const wrap = document.getElementById('notifyMatrixWrap');
+        try {
+          const [catRes, setRes] = await Promise.all([
+            fetch(`/api/companies/${cid}/notifications/config/catalog`,
+              { headers: { 'Authorization': 'Bearer ' + API.token } }).then(r => r.json()),
+            fetch(`/api/companies/${cid}/notifications/config/settings`,
+              { headers: { 'Authorization': 'Bearer ' + API.token } }).then(r => r.json()),
+          ]);
+          this._notifyCatalog = catRes.data || { events: [], recipientRoles: [] };
+          this._notifySettings = setRes.data || [];
+          this._renderNotifyMatrix();
+        } catch (e) {
+          wrap.innerHTML = '<div style="color:#dc2626;padding:20px">โหลดไม่สำเร็จ: ' + e.message + '</div>';
+        }
+      },
+      _renderNotifyMatrix() {
+        const cat = this._notifyCatalog;
+        if (!cat) return;
+        const map = new Map();
+        for (const s of this._notifySettings)
+          map.set(`${s.eventKey}|${s.recipientRole}`, s);
+        const events = cat.events || [];
+        const roles = cat.recipientRoles || cat.roles || [];
+        const roleLabel = { Requester: 'พนักงาน', DirectManager: 'หัวหน้างาน', DepartmentHead: 'หัวหน้าแผนก',
+          HR_Admin: 'HR', Accounting: 'บัญชี', Owner: 'เจ้าของบริษัท' };
+        let html = `<div style="overflow-x:auto"><table class="table" style="font-size:13px;min-width:780px">
+          <thead><tr>
+            <th style="text-align:left;width:30%">เหตุการณ์</th>
+            <th style="text-align:left">ผู้รับ</th>
+            <th style="text-align:center">🔔 กระดิ่ง</th>
+            <th style="text-align:center">✉️ อีเมล</th>
+            <th style="text-align:center">💬 LINE</th>
+          </tr></thead><tbody>`;
+        for (const ev of events) {
+          for (const role of roles) {
+            const key = `${ev.key}|${role}`;
+            const s = map.get(key) || { enableSystem: false, enableEmail: false, enableLine: false };
+            html += `<tr>
+              <td><div><strong>${ev.label}</strong></div><div class="text-gray-400" style="font-size:11px">${ev.key}</div></td>
+              <td>${roleLabel[role] || role}</td>
+              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="sys" ${s.enableSystem ? 'checked' : ''}></td>
+              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="email" ${s.enableEmail ? 'checked' : ''}></td>
+              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="line" ${s.enableLine ? 'checked' : ''}></td>
+            </tr>`;
+          }
+        }
+        html += `</tbody></table></div>`;
+        document.getElementById('notifyMatrixWrap').innerHTML = html;
+      },
+      async saveNotifyMatrix() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        const rowsMap = new Map();
+        document.querySelectorAll('#notifyMatrixWrap input[type=checkbox]').forEach(cb => {
+          const k = `${cb.dataset.ev}|${cb.dataset.role}`;
+          if (!rowsMap.has(k)) rowsMap.set(k, {
+            eventKey: cb.dataset.ev, recipientRole: cb.dataset.role,
+            enableSystem: false, enableEmail: false, enableLine: false
+          });
+          const r = rowsMap.get(k);
+          if (cb.dataset.ch === 'sys') r.enableSystem = cb.checked;
+          if (cb.dataset.ch === 'email') r.enableEmail = cb.checked;
+          if (cb.dataset.ch === 'line') r.enableLine = cb.checked;
+        });
+        // ส่งทุก row — backend จัด upsert/delete ให้
+        const settings = Array.from(rowsMap.values());
+        try {
+          const r = await fetch(`/api/companies/${cid}/notifications/config/settings`, {
+            method: 'PUT',
+            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ settings })
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          Layout.toast('บันทึกการตั้งค่าแจ้งเตือนเรียบร้อย');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       // ===== Email Config =====

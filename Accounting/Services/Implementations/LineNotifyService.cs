@@ -1,6 +1,10 @@
 using System.Text;
 using System.Text.Json;
+using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
@@ -9,132 +13,128 @@ public class LineNotifyService : ILineNotifyService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<LineNotifyService> _logger;
+    private readonly AccountingDbContext _db;
+    private readonly ISecretProtector _secrets;
 
     public LineNotifyService(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        ILogger<LineNotifyService> logger)
+        ILogger<LineNotifyService> logger,
+        AccountingDbContext db,
+        ISecretProtector secrets)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
+        _db = db;
+        _secrets = secrets;
     }
 
-    public async Task SendMessageAsync(string message)
+    /// <summary>หา (token, defaultGroupId) สำหรับบริษัท — ใช้ของบริษัทถ้าตั้ง
+    /// LineEnabled + มี token; ไม่งั้น fallback ไป appsettings global (เพื่อ
+    /// compatibility กับการตั้งค่าเก่า). Returns (null, null) ถ้าไม่มีเลย.</summary>
+    private async Task<(string? Token, string? GroupId)> ResolveConfigAsync(Guid? companyId)
     {
-        var channelAccessToken = _configuration["Line:ChannelAccessToken"];
-        var groupId = _configuration["Line:GroupId"];
-
-        if (string.IsNullOrEmpty(channelAccessToken) || string.IsNullOrEmpty(groupId))
+        if (companyId.HasValue)
         {
-            _logger.LogWarning("LINE Messaging API not configured. Skipping notification.");
-            return;
+            var s = await _db.Set<CompanySettings>().AsNoTracking()
+                .FirstOrDefaultAsync(x => x.CompanyId == companyId.Value);
+            if (s != null && s.LineEnabled && !string.IsNullOrWhiteSpace(s.LineChannelAccessToken))
+            {
+                var token = _secrets.Unprotect(s.LineChannelAccessToken);
+                if (!string.IsNullOrWhiteSpace(token))
+                    return (token, s.LineDefaultGroupId);
+            }
         }
+        return (_configuration["Line:ChannelAccessToken"], _configuration["Line:GroupId"]);
+    }
 
+    private async Task<bool> PushRawAsync(string? token, object payload, string context)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            _logger.LogInformation("LINE skipped ({Ctx}) — no token configured", context);
+            return false;
+        }
         try
         {
             var client = _httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", channelAccessToken);
-
-            var payload = new
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            var resp = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
+            if (!resp.IsSuccessStatusCode)
             {
-                to = groupId,
-                messages = new[]
-                {
-                    new { type = "text", text = message }
-                }
-            };
-
-            var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            var response = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
-
-            if (response.IsSuccessStatusCode)
-            {
-                _logger.LogInformation("LINE message sent successfully to group {GroupId}", groupId);
+                var body = await resp.Content.ReadAsStringAsync();
+                _logger.LogError("LINE push failed ({Ctx}): {Status} {Body}", context, resp.StatusCode, body);
+                return false;
             }
-            else
-            {
-                var responseBody = await response.Content.ReadAsStringAsync();
-                _logger.LogError("LINE API error: {StatusCode} - {Body}", response.StatusCode, responseBody);
-            }
+            return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send LINE message");
+            _logger.LogError(ex, "LINE push threw ({Ctx})", context);
+            return false;
         }
+    }
+
+    public async Task SendMessageAsync(string message)
+    {
+        var (token, groupId) = await ResolveConfigAsync(null);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
+        await PushRawAsync(token, new
+        {
+            to = groupId,
+            messages = new[] { new { type = "text", text = message } }
+        }, "group");
     }
 
     /// <summary>Push a personalised text message to one user. Used by
     /// the NotificationEngine when a recipient has a bound LineUserId.
     /// No-op when LINE is not configured (no token) or the userId is
     /// empty so the engine can fall back to System / Email cleanly.</summary>
-    public async Task PushToUserAsync(string lineUserId, string message)
+    public Task PushToUserAsync(string lineUserId, string message)
+        => PushToUserAsync(null, lineUserId, message);
+
+    public async Task PushToUserAsync(Guid? companyId, string lineUserId, string message)
     {
         if (string.IsNullOrWhiteSpace(lineUserId)) return;
-        var token = _configuration["Line:ChannelAccessToken"];
-        if (string.IsNullOrWhiteSpace(token))
+        var (token, _) = await ResolveConfigAsync(companyId);
+        await PushRawAsync(token, new
         {
-            _logger.LogWarning("LINE Messaging API not configured — falling back silently.");
-            return;
-        }
-        try
-        {
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            var payload = new
-            {
-                to = lineUserId,
-                messages = new[] { new { type = "text", text = message } }
-            };
-            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-            var resp = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
-            if (!resp.IsSuccessStatusCode)
-                _logger.LogError("LINE push to {UserId} failed: {Status} {Body}",
-                    lineUserId, resp.StatusCode, await resp.Content.ReadAsStringAsync());
-        }
-        catch (Exception ex) { _logger.LogError(ex, "LINE push to {UserId} threw", lineUserId); }
+            to = lineUserId,
+            messages = new[] { new { type = "text", text = message } }
+        }, $"user {lineUserId}");
     }
 
-    public async Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents)
+    public Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents)
+        => PushFlexToUserAsync(null, lineUserId, altText, flexContents);
+
+    public async Task PushFlexToUserAsync(Guid? companyId, string lineUserId, string altText, object flexContents)
     {
         if (string.IsNullOrWhiteSpace(lineUserId)) return;
-        var token = _configuration["Line:ChannelAccessToken"];
-        if (string.IsNullOrWhiteSpace(token)) { _logger.LogWarning("LINE not configured."); return; }
-        try
+        var (token, _) = await ResolveConfigAsync(companyId);
+        await PushRawAsync(token, new
         {
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            var payload = new
+            to = lineUserId,
+            messages = new[]
             {
-                to = lineUserId,
-                messages = new[]
+                new
                 {
-                    new
-                    {
-                        type = "flex",
-                        altText = string.IsNullOrEmpty(altText) ? "การแจ้งเตือนจาก NextAcc" : altText,
-                        contents = flexContents
-                    }
+                    type = "flex",
+                    altText = string.IsNullOrEmpty(altText) ? "การแจ้งเตือนจาก NextAcc" : altText,
+                    contents = flexContents
                 }
-            };
-            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-            var resp = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
-            if (!resp.IsSuccessStatusCode)
-                _logger.LogError("LINE flex push to {UserId} failed: {Status} {Body}",
-                    lineUserId, resp.StatusCode, await resp.Content.ReadAsStringAsync());
-        }
-        catch (Exception ex) { _logger.LogError(ex, "LINE flex push to {UserId} threw", lineUserId); }
+            }
+        }, $"flex user {lineUserId}");
     }
 
     public async Task NotifyDocumentApprovedAsync(Guid companyId, string documentNumber, string contactName, decimal amount)
     {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
         var msg = $"✅ เอกสารอนุมัติแล้ว\n📄 {documentNumber}\n👤 {contactName}\n💰 {amount:N2} บาท";
-        await SendMessageAsync(msg);
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "doc-approved");
     }
 
     // Servers run UTC; recipients are Thai-based. Render times in ICT (UTC+7)
@@ -143,37 +143,69 @@ public class LineNotifyService : ILineNotifyService
 
     public async Task NotifyPaymentReceivedAsync(Guid companyId, string documentNumber, decimal amount)
     {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
         var msg = $"💵 รับชำระเงินแล้ว\n📄 {documentNumber}\n💰 {amount:N2} บาท\n🕐 {NowIct()}";
-        await SendMessageAsync(msg);
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "payment");
     }
 
     public async Task NotifyOverdueInvoiceAsync(Guid companyId, string documentNumber, string contactName, decimal amount, int daysOverdue)
     {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
         var msg = $"⚠️ ใบแจ้งหนี้เกินกำหนด\n📄 {documentNumber}\n👤 {contactName}\n💰 ค้างชำระ {amount:N2} บาท\n📅 เกินกำหนด {daysOverdue} วัน";
-        await SendMessageAsync(msg);
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "overdue");
     }
 
     public async Task NotifyBankSyncCompleteAsync(Guid companyId, string bankName, int newTransactions)
     {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
         var msg = $"🏦 Sync ธนาคารสำเร็จ\n🔄 {bankName}\n📊 รายการใหม่ {newTransactions} รายการ\n🕐 {NowIct()}";
-        await SendMessageAsync(msg);
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "bank-sync");
     }
 
     public async Task NotifyECommerceSyncAsync(Guid companyId, string platform, int newOrders, decimal totalAmount)
     {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
         var msg = $"🛒 Sync {platform} สำเร็จ\n📦 ออเดอร์ใหม่ {newOrders} รายการ\n💰 ยอดรวม {totalAmount:N2} บาท\n🕐 {NowIct()}";
-        await SendMessageAsync(msg);
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "ecom-sync");
     }
 
     public async Task NotifyPayrollCompletedAsync(Guid companyId, string runName, int employeeCount, decimal totalNet)
     {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
         var msg = $"💼 คำนวณเงินเดือนเสร็จสิ้น\n📋 {runName}\n👥 {employeeCount} คน\n💰 รวมจ่ายสุทธิ {totalNet:N2} บาท";
-        await SendMessageAsync(msg);
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "payroll");
     }
 
     public async Task NotifyLowBalanceAsync(Guid companyId, string accountName, decimal balance, decimal threshold)
     {
+        var (token, groupId) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(groupId)) return;
         var msg = $"🔴 แจ้งเตือน: ยอดเงินต่ำ\n🏦 {accountName}\n💰 คงเหลือ {balance:N2} บาท\n⚠️ ต่ำกว่าเกณฑ์ {threshold:N2} บาท";
-        await SendMessageAsync(msg);
+        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "low-balance");
+    }
+
+    /// <summary>Test config — ส่ง echo message ไปยัง groupId หรือ lineUserId
+    /// ที่ระบุ. ใช้จากปุ่ม "ทดสอบ" ในหน้าตั้งค่า. Returns (success, message).</summary>
+    public async Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId)
+    {
+        if (string.IsNullOrWhiteSpace(toLineId))
+            return (false, "กรุณาระบุ LINE User ID หรือ Group ID ปลายทาง");
+        var (token, _) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(token))
+            return (false, "ยังไม่ได้ตั้งค่า Channel Access Token");
+        var ok = await PushRawAsync(token, new
+        {
+            to = toLineId,
+            messages = new[] { new { type = "text",
+                text = $"✅ ทดสอบ LINE Messaging API สำเร็จ\nบริษัท: {companyId}\nเวลา: {NowIct()}" } }
+        }, "test");
+        return ok
+            ? (true, "ส่งข้อความทดสอบสำเร็จ")
+            : (false, "ส่งไม่สำเร็จ ตรวจสอบ Token และ ID ปลายทาง (ดู log)");
     }
 }
