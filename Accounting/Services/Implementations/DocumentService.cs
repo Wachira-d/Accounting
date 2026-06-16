@@ -1237,7 +1237,7 @@ public class DocumentService : IDocumentService
                 // number already stamped) keep the existing number.
                 if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
                 {
-                    doc.DocumentNumber = await Helpers.DocumentNumberGenerator.NextAsync(
+                    doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
                         _db, companyId, doc.DocumentType);
                 }
 
