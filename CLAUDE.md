@@ -47,9 +47,14 @@ local model จะไม่มีวันโตพอจะยืนด้ว�
 1. **ไม่มี hard dependency บน AI** — โค้ดทุกเส้นทางต้องมี local path ที่ให้
    คำตอบใช้งานได้จริง (ไม่ใช่ throw / return null / ปล่อยฟอร์มว่าง) เมื่อ
    provider ไม่ตอบสนอง การปิด AI ทั้งระบบต้อง **ไม่ทำให้ feature ใดพัง**
-2. **Feature parity** — ทุก `AiFeatureKey` ต้องมี `ILocalDistillationModel`
-   ที่ register แล้ว 1 ตัวเสมอ ห้ามมี feature ที่เรียก AI ได้แต่ไม่มี
-   student รองรับ (= สร้าง dependency ที่ถอดไม่ได้)
+2. **Feature parity** — ทุก `AiFeatureKey` ที่เรียก AI ต้องมี
+   `ILocalDistillationModel` register แล้ว 1 ตัวเสมอ ห้ามมี feature ที่เรียก
+   AI ได้แต่ไม่มี student รองรับ (= สร้าง dependency ที่ถอดไม่ได้) ถ้า output
+   เป็น **single answer** (classification/suggestion) ไม่ต้องเขียน model ใหม่
+   — register `GenericFeedbackDistillationModel(featureKey, …)` ใน `Program.cs`
+   ก็พอ (เรียนรู้ exact-input + company majority fallback ให้อัตโนมัติ) เขียน
+   bespoke model เฉพาะตอน output เป็น structured/bulk/free-form essay
+   (เช่น OcrFullReview, ImportColumnMatch, BulkBankStatementMatch)
 3. **Cold-start ต้องไม่ว่างเปล่า** — tenant ใหม่ที่ยังไม่มี feedback ของ
    ตัวเอง local model ต้องตอบได้จาก seed/baseline (`IDistillationCorpusSeeder`,
    `SystemOcr*` mappings, rule resolver) — ไม่ใช่รอจน AI สอนถึงจะทำงาน
@@ -98,7 +103,8 @@ local model จะไม่มีวันโตพอจะยืนด้ว�
 | ส่วน | ตัวอย่างที่มีในโปรเจกต์ | ไฟล์ |
 | --- | --- | --- |
 | Augmenter pattern | `SuggestGlAccountAsync` | `Services/Ai/OcrAiAugmenter.cs` |
-| Distillation model | `GlAccountDistillationModel` | `Services/Ai/Distillation/GlAccountDistillationModel.cs` |
+| Distillation model (bespoke) | `GlAccountDistillationModel` | `Services/Ai/Distillation/GlAccountDistillationModel.cs` |
+| Distillation model (generic) | `GenericFeedbackDistillationModel` — ใช้กับ feature single-answer ที่ไม่ต้องเขียน model เอง register 1 instance/feature ใน `Program.cs` | `Services/Ai/Distillation/GenericFeedbackDistillationModel.cs` |
 | Wiring เข้า pipeline | OCR GL-account classification block | `Services/Implementations/OcrService.cs` |
 | ปิด loop จาก user edit | `SubmitCorrectionAsync` → `RecordUserChoiceAsync` | `Services/Implementations/OcrService.cs` |
 | Routing config | Hybrid default 0.85 short-circuit | `Services/Ai/AiFeatureRoutingResolver.cs` |
