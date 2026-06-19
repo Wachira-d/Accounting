@@ -1245,7 +1245,12 @@
         // Actions
         let actionsHtml = '';
         if (scan.scanStatus === 'Completed' && !scan.createdDocumentId) {
-          actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.createDocument('${scan.id}')">สร้างเอกสาร</button>`;
+          // Open the review modal FIRST — never commit straight from the card.
+          // The modal lets the user confirm/change the document type and
+          // check every extracted field (vendor, totals, expense account)
+          // before the document is actually created. Direct create-on-click
+          // was the cause of "พอกดสร้างดันสร้างเอกสารเลย".
+          actionsHtml += `<button class="btn btn-sm btn-primary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สร้างเอกสาร</button>`;
         }
         if (scan.createdDocumentId) {
           actionsHtml += `<a href="/pages/documents.html?id=${scan.createdDocumentId}" class="btn btn-sm btn-success">สร้างแล้ว &rarr;</a>`;
@@ -1909,7 +1914,9 @@
             <div class="review-section">
               <div class="review-section-title">📊 ผังบัญชีที่แนะนำ
                 <span style="float:right;display:inline-flex;gap:6px;align-items:center">
-                  ${scan.suggestedAccounts ? '<span style="font-size:11px;color:#059669;font-weight:400">🤖 AI แนะนำ</span>' : ''}
+                  ${scan.suggestedAccounts ? (scan.glAccountUsedAi
+                      ? '<span style="font-size:11px;color:#059669;font-weight:400" title="DeepSeek จัดหมวดบัญชีให้ — คำตอบถูกนำไปสอน local model">🤖 AI (DeepSeek) แนะนำ</span>'
+                      : '<span style="font-size:11px;color:#64748b;font-weight:400" title="มาจาก keyword/สถิติ (ยังไม่ได้เรียก AI หรือ local model มั่นใจแล้ว)">⚙️ ระบบแนะนำ (rule-based)</span>') : ''}
                   <button type="button" class="btn btn-sm"
                     style="background:#fff;border:1px solid #bae6fd;color:#0369a1;padding:2px 8px;font-size:11px;font-weight:500"
                     onclick="Page.viewOcrAiRaw('${scan.id}')">🔍 ดู AI response เต็ม</button>

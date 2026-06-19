@@ -3677,6 +3677,9 @@ public static class DatabaseMigrationHelper
             // OcrScanResult — AI augmentation trail.
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestedContactId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "AiSuggestionFeedbackId" uuid NULL;""",
+            // OcrScanResult — GL-account (expense) DeepSeek classification trail.
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountUsedAi" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiFeedbackId" uuid NULL;""",
 
             // EmployeeLeave — half-day support added 2026.
             """ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "HalfDayMarker" integer NOT NULL DEFAULT 0;""",

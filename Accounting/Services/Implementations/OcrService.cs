@@ -49,6 +49,7 @@ public class OcrService : IOcrService
     private readonly Ocr.RdComplianceValidator? _rdComplianceValidator;
     private readonly Ocr.GlobalDocWorkflowLearner? _docWorkflowLearner;
     private readonly Services.Ai.IOcrAiAugmenter? _aiAugmenter;
+    private readonly Services.Ai.IAiFeedbackRecorder? _feedbackRecorder;
     private readonly Services.Interfaces.IAccountingService? _accounting;
     private readonly Ocr.ProductMatcher? _productMatcher;
 
@@ -69,10 +70,12 @@ public class OcrService : IOcrService
         Ocr.GlobalDocWorkflowLearner? docWorkflowLearner = null,
         Services.Ai.IOcrAiAugmenter? aiAugmenter = null,
         Services.Interfaces.IAccountingService? accounting = null,
-        Ocr.ProductMatcher? productMatcher = null)
+        Ocr.ProductMatcher? productMatcher = null,
+        Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null)
     {
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
+        _feedbackRecorder = feedbackRecorder;
         _accounting = accounting;
         _productMatcher = productMatcher;
         _db = db;
@@ -952,6 +955,73 @@ public class OcrService : IOcrService
                         extractedData.ReasoningTrace.Add(
                             $"[VendorIntel] รายการตรงกับ keyword ประวัติ {hits} ครั้ง → หมวด '{extractedData.ExpenseCategory}' มั่นใจสูง");
                     }
+                }
+            }
+
+            // ───── DeepSeek GL-account classification (teacher → student) ─────
+            // Throw the line to the connected AI provider (DeepSeek) to pick the
+            // expense/asset account, then DISTIL its answer into the per-tenant
+            // local model. The orchestrator routes student-first: when the local
+            // GlAccountDistillationModel is already confident it short-circuits
+            // WITHOUT a paid call; otherwise it asks DeepSeek and records the
+            // answer as an AiSuggestionFeedback row that the nightly
+            // AiFeedbackTrainingJob distils back into the local model. This is
+            // the piece that was missing — the earlier keyword/statistical
+            // layers never consulted the AI, which is how "Epson L6370" could
+            // get mislabelled as ค่าขนส่ง. See docs/ocr-ai-classification.md.
+            if (_aiAugmenter != null)
+            {
+                try
+                {
+                    var aiLineDesc = extractedData.Items
+                            .FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Description))?.Description
+                        ?? extractedData.ExpenseCategory
+                        ?? extractedData.VendorName ?? "";
+                    if (!string.IsNullOrWhiteSpace(aiLineDesc))
+                    {
+                        var localConf = (decimal)extractedData.FieldConfidence.GetValueOrDefault("DebitAccount", 0);
+                        using var glCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                        var glResult = await _aiAugmenter.SuggestGlAccountAsync(
+                            companyId, scanResult.Id,
+                            extractedData.VendorName, extractedData.VendorTaxId,
+                            companyContext?.IndustryType.ToString(),
+                            aiLineDesc, extractedData.TotalAmount ?? 0m, "THB",
+                            extractedData.DebitAccountCode, localConf,
+                            glCts.Token);
+
+                        // Record the trail regardless of whether we applied it, so
+                        // the review UI shows an honest badge and the user's final
+                        // pick can be posted back as a training signal.
+                        scanResult.GlAccountUsedAi = glResult.UsedAi;
+                        scanResult.GlAccountAiFeedbackId = glResult.FeedbackId;
+
+                        // Apply only when AI actually ran, was confident, and named
+                        // a real account in THIS company's CoA (anti-hallucination).
+                        if (glResult.UsedAi && !string.IsNullOrEmpty(glResult.Answer)
+                            && (glResult.Confidence ?? 0m) >= 0.70m)
+                        {
+                            var aiAcct = await _db.ChartOfAccounts.AsNoTracking()
+                                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                                    && a.AccountCode == glResult.Answer
+                                    && a.IsActive && !a.IsDeleted);
+                            if (aiAcct != null)
+                            {
+                                extractedData.DebitAccountCode = aiAcct.AccountCode;
+                                extractedData.DebitAccountName = aiAcct.AccountName;
+                                extractedData.FieldConfidence["DebitAccount"] = (double)(glResult.Confidence ?? 0.7m);
+                                extractedData.ReasoningTrace.Add(
+                                    $"[AI/DeepSeek] จัดหมวดบัญชี → {aiAcct.AccountCode} {aiAcct.AccountName} "
+                                    + $"(confidence {(glResult.Confidence ?? 0):P0})"
+                                    + (string.IsNullOrEmpty(glResult.Reasoning) ? "" : ": " + glResult.Reasoning));
+                                foreach (var risk in glResult.Risks)
+                                    extractedData.ReasoningTrace.Add("[AI risk] " + risk);
+                            }
+                        }
+                    }
+                }
+                catch (Exception aiEx)
+                {
+                    _logger.LogWarning(aiEx, "GL-account AI classification failed (non-fatal)");
                 }
             }
 
@@ -2402,6 +2472,21 @@ public class OcrService : IOcrService
         var prevVendorTaxId = result.ExtractedVendorTaxId;
         var prevDocNumber = result.ExtractedDocumentNumber;
 
+        // What account did DeepSeek suggest at scan time? Captured BEFORE the
+        // SuggestedAccountsJson overwrite below, so the distillation loop can
+        // tell whether the user accepted the AI pick or overrode it.
+        string? aiSuggestedDebitBefore = null;
+        if (!string.IsNullOrEmpty(result.SuggestedAccountsJson))
+        {
+            try
+            {
+                using var d0 = System.Text.Json.JsonDocument.Parse(result.SuggestedAccountsJson);
+                if (d0.RootElement.TryGetProperty("DebitAccountCode", out var dc0))
+                    aiSuggestedDebitBefore = dc0.GetString();
+            }
+            catch { /* malformed — leave null */ }
+        }
+
         // Update the scan result with corrected data
         if (correction.DocumentType != null)
         {
@@ -2519,6 +2604,28 @@ public class OcrService : IOcrService
                 correction.ExpenseCategory ?? result.ExpenseCategory,
                 correction.DebitAccountCode,
                 debitName);
+
+            // ── Close the DeepSeek distillation loop ──
+            // When this scan was classified by DeepSeek, record the user's
+            // final account pick against that AiSuggestionFeedback row. The
+            // nightly AiFeedbackTrainingJob mines rows WHERE UserChosenAt != null
+            // to retrain GlAccountDistillationModel, so without this the teacher's
+            // answer (and the user's correction of it) would never reach the
+            // student. acceptedAi = user kept the AI's suggestion unchanged.
+            if (_feedbackRecorder != null && result.GlAccountAiFeedbackId.HasValue)
+            {
+                try
+                {
+                    var acceptedAi = result.GlAccountUsedAi
+                        && string.Equals(aiSuggestedDebitBefore, correction.DebitAccountCode, StringComparison.Ordinal);
+                    await _feedbackRecorder.RecordUserChoiceAsync(
+                        result.GlAccountAiFeedbackId.Value, correction.DebitAccountCode, acceptedAi, default);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to record GL-account feedback choice (non-fatal)");
+                }
+            }
         }
 
         // Federated doc-workflow learning — when the user confirms what
@@ -4483,7 +4590,8 @@ public class OcrService : IOcrService
             OpenPoNumbersJson: r.OpenPoNumbersJson,
             LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
             LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber,
-            ExtractedDiscountAmount: data?.DiscountAmount ?? r.ExtractedDiscountAmount);
+            ExtractedDiscountAmount: data?.DiscountAmount ?? r.ExtractedDiscountAmount,
+            GlAccountUsedAi: r.GlAccountUsedAi);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)

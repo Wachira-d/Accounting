@@ -62,7 +62,13 @@ public record OcrResultResponse(
     Guid? LinkedPurchaseOrderId = null,
     string? LinkedPurchaseOrderNumber = null,
     /// <summary>Header discount (ส่วนลด) read off the paper.</summary>
-    decimal? ExtractedDiscountAmount = null);
+    decimal? ExtractedDiscountAmount = null,
+    /// <summary>True when DeepSeek (the connected AI provider) actually
+    /// classified the expense/GL account on this scan — drives the honest
+    /// "🤖 AI แนะนำ" vs "ระบบแนะนำ (rule-based)" badge in the review UI.
+    /// False means the suggestion came purely from the keyword/statistical
+    /// learners (no paid AI call, or the local model short-circuited).</summary>
+    bool GlAccountUsedAi = false);
 
 /// <summary>One open PO of the matched vendor — what the picker modal
 /// renders. Lines come back inline so the operator can map OCR ↔ PO line
