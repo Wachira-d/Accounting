@@ -30,6 +30,44 @@ Gemini, local Llama, ฯลฯ) **ต้องมี distillation loop ครบ
 - **Latency** — เรียก AI ภายนอก 1-5 วินาที, local model หลัก ms
 - **Privacy** — ข้อมูลลูกค้าไม่ควรไหลออกไป provider ทุกครั้ง
 
+### 🛡️ Local-First Sovereignty — local model ต้องทดแทน AI ได้ 100%
+
+> **หลักการสูงสุด:** AI ภายนอกเป็น "ครูพิเศษ" ที่ช่วยสอน — ไม่ใช่ "อวัยวะ
+> สำคัญ" ที่ระบบขาดไม่ได้ ทุก feature ที่โยนข้อมูลไปให้ AI คิด **ต้องนำคำตอบ
+> กลับมาสอน local model จนถึงจุดที่ local ทำงานแทนได้เต็ม 100%** เมื่อ AI
+> ล่ม / ถูกปิด / เกินงบ / โดน rate-limit / เครือข่ายขาด ระบบต้องทำงานต่อ
+> **ได้ครบทุกฟังก์ชัน** เหมือน AI ยังอยู่ — ผู้ใช้ไม่ควรรู้สึกถึงความต่าง
+
+นี่คือเหตุผลที่ขั้น CAPTURE + DISTILL **ห้ามข้าม**: ทุก call ที่ไปหา AI คือ
+โอกาสเก็บ training data ถ้าไม่เก็บ = จ่าย token ฟรีโดยไม่ได้อะไรกลับมา และ
+local model จะไม่มีวันโตพอจะยืนด้วยตัวเอง
+
+**ข้อบังคับเชิงสถาปัตยกรรม (ทุกข้อเป็น hard requirement):**
+
+1. **ไม่มี hard dependency บน AI** — โค้ดทุกเส้นทางต้องมี local path ที่ให้
+   คำตอบใช้งานได้จริง (ไม่ใช่ throw / return null / ปล่อยฟอร์มว่าง) เมื่อ
+   provider ไม่ตอบสนอง การปิด AI ทั้งระบบต้อง **ไม่ทำให้ feature ใดพัง**
+2. **Feature parity** — ทุก `AiFeatureKey` ต้องมี `ILocalDistillationModel`
+   ที่ register แล้ว 1 ตัวเสมอ ห้ามมี feature ที่เรียก AI ได้แต่ไม่มี
+   student รองรับ (= สร้าง dependency ที่ถอดไม่ได้)
+3. **Cold-start ต้องไม่ว่างเปล่า** — tenant ใหม่ที่ยังไม่มี feedback ของ
+   ตัวเอง local model ต้องตอบได้จาก seed/baseline (`IDistillationCorpusSeeder`,
+   `SystemOcr*` mappings, rule resolver) — ไม่ใช่รอจน AI สอนถึงจะทำงาน
+4. **Graceful degradation เงียบ** — provider ดับ/เกินงบ/timeout → สลับมา
+   local ทันที ห้าม error ขึ้นหา user, ห้าม log spam, ห้าม block UI
+5. **Kill-switch ต้องผ่าน** — โค้ดต้องทำงานถูกต้องเมื่อ **ปิด provider ทุก
+   ตัว** (`AiProviderConfig.IsActive = false` ทั้งหมด) ก่อน commit ให้คิด
+   เสมอว่า "ถ้า AI หายไปวันนี้ feature นี้ยังทำงานครบไหม" ถ้าตอบไม่ได้ = ยัง
+   ไม่ผ่าน
+6. **วัดความพร้อม** — ใช้ `<Feature>UsedAi` ที่ลดลงเรื่อย ๆ เป็นตัวชี้วัด:
+   ยิ่ง local โตเท่าไร อัตราการเรียก AI ยิ่งต่ำ เป้าหมายคือ short-circuit
+   ที่ local ≥ 0.85 confidence จนแทบไม่ต้องแตะ AI ในงานประจำ
+
+**Litmus test ก่อน commit ทุก feature ที่แตะ AI:**
+> "ถ้าตอนนี้ตัด DeepSeek/Claude ออกจากระบบถาวร — feature นี้ยังให้ผลลัพธ์ที่
+> ใช้งานได้ครบ 100% หรือไม่?" ถ้า **ไม่** แปลว่าโค้ดยังพึ่ง AI เป็นไม้ค้ำ
+> ไม่ใช่ครู — ต้องแก้ให้ local ยืนเองได้ก่อน
+
 ### Checklist — ต้องผ่านทุกข้อก่อน commit
 
 - [ ] ใช้ `IAiOrchestrator.AskAsync(AiRequest)` (ไม่เรียก `IAiProvider` หรือ
@@ -49,6 +87,11 @@ Gemini, local Llama, ฯลฯ) **ต้องมี distillation loop ครบ
       ("🤖 AI แนะนำ" เฉพาะตอนเรียกจริง, ไม่งั้น "⚙️ ระบบแนะนำ")
 - [ ] fallback graceful: provider ดับ/เกินงบ/timeout → ใช้ local
       ต่อไปได้เงียบ ๆ ห้าม throw ขึ้นมาหา user
+- [ ] **Kill-switch test** — ปิด provider ทุกตัว (`IsActive=false`) แล้ว
+      feature ยังทำงานครบ 100% ผ่าน local path (ดู "🛡️ Local-First
+      Sovereignty") ถ้ายังพึ่ง AI เป็นไม้ค้ำ = ยังไม่ผ่าน
+- [ ] cold-start: tenant ใหม่ (ยังไม่มี feedback) local model ตอบได้จาก
+      seed/baseline ไม่ใช่รอ AI สอนก่อน
 
 ### Template ที่ลอกได้
 
