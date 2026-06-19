@@ -281,6 +281,14 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
                 customerPaymentHistory: new { },
                 vendorPaymentHistory: new { });
             var resp = await _orchestrator.AskAsync(req, ct);
+            // Local-First: when AI didn't run (disabled / over budget / down),
+            // don't hand back an empty panel — build the same risk_buckets +
+            // cash_gap_forecast shape from the aging data we already queried so
+            // the operator still sees who's overdue. The UI already renders a
+            // "🤖 AI ไม่พร้อม — แสดงคำตอบ local model" banner for usedAi=false.
+            if (!resp.UsedAi)
+                return BuildLocalArApResult(arDocs, apDocs, today);
+
             // ArApAnalysisPrompt expects risk_buckets + cash_gap_forecast +
             // recommendations — the UI's three-section render needs all three.
             return ToResult(resp, "risk_buckets", "cash_gap_forecast", "recommendations");
@@ -290,6 +298,70 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
             _logger.LogWarning(ex, "AR/AP augmenter failed");
             return Fallback(null);
         }
+    }
+
+    /// <summary>Deterministic local AR/AP analysis — the kill-switch fallback
+    /// for AgingExplanation. Produces the exact risk_buckets / cash_gap_forecast
+    /// JSON shape ai-tools.html parses, computed purely from the aging rows.
+    /// No learning needed: aging is arithmetic, so this is 100% as correct as
+    /// the data (only the narrative polish is missing vs the AI version).</summary>
+    private static AdvancedAiResult BuildLocalArApResult(
+        List<ArApRow> arDocs, List<ArApRow> apDocs, DateTime today)
+    {
+        int Days(ArApRow r) => (int)(today - r.DocumentDate.Date).TotalDays;
+
+        List<string> ByContact(IEnumerable<ArApRow> rows, int minDays, int maxDays, string noun)
+            => rows.GroupBy(r => r.ContactName)
+                   .Select(g => new
+                   {
+                       Contact = g.Key,
+                       Amount = g.Sum(x => x.BalanceDue),
+                       MaxDays = g.Max(Days),
+                   })
+                   .Where(g => g.MaxDays >= minDays && g.MaxDays <= maxDays)
+                   .OrderByDescending(g => g.Amount)
+                   .Take(8)
+                   .Select(g => $"{g.Contact} (ค้าง {g.MaxDays} วัน, ฿{g.Amount:N0})")
+                   .ToList();
+
+        var arOver30 = arDocs.Where(r => Days(r) > 30).Sum(r => r.BalanceDue);
+        var arOver90 = arDocs.Where(r => Days(r) > 90).Sum(r => r.BalanceDue);
+        var apTotal = apDocs.Sum(r => r.BalanceDue);
+
+        var structured = JsonSerializer.Serialize(new
+        {
+            risk_buckets = new
+            {
+                high_risk_customers = ByContact(arDocs, 91, int.MaxValue, "ลูกค้า"),
+                late_but_reliable = ByContact(arDocs, 31, 90, "ลูกค้า"),
+                high_risk_vendors = ByContact(apDocs, 61, int.MaxValue, "เจ้าหนี้"),
+            },
+            cash_gap_forecast =
+                $"ลูกหนี้ค้างเกิน 30 วัน ฿{arOver30:N0} (เกิน 90 วัน ฿{arOver90:N0}) • " +
+                $"เจ้าหนี้ค้างชำระรวม ฿{apTotal:N0} • สุทธิ ฿{(arOver30 - apTotal):N0}",
+        });
+
+        var actions = new List<string>();
+        if (arOver90 > 0)
+            actions.Add($"เร่งทวงถามลูกค้าค้างเกิน 90 วัน (฿{arOver90:N0}) — เสี่ยงเป็นหนี้สูญ");
+        if (arOver30 > 0)
+            actions.Add($"ติดตามลูกหนี้ค้างเกิน 30 วัน รวม ฿{arOver30:N0}");
+        if (apTotal > arOver30 && apTotal > 0)
+            actions.Add($"เจ้าหนี้ค้างชำระ (฿{apTotal:N0}) มากกว่าลูกหนี้ที่จะเก็บได้ — วางแผนกระแสเงินสด");
+        if (actions.Count == 0)
+            actions.Add("ไม่มีรายการค้างที่ต้องดำเนินการเร่งด่วน");
+
+        return new AdvancedAiResult(
+            Primary: null,
+            Confidence: null,
+            StructuredJson: structured,
+            Risks: Array.Empty<string>(),
+            ComplianceFlags: Array.Empty<string>(),
+            Reasoning: "วิเคราะห์โดย local model (ระบบคำนวณอายุหนี้เอง — AI ไม่พร้อม)",
+            SuggestedActions: actions,
+            UsedAi: false,
+            FeedbackId: null,
+            SchemaWarnings: Array.Empty<string>());
     }
 
     public async Task<AdvancedAiResult> SuggestDocumentConversionAsync(Guid companyId, Guid scanResultId, CancellationToken ct = default)
