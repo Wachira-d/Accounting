@@ -71,44 +71,77 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
         _logger = logger;
     }
 
+    /// <summary>Teacher answers with AiConfidence below this are NOT used as
+    /// pseudo-labels — a hesitant DeepSeek answer is too weak to distil.</summary>
+    private const decimal TeacherDistillFloor = 0.70m;
+    /// <summary>User-confirmed rows count for more than a raw teacher answer:
+    /// a human said "yes this is right". Weights feed the (confirmed, total)
+    /// tally that the Wilson score is computed over.</summary>
+    private const int StrongWeight = 2;
+    private const int WeakWeight = 1;
+
     public async Task LoadFromFeedbackAsync(Guid companyId, CancellationToken ct)
     {
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
 
         var featureName = FeatureKey.ToString();
+        // Two label sources — this is real teacher→student distillation, not just
+        // "learn from corrections": (1) user-confirmed rows (strong truth), and
+        // (2) confident DeepSeek answers the user never touched (weak pseudo-
+        // labels). Without (2) the student would starve, because users rarely
+        // click "confirm" on an answer that was already correct — yet those are
+        // exactly the cases we want the local model to reproduce for free.
         var rows = await db.AiSuggestionFeedbacks.AsNoTracking()
             .Where(f => f.CompanyId == companyId && !f.IsDeleted
                         && f.FeatureKey == featureName
-                        && f.UserChosenAt != null)
-            .Select(f => new { f.PromptJson, f.UserChosenAnswer, f.UserAcceptedAi, f.AiPrimaryAnswer })
+                        && (f.UserChosenAt != null
+                            || (f.Status == AiCallStatus.Success
+                                && f.AiPrimaryAnswer != null
+                                && f.AiConfidence >= TeacherDistillFloor)))
+            .Select(f => new
+            {
+                f.PromptJson, f.UserChosenAnswer, f.UserChosenAt,
+                f.UserAcceptedAi, f.AiPrimaryAnswer,
+            })
             .ToListAsync(ct);
 
         // (fingerprint → answer → confirmed/overridden) + company-wide answer tally.
         var perInput = new Dictionary<string, Dictionary<string, (int Confirmed, int Overridden)>>();
         var companyTally = new Dictionary<string, (int Confirmed, int Overridden)>();
 
-        foreach (var r in rows)
+        void Add(string? key, string answer, int confirmedDelta, int overriddenDelta)
         {
-            if (string.IsNullOrEmpty(r.UserChosenAnswer)) continue;
-            var key = Fingerprint(r.PromptJson);
-            var isConfirm = r.UserAcceptedAi == true
-                || (r.AiPrimaryAnswer != null && r.AiPrimaryAnswer == r.UserChosenAnswer);
-
             if (!string.IsNullOrEmpty(key))
             {
                 if (!perInput.TryGetValue(key, out var perAns))
                     perInput[key] = perAns = new Dictionary<string, (int, int)>();
-                var slot = perAns.GetValueOrDefault(r.UserChosenAnswer);
-                perAns[r.UserChosenAnswer] = isConfirm
-                    ? (slot.Item1 + 1, slot.Item2)
-                    : (slot.Item1, slot.Item2 + 1);
+                var s = perAns.GetValueOrDefault(answer);
+                perAns[answer] = (s.Item1 + confirmedDelta, s.Item2 + overriddenDelta);
             }
+            var c = companyTally.GetValueOrDefault(answer);
+            companyTally[answer] = (c.Item1 + confirmedDelta, c.Item2 + overriddenDelta);
+        }
 
-            var ctally = companyTally.GetValueOrDefault(r.UserChosenAnswer);
-            companyTally[r.UserChosenAnswer] = isConfirm
-                ? (ctally.Item1 + 1, ctally.Item2)
-                : (ctally.Item1, ctally.Item2 + 1);
+        foreach (var r in rows)
+        {
+            var key = Fingerprint(r.PromptJson);
+
+            if (r.UserChosenAt != null && !string.IsNullOrEmpty(r.UserChosenAnswer))
+            {
+                // Strong signal — the human's pick is ground truth (high weight).
+                Add(key, r.UserChosenAnswer, StrongWeight, 0);
+                // If they overrode a DIFFERENT AI answer, record that as a
+                // negative example so the wrong answer's score is pulled down.
+                if (!string.IsNullOrEmpty(r.AiPrimaryAnswer)
+                    && r.AiPrimaryAnswer != r.UserChosenAnswer)
+                    Add(key, r.AiPrimaryAnswer, 0, StrongWeight);
+            }
+            else if (!string.IsNullOrEmpty(r.AiPrimaryAnswer))
+            {
+                // Weak signal — distil the confident teacher answer (low weight).
+                Add(key, r.AiPrimaryAnswer, WeakWeight, 0);
+            }
         }
 
         lock (_lock)
