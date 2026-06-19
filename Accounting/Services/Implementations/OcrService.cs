@@ -965,10 +965,9 @@ public class OcrService : IOcrService
             // GlAccountDistillationModel is already confident it short-circuits
             // WITHOUT a paid call; otherwise it asks DeepSeek and records the
             // answer as an AiSuggestionFeedback row that the nightly
-            // AiFeedbackTrainingJob distils back into the local model. This is
-            // the piece that was missing — the earlier keyword/statistical
-            // layers never consulted the AI, which is how "Epson L6370" could
-            // get mislabelled as ค่าขนส่ง. See docs/ocr-ai-classification.md.
+            // AiFeedbackTrainingJob distils back into the local model.
+            // See CLAUDE.md → "🚨 กฎเหล็ก #1 — Distillation Mandate" for the
+            // four-step contract every AI call in this codebase must follow.
             if (_aiAugmenter != null)
             {
                 try
