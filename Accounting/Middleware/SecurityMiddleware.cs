@@ -60,8 +60,12 @@ public class SecurityMiddleware
         // Prevent MIME-type sniffing
         headers.Append("X-Content-Type-Options", "nosniff");
 
-        // Prevent clickjacking
-        headers.Append("X-Frame-Options", "DENY");
+        // Prevent clickjacking — SAMEORIGIN (not DENY) so our own pages can
+        // still embed first-party content in an <iframe> (e.g. the OCR PDF
+        // preview at /api/.../ocr/{id}/image loaded inside the review modal).
+        // DENY blocked even same-origin frames, which is why the PDF preview
+        // showed "refused to connect". Cross-origin framing stays blocked.
+        headers.Append("X-Frame-Options", "SAMEORIGIN");
 
         // XSS filter (legacy browsers)
         headers.Append("X-XSS-Protection", "1; mode=block");
@@ -80,7 +84,10 @@ public class SecurityMiddleware
             "font-src 'self' https://fonts.gstatic.com; " +
             "img-src 'self' data: blob: https:; " +
             "connect-src 'self' wss: ws:; " +
-            "frame-ancestors 'none'; " +
+            // 'self' (not 'none') — the modern equivalent of X-Frame-Options
+            // SAMEORIGIN; lets first-party pages embed the OCR PDF/image
+            // preview iframe while still blocking cross-origin embedding.
+            "frame-ancestors 'self'; " +
             "base-uri 'self'; " +
             "form-action 'self';");
 

@@ -218,6 +218,17 @@ public class OcrScanResult : TenantEntity
     // user-accept back to that row.
     public Guid? AiSuggestedContactId { get; set; }
     public Guid? AiSuggestionFeedbackId { get; set; }
+
+    // GL-account classification trail. Distinct from the vendor-match trail
+    // above. GlAccountUsedAi = true when DeepSeek (the teacher) actually
+    // classified the expense account on this scan — drives the honest
+    // "🤖 AI แนะนำ" vs "ระบบแนะนำ (rule-based)" badge in the review UI.
+    // GlAccountAiFeedbackId is the FK back to AiSuggestionFeedback so the
+    // user's confirm/override in the review modal is recorded as a training
+    // signal that the nightly job distils into the local model.
+    public bool GlAccountUsedAi { get; set; }
+    public Guid? GlAccountAiFeedbackId { get; set; }
+
     public string? RawTextContent { get; set; }
     public string? ProcessingNotes { get; set; }
     public DateTime? ProcessedAt { get; set; }

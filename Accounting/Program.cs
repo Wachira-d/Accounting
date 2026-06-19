@@ -352,6 +352,31 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
     Accounting.Services.Ai.Distillation.ApprovalWarningDistillationModel>();
 builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
     Accounting.Services.Ai.Distillation.PaymentTypeDistillationModel>();
+// Generic feedback-distillation students for single-answer AI features that
+// previously called DeepSeek with NO local fallback (feature-parity gap — see
+// CLAUDE.md "🛡️ Local-First Sovereignty"). One instance per feature, each
+// learns its own (input→answer) map from confirmed feedback + keeps a company
+// majority fallback so the feature still answers when the provider is off.
+// Free-form/bulk features (OcrFullReview, ImportColumnMatch, BulkBankStatementMatch,
+// AgingExplanation, …) are intentionally excluded — a single-answer model is the
+// wrong shape for them; they keep their own heuristic fallbacks.
+foreach (var genericFeatureKey in new[]
+{
+    Accounting.Models.Enums.AiFeatureKey.DocumentTypeClassification,
+    Accounting.Models.Enums.AiFeatureKey.WhtCategoryInference,
+    Accounting.Models.Enums.AiFeatureKey.CreditNoteReasonClassification,
+    Accounting.Models.Enums.AiFeatureKey.StockMovementValidation,
+    Accounting.Models.Enums.AiFeatureKey.PaymentVoucherAccountingSuggestion,
+    Accounting.Models.Enums.AiFeatureKey.DocumentConversionSuggestion,
+    Accounting.Models.Enums.AiFeatureKey.OcrProjectMatch,
+})
+{
+    var fk = genericFeatureKey;   // per-iteration capture for the factory closure
+    builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel>(sp =>
+        new Accounting.Services.Ai.Distillation.GenericFeedbackDistillationModel(
+            fk, sp,
+            sp.GetRequiredService<ILogger<Accounting.Services.Ai.Distillation.GenericFeedbackDistillationModel>>()));
+}
 // Risk scoring & smart approval routing — surfaces decisions the
 // admin/AR/AP teams use directly + feeds the corresponding AI narrative
 // features (AgingExplanation, ApprovalWarningFixSuggestion).
