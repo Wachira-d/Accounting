@@ -1149,6 +1149,14 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositDeferredAccountCode" varchar(20) NULL;
             """,
+            // มัดจำ: เคสภาษีขาย — Deferred=true → 21913 (รอเรียกเก็บ, ยังไม่เข้า
+            // ภ.พ.30); RecognizedAt = วันย้าย 21913→21911 (tax point เกิดจริง)
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositOutputVatDeferred" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositOutputVatRecognizedAt" timestamp with time zone NULL;
+            """,
 
             // OpeningBalances — per-period per-account opening figures
             """

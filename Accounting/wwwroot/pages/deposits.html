@@ -124,25 +124,33 @@
           <div class="table-container" style="border:none">
             <table class="table">
               <thead><tr>
-                <th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th>
-                <th class="text-right">ฐาน</th><th class="text-right">VAT</th><th class="text-right">รวม</th>
+                <th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th>อ้างอิง</th>
+                <th class="text-right">ฐาน</th><th class="text-right">VAT</th>
+                <th class="text-center">ภาษีขาย</th>
                 <th class="text-right">รับรู้แล้ว</th><th class="text-right">คงค้าง</th>
                 <th class="text-center">อายุ</th><th class="text-center">สถานะ</th><th></th>
               </tr></thead>
-              <tbody>${rows.map(r => `
+              <tbody>${rows.map(r => {
+                const vatCell = !r.outputVatDeferred
+                  ? '<span style="color:#15803d;font-size:11px" title="tax point เกิดแล้ว — เข้า ภ.พ.30 (21911)">✓ ถึงกำหนด</span>'
+                  : (r.outputVatRecognizedAt
+                      ? `<span style="color:#15803d;font-size:11px" title="ย้ายเข้า ภ.พ.30 เมื่อ ${Layout.date(r.outputVatRecognizedAt)}">✓ รับรู้แล้ว</span>`
+                      : '<span style="color:#b45309;font-size:11px" title="พักที่ 21913 ยังไม่เข้า ภ.พ.30">⏳ รอเรียกเก็บ</span>');
+                return `
                 <tr>
                   <td class="font-medium">${Layout.esc(r.documentNumber)}</td>
                   <td>${Layout.date(r.documentDate)}</td>
                   <td>${Layout.esc(r.contactName || '-')}</td>
+                  <td style="font-size:12px;color:#475569">${Layout.esc(r.reference || '-')}</td>
                   <td class="text-right">${Layout.money(r.baseAmount)}</td>
                   <td class="text-right">${Layout.money(r.vatAmount)}</td>
-                  <td class="text-right">${Layout.money(r.totalAmount)}</td>
+                  <td class="text-center">${vatCell}</td>
                   <td class="text-right">${Layout.money(r.realizedAmount)}</td>
                   <td class="text-right ${r.outstandingAmount > 0 ? 'text-danger' : ''}">${Layout.money(r.outstandingAmount)}</td>
                   <td class="text-center">${r.ageDays} วัน</td>
                   <td class="text-center">${this.statusBadge(r.status)}</td>
                   <td class="text-right">${r.status === 'Realized' ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>`}</td>
-                </tr>`).join('')}</tbody>
+                </tr>`; }).join('')}</tbody>
             </table>
           </div>`;
       },

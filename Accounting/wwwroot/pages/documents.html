@@ -313,6 +313,11 @@
                 <span>💡 <b>ฐานภาษี + VAT</b> ดึงจากยอดใบ (subtotal + vat) อัตโนมัติ — ตรวจให้ตรงใบกำกับจริง</span>
                 <span id="taxInvVatPreview" style="font-weight:600;color:#0f172a"></span>
               </div>
+              <!-- Live completeness warning — เคลม VAT ต้องมีใบกำกับครบ §86/4 -->
+              <div id="taxInvIncompleteWarn" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b">
+                ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
+                ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
+              </div>
             </div>
           </div>
 
@@ -513,13 +518,41 @@
                   <span title="ติ๊กเมื่อซื้อบริการจากต่างประเทศ (Google Ads / AWS / Facebook ฯลฯ) — ระบบจะรวมรายการนี้ในรายงาน ภ.พ.36 (self-assess VAT 7%) และ ภ.ง.ด.54 (WHT)">🌐 บริการต่างประเทศ (§83/6)</span>
                 </label>
                 <label style="display:none;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsDepositWrap">
-                  <input type="checkbox" id="fIsDeposit" style="margin:0">
-                  <span title="ติ๊กเมื่อรับเงินมัดจำ/รับล่วงหน้า ก่อนส่งมอบสินค้า/บริการ — ระบบจะลงบัญชี 'ขายรอรับรู้' (217xx) แทนรายได้ และรับรู้ภาษีขายทันที (tax point = วันรับเงิน §78) ค่อยรับรู้รายได้เมื่อส่งมอบจริงในหน้า 'เงินมัดจำ'">🤝 เงินมัดจำ/รับล่วงหน้า</span>
+                  <input type="checkbox" id="fIsDeposit" style="margin:0" onchange="Page.onDepositToggle()">
+                  <span title="ติ๊กเมื่อรับเงินมัดจำ/รับล่วงหน้า ก่อนส่งมอบสินค้า/บริการ — ระบบจะลงบัญชี 'ขายรอรับรู้' (217xx) แทนรายได้ ค่อยรับรู้รายได้เมื่อส่งมอบจริงในหน้า 'เงินมัดจำ'">🤝 เงินมัดจำ/รับล่วงหน้า</span>
                 </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
+              </div>
+            </div>
+            <!-- Deposit options — show when "เงินมัดจำ" ticked -->
+            <div id="depositOptions" style="display:none;margin-top:10px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
+              <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:8px">🤝 ตัวเลือกเงินมัดจำ/รับล่วงหน้า</div>
+              <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">
+                เงินที่รับจะลงเป็น "ขายรอรับรู้" (หนี้สิน) — รับรู้รายได้เมื่อส่งมอบจริงในหน้า "เงินมัดจำ"
+              </div>
+              <div style="margin-bottom:10px">
+                <div class="text-sm font-medium" style="margin-bottom:4px">จังหวะภาษีขาย (tax point §78/§78/1)</div>
+                <label style="display:block;font-size:13px;margin-bottom:4px;cursor:pointer">
+                  <input type="radio" name="fDepositVat" value="immediate" checked>
+                  ภาษีขายถึงกำหนดแล้ว — รับชำระราคา → ออกภาษีขายเข้า ภ.พ.30 ทันที (บัญชี 21911)
+                </label>
+                <label style="display:block;font-size:13px;cursor:pointer">
+                  <input type="radio" name="fDepositVat" value="deferred">
+                  ยังไม่ถึงกำหนด — เงินประกัน/ยังไม่ให้บริการ → พักที่ "ภาษีขายรอเรียกเก็บ" (21913) ยังไม่เข้า ภ.พ.30 จนกว่าจะรับรู้
+                </label>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                  <label class="text-sm font-medium">หมายเลขอ้างอิง / เลขจอง</label>
+                  <input type="text" class="form-input" id="fDepositRef" placeholder="เช่น เลขที่จอง BK-2026-001">
+                </div>
+                <div>
+                  <label class="text-sm font-medium">ผังบัญชีขายรอรับรู้ (เว้นว่าง = 21712)</label>
+                  <input type="text" class="form-input" id="fDepositDeferredAcc" placeholder="21712 / 21713">
+                </div>
               </div>
             </div>
             <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
@@ -1476,6 +1509,11 @@
         if (lEl) lEl.textContent = label;
       },
 
+      onDepositToggle() {
+        const on = document.getElementById('fIsDeposit')?.checked || false;
+        const panel = document.getElementById('depositOptions');
+        if (panel) panel.style.display = on ? 'block' : 'none';
+      },
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
@@ -1533,7 +1571,10 @@
         if (depositWrap) {
           const isReceipt = docType === 'Receipt' || docType === 'ReceiptVoucher';
           depositWrap.style.display = isReceipt ? 'inline-flex' : 'none';
-          if (!isReceipt) { const cb = document.getElementById('fIsDeposit'); if (cb) cb.checked = false; }
+          if (!isReceipt) {
+            const cb = document.getElementById('fIsDeposit'); if (cb) cb.checked = false;
+          }
+          this.onDepositToggle();
         }
         // Reset checkbox when the section hides so a stale "paid" state
         // doesn't fire on the next save of a non-applicable type.
@@ -1633,7 +1674,7 @@
       onTaxInvoiceRefToggle() {
         const checked = document.getElementById('fHasTaxInvoiceRef')?.checked;
         document.getElementById('taxInvoiceRefSection').style.display = checked ? '' : 'none';
-        if (!checked) return;
+        if (!checked) { this._validateTaxInvoiceClaim(); return; }
         // Default 00000 เมื่อเปิดครั้งแรก
         const branchInp = document.getElementById('fSupplierBranchCode');
         if (branchInp && !branchInp.value) branchInp.value = '00000';
@@ -1642,6 +1683,41 @@
         // โหลดรายการใบของ contact ลง dropdown (mode system default)
         this._loadTaxInvoiceSourceDocs();
         this._updateTaxInvVatPreview();
+        // ผูก live validation กับการแก้ field ใบกำกับ (ครั้งเดียว)
+        if (!this._taxInvWatchBound) {
+          ['fSupplierInvoiceNumberPV','fSupplierTaxInvoiceDatePV','fSupplierBranchCode']
+            .forEach(id => document.getElementById(id)
+              ?.addEventListener('input', () => this._validateTaxInvoiceClaim()));
+          this._taxInvWatchBound = true;
+        }
+        this._validateTaxInvoiceClaim();
+      },
+
+      /**
+       * ตรวจว่าใบกำกับภาษีของผู้ขายครบตาม §86/4 พอจะเคลมภาษีซื้อ (ภ.พ.30) ไหม.
+       * ไม่ hard-block (backend พักไว้ 11640 ให้อยู่แล้ว) แต่เตือนชัดเจนว่าจะยัง
+       * เคลมไม่ได้จนกว่าจะครบ — ตอบโจทย์ "ติ๊กใช้เคลม VAT ไม่ได้ถ้าใบไม่ครบ".
+       * คืน true เมื่อครบ.
+       */
+      _validateTaxInvoiceClaim() {
+        const warn = document.getElementById('taxInvIncompleteWarn');
+        const checked = document.getElementById('fHasTaxInvoiceRef')?.checked;
+        if (!warn) return true;
+        if (!checked) { warn.style.display = 'none'; return true; }
+        const missing = [];
+        if (!document.getElementById('fSupplierInvoiceNumberPV')?.value.trim())
+          missing.push('เลขที่ใบกำกับ');
+        if (!document.getElementById('fSupplierTaxInvoiceDatePV')?.value)
+          missing.push('วันที่ใบกำกับ');
+        const branch = document.getElementById('fSupplierBranchCode')?.value.trim();
+        if (!branch || !/^\d{5}$/.test(branch))
+          missing.push('รหัสสาขา (5 หลัก)');
+        if (!document.getElementById('fSupplierTaxIdReadonly')?.value.trim())
+          missing.push('เลขผู้เสียภาษีผู้ขาย (จาก contact)');
+        if (missing.length === 0) { warn.style.display = 'none'; return true; }
+        document.getElementById('taxInvMissingList').textContent = 'ขาด: ' + missing.join(', ');
+        warn.style.display = 'block';
+        return false;
       },
 
       /**
@@ -2715,11 +2791,20 @@
           pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
-          // (217xx) แทนรายได้ + ภาษีขายถึงกำหนดทันที (§78).
+          // (217xx) แทนรายได้. depositOutputVatDeferred เลือกจังหวะ tax point.
           isDeposit: (document.getElementById('fDocType').value === 'Receipt'
                       || document.getElementById('fDocType').value === 'ReceiptVoucher')
                      && (document.getElementById('fIsDeposit')?.checked || false),
+          depositOutputVatDeferred:
+            (document.querySelector('input[name="fDepositVat"]:checked')?.value === 'deferred') || false,
+          depositDeferredAccountCode:
+            document.getElementById('fDepositDeferredAcc')?.value.trim() || null,
         };
+        // หมายเลขอ้างอิง/เลขจอง ของมัดจำ → เก็บใน Reference (ใช้กลับรายการ)
+        if (payload.isDeposit) {
+          const depRef = document.getElementById('fDepositRef')?.value.trim();
+          if (depRef) payload.reference = depRef;
+        }
         try {
           let savedDocId = this.editingId;
           if (this.editingId) {

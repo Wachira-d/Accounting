@@ -82,6 +82,22 @@ public class Document : TenantEntity
     /// บัญชีเดิม.</summary>
     public string? DepositDeferredAccountCode { get; set; }
 
+    /// <summary>เคสภาษีขายของเงินมัดจำ — รองรับ 2 กรณีตามจังหวะ tax point:
+    /// <para>• <c>false</c> (Immediate): tax point เกิดแล้วเมื่อรับเงิน
+    /// (§78 ขายสินค้า / §78/1 บริการ — รับชำระราคา = จุดรับผิด) → Cr ภาษีขาย
+    /// 21911 เข้า ภ.พ.30 เดือนที่รับทันที.</para>
+    /// <para>• <c>true</c> (Deferred): ยังไม่เกิด tax point (เช่น เงินประกัน/
+    /// มัดจำที่ยังไม่ถือเป็นการรับชำระราคา หรือบัญชีพิจารณาว่ายังไม่ให้บริการ)
+    /// → Cr "ภาษีขายรอเรียกเก็บ" 21913 (Deferred Output VAT) — ยังไม่เข้า
+    /// ภ.พ.30 จนกว่าจะเกิด tax point แล้ว reclassify 21913 → 21911.</para></summary>
+    public bool DepositOutputVatDeferred { get; set; }
+
+    /// <summary>วันที่ภาษีขายมัดจำ (เคส Deferred) ถูกย้าย 21913 → 21911 (tax point
+    /// เกิดจริง เช่น ส่งมอบ/ออกใบกำกับ). ใช้เป็น tax point ของ ภ.พ.30 สำหรับ
+    /// มัดจำ deferred. Null = ยังไม่เกิด (ยังไม่เข้า ภ.พ.30) หรือเป็นเคส Immediate
+    /// (ซึ่งเข้า ภ.พ.30 ตั้งแต่ DocumentDate อยู่แล้ว).</summary>
+    public DateTime? DepositOutputVatRecognizedAt { get; set; }
+
     /// <summary>Credit term in days from the document date — used to
     /// auto-fill DueDate when not explicit, and to roll DSO / DPO
     /// reports. Defaulted from Contact.PaymentTermDays on create when

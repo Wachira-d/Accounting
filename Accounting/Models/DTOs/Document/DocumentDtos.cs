@@ -67,10 +67,15 @@ public record CreateDocumentRequest(
     // หัก WHT ตาม DTA. Default false. Apply เฉพาะ PI/Expense/PV.
     bool IsForeignService = false,
     // เงินมัดจำ/รับล่วงหน้า — Receipt/ReceiptVoucher ที่รับเงินก่อนส่งมอบ.
-    // True → Cr "ขายรอรับรู้" (217xx) แทนรายได้ + Cr ภาษีขายทันที (§78).
+    // True → Cr "ขายรอรับรู้" (217xx) แทนรายได้.
     // DepositDeferredAccountCode = ผังพักรายได้ (null → 21712).
+    // DepositOutputVatDeferred: false = tax point เกิดแล้ว → Cr ภาษีขาย 21911
+    //   เข้า ภ.พ.30 ทันที (§78 รับชำระราคา); true = ยังไม่เกิด tax point
+    //   (เงินประกัน/ยังไม่ให้บริการ) → Cr ภาษีขายรอเรียกเก็บ 21913 ยังไม่เข้า
+    //   ภ.พ.30 จนกว่าจะรับรู้ (RealizeDeposit).
     bool IsDeposit = false,
-    string? DepositDeferredAccountCode = null);
+    string? DepositDeferredAccountCode = null,
+    bool DepositOutputVatDeferred = false);
 
 public record DocumentLineRequest(
     string Description,
@@ -166,7 +171,13 @@ public record DepositSummary(
     DateTime? RealizedAt,
     int AgeDays,
     string Status,
-    string? DeferredAccountCode);
+    string? DeferredAccountCode,
+    // หมายเลขอ้างอิง (เลขจอง/booking) — ใช้กลับรายการ/กระทบยอด
+    string? Reference,
+    // ภาษีขาย: false = ถึงกำหนดแล้ว (21911/ภ.พ.30); true = รอเรียกเก็บ (21913)
+    bool OutputVatDeferred,
+    // วันที่ภาษีขาย deferred ถูกรับรู้เข้า ภ.พ.30 (null = ยังไม่รับรู้)
+    DateTime? OutputVatRecognizedAt);
 
 /// <summary>สรุปเอกสารที่ภาษีซื้อค้างอยู่ที่ 11640 "ยังไม่ถึงกำหนด" รอใบกำกับ
 /// ครบ §86/4. MonthsLeft = เดือนเหลือก่อนหมดสิทธิเคลม (§82/3 6 เดือนนับจาก
@@ -320,7 +331,9 @@ public record DocumentResponse(
     bool IsDeposit = false,
     decimal DepositRealizedAmount = 0m,
     DateTime? DepositRealizedAt = null,
-    string? DepositDeferredAccountCode = null);
+    string? DepositDeferredAccountCode = null,
+    bool DepositOutputVatDeferred = false,
+    DateTime? DepositOutputVatRecognizedAt = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,

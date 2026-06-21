@@ -249,21 +249,40 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         // ฝั่งขาย: ใบกำกับภาษี/ใบแจ้งหนี้ + ใบเสร็จ-ใบกำกับภาษีของการขายเงินสด
         // (Receipt/ReceiptVoucher แบบ standalone — ค้าปลีก/บริการที่ออกใบเสร็จเป็น
-        // ใบกำกับภาษี; รวมใบเสร็จมัดจำ IsDeposit ด้วย เพราะ tax point = วันรับเงิน).
-        // ใบเสร็จที่อ้าง Invoice/TaxInvoice เดิม (RelatedDocumentId != null) ไม่นับ
-        // ซ้ำ — ใบกำกับต้นทางรับ output VAT ไปแล้ว.
-        var salesDocs = await _db.Documents
+        // ใบกำกับภาษี). ใบเสร็จที่อ้าง Invoice/TaxInvoice เดิม (RelatedDocumentId
+        // != null) ไม่นับซ้ำ — ใบกำกับต้นทางรับ output VAT ไปแล้ว.
+        // มัดจำ 2 เคสตาม tax point (§78/§78/1):
+        //   • Immediate (DepositOutputVatDeferred=false) → tax point = วันรับเงิน
+        //     → เข้า ภ.พ.30 ตาม DocumentDate (รวมในชุด "ปกติ" ด้านล่าง).
+        //   • Deferred (DepositOutputVatDeferred=true) → ยังไม่เกิด tax point →
+        //     ไม่เข้า ภ.พ.30 จนกว่า DepositOutputVatRecognizedAt ถูกตั้ง (ส่งมอบ/
+        //     ออกใบกำกับ) แล้วเข้าเดือนนั้น.
+        var salesBase = _db.Documents
             .Include(d => d.Lines).Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
                 && (d.DocumentType == DocumentType.Invoice
                     || d.DocumentType == DocumentType.TaxInvoice
                     || ((d.DocumentType == DocumentType.Receipt
                          || d.DocumentType == DocumentType.ReceiptVoucher)
                         && d.RelatedDocumentId == null))
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.VatAmount > 0)
-            .OrderBy(d => d.DocumentDate).ToListAsync();
+                && d.VatAmount > 0);
+
+        // ปกติ + มัดจำ Immediate: tax point = DocumentDate (ตัดมัดจำ deferred ออก)
+        var normalSales = await salesBase
+            .Where(d => !(d.IsDeposit && d.DepositOutputVatDeferred)
+                && d.DocumentDate >= startDate && d.DocumentDate <= endDate)
+            .ToListAsync();
+        // มัดจำ deferred ที่ภาษีขายถึงกำหนดแล้ว (RecognizedAt อยู่ในงวด)
+        var recognizedDeferred = await salesBase
+            .Where(d => d.IsDeposit && d.DepositOutputVatDeferred
+                && d.DepositOutputVatRecognizedAt != null
+                && d.DepositOutputVatRecognizedAt >= startDate
+                && d.DepositOutputVatRecognizedAt <= endDate)
+            .ToListAsync();
+        var salesDocs = normalSales.Concat(recognizedDeferred)
+            .OrderBy(d => d.DepositOutputVatRecognizedAt ?? d.DocumentDate)
+            .ToList();
 
         // ภาษีซื้อเข้า ภ.พ.30 ตาม "tax point" ไม่ใช่ DocumentDate เสมอ (§82/3):
         //   • เอกสารปกติ (ใบกำกับครบตั้งแต่ approve) → tax point = DocumentDate
@@ -311,7 +330,9 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var doc in salesDocs)
         {
             var b = doc.SubTotal - doc.DiscountAmount;
-            var d = $"{doc.DocumentDate.Day:D2}/{doc.DocumentDate.Month:D2}/{thaiYear}";
+            // มัดจำ deferred ที่ถึงกำหนดแล้ว → วันที่ = วัน tax point (RecognizedAt)
+            var taxPoint = doc.DepositOutputVatRecognizedAt ?? doc.DocumentDate;
+            var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
             sale.AppendLine($"{s1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
             totalOutputBase += b; totalOutputVat += doc.VatAmount;
         }
