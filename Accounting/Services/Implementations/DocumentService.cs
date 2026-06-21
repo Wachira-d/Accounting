@@ -402,6 +402,13 @@ public class DocumentService : IDocumentService
                 // Stored unconditionally though so partner sync can round-trip.
                 SupplierInvoiceNumber = request.SupplierInvoiceNumber,
                 SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate,
+                // PV: "ใช้งานใบกำกับภาษี" checkbox + supplier branch snapshot.
+                // Branch defaults to "00000" (สำนักงานใหญ่) when flag is on but
+                // user didn't fill it — covers the >95% case + matches the RD form.
+                HasTaxInvoiceReference = request.HasTaxInvoiceReference,
+                SupplierBranchCode = request.HasTaxInvoiceReference
+                    ? (request.SupplierBranchCode ?? contact.BranchCode ?? "00000")
+                    : request.SupplierBranchCode,
                 CreditDays = request.CreditDays,
                 PaymentTerms = request.PaymentTerms,
                 CreatedBy = createdBy
@@ -864,6 +871,8 @@ public class DocumentService : IDocumentService
         if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
         if (request.SupplierInvoiceNumber != null) doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
         if (request.SupplierTaxInvoiceDate.HasValue) doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
+        if (request.HasTaxInvoiceReference.HasValue) doc.HasTaxInvoiceReference = request.HasTaxInvoiceReference.Value;
+        if (request.SupplierBranchCode != null) doc.SupplierBranchCode = request.SupplierBranchCode;
         if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
         if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
 
@@ -4762,6 +4771,8 @@ public class DocumentService : IDocumentService
         CreditNoteReason: d.CreditNoteReason,
         SupplierInvoiceNumber: d.SupplierInvoiceNumber,
         SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
+        HasTaxInvoiceReference: d.HasTaxInvoiceReference,
+        SupplierBranchCode: d.SupplierBranchCode,
         CreditDays: d.CreditDays,
         PaymentTerms: d.PaymentTerms,
         PaymentType: d.PaymentType,

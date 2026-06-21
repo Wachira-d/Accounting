@@ -25,6 +25,20 @@ public class Document : TenantEntity
     public string? SupplierInvoiceNumber { get; set; }
     public DateTime? SupplierTaxInvoiceDate { get; set; }
 
+    /// <summary>True เมื่อผู้ใช้ติ๊ก "ใช้งานใบกำกับภาษี" บนใบสำคัญจ่าย —
+    /// บอกว่า PV ใบนี้อ้างใบกำกับภาษีซื้อเพื่อขอเครดิตภาษีซื้อ (ภพ.30).
+    /// แยกออกจาก PV ที่จ่ายเฉย ๆ ไม่มี VAT (ค่าใช้จ่ายที่กิจการรับเอง).
+    /// เมื่อ true → SupplierInvoiceNumber + SupplierTaxInvoiceDate + Contact.TaxId
+    /// + SupplierBranchCode + SubTotal + VatAmount ต้องครบ (RD §86/4, §86/14)
+    /// และข้อมูลใบนี้จะไหลเข้ารายงานภาษีซื้อ.</summary>
+    public bool HasTaxInvoiceReference { get; set; }
+
+    /// <summary>สาขาผู้ขาย ณ ตอนออกใบกำกับภาษี (snapshot) — Contact.BranchCode
+    /// อาจถูกแก้ภายหลัง แต่รายงานภาษีซื้อย้อนหลังต้องคงสาขาเดิมตามใบจริง.
+    /// "00000" = สำนักงานใหญ่; "00001"+ = สาขา. Null → fallback ใช้
+    /// Contact.BranchCode ตอน export (back-compat กับเอกสารเก่า).</summary>
+    public string? SupplierBranchCode { get; set; }
+
     /// <summary>Credit term in days from the document date — used to
     /// auto-fill DueDate when not explicit, and to roll DSO / DPO
     /// reports. Defaulted from Contact.PaymentTermDays on create when

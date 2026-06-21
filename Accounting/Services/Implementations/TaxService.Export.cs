@@ -45,8 +45,12 @@ public partial class TaxService
                      from c in cj.DefaultIfEmpty()
                      join rd in _db.Documents.AsNoTracking() on d.RelatedDocumentId equals rd.Id into rdj
                      from rd in rdj.DefaultIfEmpty()
-                     select new { d.Id, d.DocumentNumber, ContactBranch = c != null ? c.BranchCode : null, RelatedNumber = rd != null ? rd.DocumentNumber : null })
-                .ToDictionaryAsync(x => x.Id, x => new DocInfo(x.DocumentNumber, x.ContactBranch, x.RelatedNumber));
+                     // SupplierBranchCode snapshot (ลงรายงานภาษีซื้อ)
+                     // ชนะ Contact.BranchCode ปัจจุบัน ตอน PV ติ๊ก "ใช้งานใบกำกับ
+                     // ภาษี" ระบบ snapshot สาขาตอนออกใบไว้แล้ว — กัน contact
+                     // branch ถูกแก้ภายหลังแล้วรายงานย้อนหลังเพี้ยน.
+                     select new { d.Id, d.DocumentNumber, SnapshotBranch = d.SupplierBranchCode, ContactBranch = c != null ? c.BranchCode : null, RelatedNumber = rd != null ? rd.DocumentNumber : null })
+                .ToDictionaryAsync(x => x.Id, x => new DocInfo(x.DocumentNumber, x.SnapshotBranch ?? x.ContactBranch, x.RelatedNumber));
 
         var sheets = new Dictionary<string, object>();
 

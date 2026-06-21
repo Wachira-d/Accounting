@@ -3680,6 +3680,12 @@ public static class DatabaseMigrationHelper
             // OcrScanResult — GL-account (expense) DeepSeek classification trail.
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountUsedAi" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiFeedbackId" uuid NULL;""",
+            // Document — Payment Voucher อ้างใบกำกับภาษี (RD §86/4 + §86/14).
+            // HasTaxInvoiceReference = flag จาก checkbox "ใช้งานใบกำกับภาษี".
+            // SupplierBranchCode = snapshot สาขาผู้ขายตอนออกใบกำกับ
+            // (กัน Contact.BranchCode ถูกแก้ภายหลังแล้วรายงานภาษีซื้อย้อนหลังเพี้ยน).
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "HasTaxInvoiceReference" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SupplierBranchCode" varchar(5) NULL;""",
 
             // EmployeeLeave — half-day support added 2026.
             """ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "HalfDayMarker" integer NOT NULL DEFAULT 0;""",

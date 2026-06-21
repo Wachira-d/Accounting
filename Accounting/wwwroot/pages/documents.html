@@ -242,6 +242,80 @@
             </div>
           </div>
 
+          <!-- PV-only: "ใช้งานใบกำกับภาษี" ─ เปิดส่วนกรอกข้อมูลใบกำกับภาษี
+               ตามรายงานภาษีซื้อ (RD §86/4 + §86/14): เลขใบ, วันที่, สาขา
+               ผู้ขาย, ฐานภาษี, VAT. รองรับ 2 mode:
+                 (1) เลือกจากใบในระบบ (PurchaseInvoice ของ contact) → auto-fill
+                 (2) กรอกเอง (กรณีใบกระดาษไม่มีในระบบ)
+               flag HasTaxInvoiceReference ส่งกลับ backend; SupplierBranchCode
+               snapshot ตอนออกใบกัน Contact.BranchCode ถูกแก้ภายหลัง. -->
+          <div class="form-row payment-voucher-only" style="display:none">
+            <div class="form-group" style="width:100%">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:14px">
+                <input type="checkbox" id="fHasTaxInvoiceRef" onchange="Page.onTaxInvoiceRefToggle()" style="width:18px;height:18px">
+                <span style="font-weight:600;color:#0369a1">📋 ใช้งานใบกำกับภาษี (ขอเครดิตภาษีซื้อ ภพ.30)</span>
+                <span style="margin-left:auto;font-size:11px;color:#64748b">RD §86/4 + §86/14</span>
+              </label>
+            </div>
+          </div>
+          <div id="taxInvoiceRefSection" class="payment-voucher-only" style="display:none">
+            <div style="background:#fefce8;border:1px solid #fde047;border-left:4px solid #ca8a04;border-radius:10px;padding:14px 16px;margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <strong style="color:#854d0e;font-size:14px">📋 ข้อมูลใบกำกับภาษีของผู้ขาย</strong>
+                <span style="font-size:11px;color:#92400e">ข้อมูลนี้จะลงรายงานภาษีซื้อ ภพ.30 อัตโนมัติ</span>
+              </div>
+
+              <!-- Mode picker: เลือกจากระบบ vs กรอกเอง -->
+              <div style="display:flex;gap:14px;margin-bottom:10px;font-size:13px">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="taxInvSource" id="taxInvSrcSystem" value="system" checked onchange="Page.onTaxInvoiceSourceChange()">
+                  <span>เลือกจากใบในระบบ <span style="font-size:11px;color:#64748b">(ใบแจ้งหนี้ซื้อของ contact)</span></span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="taxInvSource" id="taxInvSrcManual" value="manual" onchange="Page.onTaxInvoiceSourceChange()">
+                  <span>กรอกข้อมูลเอง <span style="font-size:11px;color:#64748b">(ใบกระดาษไม่มีในระบบ)</span></span>
+                </label>
+              </div>
+
+              <!-- Mode 1: เลือก PurchaseInvoice → auto-fill -->
+              <div class="form-row" id="taxInvSystemPicker" style="margin-bottom:6px">
+                <div class="form-group" style="width:100%">
+                  <label class="form-label">เลือกใบแจ้งหนี้ซื้อ/ใบกำกับภาษี</label>
+                  <select class="form-select" id="fTaxInvSourceDoc" onchange="Page.onTaxInvoiceSourceDocSelect()">
+                    <option value="">-- เลือก contact ก่อน เพื่อโหลดรายการ --</option>
+                  </select>
+                  <small style="color:#64748b;font-size:11px">กรองเฉพาะใบของ contact นี้ที่ Approved/ค้างชำระ</small>
+                </div>
+              </div>
+
+              <!-- ข้อมูลตามกฎสรรพากร — กรอกได้/แก้ได้/auto-fill -->
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" placeholder="เช่น INV-2026-0042">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <input type="date" class="form-input" id="fSupplierTaxInvoiceDatePV">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
+                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:#f1f5f9" placeholder="ดึงจาก contact">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span style="color:#dc2626">*</span></label>
+                  <input type="text" class="form-input" id="fSupplierBranchCode" placeholder="00000" maxlength="5" pattern="\d{5}">
+                </div>
+              </div>
+              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:#475569;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
+                <span>💡 <b>ฐานภาษี + VAT</b> ดึงจากยอดใบ (subtotal + vat) อัตโนมัติ — ตรวจให้ตรงใบกำกับจริง</span>
+                <span id="taxInvVatPreview" style="font-weight:600;color:#0f172a"></span>
+              </div>
+            </div>
+          </div>
+
           <!-- Supplier-side tax-invoice metadata — only relevant on PI/CertInLieu/PV
                where the partner issues the source invoice. JS toggles `.supplier-invoice-only`
                based on docType (see togglePurchaseFields below). -->
@@ -949,6 +1023,12 @@
         }
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
+        // ถ้า "ใช้งานใบกำกับภาษี" ติ๊กอยู่ → reload รายการ PI ของ contact ใหม่
+        // + เติม Tax ID จาก contact ที่เพิ่งเลือก
+        if (document.getElementById('fHasTaxInvoiceRef')?.checked) {
+          this._fillSupplierTaxIdFromContact();
+          this._loadTaxInvoiceSourceDocs();
+        }
         // For a Payment Voucher, ask the local model whether this supplier is
         // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
@@ -1530,6 +1610,121 @@
             hint.style.color = '#b45309';
             hint.textContent = '⚠ ใบสำคัญจ่าย = จ่ายเงินจริง — ถ้าต้องการตั้งหนี้รอจ่าย ให้ใช้ "ใบบันทึกค่าใช้จ่าย" แล้วแปลงเป็นใบสำคัญจ่ายเมื่อจ่าย (เครดิตใช้ได้เฉพาะใบที่อ้างอิงเอกสารตั้งหนี้)';
           }
+        }
+      },
+
+      /**
+       * Toggle "ใช้งานใบกำกับภาษี" section บน PV. ติ๊ก = แสดงกล่องเหลือง
+       * (mode picker + เลขใบ/วันที่/Tax ID/สาขา), default mode = เลือกจาก
+       * ระบบ → โหลด PI/TaxInvoice ของ contact ลง dropdown. Default
+       * SupplierBranchCode = "00000" (สำนักงานใหญ่) ตามรูปแบบฟอร์มกรมสรรพากร.
+       */
+      onTaxInvoiceRefToggle() {
+        const checked = document.getElementById('fHasTaxInvoiceRef')?.checked;
+        document.getElementById('taxInvoiceRefSection').style.display = checked ? '' : 'none';
+        if (!checked) return;
+        // Default 00000 เมื่อเปิดครั้งแรก
+        const branchInp = document.getElementById('fSupplierBranchCode');
+        if (branchInp && !branchInp.value) branchInp.value = '00000';
+        // เติม supplierTaxId จาก contact ปัจจุบัน
+        this._fillSupplierTaxIdFromContact();
+        // โหลดรายการใบของ contact ลง dropdown (mode system default)
+        this._loadTaxInvoiceSourceDocs();
+        this._updateTaxInvVatPreview();
+      },
+
+      /**
+       * สลับ mode: system (เลือกใบในระบบ → auto-fill) vs manual (กรอกเอง).
+       * manual = ซ่อน dropdown + เปิด field ให้กรอก, system = แสดง dropdown.
+       */
+      onTaxInvoiceSourceChange() {
+        const isSystem = document.querySelector('input[name="taxInvSource"]:checked')?.value === 'system';
+        document.getElementById('taxInvSystemPicker').style.display = isSystem ? '' : 'none';
+        if (isSystem) this._loadTaxInvoiceSourceDocs();
+      },
+
+      /**
+       * โหลด PurchaseInvoice + TaxInvoice ของ contact ปัจจุบันที่ Approved/
+       * ค้างชำระ ใส่ลง dropdown เพื่อให้ user เลือกแล้ว auto-fill.
+       * Reuse endpoint /api/companies/{cid}/documents?type=PurchaseInvoice&contactId=...
+       */
+      async _loadTaxInvoiceSourceDocs() {
+        const sel = document.getElementById('fTaxInvSourceDoc');
+        if (!sel) return;
+        const contactId = document.getElementById('fContactId')?.value;
+        if (!contactId) {
+          sel.innerHTML = '<option value="">-- เลือก contact ก่อน เพื่อโหลดรายการ --</option>';
+          return;
+        }
+        sel.innerHTML = '<option value="">กำลังโหลด...</option>';
+        try {
+          const api = Layout.api();
+          // 2 types ที่อ้างได้: PurchaseInvoice (ใบแจ้งหนี้ซื้อ) + TaxInvoice ขาเข้า
+          const qs = `?contactId=${contactId}&status=Approved&pageSize=50&type=`;
+          const [pi, ti] = await Promise.all([
+            api.getDocuments(qs + 'PurchaseInvoice').then(r => r.data).catch(() => ({ items: [] })),
+            api.getDocuments(qs + 'TaxInvoice').then(r => r.data).catch(() => ({ items: [] })),
+          ]);
+          const docs = [...(pi.items || []), ...(ti.items || [])]
+            .filter(d => d.status === 'Approved' || d.status === 'PartiallyPaid');
+          this._taxInvSourceDocCache = {};
+          let html = '<option value="">-- กรอกเอง / ไม่อ้างใบในระบบ --</option>';
+          for (const d of docs) {
+            this._taxInvSourceDocCache[d.id] = d;
+            const dateLbl = (d.documentDate || '').slice(0, 10);
+            html += `<option value="${d.id}">${Layout.esc(d.documentNumber)} • ${dateLbl} • ฿${(d.totalAmount || 0).toLocaleString()}</option>`;
+          }
+          sel.innerHTML = html;
+        } catch (err) {
+          sel.innerHTML = '<option value="">โหลดไม่สำเร็จ — กรอกเองได้</option>';
+        }
+      },
+
+      /**
+       * เมื่อ user เลือกใบจาก dropdown → auto-fill เลขใบ + วันที่ + จำนวน
+       * + branch (จาก SupplierBranchCode ของใบนั้นถ้ามี ไม่งั้น 00000)
+       * + RelatedDocumentId (link ไป source).
+       */
+      onTaxInvoiceSourceDocSelect() {
+        const id = document.getElementById('fTaxInvSourceDoc')?.value;
+        if (!id || !this._taxInvSourceDocCache?.[id]) {
+          this._updateTaxInvVatPreview();
+          return;
+        }
+        const d = this._taxInvSourceDocCache[id];
+        const num = document.getElementById('fSupplierInvoiceNumberPV');
+        const dt = document.getElementById('fSupplierTaxInvoiceDatePV');
+        const br = document.getElementById('fSupplierBranchCode');
+        if (num) num.value = d.supplierInvoiceNumber || d.documentNumber || '';
+        if (dt) dt.value = (d.supplierTaxInvoiceDate || d.documentDate || '').slice(0, 10);
+        if (br) br.value = d.supplierBranchCode || '00000';
+        // เก็บ relatedDocumentId hidden ลง form state เพื่อส่งกลับ
+        this._linkedTaxInvoiceSourceId = id;
+        this._updateTaxInvVatPreview(d);
+      },
+
+      _fillSupplierTaxIdFromContact() {
+        const cid = document.getElementById('fContactId')?.value;
+        const inp = document.getElementById('fSupplierTaxIdReadonly');
+        if (!inp) return;
+        const c = (this._contacts || []).find(x => x.id === cid);
+        inp.value = c?.taxId || '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)';
+      },
+
+      _updateTaxInvVatPreview(srcDoc) {
+        const el = document.getElementById('taxInvVatPreview');
+        if (!el) return;
+        // คำนวณจาก line items ปัจจุบัน (subtotal + vat) ที่ฟอร์มคำนวณไว้
+        const sub = parseFloat(document.getElementById('fSubTotalDisplay')?.dataset?.value
+                  || document.getElementById('fSubTotal')?.value || '0') || 0;
+        const vat = parseFloat(document.getElementById('fVatAmountDisplay')?.dataset?.value
+                  || document.getElementById('fVatAmount')?.value || '0') || 0;
+        if (srcDoc) {
+          el.textContent = `ฐานภาษี ฿${(srcDoc.subTotal || 0).toLocaleString(undefined, {minimumFractionDigits: 2})} • VAT ฿${(srcDoc.vatAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+        } else if (sub || vat) {
+          el.textContent = `ฐานภาษี ฿${sub.toLocaleString(undefined, {minimumFractionDigits: 2})} • VAT ฿${vat.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+        } else {
+          el.textContent = '— เพิ่มรายการในใบเพื่อคำนวณ —';
         }
       },
 
@@ -2239,6 +2434,22 @@
           if (fSin) fSin.value = d.supplierInvoiceNumber || '';
           const fStd = document.getElementById('fSupplierTaxInvoiceDate');
           if (fStd) fStd.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+          // PV: เติมกล่อง "ใช้งานใบกำกับภาษี" ตอนแก้ไขเอกสารเก่า
+          const fHtr = document.getElementById('fHasTaxInvoiceRef');
+          if (fHtr) {
+            fHtr.checked = !!d.hasTaxInvoiceReference;
+            const sec = document.getElementById('taxInvoiceRefSection');
+            if (sec) sec.style.display = fHtr.checked ? '' : 'none';
+            if (fHtr.checked) {
+              const fSinPV = document.getElementById('fSupplierInvoiceNumberPV');
+              if (fSinPV) fSinPV.value = d.supplierInvoiceNumber || '';
+              const fStdPV = document.getElementById('fSupplierTaxInvoiceDatePV');
+              if (fStdPV) fStdPV.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+              const fBr = document.getElementById('fSupplierBranchCode');
+              if (fBr) fBr.value = d.supplierBranchCode || '00000';
+              setTimeout(() => { this._fillSupplierTaxIdFromContact(); this._loadTaxInvoiceSourceDocs(); }, 50);
+            }
+          }
           const fCd = document.getElementById('fCreditDays');
           if (fCd) fCd.value = d.creditDays ?? '';
           const fPt = document.getElementById('fPaymentTerms');
@@ -2459,8 +2670,25 @@
           witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
           creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
-          supplierInvoiceNumber: document.getElementById('fSupplierInvoiceNumber')?.value.trim() || null,
-          supplierTaxInvoiceDate: document.getElementById('fSupplierTaxInvoiceDate')?.value || null,
+          // PI/Expense/CertInLieu — supplier invoice fields from main row.
+          // PV เมื่อติ๊ก "ใช้งานใบกำกับภาษี" ใช้ field คู่ขนานในกล่องเหลือง
+          // (fSupplierInvoiceNumberPV / fSupplierTaxInvoiceDatePV) แทน.
+          supplierInvoiceNumber: (() => {
+            const main = document.getElementById('fSupplierInvoiceNumber')?.value.trim();
+            const pv = document.getElementById('fSupplierInvoiceNumberPV')?.value.trim();
+            const isPV = document.getElementById('fDocType').value === 'PaymentVoucher';
+            return isPV && document.getElementById('fHasTaxInvoiceRef')?.checked ? (pv || null) : (main || null);
+          })(),
+          supplierTaxInvoiceDate: (() => {
+            const main = document.getElementById('fSupplierTaxInvoiceDate')?.value;
+            const pv = document.getElementById('fSupplierTaxInvoiceDatePV')?.value;
+            const isPV = document.getElementById('fDocType').value === 'PaymentVoucher';
+            return isPV && document.getElementById('fHasTaxInvoiceRef')?.checked ? (pv || null) : (main || null);
+          })(),
+          hasTaxInvoiceReference: document.getElementById('fDocType').value === 'PaymentVoucher'
+            && document.getElementById('fHasTaxInvoiceRef')?.checked || false,
+          supplierBranchCode: document.getElementById('fHasTaxInvoiceRef')?.checked
+            ? (document.getElementById('fSupplierBranchCode')?.value.trim() || '00000') : null,
           creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
           // Only send paymentType for Payment Voucher (the only type whose

@@ -50,6 +50,10 @@ public record CreateDocumentRequest(
     // capture the agreed payment window for DSO/DPO + DueDate auto-fill.
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // ใบสำคัญจ่าย ติ๊ก "ใช้งานใบกำกับภาษี" → flag + snapshot สาขาผู้ขาย
+    // (อ้างอิงใบกำกับซื้อ ขอเครดิตภาษีซื้อ — RD §86/4 + §86/14).
+    bool HasTaxInvoiceReference = false,
+    string? SupplierBranchCode = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     // Settlement basis (Payment Voucher: เครดิต vs จ่ายทันที). Cash → straight
@@ -112,6 +116,9 @@ public record UpdateDocumentRequest(
     DateTime? PaymentDate = null,
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // PV: ใช้งานใบกำกับภาษี (nullable → omit ไม่แตะค่าเดิม).
+    bool? HasTaxInvoiceReference = null,
+    string? SupplierBranchCode = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     PaymentType? PaymentType = null,
@@ -192,6 +199,9 @@ public record DocumentResponse(
     // Supplier-side tax invoice metadata for PurchaseInvoice rows.
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // PV flag + supplier branch snapshot (RD §86/4 + §86/14).
+    bool HasTaxInvoiceReference = false,
+    string? SupplierBranchCode = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     // Settlement basis — Cash (จ่ายทันที) vs Credit (เครดิต). Drives whether
