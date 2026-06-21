@@ -314,10 +314,16 @@ public class TaxFilingExportService : ITaxFilingExportService
         {
             var b = doc.SubTotal - doc.DiscountAmount;
             // วันที่ในรายงาน = tax point: ใบที่ reclassify จาก 11640 แสดงวันที่
-            // ถึงกำหนด (เดือนที่เคลมได้จริง) ไม่ใช่ DocumentDate เดิม.
-            var taxPoint = doc.InputVatBecameClaimableAt ?? doc.DocumentDate;
+            // ถึงกำหนด (เดือนที่เคลมได้จริง) ไม่ใช่ DocumentDate เดิม. แต่ใบปกติ
+            // ใช้วันที่บนใบกำกับของผู้ขาย (SupplierTaxInvoiceDate) เป็นหลัก.
+            var taxPoint = doc.InputVatBecameClaimableAt
+                ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
             var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
-            purchase.AppendLine($"{p1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.SupplierBranchCode ?? doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
+            // เลขที่ใบกำกับ = เลขบนใบของผู้ขาย (RD ต้องการเลขจริง) — fallback
+            // เลขเอกสารภายในเมื่อ supplier number ว่าง.
+            var invNo = !string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber)
+                ? doc.SupplierInvoiceNumber! : doc.DocumentNumber;
+            purchase.AppendLine($"{p1++},{d},{Csv(invNo)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.SupplierBranchCode ?? doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
             totalInputBase += b; totalInputVat += doc.VatAmount;
         }
 
