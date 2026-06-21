@@ -1135,6 +1135,20 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatAccountCodeOverride" varchar(20) NULL;
             """,
+            // เงินมัดจำ/รับล่วงหน้า — ใบเสร็จที่พักรายได้ไว้ "ขายรอรับรู้" (217xx)
+            // แต่รับรู้ภาษีขายทันที (tax point §78). RealizeDeposit ตัด → รายได้.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRealizedAmount" numeric(18,2) NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositDeferredAccountCode" varchar(20) NULL;
+            """,
 
             // OpeningBalances — per-period per-account opening figures
             """

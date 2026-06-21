@@ -649,6 +649,8 @@ const Layout = {
       description: 'ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเสร็จ · ใบลดหนี้/เพิ่มหนี้' },
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition',
       description: 'ASC 606 / TFRS 15 — รับรู้รายได้ตาม performance obligation' },
+    { id: 'deposits', label: 'เงินมัดจำ/รับล่วงหน้า', icon: '🤝', href: '/pages/deposits.html', feature: 'DocumentEngine',
+      description: 'มัดจำ/รับล่วงหน้าคงค้าง — ภาษีขายถึงกำหนดทันที (§78) รายได้รอรับรู้ (217xx) จนส่งมอบ · รับรู้รายได้บางส่วนได้' },
 
     { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'PR → PO → GRN → ใบกำกับ → ชำระ — full procurement chain' },
     { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine', _i18nKey: 'nav.purchases',
@@ -737,6 +739,8 @@ const Layout = {
     { section: 'ภาษี & e-Filing', icon: '🏛️', description: 'ภพ.30 · ภงด.1/3/53/54 · ภพ.36 · e-Tax · ปฏิทินภาษี · Export RD' },
     { id: 'tax', label: 'รายงานภาษี ภพ.30', icon: '🏛️', href: '/pages/tax.html', feature: 'TaxManagement', _i18nKey: 'nav.tax',
       description: 'VAT รายเดือน · Defer Input VAT ≤6 เดือน · Filing Lock · Reject & Reverse · Export pipe-delimited RD' },
+    { id: 'undue-vat', label: 'ภาษีซื้อยังไม่ถึงกำหนด', icon: '⏳', href: '/pages/undue-vat.html', feature: 'TaxManagement',
+      description: 'เอกสารที่ภาษีซื้อพักไว้ 11640 รอใบกำกับครบ §86/4 — เตือนก่อนหมดสิทธิเคลม 6 เดือน (§82/3) · เติมข้อมูลแล้วย้ายเข้า ภ.พ.30' },
     { id: 'wht', label: 'หัก ณ ที่จ่าย (ภงด.)', icon: '📜', href: '/pages/wht.html', feature: 'TaxManagement', _i18nKey: 'nav.wht',
       description: 'ภงด.1/3/53/54 · สร้างหนังสือรับรองหัก ณ ที่จ่าย · Export ยื่นออนไลน์' },
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html', feature: 'TaxManagement', _i18nKey: 'nav.taxCalendar',

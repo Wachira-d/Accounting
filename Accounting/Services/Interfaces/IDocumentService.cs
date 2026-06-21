@@ -23,6 +23,15 @@ public interface IDocumentService
     /// ภ.พ.30 จะ include ในเดือนที่ปรับ. ต่างจาก UpdateDocumentAsync ที่แก้ได้
     /// เฉพาะ Draft — method นี้แก้ได้เฉพาะเอกสาร approved ที่ค้าง 11640.</summary>
     Task<DocumentResponse> CompleteSupplierTaxInvoiceAsync(Guid companyId, Guid documentId, CompleteSupplierTaxInvoiceRequest request, string actor);
+    /// <summary>รับรู้รายได้จากเงินมัดจำ (ตัด "ขายรอรับรู้" 217xx → รายได้) เมื่อ
+    /// ส่งมอบจริง. รองรับรับรู้บางส่วน. สร้าง JE Dr 217xx / Cr รายได้.</summary>
+    Task<DocumentResponse> RealizeDepositAsync(Guid companyId, Guid documentId, RealizeDepositRequest request, string actor);
+    /// <summary>รายการเงินมัดจำคงค้าง/ที่รับรู้แล้ว สำหรับหน้าจัดการมัดจำ.
+    /// status: "Outstanding" | "Partial" | "Realized" (null = ทั้งหมด).</summary>
+    Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);
+    /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ
+    /// dashboard ภาษีซื้อยังไม่ถึงกำหนด) + 6-month aging §82/3.</summary>
+    Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId);
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy);
     /// <summary>Approve with explicit acknowledge-warnings flag. When the
     /// pre-approval check surfaces soft warnings AND acknowledgeWarnings is

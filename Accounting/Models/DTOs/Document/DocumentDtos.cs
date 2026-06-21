@@ -65,7 +65,12 @@ public record CreateDocumentRequest(
     // ภ.พ.36 / ภ.ง.ด.54 — flag เมื่อซื้อบริการจากต่างประเทศ (Google Ads /
     // AWS / Facebook ฯลฯ). ผู้รับบริการในไทยต้อง self-assess VAT 7% และ
     // หัก WHT ตาม DTA. Default false. Apply เฉพาะ PI/Expense/PV.
-    bool IsForeignService = false);
+    bool IsForeignService = false,
+    // เงินมัดจำ/รับล่วงหน้า — Receipt/ReceiptVoucher ที่รับเงินก่อนส่งมอบ.
+    // True → Cr "ขายรอรับรู้" (217xx) แทนรายได้ + Cr ภาษีขายทันที (§78).
+    // DepositDeferredAccountCode = ผังพักรายได้ (null → 21712).
+    bool IsDeposit = false,
+    string? DepositDeferredAccountCode = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -134,6 +139,49 @@ public record CompleteSupplierTaxInvoiceRequest(
     DateTime? SupplierTaxInvoiceDate = null,
     string? SupplierBranchCode = null,
     string? InputVatAccountCodeOverride = null);
+
+/// <summary>รับรู้รายได้จากเงินมัดจำ (ตัด "ขายรอรับรู้" 217xx → รายได้) เมื่อ
+/// ส่งมอบสินค้า/บริการจริง. Amount = ฐานไม่รวม VAT ที่จะรับรู้ (รองรับบางส่วน);
+/// RevenueAccountCode = ผังรายได้ปลายทาง (null → default 41000/42000);
+/// FinalInvoiceId = ใบแจ้งหนี้/ใบกำกับสุดท้ายที่หักมัดจำนี้ (optional ใช้ link).</summary>
+public record RealizeDepositRequest(
+    decimal Amount,
+    DateTime? RealizeDate = null,
+    string? RevenueAccountCode = null,
+    Guid? FinalInvoiceId = null);
+
+/// <summary>สรุปเงินมัดจำคงค้างสำหรับหน้าจัดการมัดจำ (ขึ้นงบดุลเป็นหนี้สิน
+/// ไม่ใช่เจ้าหนี้การค้า). OutstandingAmount = BaseAmount − RealizedAmount.</summary>
+public record DepositSummary(
+    Guid Id,
+    string DocumentNumber,
+    DateTime DocumentDate,
+    string ContactName,
+    string? ContactTaxId,
+    decimal BaseAmount,
+    decimal VatAmount,
+    decimal TotalAmount,
+    decimal RealizedAmount,
+    decimal OutstandingAmount,
+    DateTime? RealizedAt,
+    int AgeDays,
+    string Status,
+    string? DeferredAccountCode);
+
+/// <summary>สรุปเอกสารที่ภาษีซื้อค้างอยู่ที่ 11640 "ยังไม่ถึงกำหนด" รอใบกำกับ
+/// ครบ §86/4. MonthsLeft = เดือนเหลือก่อนหมดสิทธิเคลม (§82/3 6 เดือนนับจาก
+/// เดือนใบกำกับ); IsExpired = เกิน 6 เดือนแล้ว (เคลมไม่ได้ ต้องลงเป็นต้นทุน).</summary>
+public record UndueInputVatSummary(
+    Guid Id,
+    string DocumentNumber,
+    DateTime DocumentDate,
+    string SupplierName,
+    string? SupplierTaxId,
+    decimal VatAmount,
+    int AgeDays,
+    int MonthsLeft,
+    bool IsExpired,
+    IReadOnlyList<string> MissingFields);
 
 public record DocumentResponse(
     Guid Id,
@@ -267,7 +315,12 @@ public record DocumentResponse(
     // ภ.พ.30 ใช้เดือนนี้เป็น tax point. null + InputVatPostedAsUndue=true =
     // ยังค้าง 11640 รอเติมข้อมูล.
     DateTime? InputVatBecameClaimableAt = null,
-    string? InputVatAccountCodeOverride = null);
+    string? InputVatAccountCodeOverride = null,
+    // ===== เงินมัดจำ/รับล่วงหน้า =====
+    bool IsDeposit = false,
+    decimal DepositRealizedAmount = 0m,
+    DateTime? DepositRealizedAt = null,
+    string? DepositDeferredAccountCode = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,

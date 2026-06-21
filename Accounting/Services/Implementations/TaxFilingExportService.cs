@@ -247,11 +247,20 @@ public class TaxFilingExportService : ITaxFilingExportService
         var endDate = startDate.AddMonths(1).AddDays(-1);
         var thaiYear = year + 543;
 
+        // ฝั่งขาย: ใบกำกับภาษี/ใบแจ้งหนี้ + ใบเสร็จ-ใบกำกับภาษีของการขายเงินสด
+        // (Receipt/ReceiptVoucher แบบ standalone — ค้าปลีก/บริการที่ออกใบเสร็จเป็น
+        // ใบกำกับภาษี; รวมใบเสร็จมัดจำ IsDeposit ด้วย เพราะ tax point = วันรับเงิน).
+        // ใบเสร็จที่อ้าง Invoice/TaxInvoice เดิม (RelatedDocumentId != null) ไม่นับ
+        // ซ้ำ — ใบกำกับต้นทางรับ output VAT ไปแล้ว.
         var salesDocs = await _db.Documents
             .Include(d => d.Lines).Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                && (d.DocumentType == DocumentType.Invoice
+                    || d.DocumentType == DocumentType.TaxInvoice
+                    || ((d.DocumentType == DocumentType.Receipt
+                         || d.DocumentType == DocumentType.ReceiptVoucher)
+                        && d.RelatedDocumentId == null))
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.VatAmount > 0)
             .OrderBy(d => d.DocumentDate).ToListAsync();

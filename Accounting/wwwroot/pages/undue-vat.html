@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ภาษีซื้อยังไม่ถึงกำหนด - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ภาษีซื้อยังไม่ถึงกำหนด (บัญชี 11640)</h2>
+        <p class="page-subtitle">
+          เอกสารซื้อที่ตอนอนุมัติใบกำกับยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่
+          11640 ยังเคลม ภ.พ.30 ไม่ได้ · เติมข้อมูลใบกำกับให้ครบเพื่อย้ายเข้า
+          ภาษีซื้อ ภ.พ.30 (11610) · ต้องเคลมภายใน 6 เดือนนับจากเดือนใบกำกับ (§82/3)
+        </p>
+      </div>
+    </div>
+
+    <div class="grid grid-4 gap-4" id="kpis" style="margin-bottom:24px"></div>
+
+    <div class="card" id="listContent">
+      <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>
+    </div>
+  </div>
+
+  <!-- Complete tax invoice modal -->
+  <div id="completeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+    <div class="card" style="width:520px;max-width:94vw">
+      <div class="card-header"><h3 class="card-title">เติมข้อมูลใบกำกับภาษีซื้อ</h3></div>
+      <div style="padding:16px">
+        <div id="completeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div>
+            <label class="text-sm font-medium">เลขที่ใบกำกับผู้ขาย</label>
+            <input type="text" class="form-input" id="cInvNo" placeholder="เช่น INV-2026-0042">
+          </div>
+          <div>
+            <label class="text-sm font-medium">วันที่ใบกำกับ</label>
+            <input type="date" class="form-input" id="cInvDate">
+          </div>
+        </div>
+        <div style="margin-bottom:14px">
+          <label class="text-sm font-medium">รหัสสาขาผู้ขาย (00000 = สำนักงานใหญ่)</label>
+          <input type="text" class="form-input" id="cBranch" placeholder="00000" maxlength="5">
+        </div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:14px">
+          หมายเหตุ: ชื่อ/เลขผู้เสียภาษี/ที่อยู่ผู้ขาย ดึงจากข้อมูลผู้ติดต่อ — หากยังขาด กรุณาแก้ที่หน้าผู้ติดต่อก่อน
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="Page.closeComplete()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitComplete()">บันทึก + ย้ายเข้า ภ.พ.30</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _rows: [],
+      _completeId: null,
+      async init() {
+        if (!Layout.init('undue-vat')) return;
+        Layout.setTitle('ภาษีซื้อยังไม่ถึงกำหนด');
+        await this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const content = document.getElementById('listContent');
+        content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>';
+        try {
+          const res = await api.getUndueInputVat();
+          const rows = res.data || [];
+          this._rows = rows;
+          this.renderKpis(rows);
+          this.renderTable(rows);
+        } catch (e) {
+          content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
+      },
+      renderKpis(rows) {
+        const totalVat = rows.reduce((s, r) => s + (r.vatAmount || 0), 0);
+        const expired = rows.filter(r => r.isExpired);
+        const expiredVat = expired.reduce((s, r) => s + (r.vatAmount || 0), 0);
+        const soon = rows.filter(r => !r.isExpired && r.monthsLeft <= 1).length;
+        document.getElementById('kpis').innerHTML = `
+          <div class="kpi-card"><div class="kpi-label">VAT รอเคลม (11640)</div><div class="kpi-value">${Layout.money(totalVat)}</div><div class="text-xs text-gray-400">${rows.length} เอกสาร</div></div>
+          <div class="kpi-card"><div class="kpi-label">ใกล้หมดสิทธิ (≤1 เดือน)</div><div class="kpi-value" style="color:#ea580c">${soon}</div><div class="text-xs text-gray-400">เอกสาร</div></div>
+          <div class="kpi-card"><div class="kpi-label">หมดสิทธิแล้ว (>6 เดือน)</div><div class="kpi-value" style="color:#dc2626">${expired.length}</div></div>
+          <div class="kpi-card"><div class="kpi-label">VAT ที่หมดสิทธิ</div><div class="kpi-value" style="color:#dc2626">${Layout.money(expiredVat)}</div></div>`;
+      },
+      renderTable(rows) {
+        const content = document.getElementById('listContent');
+        if (!rows.length) {
+          content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">✓ ไม่มีภาษีซื้อค้างรอใบกำกับ</div>';
+          return;
+        }
+        content.innerHTML = `
+          <div class="table-container" style="border:none">
+            <table class="table">
+              <thead><tr>
+                <th>เลขที่</th><th>วันที่</th><th>ผู้ขาย</th>
+                <th class="text-right">VAT</th><th class="text-center">อายุ</th>
+                <th class="text-center">สิทธิเคลม</th><th>ขาดข้อมูล</th><th></th>
+              </tr></thead>
+              <tbody>${rows.map(r => {
+                const claimCell = r.isExpired
+                  ? '<span style="color:#dc2626;font-weight:700">หมดสิทธิ</span>'
+                  : (r.monthsLeft <= 1
+                      ? `<span style="color:#ea580c;font-weight:700">เหลือ ${r.monthsLeft} เดือน</span>`
+                      : `เหลือ ${r.monthsLeft} เดือน`);
+                const missing = (r.missingFields || []).join(', ');
+                return `
+                <tr>
+                  <td class="font-medium">${Layout.esc(r.documentNumber)}</td>
+                  <td>${Layout.date(r.documentDate)}</td>
+                  <td>${Layout.esc(r.supplierName || '-')}</td>
+                  <td class="text-right">${Layout.money(r.vatAmount)}</td>
+                  <td class="text-center">${r.ageDays} วัน</td>
+                  <td class="text-center">${claimCell}</td>
+                  <td style="font-size:12px;color:#b45309">${Layout.esc(missing)}</td>
+                  <td class="text-right"><button class="btn btn-sm btn-primary" onclick="Page.openComplete('${r.id}')">เติมใบกำกับ</button></td>
+                </tr>`; }).join('')}</tbody>
+            </table>
+          </div>`;
+      },
+      openComplete(id) {
+        const r = this._rows.find(x => x.id === id);
+        if (!r) return;
+        this._completeId = id;
+        document.getElementById('completeInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.supplierName || '')}<br>VAT รอเคลม: <b>${Layout.money(r.vatAmount)}</b>`;
+        document.getElementById('cInvNo').value = '';
+        document.getElementById('cInvDate').value = Layout.toDateInput(new Date(r.documentDate));
+        document.getElementById('cBranch').value = '00000';
+        document.getElementById('completeModal').style.display = 'flex';
+      },
+      closeComplete() {
+        document.getElementById('completeModal').style.display = 'none';
+        this._completeId = null;
+      },
+      async submitComplete() {
+        const api = Layout.api(); if (!api || !this._completeId) return;
+        const inv = document.getElementById('cInvNo').value.trim();
+        const dateRaw = document.getElementById('cInvDate').value;
+        const branch = document.getElementById('cBranch').value.trim();
+        if (!inv || !dateRaw) { Layout.toast('กรุณากรอกเลขที่และวันที่ใบกำกับ', 'error'); return; }
+        const body = {
+          supplierInvoiceNumber: inv,
+          supplierTaxInvoiceDate: new Date(dateRaw).toISOString(),
+          supplierBranchCode: branch || null
+        };
+        try {
+          await api.completeTaxInvoice(this._completeId, body);
+          this.closeComplete();
+          Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 แล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+    };
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

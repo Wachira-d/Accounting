@@ -512,6 +512,10 @@
                   <input type="checkbox" id="fIsForeignService" style="margin:0">
                   <span title="ติ๊กเมื่อซื้อบริการจากต่างประเทศ (Google Ads / AWS / Facebook ฯลฯ) — ระบบจะรวมรายการนี้ในรายงาน ภ.พ.36 (self-assess VAT 7%) และ ภ.ง.ด.54 (WHT)">🌐 บริการต่างประเทศ (§83/6)</span>
                 </label>
+                <label style="display:none;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsDepositWrap">
+                  <input type="checkbox" id="fIsDeposit" style="margin:0">
+                  <span title="ติ๊กเมื่อรับเงินมัดจำ/รับล่วงหน้า ก่อนส่งมอบสินค้า/บริการ — ระบบจะลงบัญชี 'ขายรอรับรู้' (217xx) แทนรายได้ และรับรู้ภาษีขายทันที (tax point = วันรับเงิน §78) ค่อยรับรู้รายได้เมื่อส่งมอบจริงในหน้า 'เงินมัดจำ'">🤝 เงินมัดจำ/รับล่วงหน้า</span>
+                </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
@@ -1524,6 +1528,13 @@
         const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
         const paidSection = document.getElementById('paidOnIssueSection');
         if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // เงินมัดจำ/รับล่วงหน้า — แสดงเฉพาะใบเสร็จ/ใบสำคัญรับ (รับเงินก่อนส่งมอบ)
+        const depositWrap = document.getElementById('fIsDepositWrap');
+        if (depositWrap) {
+          const isReceipt = docType === 'Receipt' || docType === 'ReceiptVoucher';
+          depositWrap.style.display = isReceipt ? 'inline-flex' : 'none';
+          if (!isReceipt) { const cb = document.getElementById('fIsDeposit'); if (cb) cb.checked = false; }
+        }
         // Reset checkbox when the section hides so a stale "paid" state
         // doesn't fire on the next save of a non-applicable type.
         if (paidSection && paidSection.style.display === 'none') {
@@ -2703,6 +2714,11 @@
             ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
           pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
+          // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
+          // (217xx) แทนรายได้ + ภาษีขายถึงกำหนดทันที (§78).
+          isDeposit: (document.getElementById('fDocType').value === 'Receipt'
+                      || document.getElementById('fDocType').value === 'ReceiptVoucher')
+                     && (document.getElementById('fIsDeposit')?.checked || false),
         };
         try {
           let savedDocId = this.editingId;
@@ -3428,7 +3444,7 @@
           supplierBranchCode: branch || null
         };
         try {
-          await API.post(`/api/companies/${Layout.getCompanyId()}/documents/${id}/complete-tax-invoice`, body);
+          await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
           Layout.closeModal('detailModal');
           Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 แล้ว');
           await this.load();

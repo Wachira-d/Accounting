@@ -198,6 +198,41 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "อัปเดตใบกำกับภาษีซื้อสำเร็จ"));
     }
 
+    /// <summary>รายการเอกสารภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 +
+    /// 6-month aging (§82/3) สำหรับ dashboard ภาษีซื้อยังไม่ถึงกำหนด.</summary>
+    [HttpGet("undue-input-vat")]
+    public async Task<ActionResult<ApiResponse<List<UndueInputVatSummary>>>> GetUndueInputVat(Guid companyId)
+    {
+        var result = await _documentService.GetUndueInputVatAsync(companyId);
+        return Ok(new ApiResponse<List<UndueInputVatSummary>>(true, result));
+    }
+
+    /// <summary>รายการเงินมัดจำคงค้าง/รับรู้แล้ว สำหรับหน้าจัดการมัดจำ
+    /// (ขึ้นงบดุลเป็นหนี้สิน ไม่ใช่เจ้าหนี้การค้า).</summary>
+    [HttpGet("deposits")]
+    public async Task<ActionResult<ApiResponse<List<DepositSummary>>>> GetDeposits(
+        Guid companyId, [FromQuery] string? status = null)
+    {
+        var result = await _documentService.GetDepositsAsync(companyId, status);
+        return Ok(new ApiResponse<List<DepositSummary>>(true, result));
+    }
+
+    /// <summary>รับรู้รายได้จากเงินมัดจำเมื่อส่งมอบจริง (ตัด ขายรอรับรู้ →
+    /// รายได้). รองรับรับรู้บางส่วน.</summary>
+    [HttpPost("{documentId:guid}/realize-deposit")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> RealizeDeposit(
+        Guid companyId, Guid documentId, [FromBody] RealizeDepositRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์รับรู้รายได้จากมัดจำ");
+        var result = await _documentService.RealizeDepositAsync(
+            companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "รับรู้รายได้จากมัดจำสำเร็จ"));
+    }
+
     [HttpPost("{documentId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<object>>> ApproveDocument(Guid companyId, Guid documentId, [FromBody] ApproveDocumentRequest? request = null)
     {

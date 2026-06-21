@@ -59,6 +59,29 @@ public class Document : TenantEntity
     /// เต็มจำนวน. AccountCode (ไม่ใช่ Id) เพื่อ portable ระหว่าง tenants.</summary>
     public string? InputVatAccountCodeOverride { get; set; }
 
+    /// <summary>True = ใบเสร็จ/ใบสำคัญรับนี้เป็น "เงินมัดจำ/รับล่วงหน้า"
+    /// (deposit/advance) ไม่ใช่การขายที่รับรู้รายได้ทันที. ผลทางบัญชี:
+    /// Dr เงินสด/ธนาคาร, Cr "ขายรอรับรู้/รับล่วงหน้า" (217xx — หนี้สิน) แทน
+    /// บัญชีรายได้, Cr ภาษีขาย (21911). VAT ถึงกำหนดทันที (tax point = วันรับเงิน
+    /// §78/§78/1) จึงเข้ารายงานภาษีขาย/ภ.พ.30 เดือนที่รับ แต่รายได้ยังรอรับรู้
+    /// จนกว่าจะส่งมอบจริง (เรียก RealizeDepositAsync ตัด 217xx → รายได้).</summary>
+    public bool IsDeposit { get; set; }
+
+    /// <summary>ยอด (ฐานไม่รวม VAT) ของเงินมัดจำที่ถูกรับรู้เป็นรายได้แล้ว —
+    /// รองรับการรับรู้บางส่วน (partial). คงค้าง = SubTotal − DepositRealizedAmount.
+    /// 0 = ยังไม่รับรู้เลย (มัดจำคงค้างเต็มจำนวน).</summary>
+    public decimal DepositRealizedAmount { get; set; }
+
+    /// <summary>วันที่รับรู้รายได้ครบเต็มจำนวน (มัดจำปิด). Null = ยังคงค้าง
+    /// (บางส่วนหรือทั้งหมด). ใช้คัดกรอง "มัดจำคงค้าง" ในหน้าจัดการ + งบดุล.</summary>
+    public DateTime? DepositRealizedAt { get; set; }
+
+    /// <summary>ผังบัญชี "ขายรอรับรู้/รับล่วงหน้า" ที่ใช้พักรายได้มัดจำใบนี้
+    /// (snapshot ตอนรับเงิน). Null → default 21712 (ค่าสินค้ารับล่วงหน้า) /
+    /// 21713 (ค่าบริการรับล่วงหน้า) ตอน post. ใช้ตอน RealizeDeposit ตัดกลับ
+    /// บัญชีเดิม.</summary>
+    public string? DepositDeferredAccountCode { get; set; }
+
     /// <summary>Credit term in days from the document date — used to
     /// auto-fill DueDate when not explicit, and to roll DSO / DPO
     /// reports. Defaulted from Contact.PaymentTermDays on create when

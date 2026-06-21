@@ -204,6 +204,34 @@ public partial class TaxService : ITaxService
                     DocumentId = doc.Id
                 });
             }
+            // Receipt / ReceiptVoucher ที่ออกเป็น "ใบกำกับภาษี" ของการขายเงินสด
+            // (ค้าปลีก/บริการ ที่ออกใบเสร็จ-ใบกำกับภาษีอย่างย่อหรือเต็มรูปในใบ
+            // เดียว) — tax point = วันรับเงิน (§78/§78/1) → output VAT เข้า ภ.พ.30
+            // เดือนที่รับเงิน. นับเฉพาะใบเสร็จ STANDALONE (RelatedDocumentId ว่าง):
+            // ใบเสร็จที่อ้าง Invoice/TaxInvoice เดิม → ใบกำกับต้นทางรับ VAT ไปแล้ว
+            // ห้ามนับซ้ำ. ใบเสร็จมัดจำ (IsDeposit) ก็เข้าที่นี่ — VAT ถึงกำหนดทันที
+            // แม้รายได้จะรอรับรู้ (Cr ขายรอรับรู้) ก็ตาม.
+            else if ((doc.DocumentType == DocumentType.Receipt
+                      || doc.DocumentType == DocumentType.ReceiptVoucher)
+                     && !doc.RelatedDocumentId.HasValue)
+            {
+                outputVat += doc.VatAmount;
+                report.Lines.Add(new TaxReportLine
+                {
+                    TaxReportId = report.Id,
+                    LineOrder = lineOrder++,
+                    TaxPayerId = doc.Contact?.TaxId,
+                    TaxPayerName = doc.Contact?.Name ?? "",
+                    TransactionDate = doc.DocumentDate,
+                    Description = doc.IsDeposit
+                        ? $"[มัดจำ] {doc.DocumentNumber}"
+                        : doc.DocumentNumber,
+                    IncomeAmount = doc.SubTotal,
+                    TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                    TaxAmount = doc.VatAmount,
+                    DocumentId = doc.Id
+                });
+            }
             // CreditNote — reduces output/input VAT
             else if (doc.DocumentType == DocumentType.CreditNote)
             {
