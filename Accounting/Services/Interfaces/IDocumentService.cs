@@ -16,6 +16,13 @@ public interface IDocumentService
     /// <summary>Same as GetDocumentsAsync but redacts items the user lacks permission for.</summary>
     Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false);
     Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request);
+    /// <summary>เติม/แก้รายละเอียดใบกำกับภาษีซื้อ (เลขที่ + วันที่ + สาขา + override
+    /// ผัง VAT) หลังอนุมัติแล้ว — ใช้กับเอกสารที่ตอน approve ใบกำกับยังไม่ครบ
+    /// §86/4 จึง post VAT เข้า 11640 "ภาษีซื้อยังไม่ถึงกำหนด". เมื่อ field ครบ
+    /// ระบบ generate adjusting JE: Dr 11610 / Cr 11640 อัตโนมัติ (§82/3) แล้ว
+    /// ภ.พ.30 จะ include ในเดือนที่ปรับ. ต่างจาก UpdateDocumentAsync ที่แก้ได้
+    /// เฉพาะ Draft — method นี้แก้ได้เฉพาะเอกสาร approved ที่ค้าง 11640.</summary>
+    Task<DocumentResponse> CompleteSupplierTaxInvoiceAsync(Guid companyId, Guid documentId, CompleteSupplierTaxInvoiceRequest request, string actor);
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy);
     /// <summary>Approve with explicit acknowledge-warnings flag. When the
     /// pre-approval check surfaces soft warnings AND acknowledgeWarnings is

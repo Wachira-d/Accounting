@@ -6,6 +6,7 @@ using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations.Tax;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -1010,6 +1011,46 @@ public class DocumentService : IDocumentService
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId, "document.updated", updated);
+        return updated;
+    }
+
+    public async Task<DocumentResponse> CompleteSupplierTaxInvoiceAsync(
+        Guid companyId, Guid documentId, CompleteSupplierTaxInvoiceRequest request, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // method นี้สำหรับเอกสาร approved ที่ค้าง 11640 — Draft ใช้ UpdateDocumentAsync
+        if (doc.Status == DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                "เอกสารยังเป็น Draft — แก้ใบกำกับผ่านการแก้ไขปกติ (ยังไม่ได้ลงบัญชี)");
+        if (doc.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException("เอกสารถูกยกเลิกแล้ว — แก้ไขไม่ได้");
+
+        // เติม/แก้เฉพาะ field ที่ส่งมา (null = คงค่าเดิม)
+        if (request.SupplierInvoiceNumber != null)
+            doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
+        if (request.SupplierTaxInvoiceDate.HasValue)
+            doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
+        if (request.SupplierBranchCode != null)
+            doc.SupplierBranchCode = request.SupplierBranchCode;
+        // override: "" = ล้าง (กลับ default 11610/11640); null = ไม่แตะ; ค่าอื่น = pin
+        if (request.InputVatAccountCodeOverride != null)
+            doc.InputVatAccountCodeOverride =
+                request.InputVatAccountCodeOverride.Length == 0
+                    ? null
+                    : request.InputVatAccountCodeOverride;
+
+        // ถ้าข้อมูลครบแล้ว + เดิมค้าง 11640 → gen adjusting JE 11640→11610
+        var reclassified = await ReclassifyUndueInputVatAsync(companyId, doc, actor);
+
+        await _db.SaveChangesAsync();
+        var updated = await GetDocumentAsync(companyId, documentId);
+        await FireWebhookAsync(companyId,
+            reclassified ? "document.input_vat_reclassified" : "document.updated", updated);
         return updated;
     }
 
@@ -3693,6 +3734,128 @@ public class DocumentService : IDocumentService
         return found;
     }
 
+    /// <summary>เลือกผังบัญชีปลายทางของภาษีซื้อ ตาม priority:
+    ///   1) <c>doc.InputVatAccountCodeOverride</c> set → ใช้ค่านั้น (treat as
+    ///      §82/5 ถ้าไม่ใช่ 116xx — ลง expense เต็มจำนวน, ไม่เข้า ภ.พ.30)
+    ///   2) Completeness §86/4 ครบ → 11610 "ภาษีซื้อ ภ.พ.30"
+    ///   3) ไม่ครบ → 11640 "ภาษีซื้อยังไม่ถึงกำหนด" (§82/3 รอใบครบ)
+    /// Fallback ถ้าไม่พบ 11640 (chart เก่าไม่มี): 11630 (Deferred) → 116 parent.
+    /// คืน <c>postedAsUndue=true</c> เฉพาะ path (3) เพื่อ track ว่าต้อง reclassify
+    /// ตอน user มาเติมใบกำกับครบ.</summary>
+    private async Task<(ChartOfAccount Account, bool PostedAsUndue)> ResolveInputVatAccountAsync(
+        Guid companyId, Document doc)
+    {
+        // (1) Override — user เลือกผังอื่น (เช่น 51000 ลงต้นทุนขาย)
+        if (!string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride))
+        {
+            var overrideAcc = await FindAccountAsync(companyId, doc.InputVatAccountCodeOverride!);
+            if (overrideAcc != null) return (overrideAcc, PostedAsUndue: false);
+            // override ชี้บัญชีที่ลบไป → fall through ใช้ default (กัน JE พัง)
+        }
+
+        // (2)/(3) Completeness check — pure function
+        var completeness = TaxInvoiceCompletenessChecker.Evaluate(doc, doc.Contact);
+
+        if (completeness.IsClaimable)
+        {
+            var claimable = await FindAccountAsync(companyId, "11610")
+                ?? await FindAccountAsync(companyId, "116")
+                ?? throw new InvalidOperationException(
+                    "ไม่พบบัญชีภาษีซื้อ (11610 หรือ 116) ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่มี VAT");
+            return (claimable, PostedAsUndue: false);
+        }
+
+        // ใบไม่ครบ → suspense 11640
+        var undue = await FindAccountAsync(companyId, "11640")
+            ?? await FindAccountAsync(companyId, "11630")  // Deferred Input VAT — fallback
+            ?? await FindAccountAsync(companyId, "116")
+            ?? throw new InvalidOperationException(
+                "ไม่พบบัญชี 11640 'ภาษีซื้อยังไม่ถึงกำหนด' ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่ใบกำกับยังไม่ครบ");
+        return (undue, PostedAsUndue: true);
+    }
+
+    /// <summary>หลัง user แก้เอกสารให้ใบกำกับครบ §86/4 — ตรวจว่าเดิม VAT
+    /// post ไป 11640 ไหม ถ้าใช่ generate adjusting JE: Dr 11610 / Cr 11640
+    /// (ย้ายมาเป็นภาษีซื้อเคลมได้). Idempotent — ถ้าครบอยู่แล้วหรือไม่เคย
+    /// suspend จะ no-op. เรียกก่อน SaveChanges ใน CompleteSupplierTaxInvoiceAsync.
+    /// คืน true ถ้า reclassify จริง (มีการสร้าง JE).</summary>
+    private async Task<bool> ReclassifyUndueInputVatAsync(Guid companyId, Document doc, string actor)
+    {
+        // ไม่เคย suspend → ไม่ต้องทำอะไร
+        if (!doc.InputVatPostedAsUndue) return false;
+        // เคย reclassify ไปแล้ว → ไม่ทำซ้ำ (idempotent)
+        if (doc.InputVatBecameClaimableAt.HasValue) return false;
+        // มี override → user ตั้งใจไม่เคลม VAT → ไม่ reclassify
+        if (!string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)) return false;
+        // ต้องเป็นเอกสารที่ approved แล้ว (Draft ไม่มี JE ให้ adjust)
+        if (doc.Status == DocumentStatus.Draft || doc.Status == DocumentStatus.Voided) return false;
+
+        // Reload contact ถ้ายังไม่ track (UpdateDocumentAsync อาจไม่ Include)
+        if (doc.Contact == null)
+            doc.Contact = await _db.Contacts.FirstOrDefaultAsync(c =>
+                c.Id == doc.ContactId && c.CompanyId == companyId) ?? doc.Contact!;
+
+        var completeness = TaxInvoiceCompletenessChecker.Evaluate(doc, doc.Contact);
+        if (!completeness.IsClaimable) return false;   // ยังไม่ครบ → คงอยู่ 11640
+
+        // หา VAT amount ที่เคยลงไป (= sum line.VatAmount ของบรรทัด claimable)
+        if (doc.Lines == null || doc.Lines.Count == 0)
+            doc.Lines = await _db.DocumentLines
+                .Where(l => l.DocumentId == doc.Id).ToListAsync();
+        var vatAmount = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+        if (vatAmount <= 0) return false;
+
+        var claimableAcc = await FindAccountAsync(companyId, "11610")
+            ?? await FindAccountAsync(companyId, "116");
+        var undueAcc = await FindAccountAsync(companyId, "11640")
+            ?? await FindAccountAsync(companyId, "11630");
+        if (claimableAcc == null || undueAcc == null) return false;
+
+        var now = DateTime.UtcNow;
+        var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+        var period = await ResolveFiscalPeriodAsync(companyId, now);
+        var je = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = entryNumber,
+            EntryDate = now,
+            JournalType = JournalType.General,
+            Description = $"ภาษีซื้อถึงกำหนด (ใบกำกับครบ §86/4) - {doc.DocumentNumber}",
+            Reference = doc.DocumentNumber,
+            Status = JournalEntryStatus.Posted,
+            TotalDebit = vatAmount,
+            TotalCredit = vatAmount,
+            CreatedBy = actor,
+            IsAutoGenerated = true,
+            SourceDocumentId = doc.Id,
+            FiscalPeriodId = period?.Id,
+            ProjectId = doc.ProjectId,
+        };
+        _db.JournalEntries.Add(je);
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = claimableAcc.Id,
+            DebitAmount = vatAmount, CreditAmount = 0,
+            Description = "ภาษีซื้อ (เคลม ภ.พ.30 ได้แล้ว)", LineOrder = 1,
+        });
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = undueAcc.Id,
+            DebitAmount = 0, CreditAmount = vatAmount,
+            Description = "กลับรายการภาษีซื้อยังไม่ถึงกำหนด", LineOrder = 2,
+        });
+
+        doc.InputVatBecameClaimableAt = now;
+        // InputVatPostedAsUndue คงไว้ true เป็น historical marker —
+        // ใช้คู่ BecameClaimableAt เพื่อบอก ภ.พ.30 ว่าใช้ period ของ
+        // BecameClaimableAt (ไม่ใช่ DocumentDate) เป็น tax point
+        return true;
+    }
+
+    private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)
+        => await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId && p.StartDate <= date && p.EndDate >= date);
+
     /// <summary>
     /// บันทึกบัญชีอัตโนมัติเมื่ออนุมัติเอกสาร — สร้าง JournalEntry + Lines โดยตรงผ่าน DbContext
     /// (อยู่ภายใน transaction เดียวกับ ApproveDocumentAsync เพื่อความ atomic ตามหลักบัญชี)
@@ -4158,15 +4321,22 @@ public class DocumentService : IDocumentService
                 }
             }
 
-            // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30 — เฉพาะส่วนที่
-            // เคลมได้เท่านั้น (line.IsVatClaimable=true).
+            // Dr: ภาษีซื้อ — บัญชีปลายทางขึ้นกับ completeness §86/4 + override:
+            //   1) มี override → ใช้ user-pick (เช่น 51000 ต้นทุนขาย ตาม §82/5)
+            //   2) ใบกำกับครบ §86/4 → 11610 "ภาษีซื้อ ภ.พ.30" (เคลมได้ทันที)
+            //   3) ใบกำกับยังไม่ครบ → 11640 "ภาษีซื้อยังไม่ถึงกำหนด" (§82/3 รอ
+            //      ใบครบ; CompleteSupplierTaxInvoiceAsync จะ gen adjusting JE 11640→11610
+            //      ตอน user มาเติมข้อมูลครบ + filter ภ.พ.30 ใช้ BecameClaimableAt)
             var claimableVatPi = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
             if (claimableVatPi > 0)
             {
-                var vatInputAccount = await FindAccountAsync(companyId, "116")
-                    ?? throw new InvalidOperationException("ไม่พบบัญชีภาษีซื้อ (116) ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่มี VAT");
-                if (vatInputAccount != null)
-                    AddLine(vatInputAccount.Id, claimableVatPi, 0, "ภาษีซื้อ (เคลมได้)");
+                var (vatInputAccount, postedAsUndue) = await ResolveInputVatAccountAsync(companyId, doc);
+                AddLine(vatInputAccount.Id, claimableVatPi, 0,
+                    postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
+                                  : (doc.InputVatAccountCodeOverride != null
+                                        ? $"VAT → {vatInputAccount.AccountCode} {vatInputAccount.AccountName} (override)"
+                                        : "ภาษีซื้อ (เคลมได้)"));
+                doc.InputVatPostedAsUndue = postedAsUndue;
             }
 
             // Cr: payable — role-separated (หลักบัญชีไทย):
@@ -4365,9 +4535,14 @@ public class DocumentService : IDocumentService
                 var claimableVatPv = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
                 if (claimableVatPv > 0)
                 {
-                    var vatInputAccount = await FindAccountAsync(companyId, "116");
-                    if (vatInputAccount != null)
-                        AddLine(vatInputAccount.Id, claimableVatPv, 0, "ภาษีซื้อ (เคลมได้)");
+                    // เหมือน PI — เลือก 11610/11640/override ตาม completeness §86/4
+                    var (vatInputAccount, postedAsUndue) = await ResolveInputVatAccountAsync(companyId, doc);
+                    AddLine(vatInputAccount.Id, claimableVatPv, 0,
+                        postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
+                                      : (doc.InputVatAccountCodeOverride != null
+                                            ? $"VAT → {vatInputAccount.AccountCode} {vatInputAccount.AccountName} (override)"
+                                            : "ภาษีซื้อ (เคลมได้)"));
+                    doc.InputVatPostedAsUndue = postedAsUndue;
                 }
 
                 // Credit side depends on the settlement basis:
@@ -4786,7 +4961,10 @@ public class DocumentService : IDocumentService
         ProjectCostBookedAmount: pceAmount,
         BookedProjects: bookedProjects,
         LifecycleStatus: lifecycle,
-        LifecycleReason: reason);
+        LifecycleReason: reason,
+        InputVatPostedAsUndue: d.InputVatPostedAsUndue,
+        InputVatBecameClaimableAt: d.InputVatBecameClaimableAt,
+        InputVatAccountCodeOverride: d.InputVatAccountCodeOverride);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

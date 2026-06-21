@@ -125,6 +125,16 @@ public record UpdateDocumentRequest(
     // Nullable on update so omitting it preserves the stored value.
     bool? PricesIncludeVat = null);
 
+/// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
+/// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
+/// InputVatAccountCodeOverride: ตั้ง "" (empty) เพื่อล้าง override กลับ default;
+/// null = ไม่แตะ; ค่าอื่น = pin ผัง VAT ปลายทางใหม่.</summary>
+public record CompleteSupplierTaxInvoiceRequest(
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    string? SupplierBranchCode = null,
+    string? InputVatAccountCodeOverride = null);
+
 public record DocumentResponse(
     Guid Id,
     string DocumentNumber,
@@ -247,7 +257,17 @@ public record DocumentResponse(
     // Short Thai phrase explaining the lifecycle state in context, e.g.
     // "✓ จ่ายแล้ว", "✓ แปลงเป็น PI-001", "◐ แปลงไป 60%", "× ยกเลิก".
     // Picked up directly by the badge tooltip + list column.
-    string? LifecycleReason = null);
+    string? LifecycleReason = null,
+    // ===== Undue Input VAT (§82/3) =====
+    // True เมื่อตอน approve ใบกำกับยังไม่ครบ §86/4 → VAT ลง 11640 "ภาษีซื้อ
+    // ยังไม่ถึงกำหนด" แทน 11610. UI โชว์ป้าย "⏳ ภาษีซื้อรอใบกำกับครบ" + ปุ่ม
+    // "เติมข้อมูลใบกำกับ" (เรียก CompleteSupplierTaxInvoiceAsync).
+    bool InputVatPostedAsUndue = false,
+    // เมื่อ != null = ระบบ reclassify 11640→11610 แล้ว (ใบกำกับครบ) ณ วันนี้ —
+    // ภ.พ.30 ใช้เดือนนี้เป็น tax point. null + InputVatPostedAsUndue=true =
+    // ยังค้าง 11640 รอเติมข้อมูล.
+    DateTime? InputVatBecameClaimableAt = null,
+    string? InputVatAccountCodeOverride = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,

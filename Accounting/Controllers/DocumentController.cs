@@ -179,6 +179,25 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result));
     }
 
+    /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — สำหรับเอกสารที่ตอน approve
+    /// ใบกำกับยังไม่ครบ §86/4 จึงค้างภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด".
+    /// เมื่อข้อมูลครบ ระบบ gen adjusting JE 11640→11610 อัตโนมัติ (§82/3).</summary>
+    [HttpPost("{documentId:guid}/complete-tax-invoice")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> CompleteSupplierTaxInvoice(
+        Guid companyId, Guid documentId, [FromBody] CompleteSupplierTaxInvoiceRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // ต้องมีสิทธิ์แก้เอกสารฝั่งซื้อ (เหมือน update)
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์แก้ไขเอกสาร {docType} (ต้องการ Document.Purchase.Create)");
+        var result = await _documentService.CompleteSupplierTaxInvoiceAsync(
+            companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "อัปเดตใบกำกับภาษีซื้อสำเร็จ"));
+    }
+
     [HttpPost("{documentId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<object>>> ApproveDocument(Guid companyId, Guid documentId, [FromBody] ApproveDocumentRequest? request = null)
     {

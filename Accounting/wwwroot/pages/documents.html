@@ -2058,9 +2058,15 @@
             } else if (d.rdComplianceStatus === 'Warning') {
               rdBadge = `<span title="RD compliance: มีคำเตือน" style="margin-left:4px;color:#d97706;font-size:14px">🛡️</span>`;
             }
+            // Undue input VAT (§82/3) — ภาษีซื้อ post เข้า 11640 รอใบกำกับครบ
+            // ก่อนเคลม ภ.พ.30. โชว์เฉพาะตอนยังไม่ reclassify (becameClaimableAt ว่าง).
+            let undueVatBadge = '';
+            if (d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) {
+              undueVatBadge = `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
+            }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
@@ -2947,6 +2953,21 @@
               ${d.conversionStatus && d.conversionStatus !== 'None' ? `<div><div class="text-xs text-gray-500">สถานะการแปลง</div><div class="font-medium" style="color:${d.conversionStatus === 'Full' ? '#15803d' : '#92400e'}">${d.conversionStatus === 'Full' ? '✓ แปลงครบ' : `◐ แปลง ${(d.conversionCompletionPercent || 0).toFixed(0)}%`}</div></div>` : ''}
               ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
             </div>
+            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) ? `
+              <div style="margin-bottom:12px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
+                <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:4px">⏳ ภาษีซื้อยังไม่ถึงกำหนด (พักไว้ที่บัญชี 11640)</div>
+                <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เติมเลขที่ + วันที่ + สาขาให้ครบ ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+                  <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เช่น INV-2026-0042"></div>
+                  <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
+                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || '')}" placeholder="00000" maxlength="5"></div>
+                </div>
+                <button class="btn btn-sm btn-primary" onclick="Page.completeTaxInvoice('${d.id}')">บันทึก + ย้ายเข้าภาษีซื้อ ภ.พ.30</button>
+              </div>` : ''}
+            ${(d.inputVatPostedAsUndue && d.inputVatBecameClaimableAt) ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;font-size:12px;color:#15803d">
+                ✓ ภาษีซื้อถึงกำหนดแล้ว — ย้ายจาก 11640 เข้า "ภาษีซื้อ ภ.พ.30" (11610) เมื่อ ${Layout.date(d.inputVatBecameClaimableAt)} (เข้ารายงานภาษีซื้อเดือนนั้น)
+              </div>` : ''}
             ${(d.convertedToDocuments && d.convertedToDocuments.length) ? `
               <div style="margin-bottom:12px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
                 <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:6px">📄 เอกสารต่อเนื่อง (ออกต่อจากใบนี้)</div>
@@ -3394,6 +3415,24 @@
           this.load();
           setTimeout(() => this.edit(j.data.newDocumentId), 300);
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async completeTaxInvoice(id) {
+        // เติมใบกำกับภาษีซื้อหลังอนุมัติ → backend ย้าย 11640 → 11610 (§82/3)
+        const inv = document.getElementById('ctiInvoiceNo')?.value.trim() || '';
+        const dateRaw = document.getElementById('ctiInvoiceDate')?.value || '';
+        const branch = document.getElementById('ctiBranchCode')?.value.trim() || '';
+        if (!inv || !dateRaw) { Layout.toast('กรุณากรอกเลขที่และวันที่ใบกำกับ', 'error'); return; }
+        const body = {
+          supplierInvoiceNumber: inv,
+          supplierTaxInvoiceDate: new Date(dateRaw).toISOString(),
+          supplierBranchCode: branch || null
+        };
+        try {
+          await API.post(`/api/companies/${Layout.getCompanyId()}/documents/${id}/complete-tax-invoice`, body);
+          Layout.closeModal('detailModal');
+          Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 แล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
       async voidDoc(id) {
         const api = Layout.api(); if (!api) return;

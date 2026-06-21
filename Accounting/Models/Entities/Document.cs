@@ -39,6 +39,26 @@ public class Document : TenantEntity
     /// Contact.BranchCode ตอน export (back-compat กับเอกสารเก่า).</summary>
     public string? SupplierBranchCode { get; set; }
 
+    /// <summary>True เมื่อ approve เอกสารแล้ว ใบกำกับภาษียัง §86/4 ไม่ครบ →
+    /// VAT ถูก post เข้า 11640 "ภาษีซื้อยังไม่ถึงกำหนด" แทน 11610 "ภาษีซื้อ ภ.พ.30"
+    /// (ป.รัษฎากร §82/3 — เครดิตได้เมื่อใบกำกับครบ). พอ user มาแก้ให้ครบ
+    /// ระบบจะออก adjusting JE: Dr 11610 / Cr 11640, set
+    /// InputVatBecameClaimableAt = now → InputVatPostedAsUndue ยังคง true เป็น
+    /// historical marker, แต่ ภ.พ.30 จะ include ในเดือนของ BecameClaimableAt
+    /// (ไม่ใช่ DocumentDate) เพื่อ match วันที่ JE ที่ลงจริง.</summary>
+    public bool InputVatPostedAsUndue { get; set; }
+
+    /// <summary>วันที่ระบบ generate adjusting JE ย้าย VAT 11640 → 11610.
+    /// Null = ยังไม่ครบ หรือไม่เคย suspend. ใช้เป็น tax-point สำหรับ ภ.พ.30
+    /// เมื่อ InputVatPostedAsUndue = true (เพื่อให้ตรงกับ JE จริง).</summary>
+    public DateTime? InputVatBecameClaimableAt { get; set; }
+
+    /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
+    /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
+    /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense
+    /// เต็มจำนวน. AccountCode (ไม่ใช่ Id) เพื่อ portable ระหว่าง tenants.</summary>
+    public string? InputVatAccountCodeOverride { get; set; }
+
     /// <summary>Credit term in days from the document date — used to
     /// auto-fill DueDate when not explicit, and to roll DSO / DPO
     /// reports. Defaulted from Contact.PaymentTermDays on create when

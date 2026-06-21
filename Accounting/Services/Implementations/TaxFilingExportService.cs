@@ -256,16 +256,39 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && d.VatAmount > 0)
             .OrderBy(d => d.DocumentDate).ToListAsync();
 
-        var purchaseDocs = await _db.Documents
+        // ภาษีซื้อเข้า ภ.พ.30 ตาม "tax point" ไม่ใช่ DocumentDate เสมอ (§82/3):
+        //   • เอกสารปกติ (ใบกำกับครบตั้งแต่ approve) → tax point = DocumentDate
+        //   • เอกสารที่ตอน approve ใบไม่ครบ → VAT ค้าง 11640 "ยังไม่ถึงกำหนด"
+        //     เคลมไม่ได้จนกว่าใบครบ → tax point = InputVatBecameClaimableAt
+        //     (เดือนที่ระบบ reclassify 11640→11610). ยังไม่ครบ (BecameClaimableAt
+        //     == null) → ไม่เข้ารายงานเลย — ห้ามเคลมภาษีซื้อจากใบที่ไม่สมบูรณ์.
+        var commonPurchase = _db.Documents
             .Include(d => d.Lines).Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
                 && (d.DocumentType == DocumentType.PurchaseInvoice
                     || d.DocumentType == DocumentType.Expense
                     || d.DocumentType == DocumentType.CertificateInLieu)
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.VatAmount > 0)
-            .OrderBy(d => d.DocumentDate).ToListAsync();
+                && d.VatAmount > 0);
+
+        // เอกสารปกติ: ไม่เคยค้าง 11640 → คัดตาม DocumentDate
+        var normalPurchase = await commonPurchase
+            .Where(d => !d.InputVatPostedAsUndue
+                && d.DocumentDate >= startDate && d.DocumentDate <= endDate)
+            .ToListAsync();
+
+        // เอกสารที่เคยค้าง 11640 แล้ว reclassify แล้ว → คัดตามเดือนที่ถึงกำหนด
+        var reclassifiedPurchase = await commonPurchase
+            .Where(d => d.InputVatPostedAsUndue
+                && d.InputVatBecameClaimableAt != null
+                && d.InputVatBecameClaimableAt >= startDate
+                && d.InputVatBecameClaimableAt <= endDate)
+            .ToListAsync();
+
+        // tax point สำหรับ sort/แสดงวันที่: BecameClaimableAt ถ้ามี, ไม่งั้น DocumentDate
+        var purchaseDocs = normalPurchase.Concat(reclassifiedPurchase)
+            .OrderBy(d => d.InputVatBecameClaimableAt ?? d.DocumentDate)
+            .ToList();
 
         decimal totalOutputBase = 0, totalOutputVat = 0, totalInputBase = 0, totalInputVat = 0;
 
@@ -290,8 +313,11 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var doc in purchaseDocs)
         {
             var b = doc.SubTotal - doc.DiscountAmount;
-            var d = $"{doc.DocumentDate.Day:D2}/{doc.DocumentDate.Month:D2}/{thaiYear}";
-            purchase.AppendLine($"{p1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
+            // วันที่ในรายงาน = tax point: ใบที่ reclassify จาก 11640 แสดงวันที่
+            // ถึงกำหนด (เดือนที่เคลมได้จริง) ไม่ใช่ DocumentDate เดิม.
+            var taxPoint = doc.InputVatBecameClaimableAt ?? doc.DocumentDate;
+            var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
+            purchase.AppendLine($"{p1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.SupplierBranchCode ?? doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
             totalInputBase += b; totalInputVat += doc.VatAmount;
         }
 

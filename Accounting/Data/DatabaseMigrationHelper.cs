@@ -1121,6 +1121,20 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "AgingLastEvaluatedAt" timestamp with time zone NULL;
             """,
+            // Undue Input VAT (§82/3) — PV/PurchaseInvoice ที่ใบกำกับยังไม่ครบ §86/4
+            // → VAT post เข้า 11640 ก่อน, รอ user มาแก้ครบแล้ว gen adjusting JE
+            // Dr 11610 / Cr 11640. BecameClaimableAt = tax-point จริงสำหรับ ภ.พ.30.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatPostedAsUndue" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatBecameClaimableAt" timestamp with time zone NULL;
+            """,
+            // User override ผัง VAT ปลายทาง (เช่น "51000" = ลงต้นทุนขายแทน)
+            // — ใช้ AccountCode (string) เพื่อ portable, validator แปลงเป็น Id ตอน post
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatAccountCodeOverride" varchar(20) NULL;
+            """,
 
             // OpeningBalances — per-period per-account opening figures
             """
