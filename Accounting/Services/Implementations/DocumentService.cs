@@ -1199,6 +1199,55 @@ public class DocumentService : IDocumentService
         return list.ToList();
     }
 
+    public async Task<SuggestPvAccountingResponse> SuggestPaymentVoucherAccountingAsync(
+        Guid companyId, SuggestPvAccountingRequest request, CancellationToken ct = default)
+    {
+        // AI ปิดอยู่/inject ไม่ได้ → คืนผลว่าง (เคารพ kill-switch กฎเหล็ก #1)
+        if (_aiAugmenter == null || request.Lines.Count == 0)
+            return new SuggestPvAccountingResponse(
+                request.Lines.Select(l => new SuggestPvAccountingLineResult(
+                    l.TempId, l.CurrentAccountCode, null,
+                    Array.Empty<string>(), null, false, null)).ToList(),
+                Array.Empty<string>(), UsedAi: false);
+
+        // map tempId → temp Guid (augmenter signature ใช้ LineId เป็น Guid)
+        var tempMap = request.Lines.ToDictionary(_ => Guid.NewGuid(), l => l);
+        var lineInputs = tempMap.Select(kv =>
+            (LineId: kv.Key, kv.Value.Description, kv.Value.Amount, kv.Value.CurrentAccountCode)
+        ).ToList();
+
+        var bulk = await _aiAugmenter.SuggestAllPaymentVoucherAccountingAsync(
+            companyId,
+            request.SourceInvoiceId ?? Guid.Empty,
+            request.VendorName, request.VendorTaxId, request.VendorIndustry,
+            lineInputs,
+            string.IsNullOrWhiteSpace(request.Currency) ? "THB" : request.Currency,
+            ct);
+
+        // Validate ผังที่แนะนำว่ามีจริงในผังของบริษัท (anti-hallucination guard
+        // ตามกฎเหล็ก #1) — ถ้าไม่มี ไม่ส่งกลับเป็น answer
+        var allCodes = (await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
+            .Select(a => a.AccountCode).ToListAsync(ct)).ToHashSet();
+
+        var results = tempMap.Select(kv =>
+        {
+            var line = kv.Value;
+            if (!bulk.ByLineId.TryGetValue(kv.Key, out var sugg))
+                return new SuggestPvAccountingLineResult(
+                    line.TempId, line.CurrentAccountCode, null,
+                    Array.Empty<string>(), null, false, null);
+            var ans = !string.IsNullOrWhiteSpace(sugg.Answer) && allCodes.Contains(sugg.Answer!)
+                ? sugg.Answer
+                : line.CurrentAccountCode;
+            return new SuggestPvAccountingLineResult(
+                line.TempId, ans, sugg.Confidence,
+                sugg.Alternatives, sugg.Reasoning, sugg.UsedAi, sugg.FeedbackId);
+        }).ToList();
+
+        return new SuggestPvAccountingResponse(results, bulk.CrossLineObservations, bulk.UsedAi);
+    }
+
     public async Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId)
     {
         // เอกสารที่ VAT ค้าง 11640 รอใบกำกับครบ (ยังไม่ reclassify)

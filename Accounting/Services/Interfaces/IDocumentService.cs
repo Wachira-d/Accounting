@@ -32,6 +32,14 @@ public interface IDocumentService
     /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ
     /// dashboard ภาษีซื้อยังไม่ถึงกำหนด) + 6-month aging §82/3.</summary>
     Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId);
+    /// <summary>ถาม AI ให้แนะนำผังบัญชี GL สำหรับทุกบรรทัดของใบสำคัญจ่าย (PV)
+    /// ที่กำลังสร้างจากใบกำกับภาษีซื้อต้นทาง — student-first ผ่าน
+    /// GlAccountDistillationModel + teacher fallback ผ่าน orchestrator ตามกฎ
+    /// เหล็ก #1 (Distillation Mandate). มี anti-hallucination guard: ผังที่แนะนำ
+    /// ต้องมีจริงใน CoA ของบริษัท. FeedbackId ส่งกลับเพื่อให้ frontend บันทึก
+    /// user choice ภายหลัง (RecordUserChoice).</summary>
+    Task<SuggestPvAccountingResponse> SuggestPaymentVoucherAccountingAsync(
+        Guid companyId, SuggestPvAccountingRequest request, CancellationToken ct = default);
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy);
     /// <summary>Approve with explicit acknowledge-warnings flag. When the
     /// pre-approval check surfaces soft warnings AND acknowledgeWarnings is

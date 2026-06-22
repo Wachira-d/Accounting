@@ -157,6 +157,40 @@ public record RealizeDepositRequest(
 
 /// <summary>สรุปเงินมัดจำคงค้างสำหรับหน้าจัดการมัดจำ (ขึ้นงบดุลเป็นหนี้สิน
 /// ไม่ใช่เจ้าหนี้การค้า). OutstandingAmount = BaseAmount − RealizedAmount.</summary>
+/// <summary>ขอ AI แนะนำผังบัญชีให้ทุกบรรทัดของใบสำคัญจ่ายที่กำลังสร้างจาก
+/// ใบกำกับภาษีซื้อต้นทาง. SourceInvoiceId = ใบ PI/TaxInvoice ต้นทาง (ถ้ามี).
+/// Lines = บรรทัด PV draft ที่ user กรอกแล้ว (description + amount + ผังปัจจุบัน
+/// ถ้ามี). ส่งเป็น tempId ฝั่ง client เพื่อ map ผลกลับ.</summary>
+public record SuggestPvAccountingRequest(
+    Guid? SourceInvoiceId,
+    string? VendorName,
+    string? VendorTaxId,
+    string? VendorIndustry,
+    string Currency,
+    IReadOnlyList<SuggestPvAccountingLine> Lines);
+
+public record SuggestPvAccountingLine(
+    string TempId,
+    string Description,
+    decimal Amount,
+    string? CurrentAccountCode);
+
+public record SuggestPvAccountingResponse(
+    IReadOnlyList<SuggestPvAccountingLineResult> Lines,
+    IReadOnlyList<string> CrossLineObservations,
+    bool UsedAi);
+
+/// <summary>ผลแนะนำต่อบรรทัด — AccountCode = ผังบัญชีที่แนะนำ; Confidence 0..1;
+/// FeedbackId เก็บไว้ใส่บน DocumentLine ตอน save → ใช้บันทึก user choice ภายหลัง.</summary>
+public record SuggestPvAccountingLineResult(
+    string TempId,
+    string? AccountCode,
+    decimal? Confidence,
+    IReadOnlyList<string> Alternatives,
+    string? Reasoning,
+    bool UsedAi,
+    Guid? FeedbackId);
+
 public record DepositSummary(
     Guid Id,
     string DocumentNumber,

@@ -524,6 +524,9 @@
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
+                <button class="btn btn-sm btn-secondary" id="btnAiSuggestAcc" style="display:none"
+                  title="ให้ AI ช่วยเลือกผังบัญชี GL ตามรายการที่กรอก — local model เรียนรู้ต่อทุกครั้งที่ user ยืนยัน/แก้"
+                  onclick="Page.aiSuggestAccounting()">🤖 AI แนะนำผังบัญชี</button>
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
               </div>
             </div>
@@ -555,6 +558,8 @@
                 </div>
               </div>
             </div>
+            <!-- AI accounting suggestions banner — populated by aiSuggestAccounting() -->
+            <div id="aiAccSuggestBanner" style="display:none;margin-top:10px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px"></div>
             <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
               <div id="linesBody"></div>
               <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:8px">
@@ -1514,6 +1519,78 @@
         const panel = document.getElementById('depositOptions');
         if (panel) panel.style.display = on ? 'block' : 'none';
       },
+      /**
+       * ขอ AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด — student-first (local model)
+       * ผ่าน orchestrator ตามกฎเหล็ก #1 Distillation Mandate. ระบบ validate
+       * ผังที่แนะนำว่ามีจริงใน CoA (anti-hallucination guard) ก่อนแสดงผล.
+       *
+       * UX: ไม่ apply อัตโนมัติ — แสดงเป็น banner แนะนำเหนือ lines table ให้
+       * ผู้ใช้ตัดสินใจเอง (สอดคล้องกฎเหล็ก #1: ปุ่ม "ยืนยัน" เด่นเป็นหลัก).
+       */
+      async aiSuggestAccounting() {
+        const banner = document.getElementById('aiAccSuggestBanner');
+        if (!banner) return;
+        const lines = [];
+        document.querySelectorAll('#linesBody .line-card').forEach((row, idx) => {
+          const desc = row.querySelector('[data-f="desc"]')?.value.trim();
+          const qty = parseFloat(row.querySelector('[data-f="qty"]')?.value || '0');
+          const price = parseFloat(row.querySelector('[data-f="price"]')?.value || '0');
+          const disc = parseFloat(row.querySelector('[data-f="disc"]')?.value || '0');
+          const amount = qty * price * (1 - disc / 100);
+          if (desc && amount > 0) lines.push({ tempId: 'line-' + idx, description: desc, amount });
+        });
+        if (lines.length === 0) {
+          Layout.toast('กรุณากรอกรายการที่มีรายละเอียดและจำนวนเงินก่อน', 'error');
+          return;
+        }
+        const contactId = document.getElementById('fContactId')?.value || null;
+        let contactName = null, contactTaxId = null;
+        if (contactId) {
+          try {
+            const c = await Layout.api().getContact(contactId);
+            contactName = c?.data?.name || null;
+            contactTaxId = c?.data?.taxId || null;
+          } catch (_) { /* ปล่อยว่าง — AI ยังถามได้แต่ไม่มี vendor context */ }
+        }
+        const sourceId = document.getElementById('fTaxInvSourceDoc')?.value || null;
+
+        banner.style.display = 'block';
+        banner.innerHTML = '<div style="color:#1e40af;font-size:13px">🤖 กำลังถาม AI…</div>';
+        try {
+          const res = await API.post(
+            `/api/companies/${Layout.getCompanyId()}/document/ai-suggest-pv-accounting`,
+            {
+              sourceInvoiceId: sourceId || null,
+              vendorName: contactName,
+              vendorTaxId: contactTaxId,
+              vendorIndustry: null,
+              currency: 'THB',
+              lines: lines
+            });
+          const data = res.data || {};
+          const items = data.lines || [];
+          const used = data.usedAi ? '🤖 AI' : '⚙️ ระบบ (local model)';
+          const observe = (data.crossLineObservations || []).filter(Boolean);
+          let html = `<div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:8px">${used} แนะนำผังบัญชี GL — ตรวจสอบและนำไปใส่เองตามต้องการ</div>`;
+          html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+          html += '<thead><tr style="text-align:left;border-bottom:1px solid #93c5fd"><th style="padding:4px">บรรทัด</th><th style="padding:4px">รายละเอียด</th><th style="padding:4px">ผังที่แนะนำ</th><th style="padding:4px;text-align:right">มั่นใจ</th><th style="padding:4px">เหตุผล</th></tr></thead><tbody>';
+          items.forEach((it, idx) => {
+            const ln = lines.find(l => l.tempId === it.tempId);
+            const conf = it.confidence != null ? Math.round(it.confidence * 100) + '%' : '—';
+            const color = it.confidence >= 0.85 ? '#15803d' : it.confidence >= 0.70 ? '#ca8a04' : '#dc2626';
+            const code = it.accountCode || '—';
+            html += `<tr style="border-bottom:1px solid #dbeafe"><td style="padding:4px">${idx + 1}</td><td style="padding:4px">${Layout.esc(ln?.description || '')}</td><td style="padding:4px;font-weight:600">${Layout.esc(code)}</td><td style="padding:4px;text-align:right;color:${color};font-weight:600">${conf}</td><td style="padding:4px;color:#475569">${Layout.esc(it.reasoning || '')}</td></tr>`;
+          });
+          html += '</tbody></table>';
+          if (observe.length) {
+            html += `<div style="margin-top:6px;font-size:11px;color:#475569">💡 ${observe.map(Layout.esc).join(' · ')}</div>`;
+          }
+          html += '<div style="margin-top:8px;font-size:11px;color:#64748b">หมายเหตุ: AI แนะนำตามรูปแบบที่เคยใช้ — ผู้ใช้ตัดสินใจขั้นสุดท้าย ทุกครั้งที่แก้ระบบจะเรียนรู้ต่อ</div>';
+          banner.innerHTML = html;
+        } catch (e) {
+          banner.innerHTML = `<div style="color:#dc2626;font-size:13px">ขอแนะนำไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
+      },
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
@@ -1566,6 +1643,14 @@
         const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
         const paidSection = document.getElementById('paidOnIssueSection');
         if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // AI แนะนำผังบัญชี GL — เฉพาะเอกสารฝั่งซื้อ (Expense / PI / PV) ที่มี
+        // line description ให้ AI จับคู่กับ chart of accounts
+        const aiAccBtn = document.getElementById('btnAiSuggestAcc');
+        if (aiAccBtn) {
+          const purchaseLike = ['Expense', 'PurchaseInvoice', 'PaymentVoucher', 'CertificateInLieu'];
+          aiAccBtn.style.display = purchaseLike.includes(docType) ? '' : 'none';
+        }
+
         // เงินมัดจำ/รับล่วงหน้า — แสดงเฉพาะใบเสร็จ/ใบสำคัญรับ (รับเงินก่อนส่งมอบ)
         const depositWrap = document.getElementById('fIsDepositWrap');
         if (depositWrap) {

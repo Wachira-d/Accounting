@@ -38,13 +38,19 @@ public class IntegrationService : IIntegrationService
     private readonly IWithholdingTaxCertService? _whtCertService;
     private readonly ISecretProtector _secrets;
     private readonly Accounting.Services.Interfaces.IDbdLookupService? _dbd;
+    // AI fallback สำหรับเลือกผังบัญชี GL — เมื่อระบบภายนอกส่ง line.AccountCode
+    // มาว่าง/หาไม่เจอใน chart, เรียก local distillation model ก่อน (student-first)
+    // แล้ว AI teacher fallback ผ่าน orchestrator. ใช้ feature key GlAccountSuggestion
+    // ตัวเดียวกับ OCR → cross-channel learning (feedback ฝั่ง OCR ช่วย integration).
+    private readonly Accounting.Services.Ai.IOcrAiAugmenter? _glAi;
 
     public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
         ISecretProtector secrets,
         IDocumentService? documentService = null,
         IWithholdingTaxCertService? whtCertService = null,
-        Accounting.Services.Interfaces.IDbdLookupService? dbd = null)
+        Accounting.Services.Interfaces.IDbdLookupService? dbd = null,
+        Accounting.Services.Ai.IOcrAiAugmenter? glAi = null)
     {
         _db = db;
         _settingsService = settingsService;
@@ -54,6 +60,7 @@ public class IntegrationService : IIntegrationService
         _documentService = documentService;
         _whtCertService = whtCertService;
         _dbd = dbd;
+        _glAi = glAi;
     }
 
     // ===== Helper: Atomic Journal Entry Number =====
@@ -508,6 +515,7 @@ public class IntegrationService : IIntegrationService
                 .Select(l => l.AccountCode!)
                 .Distinct().ToList();
             var accountLookup = await BatchLoadAccountsByCodesAsync(companyId, accountCodesNeeded);
+            var aiFallbackHits = 0;
 
             for (int i = 0; i < request.Lines.Count; i++)
             {
@@ -528,6 +536,54 @@ public class IntegrationService : IIntegrationService
                 Guid? accountId = null;
                 if (!string.IsNullOrEmpty(line.AccountCode) && accountLookup.TryGetValue(line.AccountCode, out var acct))
                     accountId = acct.Id;
+
+                // AI fallback: AccountCode ไม่ระบุ หรือชี้บัญชีที่ไม่อยู่ในผัง
+                // → ถาม student-first GL distillation model ผ่าน orchestrator.
+                // High-confidence (≥0.70) + ผังที่แนะนำมีจริง → ใช้; ต่ำกว่านั้น
+                // ปล่อย null ให้ผู้ใช้แก้ตอนจัดการเอกสาร (ไม่ block import).
+                if (accountId == null && _glAi != null && lineNet > 0)
+                {
+                    try
+                    {
+                        var sugg = await _glAi.SuggestGlAccountAsync(
+                            companyId: companyId,
+                            scanResultId: Guid.Empty,   // ไม่ใช่ OCR — tag ผ่าน description
+                            vendorName: request.CustomerName,
+                            vendorTaxId: request.CustomerTaxId,
+                            vendorIndustry: null,
+                            lineDescription: line.ItemName ?? line.ItemCode ?? "",
+                            amount: lineNet,
+                            currency: "THB",
+                            localBestAccountCode: line.AccountCode,
+                            localConfidence: 0m);
+                        if (!string.IsNullOrWhiteSpace(sugg.Answer)
+                            && (sugg.Confidence ?? 0m) >= 0.70m
+                            && accountLookup.TryGetValue(sugg.Answer, out var aiAcct))
+                        {
+                            accountId = aiAcct.Id;
+                            aiFallbackHits++;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(sugg.Answer)
+                                 && (sugg.Confidence ?? 0m) >= 0.70m)
+                        {
+                            // AI แนะนำผังที่ยังไม่ได้ batch-load → load เพิ่มแล้วใช้
+                            var resolved = await _db.ChartOfAccounts.AsNoTracking()
+                                .FirstOrDefaultAsync(a => a.CompanyId == companyId
+                                    && a.AccountCode == sugg.Answer && a.IsActive);
+                            if (resolved != null)
+                            {
+                                accountLookup[sugg.Answer] = resolved;
+                                accountId = resolved.Id;
+                                aiFallbackHits++;
+                            }
+                        }
+                    }
+                    catch (Exception aiEx)
+                    {
+                        // AI ล้มเหลว → ปล่อย null ตามเดิม (ไม่ block import)
+                        _logger.LogWarning(aiEx, "Integration GL AI fallback failed (line {Index})", i);
+                    }
+                }
 
                 lines.Add(new DocumentLine
                 {
@@ -581,6 +637,14 @@ public class IntegrationService : IIntegrationService
             log.CreatedContactId = contact.Id;
             log.CreatedJournalEntryId = journalEntryId;
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            if (aiFallbackHits > 0)
+                log.ResponseJson = JsonSerializer.Serialize(new
+                {
+                    documentId = document.Id,
+                    aiGlFallbackUsed = true,
+                    aiGlFallbackLines = aiFallbackHits,
+                    totalLines = request.Lines.Count
+                });
             await SaveSyncLog(log, integrationId);
 
             return new InboundSyncResponse(true, "Invoice created", document.Id, contact.Id, journalEntryId, null, docNumber);

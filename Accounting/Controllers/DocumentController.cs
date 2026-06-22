@@ -198,6 +198,16 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "อัปเดตใบกำกับภาษีซื้อสำเร็จ"));
     }
 
+    /// <summary>ถาม AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด PV — student-first ผ่าน
+    /// distillation model + teacher fallback ตาม Distillation Mandate.</summary>
+    [HttpPost("ai-suggest-pv-accounting")]
+    public async Task<ActionResult<ApiResponse<SuggestPvAccountingResponse>>> SuggestPvAccounting(
+        Guid companyId, [FromBody] SuggestPvAccountingRequest request, CancellationToken ct)
+    {
+        var result = await _documentService.SuggestPaymentVoucherAccountingAsync(companyId, request, ct);
+        return Ok(new ApiResponse<SuggestPvAccountingResponse>(true, result));
+    }
+
     /// <summary>รายการเอกสารภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 +
     /// 6-month aging (§82/3) สำหรับ dashboard ภาษีซื้อยังไม่ถึงกำหนด.</summary>
     [HttpGet("undue-input-vat")]

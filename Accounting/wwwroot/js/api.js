@@ -190,6 +190,7 @@ const API = {
       getDeposits: (status = '') => API.get(`${base}/document/deposits${status ? `?status=${status}` : ''}`),
       realizeDeposit: (id, body) => API.post(`${base}/document/${id}/realize-deposit`, body),
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
+      suggestPvAccounting: (body) => API.post(`${base}/document/ai-suggest-pv-accounting`, body),
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
       purgeDocument: (id) => API.del(`${base}/document/${id}/purge`),
