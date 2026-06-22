@@ -2790,14 +2790,9 @@
           document.getElementById('fCustomTerms').value = d.customTermsAndConditions || '';
           const fp = document.getElementById('fProject');
           if (fp) fp.value = d.projectId || '';
-          const fpc = document.getElementById('fPaymentChannel');
-          if (fpc) {
-            if (d.bankAccountId) fpc.value = 'bank:' + d.bankAccountId;
-            else if (d.paymentAccountId) fpc.value = 'account:' + d.paymentAccountId;
-            else fpc.value = '';
-          }
-          const fec = document.getElementById('fExpenseCategory');
-          if (fec) fec.value = d.expenseCategoryId || '';
+          // แหล่งเงิน + หมวดค่าใช้จ่าย — hydrate ผ่าน helper ที่ bulletproof
+          // (เพิ่ม option ถ้าหาย + mark userTouched กัน async suggest ทับ)
+          this._hydratePaymentAndCategory(d);
           // CertificateInLieu fields
           if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = d.certificateReason || '';
           if (document.getElementById('fCertifierName')) document.getElementById('fCertifierName').value = d.certifierName || '';
@@ -2882,8 +2877,48 @@
           // the select is disabled in edit mode — useful context for
           // the operator.
           this.onDocTypeChange();
+          // Re-apply แหล่งเงิน + หมวดค่าใช้จ่าย หลัง onDocTypeChange + หลัง
+          // async suggest (setValue→onContactChange) settle — ค่าที่บันทึก
+          // ต้องชนะ suggestion เสมอ
+          this._hydratePaymentAndCategory(d);
+          setTimeout(() => this._hydratePaymentAndCategory(d), 60);
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /** Hydrate "แหล่งเงิน" (fPaymentChannel) + "หมวดค่าใช้จ่าย" (fExpenseCategory)
+       *  จากเอกสารที่บันทึก. bulletproof: เพิ่ม <option> ถ้าค่าที่บันทึกไม่อยู่ใน
+       *  dropdown (เช่น บัญชีถูกซ่อน/ผังเปลี่ยน) + mark userTouched กัน async AI
+       *  suggest ทับ. idempotent — เรียกซ้ำได้. */
+      _hydratePaymentAndCategory(d) {
+        const fpc = document.getElementById('fPaymentChannel');
+        if (fpc) {
+          let want = '';
+          if (d.bankAccountId) want = 'bank:' + d.bankAccountId;
+          else if (d.paymentAccountId) want = 'account:' + d.paymentAccountId;
+          if (want) {
+            if (!Array.from(fpc.options).some(o => o.value === want)) {
+              // option หาย (บัญชีถูกซ่อน) → เพิ่มกลับเพื่อให้ค่าที่บันทึกแสดง
+              const o = document.createElement('option');
+              o.value = want;
+              o.textContent = (d.bankAccountName || d.paymentAccountName || want);
+              fpc.appendChild(o);
+            }
+            fpc.value = want;
+            fpc.dataset.userTouched = '1';   // กัน suggestPaymentChannel ทับ
+            try { this._deriveMethodFromChannel?.(); } catch (_) {}
+          }
+        }
+        const fec = document.getElementById('fExpenseCategory');
+        if (fec && d.expenseCategoryId) {
+          if (!Array.from(fec.options).some(o => o.value === d.expenseCategoryId)) {
+            const o = document.createElement('option');
+            o.value = d.expenseCategoryId;
+            o.textContent = (d.expenseCategoryName || d.expenseCategoryId);
+            fec.appendChild(o);
+          }
+          fec.value = d.expenseCategoryId;
+        }
       },
       // Pull line items from the document's original OCR scan into this empty
       // OCR-created document, then reopen it so the rebuilt lines show.
