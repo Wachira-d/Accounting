@@ -92,6 +92,18 @@ public class Document : TenantEntity
     /// ภ.พ.30 จนกว่าจะเกิด tax point แล้ว reclassify 21913 → 21911.</para></summary>
     public bool DepositOutputVatDeferred { get; set; }
 
+    /// <summary>ยอดมัดจำ (รวม VAT) ที่คืนให้ลูกค้าแล้ว (กรณียกเลิกการจอง).
+    /// RefundDepositAsync gen reversal JE + ออกใบลดหนี้กลับ output VAT.
+    /// 0 = ยังไม่คืน.</summary>
+    public decimal DepositRefundedAmount { get; set; }
+    /// <summary>วันที่คืนมัดจำ (null = ยังไม่คืน).</summary>
+    public DateTime? DepositRefundedAt { get; set; }
+    /// <summary>เลขเอกสารอ้างอิงตอนคืน/เหตุผล (เช่น "ยกเลิกงานแต่ง 15/8").</summary>
+    public string? DepositRefundReason { get; set; }
+    /// <summary>เมื่อมัดจำถูกนำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย —
+    /// FK ไปเอกสารนั้น (offset). Null = ยังไม่ถูกนำไปหัก.</summary>
+    public Guid? DepositAppliedToDocumentId { get; set; }
+
     /// <summary>วันที่ภาษีขายมัดจำ (เคส Deferred) ถูกย้าย 21913 → 21911 (tax point
     /// เกิดจริง เช่น ส่งมอบ/ออกใบกำกับ). ใช้เป็น tax point ของ ภ.พ.30 สำหรับ
     /// มัดจำ deferred. Null = ยังไม่เกิด (ยังไม่เข้า ภ.พ.30) หรือเป็นเคส Immediate

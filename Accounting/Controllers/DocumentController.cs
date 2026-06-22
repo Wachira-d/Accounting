@@ -227,6 +227,43 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<DepositSummary>>(true, result));
     }
 
+    /// <summary>สรุปมัดจำคงค้างของลูกค้ารายหนึ่ง (หน้า contact + dropdown ใบแจ้งหนี้).</summary>
+    [HttpGet("contacts/{contactId:guid}/deposit-summary")]
+    public async Task<ActionResult<ApiResponse<ContactDepositSummary>>> GetContactDepositSummary(
+        Guid companyId, Guid contactId)
+    {
+        var result = await _documentService.GetContactDepositSummaryAsync(companyId, contactId);
+        return Ok(new ApiResponse<ContactDepositSummary>(true, result));
+    }
+
+    /// <summary>คืนเงินมัดจำ (ยกเลิกการจอง) — reversal JE + ใบลดหนี้ output VAT.</summary>
+    [HttpPost("{documentId:guid}/refund-deposit")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> RefundDeposit(
+        Guid companyId, Guid documentId, [FromBody] RefundDepositRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์คืนเงินมัดจำ");
+        var result = await _documentService.RefundDepositAsync(companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "คืนเงินมัดจำสำเร็จ"));
+    }
+
+    /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย (offset prepayment).</summary>
+    [HttpPost("{invoiceId:guid}/apply-deposit")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ApplyDeposit(
+        Guid companyId, Guid invoiceId, [FromBody] ApplyDepositRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, invoiceId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์นำมัดจำมาหัก");
+        var result = await _documentService.ApplyDepositToInvoiceAsync(companyId, invoiceId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "นำมัดจำมาหักสำเร็จ"));
+    }
+
     /// <summary>รับรู้รายได้จากเงินมัดจำเมื่อส่งมอบจริง (ตัด ขายรอรับรู้ →
     /// รายได้). รองรับรับรู้บางส่วน.</summary>
     [HttpPost("{documentId:guid}/realize-deposit")]

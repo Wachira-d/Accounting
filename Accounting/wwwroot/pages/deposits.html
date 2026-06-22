@@ -60,6 +60,33 @@
     </div>
   </div>
 
+  <!-- Refund modal -->
+  <div id="refundModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+    <div class="card" style="width:460px;max-width:92vw">
+      <div class="card-header"><h3 class="card-title">คืนเงินมัดจำ (ยกเลิกการจอง)</h3></div>
+      <div style="padding:16px">
+        <div id="refundInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div style="margin-bottom:10px">
+          <label class="text-sm font-medium">จำนวนเงินที่คืน (รวม VAT)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="refundAmount">
+        </div>
+        <div style="margin-bottom:10px">
+          <label class="text-sm font-medium">วันที่คืน</label>
+          <input type="date" class="form-input" id="refundDate">
+        </div>
+        <div style="margin-bottom:14px">
+          <label class="text-sm font-medium">เหตุผล (เช่น ยกเลิกงาน, เลื่อนวัน)</label>
+          <input type="text" class="form-input" id="refundReason" placeholder="เหตุผลการคืนมัดจำ">
+        </div>
+        <div style="font-size:12px;color:#92400e;margin-bottom:14px">⚠️ ระบบจะกลับรายการขายรอรับรู้ + ออกใบลดหนี้ภาษีขายอัตโนมัติ</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="Page.closeRefund()">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.submitRefund()">คืนเงินมัดจำ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/api.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
@@ -149,7 +176,10 @@
                   <td class="text-right ${r.outstandingAmount > 0 ? 'text-danger' : ''}">${Layout.money(r.outstandingAmount)}</td>
                   <td class="text-center">${r.ageDays} วัน</td>
                   <td class="text-center">${this.statusBadge(r.status)}</td>
-                  <td class="text-right">${r.status === 'Realized' ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>`}</td>
+                  <td class="text-right" style="white-space:nowrap">
+                    ${r.status === 'Realized' ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>`}
+                    ${r.outstandingAmount > 0.005 ? `<button class="btn btn-sm btn-ghost" onclick="Page.openRefund('${r.id}')" title="คืนเงินมัดจำ (ยกเลิกการจอง)">คืนมัดจำ</button>` : ''}
+                  </td>
                 </tr>`; }).join('')}</tbody>
             </table>
           </div>`;
@@ -169,6 +199,36 @@
       closeRealize() {
         document.getElementById('realizeModal').style.display = 'none';
         this._realizeId = null;
+      },
+      openRefund(id) {
+        const r = this._rows.find(x => x.id === id);
+        if (!r) return;
+        this._refundId = id;
+        document.getElementById('refundInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (รวม VAT): <b>${Layout.money(r.totalAmount - (r.realizedAmount || 0))}</b>`;
+        document.getElementById('refundAmount').value = (r.totalAmount || 0).toFixed(2);
+        document.getElementById('refundDate').value = Layout.toDateInput(new Date());
+        document.getElementById('refundReason').value = '';
+        document.getElementById('refundModal').style.display = 'flex';
+      },
+      closeRefund() {
+        document.getElementById('refundModal').style.display = 'none';
+        this._refundId = null;
+      },
+      async submitRefund() {
+        const api = Layout.api(); if (!api || !this._refundId) return;
+        const amount = parseFloat(document.getElementById('refundAmount').value);
+        const dateRaw = document.getElementById('refundDate').value;
+        const reason = document.getElementById('refundReason').value.trim();
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่คืน', 'error'); return; }
+        try {
+          await api.refundDeposit(this._refundId, {
+            amount, refundDate: dateRaw ? new Date(dateRaw).toISOString() : null, reason: reason || null
+          });
+          this.closeRefund();
+          Layout.toast('คืนเงินมัดจำสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'คืนเงินไม่สำเร็จ', 'error'); }
       },
       async submitRealize() {
         const api = Layout.api(); if (!api || !this._realizeId) return;

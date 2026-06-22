@@ -164,6 +164,29 @@ public record RealizeDepositRequest(
     string? RevenueAccountCode = null,
     Guid? FinalInvoiceId = null);
 
+/// <summary>คืนเงินมัดจำ (ยกเลิกการจอง) — gen reversal JE: Dr ขายรอรับรู้ +
+/// Dr ภาษีขาย (ใบลดหนี้) / Cr เงินสด. Amount = ยอดรวม VAT ที่จะคืน.</summary>
+public record RefundDepositRequest(
+    decimal Amount,
+    DateTime? RefundDate = null,
+    string? Reason = null);
+
+/// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย (offset). ระบบรับรู้
+/// รายได้จากมัดจำ (Dr ขายรอรับรู้/Cr รายได้) + ลด BalanceDue ของใบสุดท้าย
+/// ตามยอดมัดจำที่จ่ายมาแล้ว (treat เป็น prepayment).</summary>
+public record ApplyDepositRequest(
+    Guid DepositDocumentId,
+    decimal Amount,
+    DateTime? ApplyDate = null);
+
+/// <summary>สรุปมัดจำคงค้างต่อ contact (สำหรับหน้า contact + dropdown ตอน
+/// ออกใบแจ้งหนี้). TotalOutstanding = มัดจำที่ยังไม่รับรู้/ไม่คืน.</summary>
+public record ContactDepositSummary(
+    Guid ContactId,
+    decimal TotalOutstanding,
+    int Count,
+    IReadOnlyList<DepositSummary> Deposits);
+
 /// <summary>สรุปเงินมัดจำคงค้างสำหรับหน้าจัดการมัดจำ (ขึ้นงบดุลเป็นหนี้สิน
 /// ไม่ใช่เจ้าหนี้การค้า). OutstandingAmount = BaseAmount − RealizedAmount.</summary>
 /// <summary>ขอ AI แนะนำผังบัญชีให้ทุกบรรทัดของใบสำคัญจ่ายที่กำลังสร้างจาก

@@ -4202,6 +4202,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "NonDeductibleAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "NonDeductibleRuleJson" text NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "LateReason" text NULL;""",
+            // Deposit lifecycle: refund (ยกเลิกการจอง) + offset เข้าใบสุดท้าย
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundedAt" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundReason" text NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedToDocumentId" uuid NULL;""",
 
             // ===== TaxRuleConfig: configurable PIT brackets + allowances ต่อปี =====
             // Per company × per year. Engine fallback ถ้าไม่มี config → ใช้

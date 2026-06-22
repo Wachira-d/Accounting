@@ -29,6 +29,14 @@ public interface IDocumentService
     /// <summary>รายการเงินมัดจำคงค้าง/ที่รับรู้แล้ว สำหรับหน้าจัดการมัดจำ.
     /// status: "Outstanding" | "Partial" | "Realized" (null = ทั้งหมด).</summary>
     Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);
+    /// <summary>สรุปมัดจำคงค้างของลูกค้ารายหนึ่ง (สำหรับหน้า contact + dropdown
+    /// ตอนออกใบแจ้งหนี้เพื่อนำมัดจำมาหัก).</summary>
+    Task<ContactDepositSummary> GetContactDepositSummaryAsync(Guid companyId, Guid contactId);
+    /// <summary>คืนเงินมัดจำ (ยกเลิกการจอง) — reversal JE + ใบลดหนี้ output VAT.</summary>
+    Task<DocumentResponse> RefundDepositAsync(Guid companyId, Guid documentId, RefundDepositRequest request, string actor);
+    /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย — รับรู้รายได้มัดจำ +
+    /// ลด BalanceDue ของใบ (treat มัดจำเป็น prepayment).</summary>
+    Task<DocumentResponse> ApplyDepositToInvoiceAsync(Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor);
     /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ
     /// dashboard ภาษีซื้อยังไม่ถึงกำหนด) + 6-month aging §82/3.</summary>
     Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId);
