@@ -1900,10 +1900,12 @@
               <div class="review-field">
                 <label>ยอดก่อน VAT</label>
                 <input type="number" class="form-input" id="revSubTotal" step="0.01" value="${scan.extractedSubTotal != null ? scan.extractedSubTotal : ''}">
+                ${fc('SubTotal')}
               </div>
               <div class="review-field">
                 <label>VAT</label>
                 <input type="number" class="form-input" id="revVatAmount" step="0.01" value="${scan.extractedVatAmount != null ? scan.extractedVatAmount : ''}">
+                ${fc('VatAmount')}
               </div>
               <div class="review-field">
                 <label>ยอดรวมทั้งสิ้น</label>
