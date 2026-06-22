@@ -2438,6 +2438,9 @@ public static class DatabaseMigrationHelper
             // Asset type discriminator — broadens the module from PPE-only to
             // cover Intangible / RightOfUse / InvestmentProperty too.
             // Default 1 = Tangible so existing rows behave unchanged.
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "SourceDocumentLineId" uuid NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "NeedsReview" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "AssetType" integer NOT NULL DEFAULT 1;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LeaseTermMonths" integer NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LessorName" varchar(200) NULL;""",

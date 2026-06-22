@@ -31,6 +31,7 @@ public class DocumentService : IDocumentService
     private readonly ISensitivityService? _sensitivity;
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
     private readonly Accounting.Services.Ai.IAiFeedbackRecorder? _feedbackRecorder;
+    private readonly IFixedAssetService? _fixedAssets;
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly IAdvancedArApService? _advancedArAp;
     private readonly IApprovalService? _approval;
@@ -51,8 +52,10 @@ public class DocumentService : IDocumentService
         IEmailScheduleService? emailSchedule = null,
         IAdvancedArApService? advancedArAp = null,
         IApprovalService? approval = null,
-        Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null)
+        Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
+        IFixedAssetService? fixedAssets = null)
     {
+        _fixedAssets = fixedAssets;
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
         _approval = approval;
@@ -1778,6 +1781,11 @@ public class DocumentService : IDocumentService
                 await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
                 await ApplyProjectBillingAsync(companyId, doc, +1);
                 await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
+
+                // บังคับลงทะเบียนสินทรัพย์ — บรรทัดที่ลงผัง PPE (12xxx) ต้องมี
+                // ทะเบียนสินทรัพย์ + ตารางค่าเสื่อม (TFRS บทที่ 10 + §65 ตรี (5)).
+                // auto-create ด้วยค่า default (อายุ/วิธีตามประเภท) NeedsReview=true
+                await AutoRegisterFixedAssetsAsync(companyId, doc, approvedBy);
 
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
@@ -4448,6 +4456,98 @@ public class DocumentService : IDocumentService
 
         doc.NonDeductibleAmount = result.TotalAddBack;
         doc.NonDeductibleRuleJson = result.Findings.Count > 0 ? result.ToJson() : null;
+    }
+
+    /// <summary>บังคับลงทะเบียนสินทรัพย์ถาวร — บรรทัดเอกสารฝั่งซื้อที่ลงผัง PPE
+    /// (12xxx) ต้องมีทะเบียนสินทรัพย์ + ตารางค่าเสื่อม (TFRS บทที่ 10).
+    /// auto-create ด้วยค่า default ตามประเภท (อายุใช้งาน/วิธี/ผังค่าเสื่อม),
+    /// NeedsReview=true ให้ผู้ใช้ตรวจ. dedupe ด้วย SourceDocumentLineId (re-approve
+    /// ไม่สร้างซ้ำ). PostAcquisitionJournalEntry=false เพราะเอกสารลง Dr asset แล้ว.</summary>
+    private async Task AutoRegisterFixedAssetsAsync(Guid companyId, Document doc, string actor)
+    {
+        if (_fixedAssets == null) return;   // service ไม่ inject (เช่น test) → ข้าม
+        if (doc.DocumentType is not (DocumentType.Expense or DocumentType.PurchaseInvoice
+            or DocumentType.PaymentVoucher)) return;
+        if (doc.Lines == null || doc.Lines.Count == 0) return;
+
+        // ผังที่แต่ละบรรทัดลง → code
+        var accIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+        if (accIds.Count == 0) return;
+        var accMap = (await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => accIds.Contains(a.Id))
+            .Select(a => new { a.Id, a.AccountCode }).ToListAsync())
+            .ToDictionary(a => a.Id, a => a.AccountCode);
+
+        // PPE accounts ทั้งบริษัท (code → Id) สำหรับ resolve accum/dep accounts
+        var allPpe = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId
+                && (a.AccountCode.StartsWith("18") || a.AccountCode.StartsWith("56")))
+            .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
+        Guid? CodeToId(string? code) => code == null ? null
+            : allPpe.FirstOrDefault(a => a.AccountCode == code)?.Id;
+
+        foreach (var line in doc.Lines)
+        {
+            if (!line.AccountId.HasValue) continue;
+            if (!accMap.TryGetValue(line.AccountId.Value, out var code)) continue;
+            var cls = Tax.FixedAssetAccountClassifier.Resolve(code);
+            if (cls == null) continue;   // ไม่ใช่ PPE → ข้าม
+
+            // dedupe — เคยลงทะเบียนจากบรรทัดนี้แล้ว (re-approve)
+            var dup = await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId
+                && a.SourceDocumentLineId == line.Id);
+            if (dup) continue;
+
+            var cost = line.Amount;   // ฐานไม่รวม VAT (VAT claimable แยก, non-claim รวมในต้นทุนแล้วผ่าน expense)
+            if (cost <= 0) continue;
+
+            var assetCode = await GenerateAssetCodeAsync(companyId);
+            try
+            {
+                await _fixedAssets.CreateAsync(companyId, new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
+                    AssetCode: assetCode,
+                    Name: string.IsNullOrWhiteSpace(line.Description) ? cls.Category : line.Description,
+                    Description: $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}",
+                    Category: cls.Category,
+                    Location: null, SerialNumber: null,
+                    PurchaseDate: doc.DocumentDate,
+                    PurchaseCost: cost,
+                    SalvageValue: 0m,
+                    UsefulLifeMonths: cls.DefaultUsefulLifeMonths,
+                    DepreciationMethod: cls.Depreciable
+                        ? Models.Enums.DepreciationMethod.StraightLine
+                        : Models.Enums.DepreciationMethod.None,
+                    AssetAccountId: line.AccountId,
+                    DepreciationExpenseAccountId: CodeToId(cls.DepExpenseAccountCode),
+                    AccumulatedDepreciationAccountId: CodeToId(cls.AccumDepAccountCode),
+                    PostAcquisitionJournalEntry: false,   // เอกสารลง Dr asset แล้ว
+                    CreditAccountId: null,
+                    ProjectId: line.ProjectId ?? doc.ProjectId,
+                    SourceDocumentId: doc.Id,
+                    SourceDocumentLineId: line.Id,
+                    NeedsReview: true), actor);
+            }
+            catch (Exception ex)
+            {
+                // ไม่ให้ asset registration ล้ม ทำ approve พัง — log ไว้
+                _logger.LogWarning(ex, "Auto-register fixed asset failed (doc {Doc} line {Line})",
+                    doc.DocumentNumber, line.Id);
+            }
+        }
+    }
+
+    /// <summary>สร้างรหัสสินทรัพย์ FA-yyyyMM-#### (gap-tolerant — MAX+1).</summary>
+    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
+    {
+        var prefix = $"FA-{DateTime.UtcNow:yyyyMM}-";
+        var last = await _db.FixedAssets.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith(prefix))
+            .OrderByDescending(a => a.AssetCode)
+            .Select(a => a.AssetCode)
+            .FirstOrDefaultAsync();
+        int seq = 1;
+        if (last != null && int.TryParse(last[prefix.Length..], out var n)) seq = n + 1;
+        return $"{prefix}{seq:D4}";
     }
 
     private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)
