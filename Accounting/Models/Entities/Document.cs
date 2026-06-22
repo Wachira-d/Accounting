@@ -236,6 +236,38 @@ public class Document : TenantEntity
     /// URI or raw base64. Rendered in the preparer slot when present.</summary>
     public string? PreparerSignatureBase64 { get; set; }
 
+    // ===== Tax Point (จุดความรับผิดในการเสีย VAT) §78 / §78/1 / §78/2 =====
+    /// <summary>วันส่งมอบสินค้า (input ของ tax point §78 ขายสินค้า). Null =
+    /// ยังไม่ส่งมอบ/ไม่ระบุ.</summary>
+    public DateTime? DeliveryDate { get; set; }
+    /// <summary>วันโอนกรรมสิทธิ์ (input ของ tax point §78). Null = ไม่ระบุ.</summary>
+    public DateTime? OwnershipTransferDate { get; set; }
+    /// <summary>วันที่ใช้บริการ/บริการเสร็จ (input ของ tax point §78/1 บริการ).</summary>
+    public DateTime? ServiceUsedDate { get; set; }
+    /// <summary>จุดความรับผิดในการเสีย VAT ที่ระบบคำนวณ (TaxPointResolver):
+    /// <para>• ขายสินค้า §78 = MIN(DeliveryDate, OwnershipTransferDate, PaymentDate, IssueDate)</para>
+    /// <para>• บริการ §78/1 = MIN(PaymentDate, IssueDate, ServiceUsedDate)</para>
+    /// VAT period ของ ภ.พ.30 ใช้เดือนของ TaxPointDate (ไม่ใช่ DocumentDate).
+    /// Null = ยังไม่คำนวณ (เอกสารเก่า) → fallback DocumentDate ตอน export.</summary>
+    public DateTime? TaxPointDate { get; set; }
+
+    // ===== Retention (อายุการเก็บเอกสาร) §87/3 + พ.ร.บ.บัญชี ม.10 =====
+    /// <summary>วันที่เก็บเอกสารถึง (เก็บอย่างน้อย 5 ปีจากวันสิ้นรอบ/วันยื่น
+    /// per §87/3 + ม.10). ห้ามลบจริงก่อนวันนี้ (legal hold). คำนวณตอน approve.</summary>
+    public DateTime? RetentionUntil { get; set; }
+
+    // ===== §65 ตรี — รายจ่ายต้องห้าม (Non-Deductible add-back) =====
+    /// <summary>ยอดรายจ่ายต้องห้ามที่ต้อง "บวกกลับ" ใน ภ.ง.ด.50 (§65 ตรี).
+    /// คำนวณโดย Section65TerValidator ตอน approve เอกสารฝั่งซื้อ/ค่าใช้จ่าย.
+    /// 0 = หักภาษีได้เต็ม.</summary>
+    public decimal NonDeductibleAmount { get; set; }
+    /// <summary>RuleCode + มาตราที่ทำให้รายจ่ายส่วนนี้ต้องห้าม (เช่น
+    /// "RD-65ter(6) ค่าปรับ"). JSON array ถ้าหลายข้อ. ลง audit + ภ.ง.ด.50 note.</summary>
+    public string? NonDeductibleRuleJson { get; set; }
+    /// <summary>เหตุผลกรณีใบกำกับมาช้า 1-6 เดือน (§82/3) — required เมื่อ
+    /// (FilingMonth − InvoiceMonth) อยู่ใน 1..6. Null = ไม่ช้า.</summary>
+    public string? LateReason { get; set; }
+
     // ===== OCR Self-Learning =====
     // Watermark set by VendorIntelligenceService.TrainFromDocumentAsync after this
     // document's data has been counted into the per-vendor intelligence cache.

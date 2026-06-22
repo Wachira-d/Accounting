@@ -376,7 +376,14 @@ public record DocumentResponse(
     DateTime? DepositRealizedAt = null,
     string? DepositDeferredAccountCode = null,
     bool DepositOutputVatDeferred = false,
-    DateTime? DepositOutputVatRecognizedAt = null);
+    DateTime? DepositOutputVatRecognizedAt = null,
+    // ===== Tax Point §78 + Retention §87/3 + §65 ตรี =====
+    DateTime? TaxPointDate = null,
+    DateTime? RetentionUntil = null,
+    // ยอดรายจ่ายต้องห้ามที่ต้องบวกกลับ ภ.ง.ด.50 + รายละเอียด rule (JSON)
+    decimal NonDeductibleAmount = 0m,
+    string? NonDeductibleRuleJson = null,
+    string? LateReason = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,

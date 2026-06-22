@@ -1588,6 +1588,26 @@ public class DocumentService : IDocumentService
                 doc.UpdatedBy = approvedBy;
                 doc.UpdatedAt = DateTime.UtcNow;
 
+                // ===== Tax Point §78/§78/1 — snapshot จุดความรับผิด VAT =====
+                // VAT period ของ ภ.พ.30 ใช้เดือนของ TaxPointDate. คำนวณเฉพาะ
+                // เอกสารที่มี VAT (มิฉะนั้นไม่เกี่ยว).
+                if (doc.VatAmount != 0)
+                    doc.TaxPointDate = TaxPointResolver.Resolve(doc);
+
+                // ===== Retention §87/3 + พ.ร.บ.บัญชี ม.10 — เก็บ 5 ปี =====
+                // นับจาก MAX(วันสิ้นรอบบัญชีของเอกสาร, วันที่เอกสาร) + 5 ปี.
+                // ใช้ simple rule: DocumentDate + 5 ปี (เพียงพอกับ floor 5 ปี;
+                // job ปิดรอบจะขยายได้ถ้าต้องการ superset).
+                doc.RetentionUntil ??= doc.DocumentDate.Date.AddYears(5);
+
+                // ===== §65 ตรี — รายจ่ายต้องห้าม (บวกกลับ ภ.ง.ด.50) =====
+                // เฉพาะเอกสารฝั่งซื้อ/ค่าใช้จ่ายที่กระทบกำไรสุทธิ.
+                if (doc.DocumentType is DocumentType.PurchaseInvoice
+                        or DocumentType.Expense or DocumentType.PaymentVoucher)
+                {
+                    await ApplySection65TerAsync(companyId, doc);
+                }
+
                 var autoPostTypes = new[] {
                     DocumentType.Invoice, DocumentType.TaxInvoice,
                     DocumentType.DebitNote, DocumentType.CreditNote,
@@ -2020,6 +2040,14 @@ public class DocumentService : IDocumentService
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // Legal hold §87/3 + พ.ร.บ.บัญชี ม.10 — ห้ามลบจริงก่อนครบอายุเก็บ 5 ปี
+        // (เอกสารที่ approve แล้วเท่านั้นที่มี RetentionUntil; Draft ลบได้).
+        if (doc.RetentionUntil.HasValue && DateTime.UtcNow.Date < doc.RetentionUntil.Value.Date
+            && doc.Status != DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                $"ห้ามลบถาวร — เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3) ถึง {doc.RetentionUntil:dd/MM/yyyy}. " +
+                "ใช้ 'ยกเลิกเอกสาร' (Void) แทนเพื่อคงหลักฐานการตรวจสอบ");
 
         var auditSnapshot = System.Text.Json.JsonSerializer.Serialize(new
         {
@@ -4206,6 +4234,49 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>คำนวณ §65 ตรี รายจ่ายต้องห้าม → เก็บ NonDeductibleAmount +
+    /// RuleJson บนเอกสาร (ไหลเข้า ภ.ง.ด.50 worksheet). hard-block กรณีไม่ระบุ
+    /// ผู้รับเงิน. NeedsConfirmation (เช่น capex) เป็นแค่ warning ไม่ block.</summary>
+    private async Task ApplySection65TerAsync(Guid companyId, Document doc)
+    {
+        // เตรียม account map (Id → code/name) สำหรับตรวจชนิดบัญชี
+        var accIds = doc.Lines.Where(l => l.AccountId.HasValue)
+            .Select(l => l.AccountId!.Value).Distinct().ToList();
+        var accInfo = accIds.Count == 0
+            ? new Dictionary<Guid, (string, string)>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => accIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+                .ToListAsync())
+                .ToDictionary(a => a.Id, a => (a.AccountCode, a.AccountName));
+
+        // context: รายได้ทั้งปี + ทุนจดทะเบียน (สำหรับ cap ค่ารับรอง)
+        var company = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == companyId);
+        var yearStart = new DateTime(doc.DocumentDate.Year, 1, 1);
+        var yearEnd = yearStart.AddYears(1);
+        var annualRevenue = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.Receipt)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.DocumentDate >= yearStart && d.DocumentDate < yearEnd)
+            .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
+
+        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital);
+        var payeeName = doc.Contact?.Name;
+        var payeeTaxId = doc.Contact?.TaxId;
+
+        var result = Section65TerValidator.Evaluate(doc, accInfo, payeeName, payeeTaxId, ctx);
+
+        if (result.HasHardBlock)
+            throw new InvalidOperationException(result.FirstBlockMessage
+                ?? "รายจ่ายต้องห้าม §65 ตรี — ข้อมูลไม่ครบ");
+
+        doc.NonDeductibleAmount = result.TotalAddBack;
+        doc.NonDeductibleRuleJson = result.Findings.Count > 0 ? result.ToJson() : null;
+    }
+
     private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)
         => await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
             p.CompanyId == companyId && p.StartDate <= date && p.EndDate >= date);
@@ -5355,7 +5426,12 @@ public class DocumentService : IDocumentService
         DepositRealizedAt: d.DepositRealizedAt,
         DepositDeferredAccountCode: d.DepositDeferredAccountCode,
         DepositOutputVatDeferred: d.DepositOutputVatDeferred,
-        DepositOutputVatRecognizedAt: d.DepositOutputVatRecognizedAt);
+        DepositOutputVatRecognizedAt: d.DepositOutputVatRecognizedAt,
+        TaxPointDate: d.TaxPointDate,
+        RetentionUntil: d.RetentionUntil,
+        NonDeductibleAmount: d.NonDeductibleAmount,
+        NonDeductibleRuleJson: d.NonDeductibleRuleJson,
+        LateReason: d.LateReason);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

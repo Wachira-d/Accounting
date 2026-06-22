@@ -4193,6 +4193,15 @@ public static class DatabaseMigrationHelper
             // GL-account AI feedback id — ปิดลูปการสอน local model ตามกฎเหล็ก #1
             // (ตอน user แก้/ยืนยัน AccountId, ระบบเรียก RecordUserChoiceAsync)
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "GlAccountAiFeedbackId" uuid NULL;""",
+            // Tax Point §78/§78/1 + Retention §87/3 + §65 ตรี add-back + LateReason §82/3
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliveryDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OwnershipTransferDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ServiceUsedDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "TaxPointDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RetentionUntil" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "NonDeductibleAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "NonDeductibleRuleJson" text NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "LateReason" text NULL;""",
 
             // ===== TaxRuleConfig: configurable PIT brackets + allowances ต่อปี =====
             // Per company × per year. Engine fallback ถ้าไม่มี config → ใช้

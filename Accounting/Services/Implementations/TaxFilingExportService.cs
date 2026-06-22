@@ -330,8 +330,10 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var doc in salesDocs)
         {
             var b = doc.SubTotal - doc.DiscountAmount;
-            // มัดจำ deferred ที่ถึงกำหนดแล้ว → วันที่ = วัน tax point (RecognizedAt)
-            var taxPoint = doc.DepositOutputVatRecognizedAt ?? doc.DocumentDate;
+            // วันที่ในรายงาน = tax point §78/§78/1: มัดจำ deferred → RecognizedAt;
+            // ขายปกติ → TaxPointDate (MIN ส่งมอบ/โอน/รับเงิน/ออกใบ) ที่ snapshot
+            // ตอน approve; fallback DocumentDate (เอกสารเก่าก่อนมี TaxPointDate).
+            var taxPoint = doc.DepositOutputVatRecognizedAt ?? doc.TaxPointDate ?? doc.DocumentDate;
             var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
             sale.AppendLine($"{s1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
             totalOutputBase += b; totalOutputVat += doc.VatAmount;
