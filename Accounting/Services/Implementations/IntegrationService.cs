@@ -592,7 +592,7 @@ public class IntegrationService : IIntegrationService
                 {
                     LineOrder = i + 1,
                     ProductCode = line.ItemCode,
-                    Description = line.ItemName,
+                    Description = line.ItemName ?? "",
                     Quantity = line.Quantity,
                     Unit = line.Unit ?? "หน่วย",
                     UnitPrice = line.UnitPrice,
