@@ -308,6 +308,14 @@ public class DocumentLine : BaseEntity
     public Guid? AccountId { get; set; }
     public ChartOfAccount? Account { get; set; }
 
+    /// <summary>FeedbackId ของ AiSuggestionFeedback ที่ให้ผังบัญชีเส้นนี้ —
+    /// set เมื่อ AccountId นี้มาจาก AI (OCR / PV bulk suggest / integration
+    /// GL fallback). ใช้ปิดลูปการสอน local model ตามกฎเหล็ก #1: ตอนผู้ใช้
+    /// ยืนยัน/แก้ AccountId, DocumentService เรียก RecordUserChoiceAsync
+    /// (acceptedAi = chosenCode == AiPrimaryAnswer). Null = user เลือก
+    /// ผังเองตั้งแต่ต้น ไม่ต้องบันทึก feedback.</summary>
+    public Guid? GlAccountAiFeedbackId { get; set; }
+
     // Per-line project override — falls back to Document.ProjectId if null.
     // Allows splitting a single document across multiple projects (e.g. one
     // mixed invoice billing two projects).

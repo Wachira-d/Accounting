@@ -560,6 +560,8 @@
             </div>
             <!-- AI accounting suggestions banner — populated by aiSuggestAccounting() -->
             <div id="aiAccSuggestBanner" style="display:none;margin-top:10px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px"></div>
+            <!-- Shared CoA datalist (โหลด 1 ครั้งตอนเปิดฟอร์ม) -->
+            <datalist id="coaList"></datalist>
             <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
               <div id="linesBody"></div>
               <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:8px">
@@ -844,7 +846,17 @@
             + group('ค่าใช้จ่าย / ต้นทุน', expense)
             + group('หนี้สิน (เช่น คืนเงินทดรองกรรมการ, ชำระเงินกู้)', liab)
             + group('สินทรัพย์ (เช่น เงินมัดจำ, เงินทดรองจ่าย)', asset);
-        } catch(e) { this.expenseCategories = []; }
+          // เติม datalist สำหรับ per-line account picker — code → name lookup
+          // map ใช้ใน badge "AI: xxxx" ในแต่ละบรรทัด
+          this.coaByCode = {};
+          this.expenseCategories.forEach(a => { this.coaByCode[a.accountCode] = a; });
+          const dl = document.getElementById('coaList');
+          if (dl) {
+            dl.innerHTML = this.expenseCategories.map(a =>
+              `<option value="${Layout.esc(a.accountCode)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`
+            ).join('');
+          }
+        } catch(e) { this.expenseCategories = []; this.coaByCode = {}; }
         // Check if email is configured for this company
         try {
           const ec = await api.getEmailConfig();
@@ -1519,6 +1531,39 @@
         const panel = document.getElementById('depositOptions');
         if (panel) panel.style.display = on ? 'block' : 'none';
       },
+      /** ผู้ใช้พิมพ์/เลือก accountCode บนบรรทัด → ถ้าต่างจากที่ AI แนะนำ
+       *  เปลี่ยน badge เป็น "✎ แก้แล้ว" (สีส้ม). บันทึก choice จริงเกิดที่
+       *  backend ตอน save (เปรียบ chosen code กับ AiPrimaryAnswer). */
+      onLineAccountInput(el) {
+        const row = el.closest('.line-card');
+        if (!row) return;
+        const badge = row.querySelector('[data-f="accountBadge"]');
+        const sugCodeEl = row.querySelector('[data-f="glAiSuggestedCode"]');
+        const suggested = sugCodeEl?.dataset?.code;
+        const code = el.value.trim();
+        // โชว์ชื่อผังด้านขวาเมื่อ valid + flag สีเขียว
+        const found = code && this.coaByCode?.[code];
+        if (!badge) return;
+        if (suggested && code && code !== suggested) {
+          badge.style.display = 'inline-block';
+          badge.style.background = '#fef3c7'; badge.style.color = '#92400e';
+          badge.textContent = `✎ แก้จาก AI: ${suggested}`;
+          badge.title = `AI แนะนำ ${suggested} — ผู้ใช้เปลี่ยนเป็น ${code} (ระบบจะบันทึก feedback ให้)`;
+        } else if (suggested && code === suggested) {
+          badge.style.display = 'inline-block';
+          badge.style.background = '#dcfce7'; badge.style.color = '#15803d';
+          badge.textContent = '✓ ตามที่ AI แนะนำ';
+          badge.title = 'AI แนะนำผังนี้ — ระบบจะบันทึกเป็น accepted';
+        } else if (found) {
+          badge.style.display = 'inline-block';
+          badge.style.background = '#e0e7ff'; badge.style.color = '#3730a3';
+          badge.textContent = found.accountName.length > 24
+            ? found.accountName.substring(0, 22) + '…' : found.accountName;
+          badge.title = found.accountName;
+        } else {
+          badge.style.display = 'none';
+        }
+      },
       /**
        * ขอ AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด — student-first (local model)
        * ผ่าน orchestrator ตามกฎเหล็ก #1 Distillation Mandate. ระบบ validate
@@ -1571,7 +1616,30 @@
           const items = data.lines || [];
           const used = data.usedAi ? '🤖 AI' : '⚙️ ระบบ (local model)';
           const observe = (data.crossLineObservations || []).filter(Boolean);
-          let html = `<div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:8px">${used} แนะนำผังบัญชี GL — ตรวจสอบและนำไปใส่เองตามต้องการ</div>`;
+
+          // Apply ผังที่แนะนำลงในแต่ละบรรทัด (≥0.70 ถึงจะ auto-fill;
+          // ต่ำกว่านั้นแสดงในตารางอย่างเดียวให้ผู้ใช้ดูแล้วเลือกเอง)
+          let applied = 0;
+          items.forEach((it, idx) => {
+            if (!it.accountCode) return;
+            const row = document.querySelectorAll('#linesBody .line-card')[idx];
+            if (!row) return;
+            const sugCodeEl = row.querySelector('[data-f="glAiSuggestedCode"]');
+            if (sugCodeEl) sugCodeEl.dataset.code = it.accountCode;
+            const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
+            if (fidEl && it.feedbackId) fidEl.dataset.feedbackId = it.feedbackId;
+            // Auto-fill เฉพาะ confidence ≥0.70 — ต่ำกว่าให้ผู้ใช้เลือกเอง
+            if ((it.confidence ?? 0) >= 0.70) {
+              const accInp = row.querySelector('[data-f="accountCode"]');
+              if (accInp && !accInp.value.trim()) {
+                accInp.value = it.accountCode;
+                this.onLineAccountInput(accInp);
+                applied++;
+              }
+            }
+          });
+
+          let html = `<div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:8px">${used} แนะนำผังบัญชี GL — เติมให้ ${applied}/${items.length} บรรทัด (confidence ≥70%) ส่วนที่เหลือผู้ใช้เลือกเอง</div>`;
           html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
           html += '<thead><tr style="text-align:left;border-bottom:1px solid #93c5fd"><th style="padding:4px">บรรทัด</th><th style="padding:4px">รายละเอียด</th><th style="padding:4px">ผังที่แนะนำ</th><th style="padding:4px;text-align:right">มั่นใจ</th><th style="padding:4px">เหตุผล</th></tr></thead><tbody>';
           items.forEach((it, idx) => {
@@ -1579,13 +1647,14 @@
             const conf = it.confidence != null ? Math.round(it.confidence * 100) + '%' : '—';
             const color = it.confidence >= 0.85 ? '#15803d' : it.confidence >= 0.70 ? '#ca8a04' : '#dc2626';
             const code = it.accountCode || '—';
-            html += `<tr style="border-bottom:1px solid #dbeafe"><td style="padding:4px">${idx + 1}</td><td style="padding:4px">${Layout.esc(ln?.description || '')}</td><td style="padding:4px;font-weight:600">${Layout.esc(code)}</td><td style="padding:4px;text-align:right;color:${color};font-weight:600">${conf}</td><td style="padding:4px;color:#475569">${Layout.esc(it.reasoning || '')}</td></tr>`;
+            const accName = this.coaByCode?.[it.accountCode]?.accountName || '';
+            html += `<tr style="border-bottom:1px solid #dbeafe"><td style="padding:4px">${idx + 1}</td><td style="padding:4px">${Layout.esc(ln?.description || '')}</td><td style="padding:4px;font-weight:600">${Layout.esc(code)} <span style="color:#6b7280;font-weight:400">${Layout.esc(accName)}</span></td><td style="padding:4px;text-align:right;color:${color};font-weight:600">${conf}</td><td style="padding:4px;color:#475569">${Layout.esc(it.reasoning || '')}</td></tr>`;
           });
           html += '</tbody></table>';
           if (observe.length) {
             html += `<div style="margin-top:6px;font-size:11px;color:#475569">💡 ${observe.map(Layout.esc).join(' · ')}</div>`;
           }
-          html += '<div style="margin-top:8px;font-size:11px;color:#64748b">หมายเหตุ: AI แนะนำตามรูปแบบที่เคยใช้ — ผู้ใช้ตัดสินใจขั้นสุดท้าย ทุกครั้งที่แก้ระบบจะเรียนรู้ต่อ</div>';
+          html += '<div style="margin-top:8px;font-size:11px;color:#64748b">หมายเหตุ: AI เติมเฉพาะที่มั่นใจ ≥70% — ผู้ใช้ตัดสินใจขั้นสุดท้าย ทุกครั้งที่ save ระบบจะบันทึกผลให้ local model เรียนรู้ต่อ</div>';
           banner.innerHTML = html;
         } catch (e) {
           banner.innerHTML = `<div style="color:#dc2626;font-size:13px">ขอแนะนำไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
@@ -2300,6 +2369,20 @@
           <div class="lc-project-row">
             <select class="form-select" data-f="project" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติระบบลงค่าใช้จ่ายเข้าโครงการให้อัตโนมัติ">${projOptHtml}</select>
           </div>
+          <!-- Per-line GL account picker — พิมพ์ code หรือชื่อเพื่อค้นจาก
+               datalist; AI ปุ่ม "🤖 AI แนะนำผังบัญชี" จะ populate ค่าให้พร้อม
+               badge "AI: xxx" และเก็บ feedbackId เพื่อปิดลูปการสอน. ผังที่ AI
+               แนะนำต้องมีจริงใน CoA (server-side guard). -->
+          <div class="lc-acc-row" style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12px">
+            <label style="color:#475569;min-width:64px">ผังบัญชี</label>
+            <input type="text" class="form-input lc-acc-input" data-f="accountCode" list="coaList"
+                   placeholder="เลือก/ค้นหาผังบัญชี…"
+                   oninput="Page.onLineAccountInput(this)"
+                   style="flex:1;font-size:13px">
+            <span class="lc-acc-badge" data-f="accountBadge" style="display:none;font-size:11px;padding:2px 8px;border-radius:8px;font-weight:600"></span>
+            <span data-f="glAiFeedbackId" hidden></span>
+            <span data-f="glAiSuggestedCode" hidden></span>
+          </div>
           <div class="lc-total">
             <span style="color:#6b7280">ยอดบรรทัดนี้ (รวม VAT)</span>
             <span class="lc-total-val" data-f="lineTotal">0.00</span>
@@ -2685,6 +2768,14 @@
               claimEl.style.color = claim ? '' : '#dc2626';
               claimEl.title = claim ? 'VAT เคลมได้' : `VAT ต้องห้าม — ${l.vatNonClaimableReason || 'ไม่นำเข้า ภพ.30'}`;
             }
+            // Per-line account picker — hydrate จาก server + AI feedback
+            const accInp = row.querySelector('[data-f="accountCode"]');
+            if (accInp && l.accountCode) accInp.value = l.accountCode;
+            if (l.glAccountAiFeedbackId) {
+              const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
+              if (fidEl) fidEl.dataset.feedbackId = l.glAccountAiFeedbackId;
+            }
+            if (accInp) this.onLineAccountInput(accInp);
             if (l.productCode) {
               row.dataset.productCode = l.productCode;
               if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
@@ -2805,6 +2896,14 @@
             if (!line.isVatClaimable && claim.dataset.reason)
               line.vatNonClaimableReason = claim.dataset.reason;
           }
+          // ผังบัญชี per บรรทัด (AccountCode) + AI feedbackId round-trip
+          // (กฎเหล็ก #1: เก็บ feedback ปิดลูปการสอน local model)
+          const accInp = row.querySelector('[data-f="accountCode"]');
+          const accCode = accInp?.value.trim();
+          if (accCode) line.accountCode = accCode;
+          const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
+          const fid = fidEl?.dataset?.feedbackId;
+          if (fid) line.glAccountAiFeedbackId = fid;
           lines.push(line);
         });
         if (strict && strictViolators.length) {

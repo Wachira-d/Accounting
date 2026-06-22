@@ -86,6 +86,15 @@ public record DocumentLineRequest(
     decimal VatRate,
     decimal WithholdingTaxRate,
     Guid? AccountId,
+    // ผังบัญชีในรูป AccountCode (string) — ทางเลือกแทน AccountId. ใช้กับ AI
+    // suggestion ที่คืน code ตรง ๆ + integration ที่ส่ง code มาจากต่างประเทศ.
+    // Service จะ resolve code → AccountId ตอน save (ในผังของบริษัท).
+    string? AccountCode = null,
+    // FeedbackId จาก AI suggestion endpoint — frontend ส่งกลับมาเมื่อบรรทัด
+    // นี้ได้ผังจาก AI (หรือ user แก้จาก AI). Service เปรียบ AccountCode ที่
+    // user เลือกกับ AiPrimaryAnswer แล้วเรียก RecordUserChoiceAsync — ปิด
+    // ลูปการสอน local distillation model (กฎเหล็ก #1).
+    Guid? GlAccountAiFeedbackId = null,
     // Optional per-line project override (null → inherits Document.ProjectId)
     Guid? ProjectId = null,
     // Optional product linkage — set when the user picked a product via
@@ -411,7 +420,13 @@ public record DocumentLineResponse(
     bool HasProjectCostEntry = false,
     // ภาษีซื้อต้องห้าม flag + เหตุผล — UI แสดง checkbox + tooltip
     bool IsVatClaimable = true,
-    string? VatNonClaimableReason = null);
+    string? VatNonClaimableReason = null,
+    // AccountCode (string) คู่กับ AccountId — ให้ frontend ใช้ matched code
+    // ใน per-line picker โดยไม่ต้อง round-trip ลง /chart-of-accounts ทุกครั้ง
+    string? AccountCode = null,
+    // FeedbackId ของ AI suggestion ที่เคยให้ผังบรรทัดนี้ — frontend ต้อง
+    // round-trip กลับมาตอน update เพื่อให้ backend ปิดลูปการสอน local model
+    Guid? GlAccountAiFeedbackId = null);
 
 // ===== Flexible / partial document conversion =====
 

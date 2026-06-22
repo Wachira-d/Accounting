@@ -537,6 +537,7 @@ public class IntegrationService : IIntegrationService
                 if (!string.IsNullOrEmpty(line.AccountCode) && accountLookup.TryGetValue(line.AccountCode, out var acct))
                     accountId = acct.Id;
 
+                Guid? glFeedbackId = null;
                 // AI fallback: AccountCode ไม่ระบุ หรือชี้บัญชีที่ไม่อยู่ในผัง
                 // → ถาม student-first GL distillation model ผ่าน orchestrator.
                 // High-confidence (≥0.70) + ผังที่แนะนำมีจริง → ใช้; ต่ำกว่านั้น
@@ -561,6 +562,7 @@ public class IntegrationService : IIntegrationService
                             && accountLookup.TryGetValue(sugg.Answer, out var aiAcct))
                         {
                             accountId = aiAcct.Id;
+                            glFeedbackId = sugg.FeedbackId;
                             aiFallbackHits++;
                         }
                         else if (!string.IsNullOrWhiteSpace(sugg.Answer)
@@ -574,6 +576,7 @@ public class IntegrationService : IIntegrationService
                             {
                                 accountLookup[sugg.Answer] = resolved;
                                 accountId = resolved.Id;
+                                glFeedbackId = sugg.FeedbackId;
                                 aiFallbackHits++;
                             }
                         }
@@ -597,7 +600,11 @@ public class IntegrationService : IIntegrationService
                     Amount = lineNet,
                     VatRate = lineVatRate,
                     VatAmount = lineVat,
-                    AccountId = accountId
+                    AccountId = accountId,
+                    // เก็บ FeedbackId เพื่อปิดลูปการสอนเมื่อ user เปิดเอกสาร
+                    // มาแก้ภายหลัง (DocumentService จะ record choice ตาม
+                    // กฎเหล็ก #1)
+                    GlAccountAiFeedbackId = glFeedbackId,
                 });
             }
 

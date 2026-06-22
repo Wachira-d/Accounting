@@ -4190,6 +4190,9 @@ public static class DatabaseMigrationHelper
             // ===== DocumentLines: ภาษีซื้อต้องห้าม (Non-claimable Input VAT) =====
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IsVatClaimable" boolean NOT NULL DEFAULT true;""",
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "VatNonClaimableReason" text NULL;""",
+            // GL-account AI feedback id — ปิดลูปการสอน local model ตามกฎเหล็ก #1
+            // (ตอน user แก้/ยืนยัน AccountId, ระบบเรียก RecordUserChoiceAsync)
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "GlAccountAiFeedbackId" uuid NULL;""",
 
             // ===== TaxRuleConfig: configurable PIT brackets + allowances ต่อปี =====
             // Per company × per year. Engine fallback ถ้าไม่มี config → ใช้

@@ -30,6 +30,7 @@ public class DocumentService : IDocumentService
     private readonly IBotExchangeRateService? _fxRates;
     private readonly ISensitivityService? _sensitivity;
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
+    private readonly Accounting.Services.Ai.IAiFeedbackRecorder? _feedbackRecorder;
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly IAdvancedArApService? _advancedArAp;
     private readonly IApprovalService? _approval;
@@ -49,7 +50,8 @@ public class DocumentService : IDocumentService
         IWebhookService? webhooks = null,
         IEmailScheduleService? emailSchedule = null,
         IAdvancedArApService? advancedArAp = null,
-        IApprovalService? approval = null)
+        IApprovalService? approval = null,
+        Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null)
     {
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
@@ -70,6 +72,7 @@ public class DocumentService : IDocumentService
         _fxRates = fxRates;
         _aiAugmenter = aiAugmenter;
         _webhooks = webhooks;
+        _feedbackRecorder = feedbackRecorder;
     }
 
     private readonly IWebhookService? _webhooks;
@@ -500,8 +503,35 @@ public class DocumentService : IDocumentService
 
             // โหลด InputVatClaimable flag ของทุกบัญชีที่ line ใช้ — รอบเดียว
             // ไว้บังคับ IsVatClaimable=false เมื่อบัญชีเป็นภาษีซื้อต้องห้าม.
-            var accountIds = (request.Lines ?? []).Where(l => l.AccountId.HasValue)
-                .Select(l => l.AccountId!.Value).Distinct().ToList();
+            // resolve AccountCode → AccountId ก่อน (AI suggestion + integration
+            // ส่งมาเป็น code) ภายในผังของบริษัท
+            var codeCache = new Dictionary<string, Guid?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in request.Lines ?? [])
+            {
+                if (!line.AccountId.HasValue && !string.IsNullOrWhiteSpace(line.AccountCode))
+                {
+                    var resolved = await ResolveAccountCodeAsync(companyId, line.AccountCode, codeCache);
+                    if (resolved.HasValue)
+                    {
+                        // mutate via reflection-free pattern: rebuild line tuple
+                        // (DocumentLineRequest is a record). Instead, store in a
+                        // side map and read at construction below.
+                    }
+                }
+            }
+            // build a side map LineIndex → resolved AccountId so we don't mutate the record list
+            var resolvedAccountIds = new Dictionary<int, Guid>();
+            for (int i = 0; i < (request.Lines?.Count ?? 0); i++)
+            {
+                var l = request.Lines![i];
+                if (l.AccountId.HasValue) { resolvedAccountIds[i] = l.AccountId.Value; continue; }
+                if (!string.IsNullOrWhiteSpace(l.AccountCode))
+                {
+                    var rid = await ResolveAccountCodeAsync(companyId, l.AccountCode, codeCache);
+                    if (rid.HasValue) resolvedAccountIds[i] = rid.Value;
+                }
+            }
+            var accountIds = resolvedAccountIds.Values.Distinct().ToList();
             var accountFlags = accountIds.Count == 0
                 ? new Dictionary<Guid, bool>()
                 : await _db.ChartOfAccounts.AsNoTracking()
@@ -510,8 +540,10 @@ public class DocumentService : IDocumentService
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
             doc.IsForeignService = request.IsForeignService;
+            int lineIdx = -1;
             foreach (var line in request.Lines ?? [])
             {
+                lineIdx++;
                 var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
 
                 subTotal += amt.NetAmount;
@@ -519,6 +551,7 @@ public class DocumentService : IDocumentService
                 totalVat += amt.VatAmount;
                 totalWht += amt.WhtAmount;
 
+                var lineAccountId = resolvedAccountIds.TryGetValue(lineIdx, out var rid) ? (Guid?)rid : null;
                 // ภาษีซื้อต้องห้าม: ถ้าบัญชีตั้งเป็น InputVatClaimable=false
                 // (เช่น ค่ารับรอง) → บังคับ line.IsVatClaimable=false
                 // ไม่ว่า request จะส่งอะไรมา — รักษา consistency กับ chart
@@ -526,7 +559,7 @@ public class DocumentService : IDocumentService
                 // หรือเปลี่ยน flag ของบัญชีที่ผังบัญชี.
                 var enforcedClaimable = line.IsVatClaimable;
                 string? enforcedReason = line.VatNonClaimableReason;
-                if (line.AccountId.HasValue && accountFlags.TryGetValue(line.AccountId.Value, out var acctClaimable) && !acctClaimable)
+                if (lineAccountId.HasValue && accountFlags.TryGetValue(lineAccountId.Value, out var acctClaimable) && !acctClaimable)
                 {
                     enforcedClaimable = false;
                     enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
@@ -546,12 +579,13 @@ public class DocumentService : IDocumentService
                     VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = amt.WhtAmount,
-                    AccountId = line.AccountId,
+                    AccountId = lineAccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
                     SourceLineId = line.SourceLineId,
                     IsVatClaimable = enforcedClaimable,
-                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason
+                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
+                    GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
                 });
             }
 
@@ -595,6 +629,7 @@ public class DocumentService : IDocumentService
         var doc = await _db.Documents
             .Include(d => d.Contact)
             .Include(d => d.Lines).ThenInclude(l => l.Project)
+            .Include(d => d.Lines).ThenInclude(l => l.Account)
             .Include(d => d.Project)
             .Include(d => d.BankAccount)
             .Include(d => d.PaymentAccount)
@@ -921,17 +956,32 @@ public class DocumentService : IDocumentService
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
+            // resolve AccountCode → AccountId per line ก่อน (รองรับ AI suggestion)
+            var updCodeCache = new Dictionary<string, Guid?>(StringComparer.OrdinalIgnoreCase);
+            var updResolvedAccountIds = new Dictionary<int, Guid>();
+            for (int i = 0; i < request.Lines.Count; i++)
+            {
+                var l = request.Lines[i];
+                if (l.AccountId.HasValue) { updResolvedAccountIds[i] = l.AccountId.Value; continue; }
+                if (!string.IsNullOrWhiteSpace(l.AccountCode))
+                {
+                    var rid = await ResolveAccountCodeAsync(companyId, l.AccountCode, updCodeCache);
+                    if (rid.HasValue) updResolvedAccountIds[i] = rid.Value;
+                }
+            }
+
             // VAT-claimability enforcement ตามผังบัญชี (เหมือนใน Create)
-            var updAccountIds = request.Lines.Where(l => l.AccountId.HasValue)
-                .Select(l => l.AccountId!.Value).Distinct().ToList();
+            var updAccountIds = updResolvedAccountIds.Values.Distinct().ToList();
             var accountFlags = updAccountIds.Count == 0
                 ? new Dictionary<Guid, bool>()
                 : await _db.ChartOfAccounts.AsNoTracking()
                     .Where(a => a.CompanyId == companyId && updAccountIds.Contains(a.Id))
                     .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
 
+            int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
+                updLineIdx++;
                 var amt = ComputeLineAmounts(line, doc.PricesIncludeVat);
 
                 subTotal += amt.NetAmount;
@@ -939,9 +989,10 @@ public class DocumentService : IDocumentService
                 totalVat += amt.VatAmount;
                 totalWht += amt.WhtAmount;
 
+                var lineAccountId = updResolvedAccountIds.TryGetValue(updLineIdx, out var rid2) ? (Guid?)rid2 : null;
                 var enforcedClaimable = line.IsVatClaimable;
                 string? enforcedReason = line.VatNonClaimableReason;
-                if (line.AccountId.HasValue && accountFlags.TryGetValue(line.AccountId.Value, out var acctClaimable) && !acctClaimable)
+                if (lineAccountId.HasValue && accountFlags.TryGetValue(lineAccountId.Value, out var acctClaimable) && !acctClaimable)
                 {
                     enforcedClaimable = false;
                     enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
@@ -961,7 +1012,7 @@ public class DocumentService : IDocumentService
                     VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = amt.WhtAmount,
-                    AccountId = line.AccountId,
+                    AccountId = lineAccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
                     // Preserve the conversion-traceability link across edits —
@@ -969,7 +1020,8 @@ public class DocumentService : IDocumentService
                     // converted document keeps its fulfilment accounting intact.
                     SourceLineId = line.SourceLineId,
                     IsVatClaimable = enforcedClaimable,
-                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason
+                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
+                    GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
                 });
             }
 
@@ -1015,6 +1067,12 @@ public class DocumentService : IDocumentService
         }
 
         await _db.SaveChangesAsync();
+        // ปิดลูปการสอน local model — บรรทัดที่มี FeedbackId + AccountId สุดท้าย
+        // จะถูกบันทึก choice ทันที (กฎเหล็ก #1: เก็บ feedback ทุกครั้งที่ user
+        // ตัดสินใจ — accept หรือ override)
+        var savedLines = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id).ToListAsync();
+        await RecordLineAccountFeedbackAsync(savedLines);
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId, "document.updated", updated);
         return updated;
@@ -1614,6 +1672,14 @@ public class DocumentService : IDocumentService
                 });
             }
         }
+
+        // ปิดลูปการสอน — final choice ตอนอนุมัติ: ทุกบรรทัดที่มี FeedbackId
+        // + AccountId → บันทึก choice (acceptedAi=true ถ้าตรง AI's answer,
+        // false ถ้า user แก้). RecordLineAccountFeedbackAsync เป็น idempotent
+        // (ข้ามถ้า UserChosenAnswer เคย set แล้ว) → ปลอดภัย ถ้า Update เคย fire
+        var approvedLines = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id).ToListAsync();
+        await RecordLineAccountFeedbackAsync(approvedLines);
 
         var approved = await GetDocumentAsync(companyId, documentId);
 
@@ -4081,6 +4147,65 @@ public class DocumentService : IDocumentService
         return true;
     }
 
+    /// <summary>Resolve AccountCode → AccountId ใน CoA ของบริษัท. คืน null ถ้า
+    /// ไม่พบ / inactive (ป้องกัน AI hallucinate ผังที่ไม่มีจริง). cache
+    /// ใน-call ผ่าน lookup map ที่ caller เตรียมไว้.</summary>
+    private async Task<Guid?> ResolveAccountCodeAsync(Guid companyId, string? code,
+        IDictionary<string, Guid?>? cache = null)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return null;
+        if (cache != null && cache.TryGetValue(code, out var cached)) return cached;
+        var id = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AccountCode == code && a.IsActive)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync();
+        if (cache != null) cache[code] = id;
+        return id;
+    }
+
+    /// <summary>ปิดลูปการสอน local distillation model ตามกฎเหล็ก #1:
+    /// สำหรับทุกบรรทัดที่มี GlAccountAiFeedbackId + AccountId — เปรียบ
+    /// AccountCode ของ user choice กับ AiPrimaryAnswer แล้วเรียก
+    /// RecordUserChoiceAsync (acceptedAi=true ถ้าตรง, false ถ้าแก้). ทนต่อ
+    /// recorder/FX ปิด (graceful degradation เงียบ).</summary>
+    private async Task RecordLineAccountFeedbackAsync(IEnumerable<DocumentLine> lines, CancellationToken ct = default)
+    {
+        if (_feedbackRecorder == null) return;
+        var pending = lines.Where(l => l.GlAccountAiFeedbackId.HasValue && l.AccountId.HasValue).ToList();
+        if (pending.Count == 0) return;
+        var feedbackIds = pending.Select(l => l.GlAccountAiFeedbackId!.Value).Distinct().ToList();
+        var accountIds = pending.Select(l => l.AccountId!.Value).Distinct().ToList();
+        // batch load AI's original answer + chosen account code
+        var aiAnswers = await _db.AiSuggestionFeedbacks.AsNoTracking()
+            .Where(f => feedbackIds.Contains(f.Id))
+            .Select(f => new { f.Id, f.AiPrimaryAnswer, f.UserChosenAnswer })
+            .ToListAsync(ct);
+        var aiAnswerMap = aiAnswers.ToDictionary(a => a.Id);
+        var codeMap = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => accountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.AccountCode, ct);
+
+        foreach (var line in pending)
+        {
+            var fid = line.GlAccountAiFeedbackId!.Value;
+            if (!aiAnswerMap.TryGetValue(fid, out var ai)) continue;
+            // ถ้าผู้ใช้เลือกแล้ว (UserChosenAnswer != null) ก่อนหน้านี้ ไม่ทำซ้ำ
+            // (ลด noise + ป้องกัน flap จากการ save หลายครั้ง). retrain job ใช้
+            // record แรกที่ผู้ใช้ confirm เป็นหลักอยู่แล้ว.
+            if (!string.IsNullOrEmpty(ai.UserChosenAnswer)) continue;
+            if (!codeMap.TryGetValue(line.AccountId!.Value, out var chosenCode)) continue;
+            var accepted = string.Equals(chosenCode, ai.AiPrimaryAnswer, StringComparison.OrdinalIgnoreCase);
+            try
+            {
+                await _feedbackRecorder.RecordUserChoiceAsync(fid, chosenCode, accepted, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Record GL feedback failed (feedbackId={Fid})", fid);
+            }
+        }
+    }
+
     private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)
         => await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
             p.CompanyId == companyId && p.StartDate <= date && p.EndDate >= date);
@@ -5166,7 +5291,9 @@ public class DocumentService : IDocumentService
             ProjectCostEntryId: pceByLine != null && pceByLine.TryGetValue(l.Id, out var pceId) ? pceId : (Guid?)null,
             HasProjectCostEntry: pceByLine != null && pceByLine.ContainsKey(l.Id),
             IsVatClaimable: l.IsVatClaimable,
-            VatNonClaimableReason: l.VatNonClaimableReason)).ToList(),
+            VatNonClaimableReason: l.VatNonClaimableReason,
+            AccountCode: l.Account != null ? l.Account.AccountCode : null,
+            GlAccountAiFeedbackId: l.GlAccountAiFeedbackId)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,
