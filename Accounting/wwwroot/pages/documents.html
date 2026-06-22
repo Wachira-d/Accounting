@@ -1017,6 +1017,33 @@
         if (payload.reference) document.getElementById('fRef').value = payload.reference;
         if (payload.notes) document.getElementById('fNotes').value = payload.notes;
 
+        // PV "ใช้งานใบกำกับภาษี" (RD §86/4 + §86/14) — เติมเลขที่/วันที่/สาขา
+        // ของใบกำกับผู้ขายจาก OCR ติ๊กกล่องและเปิด section "กรอกข้อมูลเอง"
+        if (payload.hasTaxInvoiceReference) {
+          const cb = document.getElementById('fHasTaxInvoiceRef');
+          if (cb && !cb.checked) {
+            cb.checked = true;
+            try { this.onTaxInvoiceRefToggle(); } catch (_) {}
+          }
+          // เลือก mode "กรอกเอง" (ไม่อ้างใบในระบบ — ใบ scan = ใบกระดาษภายนอก)
+          const manualRadio = document.getElementById('taxInvSrcManual');
+          if (manualRadio && !manualRadio.checked) {
+            manualRadio.checked = true;
+            try { this.onTaxInvoiceSourceChange(); } catch (_) {}
+          }
+          // เติม fields ใต้ section
+          const setVal = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+          setVal('fSupplierInvoiceNumberPV', payload.supplierInvoiceNumber);
+          if (payload.supplierTaxInvoiceDate) {
+            try { const el = document.getElementById('fSupplierTaxInvoiceDatePV');
+              if (el) el.value = Layout.dateInput(payload.supplierTaxInvoiceDate); } catch (_) {}
+          }
+          setVal('fSupplierBranchCode', payload.supplierBranchCode || '00000');
+          // อัพเดต VAT preview + completeness validation
+          try { this._updateTaxInvVatPreview?.(); } catch (_) {}
+          try { this._validateTaxInvoiceClaim?.(); } catch (_) {}
+        }
+
         // Pre-fill contact when we matched one during the scan (DBD-confirmed
         // or fuzzy-matched). Otherwise drop the extracted name into the
         // visible input so the user sees it but the hidden id stays empty —

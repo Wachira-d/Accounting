@@ -3312,6 +3312,14 @@
         // date so the voucher books the real cash-out date.
         const paymentDate = (targetType === 'PaymentVoucher') ? (scan.extractedDate || null) : null;
 
+        // PV ที่ scan มาจากใบกำกับซื้อ → ติ๊ก "ใช้งานใบกำกับภาษี" + ส่งข้อมูล
+        // ใบของผู้ขาย (เลขที่/วันที่/สาขา) ให้ฟอร์มเติมอัตโนมัติ. ปกติเลขที่
+        // ใบกำกับของผู้ขาย = extractedDocumentNumber, วันที่ = extractedDate,
+        // สาขา = "00000" สำนักงานใหญ่ (95%) — ผู้ใช้แก้ภายหลังได้
+        const hasSupplierInvoice = targetType === 'PaymentVoucher'
+          && !!scan.extractedDocumentNumber
+          && !!(scan.extractedVatAmount || scan.extractedVendorTaxId);
+
         const handoff = {
           source: 'ocr-scan',
           scanId: scan.id,
@@ -3326,6 +3334,12 @@
           reference: scan.extractedDocumentNumber || null,
           notes: scan.processingNotes ? `(จาก OCR) ${scan.processingNotes}` : null,
           lines,
+          // Supplier-tax-invoice metadata (PV ที่อ้างใบกำกับซื้อ) — เติมลง
+          // "ใช้งานใบกำกับภาษี" section อัตโนมัติเพื่อขึ้นรายงานภาษีซื้อ ภพ.30
+          hasTaxInvoiceReference: hasSupplierInvoice,
+          supplierInvoiceNumber: hasSupplierInvoice ? scan.extractedDocumentNumber : null,
+          supplierTaxInvoiceDate: hasSupplierInvoice ? scan.extractedDate : null,
+          supplierBranchCode: hasSupplierInvoice ? '00000' : null,
           createdAt: Date.now(),
         };
 
