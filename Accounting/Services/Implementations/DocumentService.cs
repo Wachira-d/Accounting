@@ -421,6 +421,10 @@ public class DocumentService : IDocumentService
                         || request.DocumentType == DocumentType.ReceiptVoucher),
                 DepositDeferredAccountCode = request.DepositDeferredAccountCode,
                 DepositOutputVatDeferred = request.DepositOutputVatDeferred,
+                // Tax Point §78 inputs (optional)
+                DeliveryDate = request.DeliveryDate,
+                OwnershipTransferDate = request.OwnershipTransferDate,
+                ServiceUsedDate = request.ServiceUsedDate,
                 CreatedBy = createdBy
             };
 
@@ -917,6 +921,11 @@ public class DocumentService : IDocumentService
         if (request.SupplierBranchCode != null) doc.SupplierBranchCode = request.SupplierBranchCode;
         if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
         if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
+
+        // Tax Point §78 inputs (Draft edit)
+        if (request.DeliveryDate.HasValue) doc.DeliveryDate = request.DeliveryDate.Value;
+        if (request.OwnershipTransferDate.HasValue) doc.OwnershipTransferDate = request.OwnershipTransferDate.Value;
+        if (request.ServiceUsedDate.HasValue) doc.ServiceUsedDate = request.ServiceUsedDate.Value;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)

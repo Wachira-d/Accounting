@@ -75,7 +75,12 @@ public record CreateDocumentRequest(
     //   ภ.พ.30 จนกว่าจะรับรู้ (RealizeDeposit).
     bool IsDeposit = false,
     string? DepositDeferredAccountCode = null,
-    bool DepositOutputVatDeferred = false);
+    bool DepositOutputVatDeferred = false,
+    // Tax Point §78/§78/1 inputs (optional) — ถ้าระบุ ระบบใช้คำนวณจุดความรับผิด
+    // VAT (MIN กับ payment/issue). ไม่ระบุ → fallback DocumentDate/PaymentDate.
+    DateTime? DeliveryDate = null,
+    DateTime? OwnershipTransferDate = null,
+    DateTime? ServiceUsedDate = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -142,7 +147,11 @@ public record UpdateDocumentRequest(
     string? PaymentTerms = null,
     PaymentType? PaymentType = null,
     // Nullable on update so omitting it preserves the stored value.
-    bool? PricesIncludeVat = null);
+    bool? PricesIncludeVat = null,
+    // Tax Point §78 inputs (optional, แก้ได้ตอน Draft)
+    DateTime? DeliveryDate = null,
+    DateTime? OwnershipTransferDate = null,
+    DateTime? ServiceUsedDate = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
