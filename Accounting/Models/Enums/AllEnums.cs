@@ -452,6 +452,7 @@ public enum RecurringStatus
 // ==================== Fixed Asset ====================
 public enum DepreciationMethod
 {
+    None = 0,                   // ไม่คิดค่าเสื่อม (ที่ดิน, งานระหว่างก่อสร้าง — TFRS บทที่ 10/§65)
     StraightLine = 1,           // เส้นตรง
     DecliningBalance = 2,       // ยอมลดลง
     DoubleDecliningBalance = 3  // ยอดลดลงสองเท่า

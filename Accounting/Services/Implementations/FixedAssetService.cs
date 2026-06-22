@@ -141,7 +141,9 @@ public class FixedAssetService : IFixedAssetService
     private static List<(int Year, int Month, decimal Amount, decimal Accumulated, decimal Nbv)> BuildScheduleRows(FixedAsset asset)
     {
         var rows = new List<(int, int, decimal, decimal, decimal)>();
-        if (asset.UsefulLifeMonths <= 0 || asset.PurchaseCost <= asset.SalvageValue)
+        // ที่ดิน/งานระหว่างก่อสร้าง = None → ไม่มีตารางค่าเสื่อม
+        if (asset.DepreciationMethod == DepreciationMethod.None
+            || asset.UsefulLifeMonths <= 0 || asset.PurchaseCost <= asset.SalvageValue)
             return rows;
 
         var nbv = asset.PurchaseCost;
@@ -498,6 +500,9 @@ public class FixedAssetService : IFixedAssetService
         foreach (var asset in assets)
         {
             if (asset.PurchaseDate > periodStart) continue;
+            // ที่ดิน/งานระหว่างก่อสร้าง (None) หรือไม่มีอายุใช้งาน → ไม่คิดค่าเสื่อม
+            if (asset.DepreciationMethod == DepreciationMethod.None || asset.UsefulLifeMonths <= 0)
+                continue;
 
             // A planned (unposted) row may already exist from CreateAsync /
             // ImportAsync. If it's already posted, skip. If it exists but
