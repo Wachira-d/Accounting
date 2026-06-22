@@ -3466,6 +3466,37 @@ public class OcrService : IOcrService
             catch { /* malformed suggestion JSON — line GL stays empty */ }
         }
 
+        // ── Pre-fill: แหล่งเงิน/ช่องทางชำระ (Credit account ที่ผู้ใช้เลือกใน review) ──
+        // CreditAccountCode = ผังที่จะลง Cr (เช่น 11110 เงินสด, 11120 ธนาคาร,
+        // 21230 เจ้าหนี้กรรมการ). map เข้า BankAccountId ถ้าผูก BankAccount
+        // อยู่; ไม่งั้นเป็น PaymentAccountId (any GL account ที่ลงผ่าน PV).
+        Guid? scanCreditAccountId = null;
+        Guid? scanCreditBankAccountId = null;
+        if (!string.IsNullOrWhiteSpace(result.SuggestedAccountsJson))
+        {
+            try
+            {
+                using var sa = System.Text.Json.JsonDocument.Parse(result.SuggestedAccountsJson);
+                if (sa.RootElement.TryGetProperty("CreditAccountCode", out var cac)
+                    && cac.ValueKind == System.Text.Json.JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(cac.GetString()))
+                {
+                    var creditCode = cac.GetString();
+                    scanCreditAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.CompanyId == companyId && a.AccountCode == creditCode && !a.IsDeleted)
+                        .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+                    // ถ้าเป็นบัญชีธนาคาร (มี BankAccount ผูกอยู่) → ใช้ BankAccountId
+                    if (scanCreditAccountId.HasValue)
+                    {
+                        scanCreditBankAccountId = await _db.BankAccounts.AsNoTracking()
+                            .Where(b => b.CompanyId == companyId && b.LinkedAccountId == scanCreditAccountId.Value)
+                            .Select(b => (Guid?)b.Id).FirstOrDefaultAsync();
+                    }
+                }
+            }
+            catch { /* malformed — skip */ }
+        }
+
         // ── Pre-fill: ใบกำกับภาษีของผู้ขาย (RD §86/4 + §86/14) ──
         // เอกสารฝั่งซื้อที่มี VAT + เลขใบ → บันทึกเลข/วัน/สาขาใบผู้ขาย +
         // ติ๊ก HasTaxInvoiceReference เพื่อให้ขึ้นรายงานภาษีซื้อ ภพ.30 ทันที
@@ -3526,6 +3557,11 @@ public class OcrService : IOcrService
             SupplierBranchCode = bookSupplierInvoice ? "00000" : null,
             // หมวดค่าใช้จ่ายระดับเอกสาร = ผังเดบิตที่ AI/ผู้ใช้เลือก
             ExpenseCategoryId = !isSalesSide ? scanDebitAccountId : null,
+            // แหล่งเงิน/ช่องทางชำระ = ผังเครดิตที่เลือกใน review (ฝั่งซื้อ)
+            // bankAccount > paymentAccount → BankAccountId; ไม่งั้น PaymentAccountId
+            BankAccountId = !isSalesSide ? scanCreditBankAccountId : null,
+            PaymentAccountId = !isSalesSide && !scanCreditBankAccountId.HasValue
+                ? scanCreditAccountId : null,
             CreatedBy = createdBy
         };
 

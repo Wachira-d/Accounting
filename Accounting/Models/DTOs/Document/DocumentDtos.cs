@@ -82,7 +82,10 @@ public record CreateDocumentRequest(
     DateTime? OwnershipTransferDate = null,
     DateTime? ServiceUsedDate = null,
     // เลขจอง (PMS/POS/CRM external key) — ผูกเอกสารหลายใบเข้า booking เดียว
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    // ผัง VAT ปลายทาง override — กรณีไม่เคลม VAT ลงเป็นต้นทุน/ค่าใช้จ่าย
+    // (§82/5) เว้นว่าง = default ตาม completeness §86/4 (11610 / 11640)
+    string? InputVatAccountCodeOverride = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -145,6 +148,7 @@ public record UpdateDocumentRequest(
     // PV: ใช้งานใบกำกับภาษี (nullable → omit ไม่แตะค่าเดิม).
     bool? HasTaxInvoiceReference = null,
     string? SupplierBranchCode = null,
+    string? InputVatAccountCodeOverride = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     PaymentType? PaymentType = null,

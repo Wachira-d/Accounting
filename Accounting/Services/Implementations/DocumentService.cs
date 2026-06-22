@@ -429,6 +429,7 @@ public class DocumentService : IDocumentService
                 OwnershipTransferDate = request.OwnershipTransferDate,
                 ServiceUsedDate = request.ServiceUsedDate,
                 BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim(),
+                InputVatAccountCodeOverride = string.IsNullOrWhiteSpace(request.InputVatAccountCodeOverride) ? null : request.InputVatAccountCodeOverride.Trim(),
                 CreatedBy = createdBy
             };
 
@@ -931,6 +932,7 @@ public class DocumentService : IDocumentService
         if (request.OwnershipTransferDate.HasValue) doc.OwnershipTransferDate = request.OwnershipTransferDate.Value;
         if (request.ServiceUsedDate.HasValue) doc.ServiceUsedDate = request.ServiceUsedDate.Value;
         if (request.BookingNumber != null) doc.BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim();
+        if (request.InputVatAccountCodeOverride != null) doc.InputVatAccountCodeOverride = string.IsNullOrWhiteSpace(request.InputVatAccountCodeOverride) ? null : request.InputVatAccountCodeOverride.Trim();
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)

@@ -390,6 +390,18 @@
                 ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
                 ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
               </div>
+              <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่
+                   เคลม VAT — ลงเป็นต้นทุน/ค่าใช้จ่ายแทน ตาม §82/5) -->
+              <details style="margin-top:10px;font-size:12px">
+                <summary style="cursor:pointer;color:#64748b;font-weight:600;user-select:none">⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชีของ VAT (กรณีไม่เคลม)</summary>
+                <div style="margin-top:8px;padding:10px 12px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px">
+                  <label class="form-label" style="font-size:12px">ผังบัญชี VAT ปลายทาง <span style="color:#6b7280;font-weight:400">(เว้นว่าง = ตามระบบ 11610 หรือ 11640 ตามความครบของใบ)</span></label>
+                  <input type="text" class="form-input" id="fInputVatAccountCodeOverride" list="coaList" placeholder="เช่น 51000 (ต้นทุนขาย) หรือ 54xxx (ค่าใช้จ่าย) — ใช้เมื่อไม่ขอเคลม VAT" style="font-size:13px">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.5">
+                    เลือกผัง 5xxxx (ค่าใช้จ่าย/ต้นทุน) เมื่อต้องการ <b>รวม VAT เข้าเป็นต้นทุน</b> (ไม่เคลม ภ.พ.30) — เช่น §82/5(1) ใบไม่ครบ, §82/5(3) ค่ารับรอง
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -2157,8 +2169,24 @@
         const cid = document.getElementById('fContactId')?.value;
         const inp = document.getElementById('fSupplierTaxIdReadonly');
         if (!inp) return;
-        const c = (this._contacts || []).find(x => x.id === cid);
-        inp.value = c?.taxId || '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)';
+        // หา contact จาก autocomplete cache (this._selectedContact ถ้าเพิ่ง
+        // เลือก) → fallback list (this.contacts) → fallback fetch ตรง
+        // (กรณี contact เพิ่งสร้างจาก OCR ยังไม่อยู่ในแคชหน้า)
+        let c = this._selectedContact && this._selectedContact.id === cid
+          ? this._selectedContact
+          : (this.contacts || []).find(x => x.id === cid);
+        if (c?.taxId) { inp.value = c.taxId; return; }
+        // ไม่พบในแคช — fetch ตรงจาก server (เคส OCR สร้าง contact ใหม่)
+        inp.value = '(กำลังโหลด...)';
+        if (!cid) { inp.value = '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)'; return; }
+        Layout.api()?.getContact(cid)
+          .then(r => {
+            const taxId = r?.data?.taxId;
+            inp.value = taxId || '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)';
+            // cache ลง this._selectedContact ใช้รอบหน้า
+            if (taxId) this._selectedContact = { id: cid, name: r.data.name, taxId };
+          })
+          .catch(() => { inp.value = '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)'; });
       },
 
       _updateTaxInvVatPreview(srcDoc) {
@@ -2830,7 +2858,8 @@
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDueDate').value = '';
         ['fSupplierInvoiceNumber','fSupplierTaxInvoiceDate','fCreditDays','fPaymentTerms',
-         'fDeliveryDate','fOwnershipTransferDate','fServiceUsedDate','fBookingNumber']
+         'fDeliveryDate','fOwnershipTransferDate','fServiceUsedDate','fBookingNumber',
+         'fInputVatAccountCodeOverride']
           .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
@@ -2907,6 +2936,8 @@
           _setDate('fOwnershipTransferDate', d.ownershipTransferDate);
           _setDate('fServiceUsedDate', d.serviceUsedDate);
           const fBn = document.getElementById('fBookingNumber'); if (fBn) fBn.value = d.bookingNumber || '';
+          const fIvao = document.getElementById('fInputVatAccountCodeOverride');
+          if (fIvao) fIvao.value = d.inputVatAccountCodeOverride || '';
           const fSin = document.getElementById('fSupplierInvoiceNumber');
           if (fSin) fSin.value = d.supplierInvoiceNumber || '';
           const fStd = document.getElementById('fSupplierTaxInvoiceDate');
@@ -3221,6 +3252,9 @@
             && document.getElementById('fHasTaxInvoiceRef')?.checked || false,
           supplierBranchCode: document.getElementById('fHasTaxInvoiceRef')?.checked
             ? (document.getElementById('fSupplierBranchCode')?.value.trim() || '00000') : null,
+          // ผัง VAT override (ไม่เคลม → ลงเป็นต้นทุน/ค่าใช้จ่าย) — เว้นว่าง = default
+          inputVatAccountCodeOverride:
+            document.getElementById('fInputVatAccountCodeOverride')?.value.trim() || null,
           creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
           // Only send paymentType for Payment Voucher (the only type whose
