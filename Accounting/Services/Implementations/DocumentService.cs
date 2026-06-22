@@ -425,6 +425,7 @@ public class DocumentService : IDocumentService
                 DeliveryDate = request.DeliveryDate,
                 OwnershipTransferDate = request.OwnershipTransferDate,
                 ServiceUsedDate = request.ServiceUsedDate,
+                BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim(),
                 CreatedBy = createdBy
             };
 
@@ -926,6 +927,7 @@ public class DocumentService : IDocumentService
         if (request.DeliveryDate.HasValue) doc.DeliveryDate = request.DeliveryDate.Value;
         if (request.OwnershipTransferDate.HasValue) doc.OwnershipTransferDate = request.OwnershipTransferDate.Value;
         if (request.ServiceUsedDate.HasValue) doc.ServiceUsedDate = request.ServiceUsedDate.Value;
+        if (request.BookingNumber != null) doc.BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim();
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -1264,6 +1266,21 @@ public class DocumentService : IDocumentService
         if (!string.IsNullOrWhiteSpace(status))
             list = list.Where(x => string.Equals(x.Status, status, StringComparison.OrdinalIgnoreCase));
         return list.ToList();
+    }
+
+    public async Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber)
+    {
+        if (string.IsNullOrWhiteSpace(bookingNumber)) return new List<DocumentResponse>();
+        var key = bookingNumber.Trim();
+        var ids = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.BookingNumber == key
+                && d.Status != DocumentStatus.Voided)
+            .OrderBy(d => d.DocumentDate)
+            .Select(d => d.Id)
+            .ToListAsync();
+        var result = new List<DocumentResponse>(ids.Count);
+        foreach (var id in ids) result.Add(await GetDocumentAsync(companyId, id));
+        return result;
     }
 
     public async Task<ContactDepositSummary> GetContactDepositSummaryAsync(Guid companyId, Guid contactId)
@@ -4368,6 +4385,28 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>WHT threshold §50: ไม่หักถ้ายอดสัญญา < 1,000 บาท แต่ถ้ารวม
+    /// ทุกครั้งที่จ่ายให้ผู้รับเดียวกัน (per contact, per income type, per
+    /// ปีภาษี) ≥ 1,000 ต้องหักย้อนหลัง. method นี้คืน "ต้องหักเพิ่ม" boolean +
+    /// total YTD ของผู้รับเดียวกัน → caller (UI/approval) เตือนผู้ใช้ก่อนอนุมัติ
+    /// เอกสารที่ลืมใส่ WHT rate. ใช้ใน warnings ตอน approve.</summary>
+    private async Task<(bool Required, decimal YtdAmount)> CheckWhtThresholdAsync(
+        Guid companyId, Guid contactId, DateTime documentDate, decimal currentLineTotal)
+    {
+        var yearStart = new DateTime(documentDate.Year, 1, 1);
+        var yearEnd = yearStart.AddYears(1);
+        var ytd = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId
+                && (d.DocumentType == DocumentType.PaymentVoucher
+                    || d.DocumentType == DocumentType.Expense
+                    || d.DocumentType == DocumentType.PurchaseInvoice)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.DocumentDate >= yearStart && d.DocumentDate < yearEnd)
+            .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
+        var projectedTotal = ytd + currentLineTotal;
+        return (projectedTotal >= 1000m, projectedTotal);
+    }
+
     /// <summary>คำนวณ §65 ตรี รายจ่ายต้องห้าม → เก็บ NonDeductibleAmount +
     /// RuleJson บนเอกสาร (ไหลเข้า ภ.ง.ด.50 worksheet). hard-block กรณีไม่ระบุ
     /// ผู้รับเงิน. NeedsConfirmation (เช่น capex) เป็นแค่ warning ไม่ block.</summary>
@@ -5565,7 +5604,15 @@ public class DocumentService : IDocumentService
         RetentionUntil: d.RetentionUntil,
         NonDeductibleAmount: d.NonDeductibleAmount,
         NonDeductibleRuleJson: d.NonDeductibleRuleJson,
-        LateReason: d.LateReason);
+        LateReason: d.LateReason,
+        DeliveryDate: d.DeliveryDate,
+        OwnershipTransferDate: d.OwnershipTransferDate,
+        ServiceUsedDate: d.ServiceUsedDate,
+        DepositRefundedAmount: d.DepositRefundedAmount,
+        DepositRefundedAt: d.DepositRefundedAt,
+        DepositRefundReason: d.DepositRefundReason,
+        DepositAppliedToDocumentId: d.DepositAppliedToDocumentId,
+        BookingNumber: d.BookingNumber);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack
@@ -5836,6 +5883,20 @@ public class DocumentService : IDocumentService
         {
             if (line.WithholdingTaxRate > 0 && !knownWhtRates.Contains(line.WithholdingTaxRate))
                 warnings.Add($"อัตรา WHT ของ '{line.Description}' = {line.WithholdingTaxRate}% — ไม่ใช่อัตรามาตรฐาน (1 / 1.5 / 2 / 3 / 5 / 10 / 15%) ตรวจ Income Type Code อีกครั้ง");
+        }
+
+        // WHT threshold §50 — รวมยอดจ่ายให้ผู้รับเดียวกันทั้งปีภาษี ≥ 1,000
+        // บาท ต้องหัก ณ ที่จ่ายทุกงวด. ถ้าเอกสารฝั่งจ่ายไม่มี WHT แต่ยอดรวม
+        // ≥ 1,000 → เตือนผู้ใช้ว่าอาจลืมหัก
+        if ((doc.DocumentType == DocumentType.PaymentVoucher
+             || doc.DocumentType == DocumentType.Expense
+             || doc.DocumentType == DocumentType.PurchaseInvoice)
+            && doc.WithholdingTaxAmount == 0m && doc.SubTotal > 0)
+        {
+            var (required, ytd) = await CheckWhtThresholdAsync(
+                companyId, doc.ContactId, doc.DocumentDate, doc.SubTotal);
+            if (required && doc.SubTotal < 1000m)
+                warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด");
         }
 
         // Sticker-shock guard — flag invoices > 500k THB. Catches a typo

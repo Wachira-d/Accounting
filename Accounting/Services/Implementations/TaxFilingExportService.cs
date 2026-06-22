@@ -365,6 +365,21 @@ public class TaxFilingExportService : ITaxFilingExportService
         summary.AppendLine($"ภาษีซื้อ (Input VAT),{totalInputVat:F2}");
         summary.AppendLine($"ภาษีที่ต้องชำระ (Net VAT),{(totalOutputVat - totalInputVat):F2}");
 
+        // §87(3) Chronological enforcement — ตรวจว่าทุกใบเรียงวันที่ tax point
+        // จริง. ระบบ sort by tax point อยู่แล้ว แต่ flag เมื่อมีเอกสารที่
+        // tax point ย้อนกลับ (เกิดจาก deferred ที่ถูก reclassify ภายหลัง) →
+        // surface ใน Summary เพื่อให้นักบัญชีตัดสินใจก่อนยื่นจริง.
+        DateTime? prevDate = null;
+        int outOfOrderCount = 0;
+        foreach (var doc in salesDocs.Concat(purchaseDocs).OrderBy(d => d.DocumentNumber))
+        {
+            var tp = doc.DepositOutputVatRecognizedAt ?? doc.InputVatBecameClaimableAt
+                ?? doc.TaxPointDate ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+            if (prevDate.HasValue && tp < prevDate.Value) outOfOrderCount++;
+            prevDate = tp;
+        }
+        summary.AppendLine($"เอกสารเรียงเวลาย้อนกลับ (§87(3) chronological),{outOfOrderCount}");
+
         // Bundle 3 CSV in a zip — RD's tooling can pull each separately.
         using var zipStream = new MemoryStream();
         using (var archive = new System.IO.Compression.ZipArchive(zipStream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))

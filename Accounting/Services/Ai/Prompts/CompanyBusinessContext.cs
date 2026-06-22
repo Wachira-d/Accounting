@@ -35,10 +35,11 @@ public sealed record CompanyBusinessContext(
     /// <summary>10 ผังบัญชีที่บริษัทใช้บ่อยที่สุดในช่วง 6 เดือนหลัง — บอก AI
     /// ว่า "บริษัทนี้เคยลงผังไหนบ่อย" ป้องกัน hallucination ไปเลือกผังที่ไม่
     /// match กับ pattern จริง.</summary>
-    IReadOnlyList<TopAccount> TopAccountsUsed)
-{
-    public sealed record TopAccount(string Code, string Name, int TimesUsed);
-}
+    IReadOnlyList<CompanyTopAccount> TopAccountsUsed);
+
+/// <summary>ผังบัญชีที่บริษัทใช้บ่อย — แยกเป็น top-level record (positional
+/// param ของ CompanyBusinessContext ต้องอ้างชนิดที่ resolved ก่อน body).</summary>
+public sealed record CompanyTopAccount(string Code, string Name, int TimesUsed);
 
 /// <summary>Loader รวมข้อมูล CompanyBusinessContext จาก DB. cache 5 นาที
 /// (per-companyId) ลด query ซ้ำเมื่อหลาย prompt ยิงในรอบเดียว.</summary>
@@ -85,7 +86,7 @@ public static class CompanyBusinessContextLoader
             FiscalYearStartMonth: company?.FiscalYearStartMonth ?? 1,
             WhtRecognitionBasis: settings?.WhtRecognitionBasis.ToString(),
             TopAccountsUsed: topAccounts
-                .Select(a => new CompanyBusinessContext.TopAccount(a.AccountCode, a.AccountName, a.TimesUsed))
+                .Select(a => new CompanyTopAccount(a.AccountCode, a.AccountName, a.TimesUsed))
                 .ToList());
     }
 

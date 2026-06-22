@@ -227,6 +227,15 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<DepositSummary>>(true, result));
     }
 
+    /// <summary>เอกสารทั้งหมดที่ผูก booking เดียวกัน (มัดจำ → ใบสุดท้าย → ใบเสร็จ).</summary>
+    [HttpGet("by-booking/{bookingNumber}")]
+    public async Task<ActionResult<ApiResponse<List<DocumentResponse>>>> GetByBooking(
+        Guid companyId, string bookingNumber)
+    {
+        var result = await _documentService.GetDocumentsByBookingAsync(companyId, bookingNumber);
+        return Ok(new ApiResponse<List<DocumentResponse>>(true, result));
+    }
+
     /// <summary>สรุปมัดจำคงค้างของลูกค้ารายหนึ่ง (หน้า contact + dropdown ใบแจ้งหนี้).</summary>
     [HttpGet("contacts/{contactId:guid}/deposit-summary")]
     public async Task<ActionResult<ApiResponse<ContactDepositSummary>>> GetContactDepositSummary(

@@ -192,6 +192,7 @@ const API = {
       refundDeposit: (id, body) => API.post(`${base}/document/${id}/refund-deposit`, body),
       applyDeposit: (invoiceId, body) => API.post(`${base}/document/${invoiceId}/apply-deposit`, body),
       getContactDepositSummary: (contactId) => API.get(`${base}/document/contacts/${contactId}/deposit-summary`),
+      getDocumentsByBooking: (bookingNumber) => API.get(`${base}/document/by-booking/${encodeURIComponent(bookingNumber)}`),
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
       suggestPvAccounting: (body) => API.post(`${base}/document/ai-suggest-pv-accounting`, body),
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
