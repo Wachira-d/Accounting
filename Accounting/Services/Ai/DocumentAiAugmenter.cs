@@ -238,14 +238,13 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
     {
         try
         {
-            // Candidate accounts: active expense + asset + COGS + payable.
-            var candidates = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive)
-                .OrderBy(a => a.AccountCode)
-                .Take(60)
-                .Select(a => new GlAccountPrompt.AccountCandidate(
-                    a.AccountCode, a.AccountName, a.AccountType.ToString(), a.IsActive))
-                .ToListAsync(ct);
+            // Candidate accounts — เรียงตามที่ใช้ล่าสุด + Description + ครบทุกหมวด
+            var candRows0 = await Prompts.GlCandidateBuilder.LoadAsync(
+                _db, companyId, expenseAssetOnly: false, cap: 150, ct);
+            var candidates = candRows0
+                .Select(c => new GlAccountPrompt.AccountCandidate(
+                    c.Code, c.Name, c.Type, c.IsActive, c.Description))
+                .ToList();
 
             var vendorKey = !string.IsNullOrEmpty(vendorTaxId)
                 ? vendorTaxId
@@ -303,6 +302,16 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             // โหลด business context — กฎเหล็ก #1: ส่งบริบทที่เกี่ยวข้องให้ครบ
             var bizCtx = await Prompts.CompanyBusinessContextLoader.LoadAsync(_db, companyId, ct);
 
+            // Durable-goods/consumables deterministic prior — ดู
+            // DurableGoodsHeuristic + GlAccountPrompt rule 7. เครื่องปริ้นท์
+            // → 12210 (Asset) ไม่ใช่ 54420 (วัสดุสิ้นเปลือง)
+            var (priorCode, priorConf) = DurableGoodsHeuristic.Predict(lineDescription, amount, candidates);
+            if (priorCode != null && (localBestAccountCode == null || (localConfidence ?? 0m) < priorConf))
+            {
+                localBestAccountCode = priorCode;
+                localConfidence = priorConf;
+            }
+
             var req = GlAccountPrompt.Build(
                 companyId, vendorName, vendorTaxId, vendorIndustry,
                 enrichedDescription, amount, currency,
@@ -341,12 +350,14 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
 
         try
         {
-            var candidates = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive)
-                .OrderBy(a => a.AccountCode).Take(80)
-                .Select(a => new BulkPvAccountingPrompt.AccountCandidate(
-                    a.AccountCode, a.AccountName, a.AccountType.ToString()))
-                .ToListAsync(ct);
+            // ทุกหมวด (PV อาจ Dr liability เช่น คืนเงินกู้กรรมการ) — เรียงตามที่
+            // ใช้ล่าสุด + ส่ง Description (แก้ bug Take(80) ตัดบัญชีค่าใช้จ่ายทิ้ง)
+            var candRows = await Prompts.GlCandidateBuilder.LoadAsync(
+                _db, companyId, expenseAssetOnly: false, cap: 150, ct);
+            var candidates = candRows
+                .Select(c => new BulkPvAccountingPrompt.AccountCandidate(
+                    c.Code, c.Name, c.Type, c.Description))
+                .ToList();
 
             var vendorKey = !string.IsNullOrEmpty(vendorTaxId)
                 ? vendorTaxId
@@ -410,9 +421,30 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             // to parse + so the UI's per-line "user picked X" can flow
             // into per-line training labels.
             var withChildIds = new Dictionary<Guid, DocumentAiSuggestion>(parsed.ByLineId.Count);
+            // Pre-build candidate prompt list for heuristic override
+            var heuristicCandidates = candidates.Select(c =>
+                new Prompts.GlAccountPrompt.AccountCandidate(c.Code, c.Name, c.Type, true)).ToList();
+            // Mutable working dict — เริ่มจากผล AI แล้ว override ตรงไหนผิด
+            var byLineWorking = parsed.ByLineId.ToDictionary(kv => kv.Key, kv => kv.Value);
             foreach (var l in lines)
             {
-                if (!parsed.ByLineId.TryGetValue(l.LineId, out var sugg))
+                // ⭐ Override AI ถ้า heuristic durable-goods ชัด — เครื่องปริ้นท์/
+                // คอมพิวเตอร์/... → 12xxx (Asset). กัน AI ตอบ "วัสดุสิ้นเปลือง"
+                // ผิด. ถ้า heuristic confidence ≥0.85 และต่างจาก AI answer →
+                // override (heuristic deterministic, AI สามารถผิดได้)
+                var (priorCode, priorConf) = DurableGoodsHeuristic.Predict(
+                    l.Description, l.Amount, heuristicCandidates);
+                if (byLineWorking.TryGetValue(l.LineId, out var aiSugg)
+                    && priorCode != null && priorConf >= 0.85m
+                    && !string.Equals(aiSugg.Answer, priorCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    byLineWorking[l.LineId] = aiSugg with {
+                        Answer = priorCode,
+                        Confidence = priorConf,
+                        Reasoning = $"[heuristic override §65 ตรี (5)] {priorCode} (เครื่องใช้ทน/durable goods). เดิม AI แนะนำ {aiSugg.Answer}",
+                    };
+                }
+                if (!byLineWorking.TryGetValue(l.LineId, out var sugg))
                 {
                     withChildIds[l.LineId] = Fallback(null, null);
                     continue;

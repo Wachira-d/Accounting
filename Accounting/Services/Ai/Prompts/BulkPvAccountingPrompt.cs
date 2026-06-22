@@ -36,13 +36,22 @@ Cross-line reasoning required:
 2. Detect ODD lines — a small ""service fee"" line on an otherwise rent-only invoice belongs to a different account than rent.
 3. Detect TYPE markers — fuel/utilities/professional-fee keywords override generic guesses.
 4. Apply Thai tax-code context: account 5402 = ค่าน้ำมัน, 5301 = ค่าไฟ ค่าน้ำ, 5303 = โทรศัพท์ อินเทอร์เน็ต, 5306 = อุปกรณ์สำนักงาน, 5102 = ค่าเช่า, 5305 = วัสดุ, 5404 = ค่าขนส่ง, 5408 = รับรอง, 5501 = โฆษณา, 5701 = ค่าธรรมเนียมธนาคาร, 5703 = ค่าธรรมเนียมราชการ. Use the company's actual chart of accounts when available.
-5. MATCH THE INDUSTRY — company.IndustryType is in the payload. Different sectors have sector-specific accounts:
+5. ⭐ FIXED ASSET vs SUPPLIES (สำคัญที่สุด — §65 ตรี (5) + พ.ร.ฎ.145):
+   เครื่องปริ้นท์ / คอมพิวเตอร์ / โน้ตบุ๊ก / หน้าจอ / เครื่องถ่ายเอกสาร / เครื่องสแกน /
+   เครื่องโทรสาร / เครื่องปรับอากาศ / โต๊ะ / เก้าอี้ / ตู้ / เครื่องจักร / ยานพาหนะ
+   = DURABLE goods → **Fixed Asset 12xxx (capitalize)** ไม่ใช่ค่าใช้จ่าย 5xxxx
+   หมึก / กระดาษ / ปากกา / ลวดเย็บ / คลิป / เทป / แฟ้ม / กล่อง / ซอง
+   = CONSUMABLES → ค่าวัสดุสิ้นเปลือง 54420/5306
+   ราคา ≥ ฿50,000 + อายุใช้งาน >1 ปี → MUST capitalize. ห้ามแนะนำ supplies สำหรับเครื่องใช้ทน.
+   ระวังคำว่า ""อุปกรณ์สำนักงาน"" (Asset 12210) vs ""ค่าวัสดุสำนักงาน"" (Expense 54420) — แยกตาม noun ที่นำหน้า.
+
+6. MATCH THE INDUSTRY — company.IndustryType is in the payload. Different sectors have sector-specific accounts:
    • Hotel: 11830 เงินมัดจำรับล่วงหน้า, 21510 ห้องพักรับล่วงหน้า, 51xxx room-cost
    • Restaurant: 51xxx cost-of-food (ingredients vs supplies are different accounts)
    • Construction: 51xxx ต้นทุนงานก่อสร้าง + 12xxx งานระหว่างก่อสร้าง
    • Real Estate / Property: 11xx ที่ดินสะสม + 21xxx เงินมัดจำซื้อขาย
    When the chart has industry-specific accounts that match the line description, PREFER them over generic 5xxx codes.
-6. company.top_accounts_used = accounts this company actually uses in the last 6 months. Treat as a strong prior — picking a code outside this list requires good justification.
+7. company.top_accounts_used = accounts this company actually uses in the last 6 months. Treat as a strong prior — picking a code outside this list requires good justification.
 
 ภาษีซื้อต้องห้าม (Non-claimable Input VAT) — Revenue Code §82/5:
 • §82/5(1) — ใบกำกับฯ ไม่สมบูรณ์ / ไม่ได้รับใบกำกับฯ (e.g. ""ใบเสร็จเงินสด"" / ""บิลเงินสด"")
@@ -87,7 +96,7 @@ Strict JSON output (NO prose outside JSON):
         decimal BalanceDue);
 
     public sealed record AccountCandidate(
-        string Code, string Name, string Type);
+        string Code, string Name, string Type, string? Description = null);
 
     public sealed record VendorHistoricalAccount(
         string AccountCode, string AccountName, int TimesUsed);

@@ -320,17 +320,29 @@ public class OcrAiAugmenter : IOcrAiAugmenter
     {
         try
         {
-            // Candidate accounts: active expense + asset accounts. Cap
-            // at 40 to keep prompt size sane.
-            var candidates = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
-                    && (a.AccountType == AccountType.Expense
-                        || a.AccountType == AccountType.Asset))
-                .OrderBy(a => a.AccountCode)
-                .Take(40)
-                .Select(a => new GlAccountPrompt.AccountCandidate(
-                    a.AccountCode, a.AccountName, a.AccountType.ToString(), a.IsActive))
-                .ToListAsync(ct);
+            // Candidate accounts — เรียงตามที่บริษัทใช้ล่าสุด/บ่อย + ส่ง
+            // Description + ครอบ Expense+Asset ครบ (แก้ bug เดิมที่ตัดบัญชี
+            // 5xxxx ค่าใช้จ่ายทิ้งเพราะ OrderBy(code).Take(40)).
+            var candRows = await GlCandidateBuilder.LoadAsync(
+                _db, companyId, expenseAssetOnly: true, cap: 150, ct);
+            var candidates = candRows
+                .Select(c => new GlAccountPrompt.AccountCandidate(
+                    c.Code, c.Name, c.Type, c.IsActive, c.Description))
+                .ToList();
+
+            // ⭐ Deterministic Fixed-Asset/Supplies prior — กันเคสที่ AI
+            // เคยพลาด: "เครื่องปริ้นท์" → 54420 ค่าวัสดุสิ้นเปลือง (ผิด!).
+            // ตรวจ keyword durable goods → bias ไปทาง 12xxx (Fixed Asset)
+            // และ keyword consumables → 5xxxx. ตั้งเป็น hint local เพื่อให้
+            // orchestrator short-circuit ที่ ≥0.85 confidence (ไม่ต้องเรียก AI).
+            // ถ้าผัง 12xxx ไม่มีจริงในผังบริษัท → ตกไปใช้ AI ตามเดิม.
+            var (priorCode, priorConf) = DurableGoodsHeuristic.Predict(
+                lineDescription, amount, candidates);
+            if (priorCode != null && (localBestAccountCode == null || localConfidence < priorConf))
+            {
+                localBestAccountCode = priorCode;
+                localConfidence = priorConf;
+            }
 
             // Vendor's historical accounts (last 24 mo) — strong signal.
             var since = DateTime.UtcNow.AddMonths(-VendorHistoryLookbackMonths);

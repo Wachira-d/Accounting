@@ -61,6 +61,17 @@ public class FixedAsset : TenantEntity
     /// in the right project's P&amp;L without manual allocation.</summary>
     public Guid? ProjectId { get; set; }
 
+    /// <summary>เอกสารต้นทาง (Expense/PI/PV) ที่ซื้อสินทรัพย์นี้ — set เมื่อ
+    /// ระบบ auto-register จากบรรทัดที่ลงผัง PPE ตอน approve. ใช้ dedupe
+    /// (ไม่สร้างซ้ำตอน re-approve) + ลิงก์กลับไปดูเอกสารซื้อ.</summary>
+    public Guid? SourceDocumentId { get; set; }
+    public Guid? SourceDocumentLineId { get; set; }
+
+    /// <summary>True = ระบบสร้างให้อัตโนมัติด้วยค่า default (อายุใช้งาน/วิธี
+    /// คิดค่าเสื่อมตามประเภท) ผู้ใช้ควรตรวจ/ปรับก่อนใช้จริง. UI ติดป้าย
+    /// "⚠️ ตรวจสอบทะเบียนสินทรัพย์".</summary>
+    public bool NeedsReview { get; set; }
+
     public ICollection<AssetDepreciation> Depreciations { get; set; } = new List<AssetDepreciation>();
 }
 

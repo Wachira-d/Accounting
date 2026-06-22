@@ -55,6 +55,9 @@ public class FixedAssetService : IFixedAssetService
             MonthlyLeasePayment = request.MonthlyLeasePayment,
             LeaseLiabilityAccountId = request.LeaseLiabilityAccountId,
             ProjectId = request.ProjectId,
+            SourceDocumentId = request.SourceDocumentId,
+            SourceDocumentLineId = request.SourceDocumentLineId,
+            NeedsReview = request.NeedsReview,
             CreatedBy = createdBy
         };
 
@@ -882,5 +885,5 @@ public class FixedAssetService : IFixedAssetService
             a.AssetAccountId, a.DepreciationExpenseAccountId,
             a.AccumulatedDepreciationAccountId,
             a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment,
-            a.ProjectId);
+            a.ProjectId, a.NeedsReview, a.SourceDocumentId);
 }
