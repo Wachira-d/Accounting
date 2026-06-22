@@ -2557,6 +2557,35 @@
           ${risks.length ? `<div style="color:#dc2626"><b>ความเสี่ยง:</b> ${risks.map(r => Layout.esc(r)).join(' · ')}</div>` : ''}`;
       },
 
+      /** อ่านค่าทุกช่องใน review modal เป็น correction payload (ใช้ร่วม
+       *  saveCorrection + createDocFromReview เพื่อให้ค่าที่เลือกไม่หาย) */
+      _buildReviewCorrection() {
+        const v = (id) => document.getElementById(id)?.value || null;
+        const f = (id) => parseFloat(document.getElementById(id)?.value) || null;
+        return {
+          documentType: v('revDocType'),
+          targetDocumentType: v('revTargetDocType'),
+          vendorName: v('revVendorName'),
+          vendorTaxId: v('revVendorTaxId'),
+          documentNumber: v('revDocNumber'),
+          documentDate: v('revDate'),
+          subTotal: f('revSubTotal'),
+          vatAmount: f('revVatAmount'),
+          totalAmount: f('revTotalAmount'),
+          expenseCategory: v('revExpenseCategory'),
+          debitAccountCode: v('revDebitAccount'),
+          creditAccountCode: v('revCreditAccount'),
+          hasWht: document.getElementById('revHasWht')?.checked || false,
+          whtRate: f('revWhtRate'),
+        };
+      },
+      /** persist review edits ลง scan (เงียบ — ไม่มี toast/ปุ่มเปลี่ยน) */
+      async _persistReviewEdits() {
+        if (!this._reviewScan) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.ocrCorrect(this._reviewScan.id, this._buildReviewCorrection()); }
+        catch (e) { /* best-effort — create จะใช้ค่าเดิมถ้า save ล้ม */ }
+      },
       async saveCorrection() {
         if (!this._reviewScan) return;
         const api = Layout.api();
@@ -2566,22 +2595,7 @@
         btn.disabled = true;
         btn.textContent = 'กำลังบันทึก...';
 
-        const correction = {
-          documentType: document.getElementById('revDocType').value || null,
-          targetDocumentType: document.getElementById('revTargetDocType')?.value || null,
-          vendorName: document.getElementById('revVendorName').value || null,
-          vendorTaxId: document.getElementById('revVendorTaxId').value || null,
-          documentNumber: document.getElementById('revDocNumber').value || null,
-          documentDate: document.getElementById('revDate').value || null,
-          subTotal: parseFloat(document.getElementById('revSubTotal').value) || null,
-          vatAmount: parseFloat(document.getElementById('revVatAmount').value) || null,
-          totalAmount: parseFloat(document.getElementById('revTotalAmount').value) || null,
-          expenseCategory: document.getElementById('revExpenseCategory').value || null,
-          debitAccountCode: document.getElementById('revDebitAccount').value || null,
-          creditAccountCode: document.getElementById('revCreditAccount').value || null,
-          hasWht: document.getElementById('revHasWht')?.checked || false,
-          whtRate: parseFloat(document.getElementById('revWhtRate').value) || null,
-        };
+        const correction = this._buildReviewCorrection();
 
         try {
           await api.ocrCorrect(this._reviewScan.id, correction);
@@ -2606,6 +2620,10 @@
         btn.textContent = 'กำลังสร้าง...';
 
         try {
+          // ⭐ บันทึกค่าที่ผู้ใช้แก้/เลือกใน review (ผังบัญชี, เลขใบกำกับ, วันที่,
+          // หมวด, WHT ฯลฯ) ลง scan ก่อนสร้าง — ไม่งั้นค่าที่เลือกหายเพราะ
+          // create อ่านจาก scan ที่ persist ไว้. (เดิมต้องกด "บันทึก" เองก่อน)
+          await this._persistReviewEdits();
           // Pass the live target-type pick so the chosen เอกสารที่จะสร้าง
           // takes effect without needing a separate "บันทึก" first.
           const target = document.getElementById('revTargetDocType')?.value || null;
