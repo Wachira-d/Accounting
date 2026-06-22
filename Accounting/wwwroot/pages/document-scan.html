@@ -3312,6 +3312,40 @@
         // date so the voucher books the real cash-out date.
         const paymentDate = (targetType === 'PaymentVoucher') ? (scan.extractedDate || null) : null;
 
+        // PV ที่ scan มาจากใบกำกับซื้อ → ติ๊ก "ใช้งานใบกำกับภาษี" + ส่งข้อมูล
+        // ใบของผู้ขาย (เลขที่/วันที่/สาขา) ให้ฟอร์มเติมอัตโนมัติ. ปกติเลขที่
+        // ใบกำกับของผู้ขาย = extractedDocumentNumber, วันที่ = extractedDate,
+        // สาขา = "00000" สำนักงานใหญ่ (95%) — ผู้ใช้แก้ภายหลังได้
+        const hasSupplierInvoice = (targetType === 'PaymentVoucher'
+              || targetType === 'PurchaseInvoice' || targetType === 'Expense')
+          && !!scan.extractedDocumentNumber
+          && !!(scan.extractedVatAmount || scan.extractedVendorTaxId);
+
+        // ค่าที่ผู้ใช้/AI เลือกใน review ก่อนกดสร้าง — ดึงจาก dropdown เพื่อ
+        // round-trip กลับฟอร์ม (revExpenseCategory, revDebitAccount,
+        // revPaymentChannel ที่หน้า scan แสดง). graceful: ไม่มี → null
+        const reviewedCategory = document.getElementById('revExpenseCategory')?.value || null;
+        const reviewedDebitAcc = document.getElementById('revDebitAccount')?.value || null;
+        const reviewedPaymentCh = document.getElementById('revPaymentChannel')?.value || null;
+        // AI's suggested account code (from scan.suggestedAccounts) — ใช้
+        // resolve เป็น accountId ฝั่ง form ถ้า review dropdown ว่าง
+        const suggestedDebitCode = scan.suggestedAccounts?.debitAccountCode || null;
+        const suggestedCreditCode = scan.suggestedAccounts?.creditAccountCode || null;
+
+        // VAT rate จากข้อมูลจริง (subtotal+vat) — heuristic ใน lines map ก่อน
+        // หน้านี้สมมติ 7 ถ้ามี vat → ระบบเดิม. ส่งเป็น header-level ด้วย
+        const headerVatRate = (scan.extractedVatAmount && scan.extractedSubTotal) ? 7 : 0;
+        // currency จาก OCR (ถ้ามี) — default THB
+        const currency = scan.currency || scan.detectedCurrency || 'THB';
+        // pricesIncludeVat: ใบเสร็จไทยส่วนมากราคารวม VAT แล้ว — heuristic
+        // จาก extractedTotalAmount ≈ extractedSubTotal (subtotal เป็นยอดรวม)
+        let pricesIncludeVat = false;
+        if (scan.extractedTotalAmount && scan.extractedSubTotal && scan.extractedVatAmount) {
+          const sumNet = scan.extractedSubTotal + scan.extractedVatAmount;
+          pricesIncludeVat = Math.abs(scan.extractedTotalAmount - scan.extractedSubTotal) < 1
+            && Math.abs(scan.extractedSubTotal - sumNet) > 1;
+        }
+
         const handoff = {
           source: 'ocr-scan',
           scanId: scan.id,
@@ -3319,6 +3353,7 @@
           documentType: targetType,
           contactId: scan.matchedContactId || null,
           contactName: scan.extractedVendorName || null,
+          contactTaxId: scan.extractedVendorTaxId || null,
           documentDate: scan.extractedDate || null,
           dueDate,
           paymentDate,
@@ -3326,6 +3361,27 @@
           reference: scan.extractedDocumentNumber || null,
           notes: scan.processingNotes ? `(จาก OCR) ${scan.processingNotes}` : null,
           lines,
+          currency,
+          pricesIncludeVat,
+          headerVatRate,
+          // Supplier-tax-invoice metadata (PV/PI/Expense ที่อ้างใบกำกับซื้อ) —
+          // เติมลง "ใช้งานใบกำกับภาษี" / supplier-invoice-only section
+          hasTaxInvoiceReference: hasSupplierInvoice,
+          supplierInvoiceNumber: hasSupplierInvoice ? scan.extractedDocumentNumber : null,
+          supplierTaxInvoiceDate: hasSupplierInvoice ? scan.extractedDate : null,
+          supplierBranchCode: hasSupplierInvoice ? '00000' : null,
+          supplierTaxId: hasSupplierInvoice ? scan.extractedVendorTaxId : null,
+          // AI/review picks — accountCode (string) ฝั่งฟอร์ม resolve → id
+          expenseCategoryCode: reviewedDebitAcc || suggestedDebitCode || null,
+          paymentChannelCode: reviewedPaymentCh || suggestedCreditCode || null,
+          // tax point §78 — ใช้วันใบกำกับเป็น default DeliveryDate (ส่งสินค้า =
+          // วันใบกำกับ ในเคสค้าปลีก/บริการที่จ่ายทันที). ผู้ใช้แก้ได้
+          deliveryDate: hasSupplierInvoice ? scan.extractedDate : null,
+          // WHT — heuristic จาก scan.hasWht + ส่งให้ฟอร์มเติมต่อบรรทัด
+          hasWht: !!scan.hasWht,
+          whtRate: scan.whtRate || null,
+          // OCR confidence + AI feedback IDs → frontend แสดง badge "🤖 AI"
+          glAccountAiFeedbackId: scan.glAccountAiFeedbackId || null,
           createdAt: Date.now(),
         };
 
