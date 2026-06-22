@@ -37,6 +37,8 @@ public interface IDocumentService
     /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย — รับรู้รายได้มัดจำ +
     /// ลด BalanceDue ของใบ (treat มัดจำเป็น prepayment).</summary>
     Task<DocumentResponse> ApplyDepositToInvoiceAsync(Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor);
+    /// <summary>เอกสารทั้งหมดที่ผูก booking เดียวกัน (มัดจำ → ใบสุดท้าย → ใบเสร็จ).</summary>
+    Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber);
     /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ
     /// dashboard ภาษีซื้อยังไม่ถึงกำหนด) + 6-month aging §82/3.</summary>
     Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId);

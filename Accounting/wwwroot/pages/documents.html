@@ -205,6 +205,26 @@
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
+          <!-- เลขจอง (Booking) — ผูกเอกสารหลายใบเข้าด้วยกัน (มัดจำ→ใบสุดท้าย→ใบเสร็จ).
+               PMS โรงแรม / POS ร้าน / CRM ส่ง booking key มา; ระบบ index ไว้
+               สำหรับ query รวมเอกสาร. -->
+          <div class="form-row">
+            <div class="form-group" style="width:100%">
+              <label class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:#6b7280;font-size:11px">— optional</span></label>
+              <input type="text" class="form-input" id="fBookingNumber" placeholder="เช่น BK-2026-001, RSV-12345">
+            </div>
+          </div>
+          <!-- Tax Point §78/§78/1 — จุดความรับผิด VAT. แสดงเฉพาะเอกสารที่มี VAT
+               (ขาย/ซื้อ). ถ้าระบุ ระบบใช้ MIN กับวันรับเงิน/ออกใบ คำนวณ tax point
+               → ภ.พ.30 เข้าเดือนที่ถูกต้องตามกฎหมาย. ปล่อยว่าง = ใช้วันที่เอกสาร. -->
+          <details id="taxPointSection" style="display:none;margin-bottom:12px;background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:8px 12px">
+            <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#854d0e">📅 จุดความรับผิด VAT (Tax Point §78) — ปล่อยว่างได้ ระบบใช้วันที่เอกสาร</summary>
+            <div class="form-row" style="margin-top:8px">
+              <div class="form-group"><label class="form-label" data-help="วันส่งมอบสินค้า — §78 ขายสินค้า: tax point = วันแรกสุดของ ส่งมอบ/โอนกรรมสิทธิ์/รับเงิน/ออกใบ">วันส่งมอบสินค้า</label><input type="date" class="form-input" id="fDeliveryDate"></div>
+              <div class="form-group"><label class="form-label" data-help="วันโอนกรรมสิทธิ์ (ถ้าต่างจากส่งมอบ)">วันโอนกรรมสิทธิ์</label><input type="date" class="form-input" id="fOwnershipTransferDate"></div>
+              <div class="form-group"><label class="form-label" data-help="วันที่ใช้บริการ/บริการเสร็จ — §78/1 บริการ: tax point = วันแรกสุดของ รับเงิน/ออกใบ/ใช้บริการ">วันใช้บริการ</label><input type="date" class="form-input" id="fServiceUsedDate"></div>
+            </div>
+          </details>
           <!-- Currency + FX rate (auto-fill จาก CurrencyRate history) — ซ่อนค่า
                default THB เพื่อไม่รบกวน flow ปกติ; เลือกสกุลอื่นแล้ว rate +
                hint โผล่ -->
@@ -1712,6 +1732,16 @@
         const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
         const paidSection = document.getElementById('paidOnIssueSection');
         if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // Tax Point §78/§78/1 — แสดงเฉพาะเอกสารที่กระทบ VAT (ขาย/ซื้อ)
+        // Quotation/PR/PO/DN/BillingNote ไม่ตกในงวด VAT จึงไม่ต้องโชว์
+        const taxPointSec = document.getElementById('taxPointSection');
+        if (taxPointSec) {
+          const vatBearing = ['Invoice', 'TaxInvoice', 'Receipt', 'ReceiptVoucher',
+            'PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu',
+            'CreditNote', 'DebitNote'];
+          taxPointSec.style.display = vatBearing.includes(docType) ? '' : 'none';
+        }
+
         // AI แนะนำผังบัญชี GL — เฉพาะเอกสารฝั่งซื้อ (Expense / PI / PV) ที่มี
         // line description ให้ AI จับคู่กับ chart of accounts
         const aiAccBtn = document.getElementById('btnAiSuggestAcc');
@@ -2620,7 +2650,8 @@
         sel.value = isExpense ? 'PurchaseRequisition' : 'Quotation';
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDueDate').value = '';
-        ['fSupplierInvoiceNumber','fSupplierTaxInvoiceDate','fCreditDays','fPaymentTerms']
+        ['fSupplierInvoiceNumber','fSupplierTaxInvoiceDate','fCreditDays','fPaymentTerms',
+         'fDeliveryDate','fOwnershipTransferDate','fServiceUsedDate','fBookingNumber']
           .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
@@ -2691,6 +2722,12 @@
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
           document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
+          // Tax Point §78 inputs — hydrate ทั้ง 3 fields ถ้ามี
+          const _setDate = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ? Layout.dateInput(v) : ''; };
+          _setDate('fDeliveryDate', d.deliveryDate);
+          _setDate('fOwnershipTransferDate', d.ownershipTransferDate);
+          _setDate('fServiceUsedDate', d.serviceUsedDate);
+          const fBn = document.getElementById('fBookingNumber'); if (fBn) fBn.value = d.bookingNumber || '';
           const fSin = document.getElementById('fSupplierInvoiceNumber');
           if (fSin) fSin.value = d.supplierInvoiceNumber || '';
           const fStd = document.getElementById('fSupplierTaxInvoiceDate');
@@ -2928,6 +2965,10 @@
           documentType: document.getElementById('fDocType').value,
           documentDate: document.getElementById('fDate').value,
           dueDate: document.getElementById('fDueDate').value || null,
+          deliveryDate: document.getElementById('fDeliveryDate')?.value || null,
+          ownershipTransferDate: document.getElementById('fOwnershipTransferDate')?.value || null,
+          serviceUsedDate: document.getElementById('fServiceUsedDate')?.value || null,
+          bookingNumber: document.getElementById('fBookingNumber')?.value.trim() || null,
           contactId,
           reference: document.getElementById('fRef').value || null,
           notes: document.getElementById('fNotes').value || null,
@@ -3258,6 +3299,21 @@
                 <div style="font-size:13px;font-weight:700;color:#991b1b;margin-bottom:4px">⚠️ รายจ่ายต้องห้าม §65 ตรี — บวกกลับ ภ.ง.ด.50: ${Layout.money(d.nonDeductibleAmount)}</div>
                 <div style="font-size:12px;color:#7f1d1d">${(() => { try { return (JSON.parse(d.nonDeductibleRuleJson||'[]')).map(r => `• ${Layout.esc(r.RuleCode||r.ruleCode||'')}: ${Layout.esc(r.Message||r.message||'')}`).join('<br>'); } catch(_) { return ''; } })()}</div>
               </div>` : ''}
+            ${d.bookingNumber ? `
+              <div id="bookingLinked_${d.id}" style="margin-bottom:12px;padding:10px 12px;background:#f0fdfa;border:1px solid #5eead4;border-radius:8px">
+                <div style="font-size:13px;font-weight:700;color:#0f766e;margin-bottom:4px">🎫 เลขจอง: ${Layout.esc(d.bookingNumber)}</div>
+                <div id="bookingDocsBody_${d.id}" style="font-size:12px;color:#0f766e">กำลังโหลดเอกสารที่ผูก booking…</div>
+              </div>
+              <script>(async () => {
+                try {
+                  const r = await Layout.api().getDocumentsByBooking('${encodeURIComponent(d.bookingNumber)}');
+                  const docs = (r.data || []).filter(x => x.id !== '${d.id}');
+                  const body = document.getElementById('bookingDocsBody_${d.id}');
+                  if (!body) return;
+                  if (!docs.length) { body.textContent = '— ไม่มีเอกสารอื่นที่ผูก booking นี้ —'; return; }
+                  body.innerHTML = docs.map(x => \`<a href="#" onclick="Page.detail('\${x.id}');return false" style="display:inline-flex;gap:4px;padding:3px 8px;margin:2px;background:white;border:1px solid #5eead4;border-radius:6px;text-decoration:none;color:#0f766e">\${Layout.docTypeLabel(x.documentType)} <b>\${x.documentNumber}</b> · \${Layout.money(x.totalAmount)}</a>\`).join('');
+                } catch (_) {}
+              })();</script>` : ''}
             ${(d.taxPointDate && new Date(d.taxPointDate).toISOString().slice(0,7) !== new Date(d.documentDate).toISOString().slice(0,7)) ? `
               <div style="margin-bottom:12px;padding:10px 12px;background:#fefce8;border:1px solid #fde047;border-radius:8px;font-size:12px;color:#854d0e">
                 📅 จุดความรับผิด VAT (§78): <b>${Layout.date(d.taxPointDate)}</b> — VAT จะเข้า ภ.พ.30 เดือนนี้ (ต่างจากวันที่เอกสาร ${Layout.date(d.documentDate)})

@@ -4207,6 +4207,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundedAt" timestamp with time zone NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundReason" text NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedToDocumentId" uuid NULL;""",
+            // Booking number — ผูกเอกสารหลายใบ (มัดจำ→ใบสุดท้าย→ใบเสร็จ) เข้า booking เดียว
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BookingNumber" varchar(50) NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_BookingNumber" ON "Documents" ("CompanyId", "BookingNumber") WHERE "BookingNumber" IS NOT NULL;""",
 
             // ===== TaxRuleConfig: configurable PIT brackets + allowances ต่อปี =====
             // Per company × per year. Engine fallback ถ้าไม่มี config → ใช้

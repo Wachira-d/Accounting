@@ -80,7 +80,9 @@ public record CreateDocumentRequest(
     // VAT (MIN กับ payment/issue). ไม่ระบุ → fallback DocumentDate/PaymentDate.
     DateTime? DeliveryDate = null,
     DateTime? OwnershipTransferDate = null,
-    DateTime? ServiceUsedDate = null);
+    DateTime? ServiceUsedDate = null,
+    // เลขจอง (PMS/POS/CRM external key) — ผูกเอกสารหลายใบเข้า booking เดียว
+    string? BookingNumber = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -151,7 +153,8 @@ public record UpdateDocumentRequest(
     // Tax Point §78 inputs (optional, แก้ได้ตอน Draft)
     DateTime? DeliveryDate = null,
     DateTime? OwnershipTransferDate = null,
-    DateTime? ServiceUsedDate = null);
+    DateTime? ServiceUsedDate = null,
+    string? BookingNumber = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -415,7 +418,17 @@ public record DocumentResponse(
     // ยอดรายจ่ายต้องห้ามที่ต้องบวกกลับ ภ.ง.ด.50 + รายละเอียด rule (JSON)
     decimal NonDeductibleAmount = 0m,
     string? NonDeductibleRuleJson = null,
-    string? LateReason = null);
+    string? LateReason = null,
+    // Tax Point §78 input fields (echoed back สำหรับฟอร์ม hydration)
+    DateTime? DeliveryDate = null,
+    DateTime? OwnershipTransferDate = null,
+    DateTime? ServiceUsedDate = null,
+    // Deposit lifecycle status
+    decimal DepositRefundedAmount = 0m,
+    DateTime? DepositRefundedAt = null,
+    string? DepositRefundReason = null,
+    Guid? DepositAppliedToDocumentId = null,
+    string? BookingNumber = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,

@@ -104,6 +104,13 @@ public class Document : TenantEntity
     /// FK ไปเอกสารนั้น (offset). Null = ยังไม่ถูกนำไปหัก.</summary>
     public Guid? DepositAppliedToDocumentId { get; set; }
 
+    /// <summary>เลขจอง/รหัส booking ที่ระบบภายนอก (PMS โรงแรม / POS ร้าน /
+    /// CRM งานแต่ง) อ้างถึง. ใช้ผูกเอกสารหลายใบเข้ากับ booking เดียวกัน:
+    /// มัดจำ → ใบแจ้งหนี้สุดท้าย → ใบเสร็จ. ต่างจาก Reference (free-text) ที่
+    /// BookingNumber เป็น key indexed สำหรับ query รวมเอกสารทั้ง booking.
+    /// Null = เอกสารไม่ผูก booking.</summary>
+    public string? BookingNumber { get; set; }
+
     /// <summary>วันที่ภาษีขายมัดจำ (เคส Deferred) ถูกย้าย 21913 → 21911 (tax point
     /// เกิดจริง เช่น ส่งมอบ/ออกใบกำกับ). ใช้เป็น tax point ของ ภ.พ.30 สำหรับ
     /// มัดจำ deferred. Null = ยังไม่เกิด (ยังไม่เข้า ภ.พ.30) หรือเป็นเคส Immediate
