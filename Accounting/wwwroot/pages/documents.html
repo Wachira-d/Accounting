@@ -1086,6 +1086,72 @@
           try { this._validateTaxInvoiceClaim?.(); } catch (_) {}
         }
 
+        // PI/Expense supplier-invoice-only section (ไม่ใช่ PV) — เติม fields
+        // คนละชุด (fSupplierInvoiceNumber/Date — ไม่มี PV suffix)
+        if (payload.supplierInvoiceNumber && !payload.hasTaxInvoiceReference) {
+          const sin = document.getElementById('fSupplierInvoiceNumber');
+          if (sin) sin.value = payload.supplierInvoiceNumber;
+          const sid = document.getElementById('fSupplierTaxInvoiceDate');
+          if (sid && payload.supplierTaxInvoiceDate) {
+            try { sid.value = Layout.dateInput(payload.supplierTaxInvoiceDate); } catch (_) {}
+          }
+        }
+
+        // สกุลเงิน + ราคารวม VAT — เติมจาก OCR
+        if (payload.currency) {
+          const fc = document.getElementById('fCurrency');
+          if (fc && [...fc.options].some(o => o.value === payload.currency)) {
+            fc.value = payload.currency;
+            try { this.onCurrencyOrDateChange?.(); } catch (_) {}
+          }
+        }
+        if (payload.pricesIncludeVat !== undefined) {
+          const fpiv = document.getElementById('fPricesIncludeVat');
+          if (fpiv) fpiv.checked = !!payload.pricesIncludeVat;
+        }
+
+        // วันส่งมอบ (tax point §78 — default = วันใบกำกับ) — เปิด details ถ้าระบุ
+        if (payload.deliveryDate) {
+          const fdd = document.getElementById('fDeliveryDate');
+          if (fdd) {
+            try { fdd.value = Layout.dateInput(payload.deliveryDate); } catch (_) {}
+            const tps = document.getElementById('taxPointSection');
+            if (tps && tps.tagName === 'DETAILS') tps.open = true;
+          }
+        }
+
+        // หมวดค่าใช้จ่าย (ผังบัญชี) — resolve จาก code → id แล้วเลือก dropdown
+        // OCR/AI แนะนำมาเป็น code; this.expenseCategories โหลดมาแล้วใน openCreate
+        const resolveByCode = (code) => code
+          ? (this.expenseCategories || []).find(a => a.accountCode === code)?.id
+          : null;
+        if (payload.expenseCategoryCode) {
+          const id = resolveByCode(payload.expenseCategoryCode);
+          const fec = document.getElementById('fExpenseCategory');
+          if (id && fec) {
+            fec.value = id;
+            // กัน async AI suggest ทับ
+            fec.dataset.userTouched = '1';
+          }
+        }
+
+        // แหล่งเงิน / ช่องทางชำระ — OCR/AI แนะนำเป็น code → resolve เป็น
+        // bank:xxx หรือ account:xxx
+        if (payload.paymentChannelCode) {
+          const fpc = document.getElementById('fPaymentChannel');
+          if (fpc) {
+            // ลอง bank:<id> ก่อน (ถ้า code ตรง bank accounts) ไม่งั้น account:<id>
+            const bank = (this.bankAccounts || []).find(b => b.accountCode === payload.paymentChannelCode);
+            const acc = !bank ? (this.paymentChannels || []).find(a => a.accountCode === payload.paymentChannelCode) : null;
+            const wantValue = bank ? `bank:${bank.id}` : (acc ? `account:${acc.id}` : null);
+            if (wantValue && [...fpc.options].some(o => o.value === wantValue)) {
+              fpc.value = wantValue;
+              fpc.dataset.userTouched = '1';   // กัน suggestPaymentChannel ทับ
+              try { this._deriveMethodFromChannel?.(); } catch (_) {}
+            }
+          }
+        }
+
         // Pre-fill contact when we matched one during the scan (DBD-confirmed
         // or fuzzy-matched). Otherwise drop the extracted name into the
         // visible input so the user sees it but the hidden id stays empty —
@@ -1116,10 +1182,20 @@
           row.querySelector('[data-f="disc"]').value = l.discountPercent ?? 0;
           const vatSel = row.querySelector('[data-f="vat"]');
           if (vatSel) vatSel.value = String(l.vatRate ?? 7);
-          row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate ?? 0;
+          // WHT — ใช้ค่า per-line ก่อน, fallback to header-level จาก OCR
+          row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate
+            ?? (payload.hasWht && payload.whtRate ? payload.whtRate : 0);
           // OCR per-line project allocation (set by the OCR review modal).
           const pSel = row.querySelector('[data-f="project"]');
           if (pSel && l.projectId) pSel.value = l.projectId;
+          // ผังบัญชี per-line — line-level ก่อน, fallback to doc-level
+          // (expenseCategoryCode คือผังที่ AI/ผู้ใช้เลือกบนหน้า scan)
+          const accInp = row.querySelector('[data-f="accountCode"]');
+          const lineCode = l.accountCode || payload.expenseCategoryCode;
+          if (accInp && lineCode) {
+            accInp.value = lineCode;
+            try { this.onLineAccountInput?.(accInp); } catch (_) {}
+          }
         });
         if (!document.querySelector('#linesBody .line-card')) this.addLine();
         this.calcSum();
