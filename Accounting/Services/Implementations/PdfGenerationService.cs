@@ -612,8 +612,20 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
         sb.AppendLine("</div></div>");
 
-        // Document Title
+        // Document Title — Receipt/ReceiptVoucher ที่มี VAT > 0 ต้องพิมพ์เป็น
+        // ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4: ใบเสร็จที่มี VAT = ใบกำกับภาษีในตัว);
+        // มัดจำ (IsDeposit) → ต่อท้าย "(เงินมัดจำ)" ให้ลูกค้าทราบ.
         var title = template.CustomTitle ?? GetDocumentTitle(doc.DocumentType, lang);
+        if (template.CustomTitle == null
+            && (doc.DocumentType == DocumentType.Receipt || doc.DocumentType == DocumentType.ReceiptVoucher)
+            && doc.VatAmount > 0)
+        {
+            title = lang == "en"
+                ? "Tax Invoice / Receipt"
+                : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
+        }
+        if (doc.IsDeposit)
+            title += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
 
         // Document Info
