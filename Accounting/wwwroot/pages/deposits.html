@@ -34,55 +34,62 @@
     </div>
   </div>
 
-  <!-- Realize modal -->
-  <div id="realizeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
-    <div class="card" style="width:460px;max-width:92vw">
-      <div class="card-header"><h3 class="card-title">รับรู้รายได้จากมัดจำ</h3></div>
-      <div style="padding:16px">
+  <!-- Realize modal — ใช้ .modal-overlay กลาง (เดิมเขียน overlay เอง ไม่มี ×,
+       ไม่มี animation, ไม่ตรงกับ modal อื่นในระบบ) -->
+  <div class="modal-overlay" id="realizeModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <h3 class="modal-title">รับรู้รายได้จากมัดจำ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('realizeModal')">&times;</button>
+      </div>
+      <div class="modal-body">
         <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
-        <div style="margin-bottom:10px">
-          <label class="text-sm font-medium">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
+        <div class="form-group">
+          <label class="form-label">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
           <input type="number" step="0.01" min="0" class="form-input" id="realizeAmount">
         </div>
-        <div style="margin-bottom:10px">
-          <label class="text-sm font-medium">วันที่รับรู้</label>
+        <div class="form-group">
+          <label class="form-label">วันที่รับรู้</label>
           <input type="date" class="form-input" id="realizeDate">
         </div>
-        <div style="margin-bottom:14px">
-          <label class="text-sm font-medium">ผังบัญชีรายได้ (เว้นว่าง = ค่าเริ่มต้น 41000/42000)</label>
+        <div class="form-group">
+          <label class="form-label">ผังบัญชีรายได้ (เว้นว่าง = ค่าเริ่มต้น 41000/42000)</label>
           <input type="text" class="form-input" id="realizeRevenueCode" placeholder="เช่น 41000">
         </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn btn-secondary" onclick="Page.closeRealize()">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.submitRealize()">รับรู้รายได้</button>
-        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('realizeModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.submitRealize()">รับรู้รายได้</button>
       </div>
     </div>
   </div>
 
   <!-- Refund modal -->
-  <div id="refundModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
-    <div class="card" style="width:460px;max-width:92vw">
-      <div class="card-header"><h3 class="card-title">คืนเงินมัดจำ (ยกเลิกการจอง)</h3></div>
-      <div style="padding:16px">
+  <div class="modal-overlay" id="refundModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <h3 class="modal-title">คืนเงินมัดจำ (ยกเลิกการจอง)</h3>
+        <button class="modal-close" onclick="Layout.closeModal('refundModal')">&times;</button>
+      </div>
+      <div class="modal-body">
         <div id="refundInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
-        <div style="margin-bottom:10px">
-          <label class="text-sm font-medium">จำนวนเงินที่คืน (รวม VAT)</label>
+        <div class="form-group">
+          <label class="form-label">จำนวนเงินที่คืน (รวม VAT)</label>
           <input type="number" step="0.01" min="0" class="form-input" id="refundAmount">
         </div>
-        <div style="margin-bottom:10px">
-          <label class="text-sm font-medium">วันที่คืน</label>
+        <div class="form-group">
+          <label class="form-label">วันที่คืน</label>
           <input type="date" class="form-input" id="refundDate">
         </div>
-        <div style="margin-bottom:14px">
-          <label class="text-sm font-medium">เหตุผล (เช่น ยกเลิกงาน, เลื่อนวัน)</label>
+        <div class="form-group">
+          <label class="form-label">เหตุผล (เช่น ยกเลิกงาน, เลื่อนวัน)</label>
           <input type="text" class="form-input" id="refundReason" placeholder="เหตุผลการคืนมัดจำ">
         </div>
-        <div style="font-size:12px;color:#92400e;margin-bottom:14px">⚠️ ระบบจะกลับรายการขายรอรับรู้ + ออกใบลดหนี้ภาษีขายอัตโนมัติ</div>
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn btn-secondary" onclick="Page.closeRefund()">ยกเลิก</button>
-          <button class="btn btn-danger" onclick="Page.submitRefund()">คืนเงินมัดจำ</button>
-        </div>
+        <div style="font-size:12px;color:#92400e">⚠️ ระบบจะกลับรายการขายรอรับรู้ + ออกใบลดหนี้ภาษีขายอัตโนมัติ</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('refundModal')">ยกเลิก</button>
+        <button class="btn btn-danger" onclick="Page.submitRefund()">คืนเงินมัดจำ</button>
       </div>
     </div>
   </div>
@@ -136,7 +143,7 @@
         const map = {
           Outstanding: ['#fef3c7', '#92400e', 'คงค้าง'],
           Partial:     ['#dbeafe', '#1e40af', 'รับรู้บางส่วน'],
-          Realized:    ['#dcfce7', '#15803d', 'รับรู้ครบ'],
+          Realized:    ['#dcfce7', '#15803d', 'รับรู้ครบแล้ว'],
         };
         const [bg, fg, label] = map[st] || ['#f1f5f9', '#475569', st];
         return `<span style="padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;background:${bg};color:${fg}">${label}</span>`;
@@ -194,10 +201,10 @@
         document.getElementById('realizeAmount').max = r.outstandingAmount;
         document.getElementById('realizeDate').value = Layout.toDateInput(new Date());
         document.getElementById('realizeRevenueCode').value = '';
-        document.getElementById('realizeModal').style.display = 'flex';
+        Layout.openModal('realizeModal');
       },
       closeRealize() {
-        document.getElementById('realizeModal').style.display = 'none';
+        Layout.closeModal('realizeModal');
         this._realizeId = null;
       },
       openRefund(id) {
@@ -209,10 +216,10 @@
         document.getElementById('refundAmount').value = (r.totalAmount || 0).toFixed(2);
         document.getElementById('refundDate').value = Layout.toDateInput(new Date());
         document.getElementById('refundReason').value = '';
-        document.getElementById('refundModal').style.display = 'flex';
+        Layout.openModal('refundModal');
       },
       closeRefund() {
-        document.getElementById('refundModal').style.display = 'none';
+        Layout.closeModal('refundModal');
         this._refundId = null;
       },
       async submitRefund() {

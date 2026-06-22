@@ -121,6 +121,9 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   cursor: pointer; font-family: inherit; line-height: 1.2;
 }
 .btn-ai:hover { background: #fde68a; }
+/* required-field marker — ใช้ <span class="req">*</span> แทน inline color
+   หลายแบบ (เดิม #dc2626 / red / var(--gray-500)) */
+.req { color: #dc2626; font-weight: 600; margin-left: 2px; }
 .btn-white { background: #fff; color: var(--gray-800); box-shadow: var(--shadow-sm); }
 .btn-white:hover { box-shadow: var(--shadow); }
 .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
