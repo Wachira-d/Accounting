@@ -238,14 +238,13 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
     {
         try
         {
-            // Candidate accounts: active expense + asset + COGS + payable.
-            var candidates = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive)
-                .OrderBy(a => a.AccountCode)
-                .Take(60)
-                .Select(a => new GlAccountPrompt.AccountCandidate(
-                    a.AccountCode, a.AccountName, a.AccountType.ToString(), a.IsActive))
-                .ToListAsync(ct);
+            // Candidate accounts — เรียงตามที่ใช้ล่าสุด + Description + ครบทุกหมวด
+            var candRows0 = await Prompts.GlCandidateBuilder.LoadAsync(
+                _db, companyId, expenseAssetOnly: false, cap: 150, ct);
+            var candidates = candRows0
+                .Select(c => new GlAccountPrompt.AccountCandidate(
+                    c.Code, c.Name, c.Type, c.IsActive, c.Description))
+                .ToList();
 
             var vendorKey = !string.IsNullOrEmpty(vendorTaxId)
                 ? vendorTaxId
@@ -351,12 +350,14 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
 
         try
         {
-            var candidates = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive)
-                .OrderBy(a => a.AccountCode).Take(80)
-                .Select(a => new BulkPvAccountingPrompt.AccountCandidate(
-                    a.AccountCode, a.AccountName, a.AccountType.ToString()))
-                .ToListAsync(ct);
+            // ทุกหมวด (PV อาจ Dr liability เช่น คืนเงินกู้กรรมการ) — เรียงตามที่
+            // ใช้ล่าสุด + ส่ง Description (แก้ bug Take(80) ตัดบัญชีค่าใช้จ่ายทิ้ง)
+            var candRows = await Prompts.GlCandidateBuilder.LoadAsync(
+                _db, companyId, expenseAssetOnly: false, cap: 150, ct);
+            var candidates = candRows
+                .Select(c => new BulkPvAccountingPrompt.AccountCandidate(
+                    c.Code, c.Name, c.Type, c.Description))
+                .ToList();
 
             var vendorKey = !string.IsNullOrEmpty(vendorTaxId)
                 ? vendorTaxId

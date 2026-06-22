@@ -72,7 +72,7 @@ Respond ONLY as JSON:
   ""suggested_actions"": [""<short action>""]
 }";
 
-    public sealed record AccountCandidate(string Code, string Name, string Type, bool IsActive);
+    public sealed record AccountCandidate(string Code, string Name, string Type, bool IsActive, string? Description = null);
     public sealed record VendorHistoricalAccount(string Code, string Name, int TimesUsed, decimal AvgAmount);
 
     public static AiRequest Build(
@@ -114,6 +114,7 @@ Respond ONLY as JSON:
                 name = a.Name,
                 type = a.Type,
                 is_active = a.IsActive,
+                description = a.Description,   // คำอธิบายผัง — ช่วย AI แยกผังชื่อคล้าย
             }),
             vendor_history = vendorHistory.Select(h => new
             {

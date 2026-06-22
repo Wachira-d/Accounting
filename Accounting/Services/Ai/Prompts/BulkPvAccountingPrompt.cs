@@ -96,7 +96,7 @@ Strict JSON output (NO prose outside JSON):
         decimal BalanceDue);
 
     public sealed record AccountCandidate(
-        string Code, string Name, string Type);
+        string Code, string Name, string Type, string? Description = null);
 
     public sealed record VendorHistoricalAccount(
         string AccountCode, string AccountName, int TimesUsed);
