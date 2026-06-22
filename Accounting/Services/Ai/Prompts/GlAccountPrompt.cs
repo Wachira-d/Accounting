@@ -57,11 +57,17 @@ Respond ONLY as JSON:
         AiFeatureKey featureKey = AiFeatureKey.GlAccountSuggestion,
         string? localModelVersion = null,
         string? sourceEntityType = null, Guid? sourceEntityId = null,
-        string? whtRecognitionBasis = null)
+        string? whtRecognitionBasis = null,
+        CompanyBusinessContext? businessContext = null)
     {
         var payload = new
         {
             task = "gl_account_suggestion",
+            // ข้อมูลธุรกิจของบริษัท — บริบทสำคัญที่สุดสำหรับ AI ก่อนเลือกผัง
+            // (ร้านอาหารผังต่างจากที่ปรึกษา, โรงแรมมีผัง 21510 ห้องพัก
+            // รับล่วงหน้า). top_accounts_used = pattern signal บอก AI ว่า
+            // บริษัทนี้คุ้นกับผังไหน → ลด hallucination + เพิ่ม consistency.
+            company = businessContext,
             vendor = new
             {
                 name = vendorName ?? "",
@@ -100,6 +106,7 @@ Respond ONLY as JSON:
                     "Fixed asset threshold: ≥฿15,000 + life >1 year → capitalize (Thai Revenue Department guidance).",
                     "Input VAT (ภาษีซื้อ) booked to 1531 only if vendor issued valid Tax Invoice per §86.",
                     "WHT asset (ภาษีถูกหัก ณ ที่จ่าย) booked at " + (whtRecognitionBasis ?? "tenant's chosen basis: Cash (§50) or Accrual"),
+                    "Match the company's IndustryType — different sectors have sector-specific accounts (Hotel: 11830/21510 ห้องพัก, Restaurant: cost-of-food 51xxx etc.). Prefer accounts that match top_accounts_used pattern.",
                 },
             },
         };

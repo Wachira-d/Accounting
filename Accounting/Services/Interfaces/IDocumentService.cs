@@ -16,6 +16,38 @@ public interface IDocumentService
     /// <summary>Same as GetDocumentsAsync but redacts items the user lacks permission for.</summary>
     Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false);
     Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request);
+    /// <summary>เติม/แก้รายละเอียดใบกำกับภาษีซื้อ (เลขที่ + วันที่ + สาขา + override
+    /// ผัง VAT) หลังอนุมัติแล้ว — ใช้กับเอกสารที่ตอน approve ใบกำกับยังไม่ครบ
+    /// §86/4 จึง post VAT เข้า 11640 "ภาษีซื้อยังไม่ถึงกำหนด". เมื่อ field ครบ
+    /// ระบบ generate adjusting JE: Dr 11610 / Cr 11640 อัตโนมัติ (§82/3) แล้ว
+    /// ภ.พ.30 จะ include ในเดือนที่ปรับ. ต่างจาก UpdateDocumentAsync ที่แก้ได้
+    /// เฉพาะ Draft — method นี้แก้ได้เฉพาะเอกสาร approved ที่ค้าง 11640.</summary>
+    Task<DocumentResponse> CompleteSupplierTaxInvoiceAsync(Guid companyId, Guid documentId, CompleteSupplierTaxInvoiceRequest request, string actor);
+    /// <summary>รับรู้รายได้จากเงินมัดจำ (ตัด "ขายรอรับรู้" 217xx → รายได้) เมื่อ
+    /// ส่งมอบจริง. รองรับรับรู้บางส่วน. สร้าง JE Dr 217xx / Cr รายได้.</summary>
+    Task<DocumentResponse> RealizeDepositAsync(Guid companyId, Guid documentId, RealizeDepositRequest request, string actor);
+    /// <summary>รายการเงินมัดจำคงค้าง/ที่รับรู้แล้ว สำหรับหน้าจัดการมัดจำ.
+    /// status: "Outstanding" | "Partial" | "Realized" (null = ทั้งหมด).</summary>
+    Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);
+    /// <summary>สรุปมัดจำคงค้างของลูกค้ารายหนึ่ง (สำหรับหน้า contact + dropdown
+    /// ตอนออกใบแจ้งหนี้เพื่อนำมัดจำมาหัก).</summary>
+    Task<ContactDepositSummary> GetContactDepositSummaryAsync(Guid companyId, Guid contactId);
+    /// <summary>คืนเงินมัดจำ (ยกเลิกการจอง) — reversal JE + ใบลดหนี้ output VAT.</summary>
+    Task<DocumentResponse> RefundDepositAsync(Guid companyId, Guid documentId, RefundDepositRequest request, string actor);
+    /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย — รับรู้รายได้มัดจำ +
+    /// ลด BalanceDue ของใบ (treat มัดจำเป็น prepayment).</summary>
+    Task<DocumentResponse> ApplyDepositToInvoiceAsync(Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor);
+    /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ
+    /// dashboard ภาษีซื้อยังไม่ถึงกำหนด) + 6-month aging §82/3.</summary>
+    Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId);
+    /// <summary>ถาม AI ให้แนะนำผังบัญชี GL สำหรับทุกบรรทัดของใบสำคัญจ่าย (PV)
+    /// ที่กำลังสร้างจากใบกำกับภาษีซื้อต้นทาง — student-first ผ่าน
+    /// GlAccountDistillationModel + teacher fallback ผ่าน orchestrator ตามกฎ
+    /// เหล็ก #1 (Distillation Mandate). มี anti-hallucination guard: ผังที่แนะนำ
+    /// ต้องมีจริงใน CoA ของบริษัท. FeedbackId ส่งกลับเพื่อให้ frontend บันทึก
+    /// user choice ภายหลัง (RecordUserChoice).</summary>
+    Task<SuggestPvAccountingResponse> SuggestPaymentVoucherAccountingAsync(
+        Guid companyId, SuggestPvAccountingRequest request, CancellationToken ct = default);
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy);
     /// <summary>Approve with explicit acknowledge-warnings flag. When the
     /// pre-approval check surfaces soft warnings AND acknowledgeWarnings is

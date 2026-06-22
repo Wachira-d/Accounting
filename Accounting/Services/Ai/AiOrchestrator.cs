@@ -19,6 +19,11 @@ public class AiOrchestrator : IAiOrchestrator
     private readonly IAiFeatureRoutingResolver _routing;
     private readonly ILogger<AiOrchestrator> _logger;
 
+    /// <summary>Per-instance cache ของ company-context block (key=companyId).
+    /// Orchestrator เป็น scoped → cache อยู่ตลอด request เดียว; bulk call
+    /// หลายครั้งจึงโหลด context ครั้งเดียว.</summary>
+    private readonly Dictionary<Guid, string> _companyContextCache = new();
+
     public AiOrchestrator(
         AccountingDbContext db,
         IEnumerable<IAiProvider> providers,
@@ -234,8 +239,16 @@ public class AiOrchestrator : IAiOrchestrator
         }
 
         // ── Step 4: sanitise + hash ───────────────────────────────────
+        // กฎเหล็ก #1: ส่งบริบทธุรกิจให้ AI ทุก call (ชื่อบริษัท, ประเภทธุรกิจ,
+        // industry, ผังที่ใช้บ่อย) — รวมศูนย์ที่นี่เพื่อให้ทุก prompt (GL, WHT,
+        // CN reason, DocType ฯลฯ) ได้ context เดียวกันโดยไม่ต้องแก้ทุก Build.
+        // append เข้า SystemPrompt ก่อนคิด hash → cache key สะท้อน context.
+        var enrichedSystemPrompt = await EnrichSystemPromptWithCompanyAsync(
+            request.CompanyId, request.SystemPrompt, ct);
+        var effectiveRequest = request with { SystemPrompt = enrichedSystemPrompt };
+
         var sanitizedUserJson = _sanitizer.Sanitize(request.UserPromptJson, settings.AiStripPiiInPrompts);
-        var promptHash = _sanitizer.ComputePromptHash(sanitizedUserJson, request.SystemPrompt, providerConfig.Model);
+        var promptHash = _sanitizer.ComputePromptHash(sanitizedUserJson, enrichedSystemPrompt, providerConfig.Model);
 
         // ── Step 5: cache lookup ──────────────────────────────────────
         if (!request.BypassCache)
@@ -285,7 +298,7 @@ public class AiOrchestrator : IAiOrchestrator
             var requested = request.TimeoutSecondsOverride ?? providerConfig.RequestTimeoutSeconds;
             var timeoutSec = Math.Clamp(requested, 2, MaxTimeoutSec);
             providerCts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
-            raw = await providerImpl.CompleteAsync(request with { UserPromptJson = sanitizedUserJson },
+            raw = await providerImpl.CompleteAsync(effectiveRequest with { UserPromptJson = sanitizedUserJson },
                 providerConfig, providerCts.Token);
         }
         sw.Stop();
@@ -420,6 +433,40 @@ public class AiOrchestrator : IAiOrchestrator
 
     public Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi, CancellationToken ct = default)
         => _recorder.RecordUserChoiceAsync(feedbackId, chosenAnswer, acceptedAi, ct);
+
+    /// <summary>เติม business context (ชื่อ/ประเภทธุรกิจ/industry/top accounts)
+    /// ต่อท้าย system prompt — ทำให้ AI ทุก feature ตัดสินใจตามสายธุรกิจของ
+    /// tenant. ทนต่อ DB error (คืน system prompt เดิม — ไม่ทำให้ AI flow พัง).</summary>
+    private async Task<string> EnrichSystemPromptWithCompanyAsync(
+        Guid companyId, string systemPrompt, CancellationToken ct)
+    {
+        try
+        {
+            if (!_companyContextCache.TryGetValue(companyId, out var block))
+            {
+                var ctx = await Prompts.CompanyBusinessContextLoader.LoadAsync(_db, companyId, ct);
+                var top = ctx.TopAccountsUsed.Count > 0
+                    ? string.Join(", ", ctx.TopAccountsUsed.Take(8).Select(a => $"{a.Code} {a.Name}"))
+                    : "(ยังไม่มีประวัติการลงบัญชี)";
+                block =
+                    "\n\n--- BUSINESS CONTEXT (ใช้บริบทนี้ตัดสินใจให้ตรงสายธุรกิจ) ---\n" +
+                    $"Company: {ctx.Name}\n" +
+                    $"BusinessType: {ctx.BusinessType}\n" +
+                    $"Industry: {ctx.IndustryType}\n" +
+                    $"VAT-registered: {(ctx.IsVatRegistered ? $"yes ({ctx.VatRate}%)" : "no")}\n" +
+                    $"WHT basis: {ctx.WhtRecognitionBasis ?? "Cash"}\n" +
+                    $"Most-used accounts (6mo): {top}\n" +
+                    "Prefer answers consistent with this company's industry + historical account pattern.";
+                _companyContextCache[companyId] = block;
+            }
+            return systemPrompt + block;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "EnrichSystemPromptWithCompany failed for {CompanyId}", companyId);
+            return systemPrompt;
+        }
+    }
 
     private async Task<Guid?> RecordSkip(AiRequest req, AiCallStatus status, string? reason, CancellationToken ct)
     {

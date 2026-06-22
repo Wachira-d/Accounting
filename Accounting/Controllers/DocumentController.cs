@@ -179,6 +179,107 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result));
     }
 
+    /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — สำหรับเอกสารที่ตอน approve
+    /// ใบกำกับยังไม่ครบ §86/4 จึงค้างภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด".
+    /// เมื่อข้อมูลครบ ระบบ gen adjusting JE 11640→11610 อัตโนมัติ (§82/3).</summary>
+    [HttpPost("{documentId:guid}/complete-tax-invoice")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> CompleteSupplierTaxInvoice(
+        Guid companyId, Guid documentId, [FromBody] CompleteSupplierTaxInvoiceRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // ต้องมีสิทธิ์แก้เอกสารฝั่งซื้อ (เหมือน update)
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์แก้ไขเอกสาร {docType} (ต้องการ Document.Purchase.Create)");
+        var result = await _documentService.CompleteSupplierTaxInvoiceAsync(
+            companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "อัปเดตใบกำกับภาษีซื้อสำเร็จ"));
+    }
+
+    /// <summary>ถาม AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด PV — student-first ผ่าน
+    /// distillation model + teacher fallback ตาม Distillation Mandate.</summary>
+    [HttpPost("ai-suggest-pv-accounting")]
+    public async Task<ActionResult<ApiResponse<SuggestPvAccountingResponse>>> SuggestPvAccounting(
+        Guid companyId, [FromBody] SuggestPvAccountingRequest request, CancellationToken ct)
+    {
+        var result = await _documentService.SuggestPaymentVoucherAccountingAsync(companyId, request, ct);
+        return Ok(new ApiResponse<SuggestPvAccountingResponse>(true, result));
+    }
+
+    /// <summary>รายการเอกสารภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 +
+    /// 6-month aging (§82/3) สำหรับ dashboard ภาษีซื้อยังไม่ถึงกำหนด.</summary>
+    [HttpGet("undue-input-vat")]
+    public async Task<ActionResult<ApiResponse<List<UndueInputVatSummary>>>> GetUndueInputVat(Guid companyId)
+    {
+        var result = await _documentService.GetUndueInputVatAsync(companyId);
+        return Ok(new ApiResponse<List<UndueInputVatSummary>>(true, result));
+    }
+
+    /// <summary>รายการเงินมัดจำคงค้าง/รับรู้แล้ว สำหรับหน้าจัดการมัดจำ
+    /// (ขึ้นงบดุลเป็นหนี้สิน ไม่ใช่เจ้าหนี้การค้า).</summary>
+    [HttpGet("deposits")]
+    public async Task<ActionResult<ApiResponse<List<DepositSummary>>>> GetDeposits(
+        Guid companyId, [FromQuery] string? status = null)
+    {
+        var result = await _documentService.GetDepositsAsync(companyId, status);
+        return Ok(new ApiResponse<List<DepositSummary>>(true, result));
+    }
+
+    /// <summary>สรุปมัดจำคงค้างของลูกค้ารายหนึ่ง (หน้า contact + dropdown ใบแจ้งหนี้).</summary>
+    [HttpGet("contacts/{contactId:guid}/deposit-summary")]
+    public async Task<ActionResult<ApiResponse<ContactDepositSummary>>> GetContactDepositSummary(
+        Guid companyId, Guid contactId)
+    {
+        var result = await _documentService.GetContactDepositSummaryAsync(companyId, contactId);
+        return Ok(new ApiResponse<ContactDepositSummary>(true, result));
+    }
+
+    /// <summary>คืนเงินมัดจำ (ยกเลิกการจอง) — reversal JE + ใบลดหนี้ output VAT.</summary>
+    [HttpPost("{documentId:guid}/refund-deposit")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> RefundDeposit(
+        Guid companyId, Guid documentId, [FromBody] RefundDepositRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์คืนเงินมัดจำ");
+        var result = await _documentService.RefundDepositAsync(companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "คืนเงินมัดจำสำเร็จ"));
+    }
+
+    /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย (offset prepayment).</summary>
+    [HttpPost("{invoiceId:guid}/apply-deposit")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ApplyDeposit(
+        Guid companyId, Guid invoiceId, [FromBody] ApplyDepositRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, invoiceId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์นำมัดจำมาหัก");
+        var result = await _documentService.ApplyDepositToInvoiceAsync(companyId, invoiceId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "นำมัดจำมาหักสำเร็จ"));
+    }
+
+    /// <summary>รับรู้รายได้จากเงินมัดจำเมื่อส่งมอบจริง (ตัด ขายรอรับรู้ →
+    /// รายได้). รองรับรับรู้บางส่วน.</summary>
+    [HttpPost("{documentId:guid}/realize-deposit")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> RealizeDeposit(
+        Guid companyId, Guid documentId, [FromBody] RealizeDepositRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>("ไม่มีสิทธิ์รับรู้รายได้จากมัดจำ");
+        var result = await _documentService.RealizeDepositAsync(
+            companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "รับรู้รายได้จากมัดจำสำเร็จ"));
+    }
+
     [HttpPost("{documentId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<object>>> ApproveDocument(Guid companyId, Guid documentId, [FromBody] ApproveDocumentRequest? request = null)
     {

@@ -36,6 +36,13 @@ Cross-line reasoning required:
 2. Detect ODD lines — a small ""service fee"" line on an otherwise rent-only invoice belongs to a different account than rent.
 3. Detect TYPE markers — fuel/utilities/professional-fee keywords override generic guesses.
 4. Apply Thai tax-code context: account 5402 = ค่าน้ำมัน, 5301 = ค่าไฟ ค่าน้ำ, 5303 = โทรศัพท์ อินเทอร์เน็ต, 5306 = อุปกรณ์สำนักงาน, 5102 = ค่าเช่า, 5305 = วัสดุ, 5404 = ค่าขนส่ง, 5408 = รับรอง, 5501 = โฆษณา, 5701 = ค่าธรรมเนียมธนาคาร, 5703 = ค่าธรรมเนียมราชการ. Use the company's actual chart of accounts when available.
+5. MATCH THE INDUSTRY — company.IndustryType is in the payload. Different sectors have sector-specific accounts:
+   • Hotel: 11830 เงินมัดจำรับล่วงหน้า, 21510 ห้องพักรับล่วงหน้า, 51xxx room-cost
+   • Restaurant: 51xxx cost-of-food (ingredients vs supplies are different accounts)
+   • Construction: 51xxx ต้นทุนงานก่อสร้าง + 12xxx งานระหว่างก่อสร้าง
+   • Real Estate / Property: 11xx ที่ดินสะสม + 21xxx เงินมัดจำซื้อขาย
+   When the chart has industry-specific accounts that match the line description, PREFER them over generic 5xxx codes.
+6. company.top_accounts_used = accounts this company actually uses in the last 6 months. Treat as a strong prior — picking a code outside this list requires good justification.
 
 ภาษีซื้อต้องห้าม (Non-claimable Input VAT) — Revenue Code §82/5:
 • §82/5(1) — ใบกำกับฯ ไม่สมบูรณ์ / ไม่ได้รับใบกำกับฯ (e.g. ""ใบเสร็จเงินสด"" / ""บิลเงินสด"")
@@ -94,11 +101,16 @@ Strict JSON output (NO prose outside JSON):
         IReadOnlyList<AccountCandidate> chartCandidates,
         IReadOnlyList<VendorHistoricalAccount> vendorHistory,
         string currency,
-        string? whtRecognitionBasis = "Cash")
+        string? whtRecognitionBasis = "Cash",
+        CompanyBusinessContext? businessContext = null)
     {
         var payload = new
         {
             task = "bulk_pv_line_accounting",
+            // ข้อมูลธุรกิจ — บริบทสำคัญสำหรับ cross-line reasoning
+            // (โรงแรมเห็น "ค่าซักผ้าผ้าปูที่นอน" → ลง 5xxx hotel-specific
+            // ไม่ใช่ 5305 วัสดุทั่วไป). top_accounts_used = pattern guide.
+            company = businessContext,
             company_currency = currency,
             wht_recognition_basis = whtRecognitionBasis,
             vendor,

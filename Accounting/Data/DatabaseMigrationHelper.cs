@@ -1121,6 +1121,42 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "AgingLastEvaluatedAt" timestamp with time zone NULL;
             """,
+            // Undue Input VAT (§82/3) — PV/PurchaseInvoice ที่ใบกำกับยังไม่ครบ §86/4
+            // → VAT post เข้า 11640 ก่อน, รอ user มาแก้ครบแล้ว gen adjusting JE
+            // Dr 11610 / Cr 11640. BecameClaimableAt = tax-point จริงสำหรับ ภ.พ.30.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatPostedAsUndue" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatBecameClaimableAt" timestamp with time zone NULL;
+            """,
+            // User override ผัง VAT ปลายทาง (เช่น "51000" = ลงต้นทุนขายแทน)
+            // — ใช้ AccountCode (string) เพื่อ portable, validator แปลงเป็น Id ตอน post
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatAccountCodeOverride" varchar(20) NULL;
+            """,
+            // เงินมัดจำ/รับล่วงหน้า — ใบเสร็จที่พักรายได้ไว้ "ขายรอรับรู้" (217xx)
+            // แต่รับรู้ภาษีขายทันที (tax point §78). RealizeDeposit ตัด → รายได้.
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRealizedAmount" numeric(18,2) NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositDeferredAccountCode" varchar(20) NULL;
+            """,
+            // มัดจำ: เคสภาษีขาย — Deferred=true → 21913 (รอเรียกเก็บ, ยังไม่เข้า
+            // ภ.พ.30); RecognizedAt = วันย้าย 21913→21911 (tax point เกิดจริง)
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositOutputVatDeferred" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositOutputVatRecognizedAt" timestamp with time zone NULL;
+            """,
 
             // OpeningBalances — per-period per-account opening figures
             """
@@ -3680,6 +3716,12 @@ public static class DatabaseMigrationHelper
             // OcrScanResult — GL-account (expense) DeepSeek classification trail.
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountUsedAi" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "GlAccountAiFeedbackId" uuid NULL;""",
+            // Document — Payment Voucher อ้างใบกำกับภาษี (RD §86/4 + §86/14).
+            // HasTaxInvoiceReference = flag จาก checkbox "ใช้งานใบกำกับภาษี".
+            // SupplierBranchCode = snapshot สาขาผู้ขายตอนออกใบกำกับ
+            // (กัน Contact.BranchCode ถูกแก้ภายหลังแล้วรายงานภาษีซื้อย้อนหลังเพี้ยน).
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "HasTaxInvoiceReference" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SupplierBranchCode" varchar(5) NULL;""",
 
             // EmployeeLeave — half-day support added 2026.
             """ALTER TABLE "EmployeeLeaves" ADD COLUMN IF NOT EXISTS "HalfDayMarker" integer NOT NULL DEFAULT 0;""",
@@ -4148,6 +4190,23 @@ public static class DatabaseMigrationHelper
             // ===== DocumentLines: ภาษีซื้อต้องห้าม (Non-claimable Input VAT) =====
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IsVatClaimable" boolean NOT NULL DEFAULT true;""",
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "VatNonClaimableReason" text NULL;""",
+            // GL-account AI feedback id — ปิดลูปการสอน local model ตามกฎเหล็ก #1
+            // (ตอน user แก้/ยืนยัน AccountId, ระบบเรียก RecordUserChoiceAsync)
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "GlAccountAiFeedbackId" uuid NULL;""",
+            // Tax Point §78/§78/1 + Retention §87/3 + §65 ตรี add-back + LateReason §82/3
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliveryDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OwnershipTransferDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ServiceUsedDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "TaxPointDate" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RetentionUntil" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "NonDeductibleAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "NonDeductibleRuleJson" text NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "LateReason" text NULL;""",
+            // Deposit lifecycle: refund (ยกเลิกการจอง) + offset เข้าใบสุดท้าย
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundedAt" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositRefundReason" text NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedToDocumentId" uuid NULL;""",
 
             // ===== TaxRuleConfig: configurable PIT brackets + allowances ต่อปี =====
             // Per company × per year. Engine fallback ถ้าไม่มี config → ใช้

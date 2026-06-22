@@ -247,25 +247,76 @@ public class TaxFilingExportService : ITaxFilingExportService
         var endDate = startDate.AddMonths(1).AddDays(-1);
         var thaiYear = year + 543;
 
-        var salesDocs = await _db.Documents
+        // ฝั่งขาย: ใบกำกับภาษี/ใบแจ้งหนี้ + ใบเสร็จ-ใบกำกับภาษีของการขายเงินสด
+        // (Receipt/ReceiptVoucher แบบ standalone — ค้าปลีก/บริการที่ออกใบเสร็จเป็น
+        // ใบกำกับภาษี). ใบเสร็จที่อ้าง Invoice/TaxInvoice เดิม (RelatedDocumentId
+        // != null) ไม่นับซ้ำ — ใบกำกับต้นทางรับ output VAT ไปแล้ว.
+        // มัดจำ 2 เคสตาม tax point (§78/§78/1):
+        //   • Immediate (DepositOutputVatDeferred=false) → tax point = วันรับเงิน
+        //     → เข้า ภ.พ.30 ตาม DocumentDate (รวมในชุด "ปกติ" ด้านล่าง).
+        //   • Deferred (DepositOutputVatDeferred=true) → ยังไม่เกิด tax point →
+        //     ไม่เข้า ภ.พ.30 จนกว่า DepositOutputVatRecognizedAt ถูกตั้ง (ส่งมอบ/
+        //     ออกใบกำกับ) แล้วเข้าเดือนนั้น.
+        var salesBase = _db.Documents
             .Include(d => d.Lines).Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                && (d.DocumentType == DocumentType.Invoice
+                    || d.DocumentType == DocumentType.TaxInvoice
+                    || ((d.DocumentType == DocumentType.Receipt
+                         || d.DocumentType == DocumentType.ReceiptVoucher)
+                        && d.RelatedDocumentId == null))
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.VatAmount > 0)
-            .OrderBy(d => d.DocumentDate).ToListAsync();
+                && d.VatAmount > 0);
 
-        var purchaseDocs = await _db.Documents
+        // ปกติ + มัดจำ Immediate: tax point = DocumentDate (ตัดมัดจำ deferred ออก)
+        var normalSales = await salesBase
+            .Where(d => !(d.IsDeposit && d.DepositOutputVatDeferred)
+                && d.DocumentDate >= startDate && d.DocumentDate <= endDate)
+            .ToListAsync();
+        // มัดจำ deferred ที่ภาษีขายถึงกำหนดแล้ว (RecognizedAt อยู่ในงวด)
+        var recognizedDeferred = await salesBase
+            .Where(d => d.IsDeposit && d.DepositOutputVatDeferred
+                && d.DepositOutputVatRecognizedAt != null
+                && d.DepositOutputVatRecognizedAt >= startDate
+                && d.DepositOutputVatRecognizedAt <= endDate)
+            .ToListAsync();
+        var salesDocs = normalSales.Concat(recognizedDeferred)
+            .OrderBy(d => d.DepositOutputVatRecognizedAt ?? d.DocumentDate)
+            .ToList();
+
+        // ภาษีซื้อเข้า ภ.พ.30 ตาม "tax point" ไม่ใช่ DocumentDate เสมอ (§82/3):
+        //   • เอกสารปกติ (ใบกำกับครบตั้งแต่ approve) → tax point = DocumentDate
+        //   • เอกสารที่ตอน approve ใบไม่ครบ → VAT ค้าง 11640 "ยังไม่ถึงกำหนด"
+        //     เคลมไม่ได้จนกว่าใบครบ → tax point = InputVatBecameClaimableAt
+        //     (เดือนที่ระบบ reclassify 11640→11610). ยังไม่ครบ (BecameClaimableAt
+        //     == null) → ไม่เข้ารายงานเลย — ห้ามเคลมภาษีซื้อจากใบที่ไม่สมบูรณ์.
+        var commonPurchase = _db.Documents
             .Include(d => d.Lines).Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
                 && (d.DocumentType == DocumentType.PurchaseInvoice
                     || d.DocumentType == DocumentType.Expense
                     || d.DocumentType == DocumentType.CertificateInLieu)
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.VatAmount > 0)
-            .OrderBy(d => d.DocumentDate).ToListAsync();
+                && d.VatAmount > 0);
+
+        // เอกสารปกติ: ไม่เคยค้าง 11640 → คัดตาม DocumentDate
+        var normalPurchase = await commonPurchase
+            .Where(d => !d.InputVatPostedAsUndue
+                && d.DocumentDate >= startDate && d.DocumentDate <= endDate)
+            .ToListAsync();
+
+        // เอกสารที่เคยค้าง 11640 แล้ว reclassify แล้ว → คัดตามเดือนที่ถึงกำหนด
+        var reclassifiedPurchase = await commonPurchase
+            .Where(d => d.InputVatPostedAsUndue
+                && d.InputVatBecameClaimableAt != null
+                && d.InputVatBecameClaimableAt >= startDate
+                && d.InputVatBecameClaimableAt <= endDate)
+            .ToListAsync();
+
+        // tax point สำหรับ sort/แสดงวันที่: BecameClaimableAt ถ้ามี, ไม่งั้น DocumentDate
+        var purchaseDocs = normalPurchase.Concat(reclassifiedPurchase)
+            .OrderBy(d => d.InputVatBecameClaimableAt ?? d.DocumentDate)
+            .ToList();
 
         decimal totalOutputBase = 0, totalOutputVat = 0, totalInputBase = 0, totalInputVat = 0;
 
@@ -279,7 +330,11 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var doc in salesDocs)
         {
             var b = doc.SubTotal - doc.DiscountAmount;
-            var d = $"{doc.DocumentDate.Day:D2}/{doc.DocumentDate.Month:D2}/{thaiYear}";
+            // วันที่ในรายงาน = tax point §78/§78/1: มัดจำ deferred → RecognizedAt;
+            // ขายปกติ → TaxPointDate (MIN ส่งมอบ/โอน/รับเงิน/ออกใบ) ที่ snapshot
+            // ตอน approve; fallback DocumentDate (เอกสารเก่าก่อนมี TaxPointDate).
+            var taxPoint = doc.DepositOutputVatRecognizedAt ?? doc.TaxPointDate ?? doc.DocumentDate;
+            var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
             sale.AppendLine($"{s1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
             totalOutputBase += b; totalOutputVat += doc.VatAmount;
         }
@@ -290,8 +345,17 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var doc in purchaseDocs)
         {
             var b = doc.SubTotal - doc.DiscountAmount;
-            var d = $"{doc.DocumentDate.Day:D2}/{doc.DocumentDate.Month:D2}/{thaiYear}";
-            purchase.AppendLine($"{p1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
+            // วันที่ในรายงาน = tax point: ใบที่ reclassify จาก 11640 แสดงวันที่
+            // ถึงกำหนด (เดือนที่เคลมได้จริง) ไม่ใช่ DocumentDate เดิม. แต่ใบปกติ
+            // ใช้วันที่บนใบกำกับของผู้ขาย (SupplierTaxInvoiceDate) เป็นหลัก.
+            var taxPoint = doc.InputVatBecameClaimableAt
+                ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+            var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
+            // เลขที่ใบกำกับ = เลขบนใบของผู้ขาย (RD ต้องการเลขจริง) — fallback
+            // เลขเอกสารภายในเมื่อ supplier number ว่าง.
+            var invNo = !string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber)
+                ? doc.SupplierInvoiceNumber! : doc.DocumentNumber;
+            purchase.AppendLine($"{p1++},{d},{Csv(invNo)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.SupplierBranchCode ?? doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
             totalInputBase += b; totalInputVat += doc.VatAmount;
         }
 

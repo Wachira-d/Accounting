@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เงินมัดจำ/รับล่วงหน้า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เงินมัดจำ / รับล่วงหน้า</h2>
+        <p class="page-subtitle">
+          มัดจำ = หนี้สิน (ขายรอรับรู้ 217xx) บนงบดุล — ไม่ใช่เจ้าหนี้การค้า ·
+          ภาษีขายถึงกำหนดทันทีตั้งแต่วันรับเงิน (§78/§78/1) ·
+          รับรู้รายได้เมื่อส่งมอบจริง
+        </p>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="Page.setStatus('',this)">ทั้งหมด</div>
+      <div class="tab" onclick="Page.setStatus('Outstanding',this)">คงค้าง</div>
+      <div class="tab" onclick="Page.setStatus('Partial',this)">รับรู้บางส่วน</div>
+      <div class="tab" onclick="Page.setStatus('Realized',this)">รับรู้ครบแล้ว</div>
+    </div>
+
+    <div class="grid grid-4 gap-4" id="kpis" style="margin-bottom:24px"></div>
+
+    <div class="card" id="listContent">
+      <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>
+    </div>
+  </div>
+
+  <!-- Realize modal -->
+  <div id="realizeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+    <div class="card" style="width:460px;max-width:92vw">
+      <div class="card-header"><h3 class="card-title">รับรู้รายได้จากมัดจำ</h3></div>
+      <div style="padding:16px">
+        <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div style="margin-bottom:10px">
+          <label class="text-sm font-medium">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="realizeAmount">
+        </div>
+        <div style="margin-bottom:10px">
+          <label class="text-sm font-medium">วันที่รับรู้</label>
+          <input type="date" class="form-input" id="realizeDate">
+        </div>
+        <div style="margin-bottom:14px">
+          <label class="text-sm font-medium">ผังบัญชีรายได้ (เว้นว่าง = ค่าเริ่มต้น 41000/42000)</label>
+          <input type="text" class="form-input" id="realizeRevenueCode" placeholder="เช่น 41000">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="Page.closeRealize()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitRealize()">รับรู้รายได้</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Refund modal -->
+  <div id="refundModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+    <div class="card" style="width:460px;max-width:92vw">
+      <div class="card-header"><h3 class="card-title">คืนเงินมัดจำ (ยกเลิกการจอง)</h3></div>
+      <div style="padding:16px">
+        <div id="refundInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div style="margin-bottom:10px">
+          <label class="text-sm font-medium">จำนวนเงินที่คืน (รวม VAT)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="refundAmount">
+        </div>
+        <div style="margin-bottom:10px">
+          <label class="text-sm font-medium">วันที่คืน</label>
+          <input type="date" class="form-input" id="refundDate">
+        </div>
+        <div style="margin-bottom:14px">
+          <label class="text-sm font-medium">เหตุผล (เช่น ยกเลิกงาน, เลื่อนวัน)</label>
+          <input type="text" class="form-input" id="refundReason" placeholder="เหตุผลการคืนมัดจำ">
+        </div>
+        <div style="font-size:12px;color:#92400e;margin-bottom:14px">⚠️ ระบบจะกลับรายการขายรอรับรู้ + ออกใบลดหนี้ภาษีขายอัตโนมัติ</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="Page.closeRefund()">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.submitRefund()">คืนเงินมัดจำ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      status: '',
+      _rows: [],
+      _realizeId: null,
+      async init() {
+        if (!Layout.init('deposits')) return;
+        Layout.setTitle('เงินมัดจำ / รับล่วงหน้า');
+        await this.load();
+      },
+      setStatus(s, el) {
+        this.status = s;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        this.load();
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const content = document.getElementById('listContent');
+        content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>';
+        try {
+          const res = await api.getDeposits(this.status);
+          const rows = res.data || [];
+          this._rows = rows;
+          this.renderKpis(rows);
+          this.renderTable(rows);
+        } catch (e) {
+          content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
+      },
+      renderKpis(rows) {
+        const outstanding = rows.reduce((s, r) => s + (r.outstandingAmount || 0), 0);
+        const realized = rows.reduce((s, r) => s + (r.realizedAmount || 0), 0);
+        const vat = rows.reduce((s, r) => s + (r.vatAmount || 0), 0);
+        const openCount = rows.filter(r => r.status !== 'Realized').length;
+        document.getElementById('kpis').innerHTML = `
+          <div class="kpi-card"><div class="kpi-label">มัดจำคงค้าง (ฐาน)</div><div class="kpi-value">${Layout.money(outstanding)}</div><div class="text-xs text-gray-400">${openCount} รายการ</div></div>
+          <div class="kpi-card"><div class="kpi-label">รับรู้รายได้แล้ว</div><div class="kpi-value">${Layout.money(realized)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">ภาษีขาย (ยื่นแล้ว/ถึงกำหนด)</div><div class="kpi-value">${Layout.money(vat)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">จำนวนใบทั้งหมด</div><div class="kpi-value">${rows.length}</div></div>`;
+      },
+      statusBadge(st) {
+        const map = {
+          Outstanding: ['#fef3c7', '#92400e', 'คงค้าง'],
+          Partial:     ['#dbeafe', '#1e40af', 'รับรู้บางส่วน'],
+          Realized:    ['#dcfce7', '#15803d', 'รับรู้ครบ'],
+        };
+        const [bg, fg, label] = map[st] || ['#f1f5f9', '#475569', st];
+        return `<span style="padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;background:${bg};color:${fg}">${label}</span>`;
+      },
+      renderTable(rows) {
+        const content = document.getElementById('listContent');
+        if (!rows.length) {
+          content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">ไม่มีรายการเงินมัดจำ</div>';
+          return;
+        }
+        content.innerHTML = `
+          <div class="table-container" style="border:none">
+            <table class="table">
+              <thead><tr>
+                <th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th>อ้างอิง</th>
+                <th class="text-right">ฐาน</th><th class="text-right">VAT</th>
+                <th class="text-center">ภาษีขาย</th>
+                <th class="text-right">รับรู้แล้ว</th><th class="text-right">คงค้าง</th>
+                <th class="text-center">อายุ</th><th class="text-center">สถานะ</th><th></th>
+              </tr></thead>
+              <tbody>${rows.map(r => {
+                const vatCell = !r.outputVatDeferred
+                  ? '<span style="color:#15803d;font-size:11px" title="tax point เกิดแล้ว — เข้า ภ.พ.30 (21911)">✓ ถึงกำหนด</span>'
+                  : (r.outputVatRecognizedAt
+                      ? `<span style="color:#15803d;font-size:11px" title="ย้ายเข้า ภ.พ.30 เมื่อ ${Layout.date(r.outputVatRecognizedAt)}">✓ รับรู้แล้ว</span>`
+                      : '<span style="color:#b45309;font-size:11px" title="พักที่ 21913 ยังไม่เข้า ภ.พ.30">⏳ รอเรียกเก็บ</span>');
+                return `
+                <tr>
+                  <td class="font-medium">${Layout.esc(r.documentNumber)}</td>
+                  <td>${Layout.date(r.documentDate)}</td>
+                  <td>${Layout.esc(r.contactName || '-')}</td>
+                  <td style="font-size:12px;color:#475569">${Layout.esc(r.reference || '-')}</td>
+                  <td class="text-right">${Layout.money(r.baseAmount)}</td>
+                  <td class="text-right">${Layout.money(r.vatAmount)}</td>
+                  <td class="text-center">${vatCell}</td>
+                  <td class="text-right">${Layout.money(r.realizedAmount)}</td>
+                  <td class="text-right ${r.outstandingAmount > 0 ? 'text-danger' : ''}">${Layout.money(r.outstandingAmount)}</td>
+                  <td class="text-center">${r.ageDays} วัน</td>
+                  <td class="text-center">${this.statusBadge(r.status)}</td>
+                  <td class="text-right" style="white-space:nowrap">
+                    ${r.status === 'Realized' ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>`}
+                    ${r.outstandingAmount > 0.005 ? `<button class="btn btn-sm btn-ghost" onclick="Page.openRefund('${r.id}')" title="คืนเงินมัดจำ (ยกเลิกการจอง)">คืนมัดจำ</button>` : ''}
+                  </td>
+                </tr>`; }).join('')}</tbody>
+            </table>
+          </div>`;
+      },
+      openRealize(id) {
+        const r = this._rows.find(x => x.id === id);
+        if (!r) return;
+        this._realizeId = id;
+        document.getElementById('realizeInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (ฐาน): <b>${Layout.money(r.outstandingAmount)}</b>`;
+        document.getElementById('realizeAmount').value = (r.outstandingAmount || 0).toFixed(2);
+        document.getElementById('realizeAmount').max = r.outstandingAmount;
+        document.getElementById('realizeDate').value = Layout.toDateInput(new Date());
+        document.getElementById('realizeRevenueCode').value = '';
+        document.getElementById('realizeModal').style.display = 'flex';
+      },
+      closeRealize() {
+        document.getElementById('realizeModal').style.display = 'none';
+        this._realizeId = null;
+      },
+      openRefund(id) {
+        const r = this._rows.find(x => x.id === id);
+        if (!r) return;
+        this._refundId = id;
+        document.getElementById('refundInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (รวม VAT): <b>${Layout.money(r.totalAmount - (r.realizedAmount || 0))}</b>`;
+        document.getElementById('refundAmount').value = (r.totalAmount || 0).toFixed(2);
+        document.getElementById('refundDate').value = Layout.toDateInput(new Date());
+        document.getElementById('refundReason').value = '';
+        document.getElementById('refundModal').style.display = 'flex';
+      },
+      closeRefund() {
+        document.getElementById('refundModal').style.display = 'none';
+        this._refundId = null;
+      },
+      async submitRefund() {
+        const api = Layout.api(); if (!api || !this._refundId) return;
+        const amount = parseFloat(document.getElementById('refundAmount').value);
+        const dateRaw = document.getElementById('refundDate').value;
+        const reason = document.getElementById('refundReason').value.trim();
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่คืน', 'error'); return; }
+        try {
+          await api.refundDeposit(this._refundId, {
+            amount, refundDate: dateRaw ? new Date(dateRaw).toISOString() : null, reason: reason || null
+          });
+          this.closeRefund();
+          Layout.toast('คืนเงินมัดจำสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'คืนเงินไม่สำเร็จ', 'error'); }
+      },
+      async submitRealize() {
+        const api = Layout.api(); if (!api || !this._realizeId) return;
+        const amount = parseFloat(document.getElementById('realizeAmount').value);
+        const dateRaw = document.getElementById('realizeDate').value;
+        const code = document.getElementById('realizeRevenueCode').value.trim();
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่รับรู้', 'error'); return; }
+        const body = {
+          amount,
+          realizeDate: dateRaw ? new Date(dateRaw).toISOString() : null,
+          revenueAccountCode: code || null
+        };
+        try {
+          await api.realizeDeposit(this._realizeId, body);
+          this.closeRealize();
+          Layout.toast('รับรู้รายได้จากมัดจำสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
+      },
+    };
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

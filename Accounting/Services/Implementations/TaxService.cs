@@ -145,6 +145,27 @@ public partial class TaxService : ITaxService
         if (claimedElsewhere.Count > 0)
             docs = docs.Where(d => !claimedElsewhere.Contains(d.Id)).ToList();
 
+        // มัดจำเคส Deferred output VAT (§78): tax point เกิดเมื่อ
+        // DepositOutputVatRecognizedAt ไม่ใช่ DocumentDate — ดึงเพิ่มใบที่
+        // recognized ในงวดนี้แต่ DocumentDate อยู่นอกงวด (กันตกหล่นจาก ภ.พ.30).
+        // ใบที่ DocumentDate อยู่ในงวดอยู่แล้วถูกดึงข้างบน แล้ว Receipt branch
+        // จะกรองด้วย RecognizedAt เอง.
+        var deferredRecognized = await _db.Documents
+            .Include(d => d.Lines).Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId
+                && d.IsDeposit && d.DepositOutputVatDeferred
+                && d.DepositOutputVatRecognizedAt != null
+                && d.DepositOutputVatRecognizedAt >= startDate && d.DepositOutputVatRecognizedAt <= endDate
+                && (d.DocumentDate < startDate || d.DocumentDate > endDate)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.VatAmount != 0)
+            .ToListAsync();
+        if (deferredRecognized.Count > 0)
+        {
+            var existing = docs.Select(d => d.Id).ToHashSet();
+            docs.AddRange(deferredRecognized.Where(d => !existing.Contains(d.Id)));
+        }
+
         // Accounts whose input VAT is prohibited (ภาษีซื้อต้องห้าม, §82/5) —
         // e.g. ค่ารับรอง. VAT on purchase lines posting here is excluded from
         // the claimable ภ.พ.30 input total.
@@ -198,6 +219,48 @@ public partial class TaxService : ITaxService
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = doc.DocumentDate,
                     Description = doc.DocumentNumber,
+                    IncomeAmount = doc.SubTotal,
+                    TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                    TaxAmount = doc.VatAmount,
+                    DocumentId = doc.Id
+                });
+            }
+            // Receipt / ReceiptVoucher ที่ออกเป็น "ใบกำกับภาษี" ของการขายเงินสด
+            // (ค้าปลีก/บริการ ที่ออกใบเสร็จ-ใบกำกับภาษีอย่างย่อหรือเต็มรูปในใบ
+            // เดียว) — tax point = วันรับเงิน (§78/§78/1) → output VAT เข้า ภ.พ.30
+            // เดือนที่รับเงิน. นับเฉพาะใบเสร็จ STANDALONE (RelatedDocumentId ว่าง):
+            // ใบเสร็จที่อ้าง Invoice/TaxInvoice เดิม → ใบกำกับต้นทางรับ VAT ไปแล้ว
+            // ห้ามนับซ้ำ. ใบเสร็จมัดจำ (IsDeposit) ก็เข้าที่นี่ — VAT ถึงกำหนดทันที
+            // แม้รายได้จะรอรับรู้ (Cr ขายรอรับรู้) ก็ตาม.
+            else if ((doc.DocumentType == DocumentType.Receipt
+                      || doc.DocumentType == DocumentType.ReceiptVoucher)
+                     && !doc.RelatedDocumentId.HasValue)
+            {
+                // มัดจำเคส Deferred output VAT: tax point เกิดเมื่อ RecognizedAt.
+                //   • ยังไม่ recognized → ข้าม (ยังไม่เข้า ภ.พ.30 — VAT อยู่ 21913)
+                //   • recognized แล้ว → เข้า ภ.พ.30 เฉพาะงวดที่ RecognizedAt อยู่,
+                //     ใช้ RecognizedAt เป็นวันที่. (Immediate / ขายปกติ →
+                //     tax point = DocumentDate ตามเดิม)
+                if (doc.IsDeposit && doc.DepositOutputVatDeferred)
+                {
+                    if (doc.DepositOutputVatRecognizedAt == null) continue;
+                    var rec = doc.DepositOutputVatRecognizedAt.Value;
+                    if (rec < startDate || rec > endDate) continue;
+                }
+                var taxPoint = (doc.IsDeposit && doc.DepositOutputVatDeferred)
+                    ? doc.DepositOutputVatRecognizedAt!.Value
+                    : doc.DocumentDate;
+                outputVat += doc.VatAmount;
+                report.Lines.Add(new TaxReportLine
+                {
+                    TaxReportId = report.Id,
+                    LineOrder = lineOrder++,
+                    TaxPayerId = doc.Contact?.TaxId,
+                    TaxPayerName = doc.Contact?.Name ?? "",
+                    TransactionDate = taxPoint,
+                    Description = doc.IsDeposit
+                        ? $"[มัดจำ] {doc.DocumentNumber}"
+                        : doc.DocumentNumber,
                     IncomeAmount = doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = doc.VatAmount,

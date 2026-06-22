@@ -353,6 +353,13 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             var settings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
             var whtBasis = settings != null ? "Cash" : "Cash";   // Default for new tenants
 
+            // โหลด business context (ชื่อบริษัท, ประเภทธุรกิจ, industry, top
+            // accounts ใช้บ่อย) — AI ใช้ตัดสินใจตามสายธุรกิจ (โรงแรม vs
+            // ร้านอาหาร vs ที่ปรึกษา ผังไม่เหมือนกัน). กฎเหล็ก #1: ส่งบริบท
+            // ที่เกี่ยวข้องให้ครบที่สุด.
+            var bizCtx = await Accounting.Services.Ai.Prompts.CompanyBusinessContextLoader
+                .LoadAsync(_db, companyId, ct);
+
             var req = GlAccountPrompt.Build(
                 companyId, vendorName, vendorTaxId, vendorIndustry,
                 lineDescription, amount, currency,
@@ -361,7 +368,8 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 AiFeatureKey.GlAccountSuggestion,
                 localModelVersion: "ExpenseCategoryLearner-v1",
                 sourceEntityType: "OcrScanResult", sourceEntityId: scanResultId,
-                whtRecognitionBasis: whtBasis);
+                whtRecognitionBasis: whtBasis,
+                businessContext: bizCtx);
 
             var resp = await _orchestrator.AskAsync(req, ct);
             return new OcrAiAugmentationResult(

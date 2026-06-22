@@ -25,6 +25,91 @@ public class Document : TenantEntity
     public string? SupplierInvoiceNumber { get; set; }
     public DateTime? SupplierTaxInvoiceDate { get; set; }
 
+    /// <summary>True เมื่อผู้ใช้ติ๊ก "ใช้งานใบกำกับภาษี" บนใบสำคัญจ่าย —
+    /// บอกว่า PV ใบนี้อ้างใบกำกับภาษีซื้อเพื่อขอเครดิตภาษีซื้อ (ภพ.30).
+    /// แยกออกจาก PV ที่จ่ายเฉย ๆ ไม่มี VAT (ค่าใช้จ่ายที่กิจการรับเอง).
+    /// เมื่อ true → SupplierInvoiceNumber + SupplierTaxInvoiceDate + Contact.TaxId
+    /// + SupplierBranchCode + SubTotal + VatAmount ต้องครบ (RD §86/4, §86/14)
+    /// และข้อมูลใบนี้จะไหลเข้ารายงานภาษีซื้อ.</summary>
+    public bool HasTaxInvoiceReference { get; set; }
+
+    /// <summary>สาขาผู้ขาย ณ ตอนออกใบกำกับภาษี (snapshot) — Contact.BranchCode
+    /// อาจถูกแก้ภายหลัง แต่รายงานภาษีซื้อย้อนหลังต้องคงสาขาเดิมตามใบจริง.
+    /// "00000" = สำนักงานใหญ่; "00001"+ = สาขา. Null → fallback ใช้
+    /// Contact.BranchCode ตอน export (back-compat กับเอกสารเก่า).</summary>
+    public string? SupplierBranchCode { get; set; }
+
+    /// <summary>True เมื่อ approve เอกสารแล้ว ใบกำกับภาษียัง §86/4 ไม่ครบ →
+    /// VAT ถูก post เข้า 11640 "ภาษีซื้อยังไม่ถึงกำหนด" แทน 11610 "ภาษีซื้อ ภ.พ.30"
+    /// (ป.รัษฎากร §82/3 — เครดิตได้เมื่อใบกำกับครบ). พอ user มาแก้ให้ครบ
+    /// ระบบจะออก adjusting JE: Dr 11610 / Cr 11640, set
+    /// InputVatBecameClaimableAt = now → InputVatPostedAsUndue ยังคง true เป็น
+    /// historical marker, แต่ ภ.พ.30 จะ include ในเดือนของ BecameClaimableAt
+    /// (ไม่ใช่ DocumentDate) เพื่อ match วันที่ JE ที่ลงจริง.</summary>
+    public bool InputVatPostedAsUndue { get; set; }
+
+    /// <summary>วันที่ระบบ generate adjusting JE ย้าย VAT 11640 → 11610.
+    /// Null = ยังไม่ครบ หรือไม่เคย suspend. ใช้เป็น tax-point สำหรับ ภ.พ.30
+    /// เมื่อ InputVatPostedAsUndue = true (เพื่อให้ตรงกับ JE จริง).</summary>
+    public DateTime? InputVatBecameClaimableAt { get; set; }
+
+    /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
+    /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
+    /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense
+    /// เต็มจำนวน. AccountCode (ไม่ใช่ Id) เพื่อ portable ระหว่าง tenants.</summary>
+    public string? InputVatAccountCodeOverride { get; set; }
+
+    /// <summary>True = ใบเสร็จ/ใบสำคัญรับนี้เป็น "เงินมัดจำ/รับล่วงหน้า"
+    /// (deposit/advance) ไม่ใช่การขายที่รับรู้รายได้ทันที. ผลทางบัญชี:
+    /// Dr เงินสด/ธนาคาร, Cr "ขายรอรับรู้/รับล่วงหน้า" (217xx — หนี้สิน) แทน
+    /// บัญชีรายได้, Cr ภาษีขาย (21911). VAT ถึงกำหนดทันที (tax point = วันรับเงิน
+    /// §78/§78/1) จึงเข้ารายงานภาษีขาย/ภ.พ.30 เดือนที่รับ แต่รายได้ยังรอรับรู้
+    /// จนกว่าจะส่งมอบจริง (เรียก RealizeDepositAsync ตัด 217xx → รายได้).</summary>
+    public bool IsDeposit { get; set; }
+
+    /// <summary>ยอด (ฐานไม่รวม VAT) ของเงินมัดจำที่ถูกรับรู้เป็นรายได้แล้ว —
+    /// รองรับการรับรู้บางส่วน (partial). คงค้าง = SubTotal − DepositRealizedAmount.
+    /// 0 = ยังไม่รับรู้เลย (มัดจำคงค้างเต็มจำนวน).</summary>
+    public decimal DepositRealizedAmount { get; set; }
+
+    /// <summary>วันที่รับรู้รายได้ครบเต็มจำนวน (มัดจำปิด). Null = ยังคงค้าง
+    /// (บางส่วนหรือทั้งหมด). ใช้คัดกรอง "มัดจำคงค้าง" ในหน้าจัดการ + งบดุล.</summary>
+    public DateTime? DepositRealizedAt { get; set; }
+
+    /// <summary>ผังบัญชี "ขายรอรับรู้/รับล่วงหน้า" ที่ใช้พักรายได้มัดจำใบนี้
+    /// (snapshot ตอนรับเงิน). Null → default 21712 (ค่าสินค้ารับล่วงหน้า) /
+    /// 21713 (ค่าบริการรับล่วงหน้า) ตอน post. ใช้ตอน RealizeDeposit ตัดกลับ
+    /// บัญชีเดิม.</summary>
+    public string? DepositDeferredAccountCode { get; set; }
+
+    /// <summary>เคสภาษีขายของเงินมัดจำ — รองรับ 2 กรณีตามจังหวะ tax point:
+    /// <para>• <c>false</c> (Immediate): tax point เกิดแล้วเมื่อรับเงิน
+    /// (§78 ขายสินค้า / §78/1 บริการ — รับชำระราคา = จุดรับผิด) → Cr ภาษีขาย
+    /// 21911 เข้า ภ.พ.30 เดือนที่รับทันที.</para>
+    /// <para>• <c>true</c> (Deferred): ยังไม่เกิด tax point (เช่น เงินประกัน/
+    /// มัดจำที่ยังไม่ถือเป็นการรับชำระราคา หรือบัญชีพิจารณาว่ายังไม่ให้บริการ)
+    /// → Cr "ภาษีขายรอเรียกเก็บ" 21913 (Deferred Output VAT) — ยังไม่เข้า
+    /// ภ.พ.30 จนกว่าจะเกิด tax point แล้ว reclassify 21913 → 21911.</para></summary>
+    public bool DepositOutputVatDeferred { get; set; }
+
+    /// <summary>ยอดมัดจำ (รวม VAT) ที่คืนให้ลูกค้าแล้ว (กรณียกเลิกการจอง).
+    /// RefundDepositAsync gen reversal JE + ออกใบลดหนี้กลับ output VAT.
+    /// 0 = ยังไม่คืน.</summary>
+    public decimal DepositRefundedAmount { get; set; }
+    /// <summary>วันที่คืนมัดจำ (null = ยังไม่คืน).</summary>
+    public DateTime? DepositRefundedAt { get; set; }
+    /// <summary>เลขเอกสารอ้างอิงตอนคืน/เหตุผล (เช่น "ยกเลิกงานแต่ง 15/8").</summary>
+    public string? DepositRefundReason { get; set; }
+    /// <summary>เมื่อมัดจำถูกนำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย —
+    /// FK ไปเอกสารนั้น (offset). Null = ยังไม่ถูกนำไปหัก.</summary>
+    public Guid? DepositAppliedToDocumentId { get; set; }
+
+    /// <summary>วันที่ภาษีขายมัดจำ (เคส Deferred) ถูกย้าย 21913 → 21911 (tax point
+    /// เกิดจริง เช่น ส่งมอบ/ออกใบกำกับ). ใช้เป็น tax point ของ ภ.พ.30 สำหรับ
+    /// มัดจำ deferred. Null = ยังไม่เกิด (ยังไม่เข้า ภ.พ.30) หรือเป็นเคส Immediate
+    /// (ซึ่งเข้า ภ.พ.30 ตั้งแต่ DocumentDate อยู่แล้ว).</summary>
+    public DateTime? DepositOutputVatRecognizedAt { get; set; }
+
     /// <summary>Credit term in days from the document date — used to
     /// auto-fill DueDate when not explicit, and to roll DSO / DPO
     /// reports. Defaulted from Contact.PaymentTermDays on create when
@@ -163,6 +248,38 @@ public class Document : TenantEntity
     /// URI or raw base64. Rendered in the preparer slot when present.</summary>
     public string? PreparerSignatureBase64 { get; set; }
 
+    // ===== Tax Point (จุดความรับผิดในการเสีย VAT) §78 / §78/1 / §78/2 =====
+    /// <summary>วันส่งมอบสินค้า (input ของ tax point §78 ขายสินค้า). Null =
+    /// ยังไม่ส่งมอบ/ไม่ระบุ.</summary>
+    public DateTime? DeliveryDate { get; set; }
+    /// <summary>วันโอนกรรมสิทธิ์ (input ของ tax point §78). Null = ไม่ระบุ.</summary>
+    public DateTime? OwnershipTransferDate { get; set; }
+    /// <summary>วันที่ใช้บริการ/บริการเสร็จ (input ของ tax point §78/1 บริการ).</summary>
+    public DateTime? ServiceUsedDate { get; set; }
+    /// <summary>จุดความรับผิดในการเสีย VAT ที่ระบบคำนวณ (TaxPointResolver):
+    /// <para>• ขายสินค้า §78 = MIN(DeliveryDate, OwnershipTransferDate, PaymentDate, IssueDate)</para>
+    /// <para>• บริการ §78/1 = MIN(PaymentDate, IssueDate, ServiceUsedDate)</para>
+    /// VAT period ของ ภ.พ.30 ใช้เดือนของ TaxPointDate (ไม่ใช่ DocumentDate).
+    /// Null = ยังไม่คำนวณ (เอกสารเก่า) → fallback DocumentDate ตอน export.</summary>
+    public DateTime? TaxPointDate { get; set; }
+
+    // ===== Retention (อายุการเก็บเอกสาร) §87/3 + พ.ร.บ.บัญชี ม.10 =====
+    /// <summary>วันที่เก็บเอกสารถึง (เก็บอย่างน้อย 5 ปีจากวันสิ้นรอบ/วันยื่น
+    /// per §87/3 + ม.10). ห้ามลบจริงก่อนวันนี้ (legal hold). คำนวณตอน approve.</summary>
+    public DateTime? RetentionUntil { get; set; }
+
+    // ===== §65 ตรี — รายจ่ายต้องห้าม (Non-Deductible add-back) =====
+    /// <summary>ยอดรายจ่ายต้องห้ามที่ต้อง "บวกกลับ" ใน ภ.ง.ด.50 (§65 ตรี).
+    /// คำนวณโดย Section65TerValidator ตอน approve เอกสารฝั่งซื้อ/ค่าใช้จ่าย.
+    /// 0 = หักภาษีได้เต็ม.</summary>
+    public decimal NonDeductibleAmount { get; set; }
+    /// <summary>RuleCode + มาตราที่ทำให้รายจ่ายส่วนนี้ต้องห้าม (เช่น
+    /// "RD-65ter(6) ค่าปรับ"). JSON array ถ้าหลายข้อ. ลง audit + ภ.ง.ด.50 note.</summary>
+    public string? NonDeductibleRuleJson { get; set; }
+    /// <summary>เหตุผลกรณีใบกำกับมาช้า 1-6 เดือน (§82/3) — required เมื่อ
+    /// (FilingMonth − InvoiceMonth) อยู่ใน 1..6. Null = ไม่ช้า.</summary>
+    public string? LateReason { get; set; }
+
     // ===== OCR Self-Learning =====
     // Watermark set by VendorIntelligenceService.TrainFromDocumentAsync after this
     // document's data has been counted into the per-vendor intelligence cache.
@@ -234,6 +351,14 @@ public class DocumentLine : BaseEntity
     // Account mapping for auto-posting
     public Guid? AccountId { get; set; }
     public ChartOfAccount? Account { get; set; }
+
+    /// <summary>FeedbackId ของ AiSuggestionFeedback ที่ให้ผังบัญชีเส้นนี้ —
+    /// set เมื่อ AccountId นี้มาจาก AI (OCR / PV bulk suggest / integration
+    /// GL fallback). ใช้ปิดลูปการสอน local model ตามกฎเหล็ก #1: ตอนผู้ใช้
+    /// ยืนยัน/แก้ AccountId, DocumentService เรียก RecordUserChoiceAsync
+    /// (acceptedAi = chosenCode == AiPrimaryAnswer). Null = user เลือก
+    /// ผังเองตั้งแต่ต้น ไม่ต้องบันทึก feedback.</summary>
+    public Guid? GlAccountAiFeedbackId { get; set; }
 
     // Per-line project override — falls back to Document.ProjectId if null.
     // Allows splitting a single document across multiple projects (e.g. one

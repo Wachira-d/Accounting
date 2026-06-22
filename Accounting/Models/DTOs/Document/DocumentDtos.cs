@@ -50,6 +50,10 @@ public record CreateDocumentRequest(
     // capture the agreed payment window for DSO/DPO + DueDate auto-fill.
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // ใบสำคัญจ่าย ติ๊ก "ใช้งานใบกำกับภาษี" → flag + snapshot สาขาผู้ขาย
+    // (อ้างอิงใบกำกับซื้อ ขอเครดิตภาษีซื้อ — RD §86/4 + §86/14).
+    bool HasTaxInvoiceReference = false,
+    string? SupplierBranchCode = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     // Settlement basis (Payment Voucher: เครดิต vs จ่ายทันที). Cash → straight
@@ -61,7 +65,22 @@ public record CreateDocumentRequest(
     // ภ.พ.36 / ภ.ง.ด.54 — flag เมื่อซื้อบริการจากต่างประเทศ (Google Ads /
     // AWS / Facebook ฯลฯ). ผู้รับบริการในไทยต้อง self-assess VAT 7% และ
     // หัก WHT ตาม DTA. Default false. Apply เฉพาะ PI/Expense/PV.
-    bool IsForeignService = false);
+    bool IsForeignService = false,
+    // เงินมัดจำ/รับล่วงหน้า — Receipt/ReceiptVoucher ที่รับเงินก่อนส่งมอบ.
+    // True → Cr "ขายรอรับรู้" (217xx) แทนรายได้.
+    // DepositDeferredAccountCode = ผังพักรายได้ (null → 21712).
+    // DepositOutputVatDeferred: false = tax point เกิดแล้ว → Cr ภาษีขาย 21911
+    //   เข้า ภ.พ.30 ทันที (§78 รับชำระราคา); true = ยังไม่เกิด tax point
+    //   (เงินประกัน/ยังไม่ให้บริการ) → Cr ภาษีขายรอเรียกเก็บ 21913 ยังไม่เข้า
+    //   ภ.พ.30 จนกว่าจะรับรู้ (RealizeDeposit).
+    bool IsDeposit = false,
+    string? DepositDeferredAccountCode = null,
+    bool DepositOutputVatDeferred = false,
+    // Tax Point §78/§78/1 inputs (optional) — ถ้าระบุ ระบบใช้คำนวณจุดความรับผิด
+    // VAT (MIN กับ payment/issue). ไม่ระบุ → fallback DocumentDate/PaymentDate.
+    DateTime? DeliveryDate = null,
+    DateTime? OwnershipTransferDate = null,
+    DateTime? ServiceUsedDate = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -72,6 +91,15 @@ public record DocumentLineRequest(
     decimal VatRate,
     decimal WithholdingTaxRate,
     Guid? AccountId,
+    // ผังบัญชีในรูป AccountCode (string) — ทางเลือกแทน AccountId. ใช้กับ AI
+    // suggestion ที่คืน code ตรง ๆ + integration ที่ส่ง code มาจากต่างประเทศ.
+    // Service จะ resolve code → AccountId ตอน save (ในผังของบริษัท).
+    string? AccountCode = null,
+    // FeedbackId จาก AI suggestion endpoint — frontend ส่งกลับมาเมื่อบรรทัด
+    // นี้ได้ผังจาก AI (หรือ user แก้จาก AI). Service เปรียบ AccountCode ที่
+    // user เลือกกับ AiPrimaryAnswer แล้วเรียก RecordUserChoiceAsync — ปิด
+    // ลูปการสอน local distillation model (กฎเหล็ก #1).
+    Guid? GlAccountAiFeedbackId = null,
     // Optional per-line project override (null → inherits Document.ProjectId)
     Guid? ProjectId = null,
     // Optional product linkage — set when the user picked a product via
@@ -112,11 +140,134 @@ public record UpdateDocumentRequest(
     DateTime? PaymentDate = null,
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // PV: ใช้งานใบกำกับภาษี (nullable → omit ไม่แตะค่าเดิม).
+    bool? HasTaxInvoiceReference = null,
+    string? SupplierBranchCode = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     PaymentType? PaymentType = null,
     // Nullable on update so omitting it preserves the stored value.
-    bool? PricesIncludeVat = null);
+    bool? PricesIncludeVat = null,
+    // Tax Point §78 inputs (optional, แก้ได้ตอน Draft)
+    DateTime? DeliveryDate = null,
+    DateTime? OwnershipTransferDate = null,
+    DateTime? ServiceUsedDate = null);
+
+/// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
+/// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
+/// InputVatAccountCodeOverride: ตั้ง "" (empty) เพื่อล้าง override กลับ default;
+/// null = ไม่แตะ; ค่าอื่น = pin ผัง VAT ปลายทางใหม่.</summary>
+public record CompleteSupplierTaxInvoiceRequest(
+    string? SupplierInvoiceNumber = null,
+    DateTime? SupplierTaxInvoiceDate = null,
+    string? SupplierBranchCode = null,
+    string? InputVatAccountCodeOverride = null);
+
+/// <summary>รับรู้รายได้จากเงินมัดจำ (ตัด "ขายรอรับรู้" 217xx → รายได้) เมื่อ
+/// ส่งมอบสินค้า/บริการจริง. Amount = ฐานไม่รวม VAT ที่จะรับรู้ (รองรับบางส่วน);
+/// RevenueAccountCode = ผังรายได้ปลายทาง (null → default 41000/42000);
+/// FinalInvoiceId = ใบแจ้งหนี้/ใบกำกับสุดท้ายที่หักมัดจำนี้ (optional ใช้ link).</summary>
+public record RealizeDepositRequest(
+    decimal Amount,
+    DateTime? RealizeDate = null,
+    string? RevenueAccountCode = null,
+    Guid? FinalInvoiceId = null);
+
+/// <summary>คืนเงินมัดจำ (ยกเลิกการจอง) — gen reversal JE: Dr ขายรอรับรู้ +
+/// Dr ภาษีขาย (ใบลดหนี้) / Cr เงินสด. Amount = ยอดรวม VAT ที่จะคืน.</summary>
+public record RefundDepositRequest(
+    decimal Amount,
+    DateTime? RefundDate = null,
+    string? Reason = null);
+
+/// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย (offset). ระบบรับรู้
+/// รายได้จากมัดจำ (Dr ขายรอรับรู้/Cr รายได้) + ลด BalanceDue ของใบสุดท้าย
+/// ตามยอดมัดจำที่จ่ายมาแล้ว (treat เป็น prepayment).</summary>
+public record ApplyDepositRequest(
+    Guid DepositDocumentId,
+    decimal Amount,
+    DateTime? ApplyDate = null);
+
+/// <summary>สรุปมัดจำคงค้างต่อ contact (สำหรับหน้า contact + dropdown ตอน
+/// ออกใบแจ้งหนี้). TotalOutstanding = มัดจำที่ยังไม่รับรู้/ไม่คืน.</summary>
+public record ContactDepositSummary(
+    Guid ContactId,
+    decimal TotalOutstanding,
+    int Count,
+    IReadOnlyList<DepositSummary> Deposits);
+
+/// <summary>สรุปเงินมัดจำคงค้างสำหรับหน้าจัดการมัดจำ (ขึ้นงบดุลเป็นหนี้สิน
+/// ไม่ใช่เจ้าหนี้การค้า). OutstandingAmount = BaseAmount − RealizedAmount.</summary>
+/// <summary>ขอ AI แนะนำผังบัญชีให้ทุกบรรทัดของใบสำคัญจ่ายที่กำลังสร้างจาก
+/// ใบกำกับภาษีซื้อต้นทาง. SourceInvoiceId = ใบ PI/TaxInvoice ต้นทาง (ถ้ามี).
+/// Lines = บรรทัด PV draft ที่ user กรอกแล้ว (description + amount + ผังปัจจุบัน
+/// ถ้ามี). ส่งเป็น tempId ฝั่ง client เพื่อ map ผลกลับ.</summary>
+public record SuggestPvAccountingRequest(
+    Guid? SourceInvoiceId,
+    string? VendorName,
+    string? VendorTaxId,
+    string? VendorIndustry,
+    string Currency,
+    IReadOnlyList<SuggestPvAccountingLine> Lines);
+
+public record SuggestPvAccountingLine(
+    string TempId,
+    string Description,
+    decimal Amount,
+    string? CurrentAccountCode);
+
+public record SuggestPvAccountingResponse(
+    IReadOnlyList<SuggestPvAccountingLineResult> Lines,
+    IReadOnlyList<string> CrossLineObservations,
+    bool UsedAi);
+
+/// <summary>ผลแนะนำต่อบรรทัด — AccountCode = ผังบัญชีที่แนะนำ; Confidence 0..1;
+/// FeedbackId เก็บไว้ใส่บน DocumentLine ตอน save → ใช้บันทึก user choice ภายหลัง.</summary>
+public record SuggestPvAccountingLineResult(
+    string TempId,
+    string? AccountCode,
+    decimal? Confidence,
+    IReadOnlyList<string> Alternatives,
+    string? Reasoning,
+    bool UsedAi,
+    Guid? FeedbackId);
+
+public record DepositSummary(
+    Guid Id,
+    string DocumentNumber,
+    DateTime DocumentDate,
+    string ContactName,
+    string? ContactTaxId,
+    decimal BaseAmount,
+    decimal VatAmount,
+    decimal TotalAmount,
+    decimal RealizedAmount,
+    decimal OutstandingAmount,
+    DateTime? RealizedAt,
+    int AgeDays,
+    string Status,
+    string? DeferredAccountCode,
+    // หมายเลขอ้างอิง (เลขจอง/booking) — ใช้กลับรายการ/กระทบยอด
+    string? Reference,
+    // ภาษีขาย: false = ถึงกำหนดแล้ว (21911/ภ.พ.30); true = รอเรียกเก็บ (21913)
+    bool OutputVatDeferred,
+    // วันที่ภาษีขาย deferred ถูกรับรู้เข้า ภ.พ.30 (null = ยังไม่รับรู้)
+    DateTime? OutputVatRecognizedAt);
+
+/// <summary>สรุปเอกสารที่ภาษีซื้อค้างอยู่ที่ 11640 "ยังไม่ถึงกำหนด" รอใบกำกับ
+/// ครบ §86/4. MonthsLeft = เดือนเหลือก่อนหมดสิทธิเคลม (§82/3 6 เดือนนับจาก
+/// เดือนใบกำกับ); IsExpired = เกิน 6 เดือนแล้ว (เคลมไม่ได้ ต้องลงเป็นต้นทุน).</summary>
+public record UndueInputVatSummary(
+    Guid Id,
+    string DocumentNumber,
+    DateTime DocumentDate,
+    string SupplierName,
+    string? SupplierTaxId,
+    decimal VatAmount,
+    int AgeDays,
+    int MonthsLeft,
+    bool IsExpired,
+    IReadOnlyList<string> MissingFields);
 
 public record DocumentResponse(
     Guid Id,
@@ -192,6 +343,9 @@ public record DocumentResponse(
     // Supplier-side tax invoice metadata for PurchaseInvoice rows.
     string? SupplierInvoiceNumber = null,
     DateTime? SupplierTaxInvoiceDate = null,
+    // PV flag + supplier branch snapshot (RD §86/4 + §86/14).
+    bool HasTaxInvoiceReference = false,
+    string? SupplierBranchCode = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     // Settlement basis — Cash (จ่ายทันที) vs Credit (เครดิต). Drives whether
@@ -237,7 +391,31 @@ public record DocumentResponse(
     // Short Thai phrase explaining the lifecycle state in context, e.g.
     // "✓ จ่ายแล้ว", "✓ แปลงเป็น PI-001", "◐ แปลงไป 60%", "× ยกเลิก".
     // Picked up directly by the badge tooltip + list column.
-    string? LifecycleReason = null);
+    string? LifecycleReason = null,
+    // ===== Undue Input VAT (§82/3) =====
+    // True เมื่อตอน approve ใบกำกับยังไม่ครบ §86/4 → VAT ลง 11640 "ภาษีซื้อ
+    // ยังไม่ถึงกำหนด" แทน 11610. UI โชว์ป้าย "⏳ ภาษีซื้อรอใบกำกับครบ" + ปุ่ม
+    // "เติมข้อมูลใบกำกับ" (เรียก CompleteSupplierTaxInvoiceAsync).
+    bool InputVatPostedAsUndue = false,
+    // เมื่อ != null = ระบบ reclassify 11640→11610 แล้ว (ใบกำกับครบ) ณ วันนี้ —
+    // ภ.พ.30 ใช้เดือนนี้เป็น tax point. null + InputVatPostedAsUndue=true =
+    // ยังค้าง 11640 รอเติมข้อมูล.
+    DateTime? InputVatBecameClaimableAt = null,
+    string? InputVatAccountCodeOverride = null,
+    // ===== เงินมัดจำ/รับล่วงหน้า =====
+    bool IsDeposit = false,
+    decimal DepositRealizedAmount = 0m,
+    DateTime? DepositRealizedAt = null,
+    string? DepositDeferredAccountCode = null,
+    bool DepositOutputVatDeferred = false,
+    DateTime? DepositOutputVatRecognizedAt = null,
+    // ===== Tax Point §78 + Retention §87/3 + §65 ตรี =====
+    DateTime? TaxPointDate = null,
+    DateTime? RetentionUntil = null,
+    // ยอดรายจ่ายต้องห้ามที่ต้องบวกกลับ ภ.ง.ด.50 + รายละเอียด rule (JSON)
+    decimal NonDeductibleAmount = 0m,
+    string? NonDeductibleRuleJson = null,
+    string? LateReason = null);
 
 public record ProjectCostBrief(
     Guid ProjectId,
@@ -281,7 +459,13 @@ public record DocumentLineResponse(
     bool HasProjectCostEntry = false,
     // ภาษีซื้อต้องห้าม flag + เหตุผล — UI แสดง checkbox + tooltip
     bool IsVatClaimable = true,
-    string? VatNonClaimableReason = null);
+    string? VatNonClaimableReason = null,
+    // AccountCode (string) คู่กับ AccountId — ให้ frontend ใช้ matched code
+    // ใน per-line picker โดยไม่ต้อง round-trip ลง /chart-of-accounts ทุกครั้ง
+    string? AccountCode = null,
+    // FeedbackId ของ AI suggestion ที่เคยให้ผังบรรทัดนี้ — frontend ต้อง
+    // round-trip กลับมาตอน update เพื่อให้ backend ปิดลูปการสอน local model
+    Guid? GlAccountAiFeedbackId = null);
 
 // ===== Flexible / partial document conversion =====
 

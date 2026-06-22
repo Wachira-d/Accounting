@@ -6,6 +6,7 @@ using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations.Tax;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,7 @@ public class DocumentService : IDocumentService
     private readonly IBotExchangeRateService? _fxRates;
     private readonly ISensitivityService? _sensitivity;
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
+    private readonly Accounting.Services.Ai.IAiFeedbackRecorder? _feedbackRecorder;
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly IAdvancedArApService? _advancedArAp;
     private readonly IApprovalService? _approval;
@@ -48,7 +50,8 @@ public class DocumentService : IDocumentService
         IWebhookService? webhooks = null,
         IEmailScheduleService? emailSchedule = null,
         IAdvancedArApService? advancedArAp = null,
-        IApprovalService? approval = null)
+        IApprovalService? approval = null,
+        Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null)
     {
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
@@ -69,6 +72,7 @@ public class DocumentService : IDocumentService
         _fxRates = fxRates;
         _aiAugmenter = aiAugmenter;
         _webhooks = webhooks;
+        _feedbackRecorder = feedbackRecorder;
     }
 
     private readonly IWebhookService? _webhooks;
@@ -402,8 +406,25 @@ public class DocumentService : IDocumentService
                 // Stored unconditionally though so partner sync can round-trip.
                 SupplierInvoiceNumber = request.SupplierInvoiceNumber,
                 SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate,
+                // PV: "ใช้งานใบกำกับภาษี" checkbox + supplier branch snapshot.
+                // Branch defaults to "00000" (สำนักงานใหญ่) when flag is on but
+                // user didn't fill it — covers the >95% case + matches the RD form.
+                HasTaxInvoiceReference = request.HasTaxInvoiceReference,
+                SupplierBranchCode = request.HasTaxInvoiceReference
+                    ? (request.SupplierBranchCode ?? contact.BranchCode ?? "00000")
+                    : request.SupplierBranchCode,
                 CreditDays = request.CreditDays,
                 PaymentTerms = request.PaymentTerms,
+                // เงินมัดจำ/รับล่วงหน้า — เฉพาะใบเสร็จ/ใบสำคัญรับ
+                IsDeposit = request.IsDeposit
+                    && (request.DocumentType == DocumentType.Receipt
+                        || request.DocumentType == DocumentType.ReceiptVoucher),
+                DepositDeferredAccountCode = request.DepositDeferredAccountCode,
+                DepositOutputVatDeferred = request.DepositOutputVatDeferred,
+                // Tax Point §78 inputs (optional)
+                DeliveryDate = request.DeliveryDate,
+                OwnershipTransferDate = request.OwnershipTransferDate,
+                ServiceUsedDate = request.ServiceUsedDate,
                 CreatedBy = createdBy
             };
 
@@ -486,8 +507,35 @@ public class DocumentService : IDocumentService
 
             // โหลด InputVatClaimable flag ของทุกบัญชีที่ line ใช้ — รอบเดียว
             // ไว้บังคับ IsVatClaimable=false เมื่อบัญชีเป็นภาษีซื้อต้องห้าม.
-            var accountIds = (request.Lines ?? []).Where(l => l.AccountId.HasValue)
-                .Select(l => l.AccountId!.Value).Distinct().ToList();
+            // resolve AccountCode → AccountId ก่อน (AI suggestion + integration
+            // ส่งมาเป็น code) ภายในผังของบริษัท
+            var codeCache = new Dictionary<string, Guid?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in request.Lines ?? [])
+            {
+                if (!line.AccountId.HasValue && !string.IsNullOrWhiteSpace(line.AccountCode))
+                {
+                    var resolved = await ResolveAccountCodeAsync(companyId, line.AccountCode, codeCache);
+                    if (resolved.HasValue)
+                    {
+                        // mutate via reflection-free pattern: rebuild line tuple
+                        // (DocumentLineRequest is a record). Instead, store in a
+                        // side map and read at construction below.
+                    }
+                }
+            }
+            // build a side map LineIndex → resolved AccountId so we don't mutate the record list
+            var resolvedAccountIds = new Dictionary<int, Guid>();
+            for (int i = 0; i < (request.Lines?.Count ?? 0); i++)
+            {
+                var l = request.Lines![i];
+                if (l.AccountId.HasValue) { resolvedAccountIds[i] = l.AccountId.Value; continue; }
+                if (!string.IsNullOrWhiteSpace(l.AccountCode))
+                {
+                    var rid = await ResolveAccountCodeAsync(companyId, l.AccountCode, codeCache);
+                    if (rid.HasValue) resolvedAccountIds[i] = rid.Value;
+                }
+            }
+            var accountIds = resolvedAccountIds.Values.Distinct().ToList();
             var accountFlags = accountIds.Count == 0
                 ? new Dictionary<Guid, bool>()
                 : await _db.ChartOfAccounts.AsNoTracking()
@@ -496,8 +544,10 @@ public class DocumentService : IDocumentService
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
             doc.IsForeignService = request.IsForeignService;
+            int lineIdx = -1;
             foreach (var line in request.Lines ?? [])
             {
+                lineIdx++;
                 var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
 
                 subTotal += amt.NetAmount;
@@ -505,6 +555,7 @@ public class DocumentService : IDocumentService
                 totalVat += amt.VatAmount;
                 totalWht += amt.WhtAmount;
 
+                var lineAccountId = resolvedAccountIds.TryGetValue(lineIdx, out var rid) ? (Guid?)rid : null;
                 // ภาษีซื้อต้องห้าม: ถ้าบัญชีตั้งเป็น InputVatClaimable=false
                 // (เช่น ค่ารับรอง) → บังคับ line.IsVatClaimable=false
                 // ไม่ว่า request จะส่งอะไรมา — รักษา consistency กับ chart
@@ -512,7 +563,7 @@ public class DocumentService : IDocumentService
                 // หรือเปลี่ยน flag ของบัญชีที่ผังบัญชี.
                 var enforcedClaimable = line.IsVatClaimable;
                 string? enforcedReason = line.VatNonClaimableReason;
-                if (line.AccountId.HasValue && accountFlags.TryGetValue(line.AccountId.Value, out var acctClaimable) && !acctClaimable)
+                if (lineAccountId.HasValue && accountFlags.TryGetValue(lineAccountId.Value, out var acctClaimable) && !acctClaimable)
                 {
                     enforcedClaimable = false;
                     enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
@@ -532,12 +583,13 @@ public class DocumentService : IDocumentService
                     VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = amt.WhtAmount,
-                    AccountId = line.AccountId,
+                    AccountId = lineAccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
                     SourceLineId = line.SourceLineId,
                     IsVatClaimable = enforcedClaimable,
-                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason
+                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
+                    GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
                 });
             }
 
@@ -581,6 +633,7 @@ public class DocumentService : IDocumentService
         var doc = await _db.Documents
             .Include(d => d.Contact)
             .Include(d => d.Lines).ThenInclude(l => l.Project)
+            .Include(d => d.Lines).ThenInclude(l => l.Account)
             .Include(d => d.Project)
             .Include(d => d.BankAccount)
             .Include(d => d.PaymentAccount)
@@ -864,8 +917,15 @@ public class DocumentService : IDocumentService
         if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
         if (request.SupplierInvoiceNumber != null) doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
         if (request.SupplierTaxInvoiceDate.HasValue) doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
+        if (request.HasTaxInvoiceReference.HasValue) doc.HasTaxInvoiceReference = request.HasTaxInvoiceReference.Value;
+        if (request.SupplierBranchCode != null) doc.SupplierBranchCode = request.SupplierBranchCode;
         if (request.CreditDays.HasValue) doc.CreditDays = request.CreditDays.Value;
         if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
+
+        // Tax Point §78 inputs (Draft edit)
+        if (request.DeliveryDate.HasValue) doc.DeliveryDate = request.DeliveryDate.Value;
+        if (request.OwnershipTransferDate.HasValue) doc.OwnershipTransferDate = request.OwnershipTransferDate.Value;
+        if (request.ServiceUsedDate.HasValue) doc.ServiceUsedDate = request.ServiceUsedDate.Value;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -905,17 +965,32 @@ public class DocumentService : IDocumentService
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
             var order = 1;
 
+            // resolve AccountCode → AccountId per line ก่อน (รองรับ AI suggestion)
+            var updCodeCache = new Dictionary<string, Guid?>(StringComparer.OrdinalIgnoreCase);
+            var updResolvedAccountIds = new Dictionary<int, Guid>();
+            for (int i = 0; i < request.Lines.Count; i++)
+            {
+                var l = request.Lines[i];
+                if (l.AccountId.HasValue) { updResolvedAccountIds[i] = l.AccountId.Value; continue; }
+                if (!string.IsNullOrWhiteSpace(l.AccountCode))
+                {
+                    var rid = await ResolveAccountCodeAsync(companyId, l.AccountCode, updCodeCache);
+                    if (rid.HasValue) updResolvedAccountIds[i] = rid.Value;
+                }
+            }
+
             // VAT-claimability enforcement ตามผังบัญชี (เหมือนใน Create)
-            var updAccountIds = request.Lines.Where(l => l.AccountId.HasValue)
-                .Select(l => l.AccountId!.Value).Distinct().ToList();
+            var updAccountIds = updResolvedAccountIds.Values.Distinct().ToList();
             var accountFlags = updAccountIds.Count == 0
                 ? new Dictionary<Guid, bool>()
                 : await _db.ChartOfAccounts.AsNoTracking()
                     .Where(a => a.CompanyId == companyId && updAccountIds.Contains(a.Id))
                     .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
 
+            int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
+                updLineIdx++;
                 var amt = ComputeLineAmounts(line, doc.PricesIncludeVat);
 
                 subTotal += amt.NetAmount;
@@ -923,9 +998,10 @@ public class DocumentService : IDocumentService
                 totalVat += amt.VatAmount;
                 totalWht += amt.WhtAmount;
 
+                var lineAccountId = updResolvedAccountIds.TryGetValue(updLineIdx, out var rid2) ? (Guid?)rid2 : null;
                 var enforcedClaimable = line.IsVatClaimable;
                 string? enforcedReason = line.VatNonClaimableReason;
-                if (line.AccountId.HasValue && accountFlags.TryGetValue(line.AccountId.Value, out var acctClaimable) && !acctClaimable)
+                if (lineAccountId.HasValue && accountFlags.TryGetValue(lineAccountId.Value, out var acctClaimable) && !acctClaimable)
                 {
                     enforcedClaimable = false;
                     enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
@@ -945,7 +1021,7 @@ public class DocumentService : IDocumentService
                     VatAmount = amt.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = amt.WhtAmount,
-                    AccountId = line.AccountId,
+                    AccountId = lineAccountId,
                     ProjectId = line.ProjectId,
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
                     // Preserve the conversion-traceability link across edits —
@@ -953,7 +1029,8 @@ public class DocumentService : IDocumentService
                     // converted document keeps its fulfilment accounting intact.
                     SourceLineId = line.SourceLineId,
                     IsVatClaimable = enforcedClaimable,
-                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason
+                    VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
+                    GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
                 });
             }
 
@@ -999,9 +1076,403 @@ public class DocumentService : IDocumentService
         }
 
         await _db.SaveChangesAsync();
+        // ปิดลูปการสอน local model — บรรทัดที่มี FeedbackId + AccountId สุดท้าย
+        // จะถูกบันทึก choice ทันที (กฎเหล็ก #1: เก็บ feedback ทุกครั้งที่ user
+        // ตัดสินใจ — accept หรือ override)
+        var savedLines = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id).ToListAsync();
+        await RecordLineAccountFeedbackAsync(savedLines);
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId, "document.updated", updated);
         return updated;
+    }
+
+    public async Task<DocumentResponse> CompleteSupplierTaxInvoiceAsync(
+        Guid companyId, Guid documentId, CompleteSupplierTaxInvoiceRequest request, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // method นี้สำหรับเอกสาร approved ที่ค้าง 11640 — Draft ใช้ UpdateDocumentAsync
+        if (doc.Status == DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                "เอกสารยังเป็น Draft — แก้ใบกำกับผ่านการแก้ไขปกติ (ยังไม่ได้ลงบัญชี)");
+        if (doc.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException("เอกสารถูกยกเลิกแล้ว — แก้ไขไม่ได้");
+
+        // เติม/แก้เฉพาะ field ที่ส่งมา (null = คงค่าเดิม)
+        if (request.SupplierInvoiceNumber != null)
+            doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
+        if (request.SupplierTaxInvoiceDate.HasValue)
+            doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
+        if (request.SupplierBranchCode != null)
+            doc.SupplierBranchCode = request.SupplierBranchCode;
+        // override: "" = ล้าง (กลับ default 11610/11640); null = ไม่แตะ; ค่าอื่น = pin
+        if (request.InputVatAccountCodeOverride != null)
+            doc.InputVatAccountCodeOverride =
+                request.InputVatAccountCodeOverride.Length == 0
+                    ? null
+                    : request.InputVatAccountCodeOverride;
+
+        // ถ้าข้อมูลครบแล้ว + เดิมค้าง 11640 → gen adjusting JE 11640→11610
+        var reclassified = await ReclassifyUndueInputVatAsync(companyId, doc, actor);
+
+        await _db.SaveChangesAsync();
+        var updated = await GetDocumentAsync(companyId, documentId);
+        await FireWebhookAsync(companyId,
+            reclassified ? "document.input_vat_reclassified" : "document.updated", updated);
+        return updated;
+    }
+
+    public async Task<DocumentResponse> RealizeDepositAsync(
+        Guid companyId, Guid documentId, RealizeDepositRequest request, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (!doc.IsDeposit)
+            throw new InvalidOperationException("เอกสารนี้ไม่ใช่เงินมัดจำ/รับล่วงหน้า");
+        if (doc.Status == DocumentStatus.Draft || doc.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException("รับรู้รายได้ได้เฉพาะมัดจำที่อนุมัติแล้ว");
+
+        // ฐาน (ไม่รวม VAT) คงค้างที่ยังรับรู้ไม่ได้
+        var outstanding = doc.SubTotal - doc.DepositRealizedAmount;
+        if (request.Amount <= 0)
+            throw new InvalidOperationException("จำนวนเงินที่รับรู้ต้องมากกว่า 0");
+        if (request.Amount > outstanding + 0.005m)
+            throw new InvalidOperationException(
+                $"รับรู้เกินยอดมัดจำคงค้าง (คงค้าง {outstanding:N2}, ขอรับรู้ {request.Amount:N2})");
+
+        var deferredAcc = await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
+            ?? await FindAccountAsync(companyId, "217")
+            ?? throw new InvalidOperationException("ไม่พบบัญชีขายรอรับรู้ (217xx) ในผังบัญชี");
+        var revenueAcc = await FindAccountAsync(companyId, request.RevenueAccountCode ?? "41000")
+            ?? await FindAccountAsync(companyId, "42000")
+            ?? await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.Level >= 4 && a.IsActive)
+                .OrderBy(a => a.AccountCode).FirstOrDefaultAsync()
+            ?? throw new InvalidOperationException("ไม่พบบัญชีรายได้ในผังบัญชี");
+
+        var when = request.RealizeDate ?? DateTime.UtcNow;
+        // เคส Deferred output VAT: การรับรู้รายได้ (ส่งมอบ/ให้บริการ) = tax point
+        // เกิดจริง → ย้ายภาษีขายรอเรียกเก็บ 21913 → ภาษีขาย ภ.พ.30 21911 เต็มจำนวน
+        // ครั้งแรกที่ realize (จุดรับผิดเกิดทันทีที่เริ่มส่งมอบ — บันทึกเชิงระวัง).
+        var recognizeDeferredVat = doc.DepositOutputVatDeferred
+            && doc.DepositOutputVatRecognizedAt == null
+            && doc.VatAmount > 0;
+        ChartOfAccount? deferredVatAcc = null, outputVatAcc = null;
+        if (recognizeDeferredVat)
+        {
+            deferredVatAcc = await FindAccountAsync(companyId, "21913");
+            outputVatAcc = await FindAccountAsync(companyId, "21911");
+            if (deferredVatAcc == null || outputVatAcc == null)
+                recognizeDeferredVat = false;   // ผังไม่รองรับ → คงไว้ที่เดิม
+        }
+        var vatMove = recognizeDeferredVat ? doc.VatAmount : 0m;
+
+        var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+        var period = await ResolveFiscalPeriodAsync(companyId, when);
+        var je = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = entryNumber,
+            EntryDate = when,
+            JournalType = JournalType.General,
+            Description = $"รับรู้รายได้จากมัดจำ - {doc.DocumentNumber}",
+            Reference = doc.DocumentNumber,
+            Status = JournalEntryStatus.Posted,
+            TotalDebit = request.Amount + vatMove,
+            TotalCredit = request.Amount + vatMove,
+            CreatedBy = actor,
+            IsAutoGenerated = true,
+            SourceDocumentId = doc.Id,
+            FiscalPeriodId = period?.Id,
+            ProjectId = doc.ProjectId,
+        };
+        _db.JournalEntries.Add(je);
+        var lineNo = 1;
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = deferredAcc.Id,
+            DebitAmount = request.Amount, CreditAmount = 0,
+            Description = "ตัดขายรอรับรู้ (มัดจำ)", LineOrder = lineNo++,
+        });
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = revenueAcc.Id,
+            DebitAmount = 0, CreditAmount = request.Amount,
+            Description = "รับรู้รายได้", LineOrder = lineNo++,
+        });
+        if (recognizeDeferredVat)
+        {
+            _db.JournalEntryLines.Add(new JournalEntryLine
+            {
+                JournalEntryId = je.Id, AccountId = deferredVatAcc!.Id,
+                DebitAmount = vatMove, CreditAmount = 0,
+                Description = "ตัดภาษีขายรอเรียกเก็บ (tax point เกิด)", LineOrder = lineNo++,
+            });
+            _db.JournalEntryLines.Add(new JournalEntryLine
+            {
+                JournalEntryId = je.Id, AccountId = outputVatAcc!.Id,
+                DebitAmount = 0, CreditAmount = vatMove,
+                Description = "ภาษีขาย ภ.พ.30 (มัดจำถึงกำหนด)", LineOrder = lineNo++,
+            });
+            doc.DepositOutputVatRecognizedAt = when;   // เข้า ภ.พ.30 เดือนนี้
+        }
+
+        doc.DepositRealizedAmount += request.Amount;
+        if (doc.SubTotal - doc.DepositRealizedAmount <= 0.005m)
+            doc.DepositRealizedAt = when;   // ปิดมัดจำ (รับรู้ครบ)
+
+        await _db.SaveChangesAsync();
+        var updated = await GetDocumentAsync(companyId, documentId);
+        await FireWebhookAsync(companyId, "deposit.realized", updated);
+        return updated;
+    }
+
+    public async Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null)
+    {
+        var rows = await _db.Documents.AsNoTracking()
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId && d.IsDeposit
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+            .OrderByDescending(d => d.DocumentDate)
+            .ToListAsync();
+
+        var now = DateTime.UtcNow;
+        var list = rows.Select(d =>
+        {
+            var outstanding = d.SubTotal - d.DepositRealizedAmount;
+            var st = outstanding <= 0.005m ? "Realized"
+                : d.DepositRealizedAmount > 0 ? "Partial" : "Outstanding";
+            return new DepositSummary(
+                d.Id, d.DocumentNumber, d.DocumentDate,
+                d.Contact?.Name ?? "", d.Contact?.TaxId,
+                d.SubTotal, d.VatAmount, d.TotalAmount,
+                d.DepositRealizedAmount, outstanding,
+                d.DepositRealizedAt,
+                (int)(now.Date - d.DocumentDate.Date).TotalDays,
+                st, d.DepositDeferredAccountCode,
+                d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt);
+        });
+        if (!string.IsNullOrWhiteSpace(status))
+            list = list.Where(x => string.Equals(x.Status, status, StringComparison.OrdinalIgnoreCase));
+        return list.ToList();
+    }
+
+    public async Task<ContactDepositSummary> GetContactDepositSummaryAsync(Guid companyId, Guid contactId)
+    {
+        var all = await GetDepositsAsync(companyId);
+        var forContact = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.IsDeposit && d.ContactId == contactId
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+            .Select(d => d.Id).ToListAsync();
+        var ids = forContact.ToHashSet();
+        var deposits = all.Where(d => ids.Contains(d.Id) && d.OutstandingAmount > 0.005m).ToList();
+        return new ContactDepositSummary(
+            contactId,
+            deposits.Sum(d => d.OutstandingAmount),
+            deposits.Count,
+            deposits);
+    }
+
+    public async Task<DocumentResponse> RefundDepositAsync(
+        Guid companyId, Guid documentId, RefundDepositRequest request, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines).Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (!doc.IsDeposit)
+            throw new InvalidOperationException("เอกสารนี้ไม่ใช่เงินมัดจำ");
+        if (doc.Status == DocumentStatus.Draft || doc.Status == DocumentStatus.Voided)
+            throw new InvalidOperationException("คืนมัดจำได้เฉพาะมัดจำที่อนุมัติแล้ว");
+
+        if (request.Amount <= 0)
+            throw new InvalidOperationException("จำนวนเงินคืนต้องมากกว่า 0");
+        if (request.Amount > doc.TotalAmount - doc.DepositRefundedAmount + 0.005m)
+            throw new InvalidOperationException(
+                $"คืนเกินยอดมัดจำ (ยอดมัดจำ {doc.TotalAmount:N2}, คืนไปแล้ว {doc.DepositRefundedAmount:N2})");
+
+        // แยกฐาน + VAT จากยอด gross ที่จะคืน (ตามสัดส่วนเดิมของใบ)
+        var vatPortion = doc.TotalAmount > 0 ? doc.VatAmount / doc.TotalAmount : 0m;
+        var refundVat = Math.Round(request.Amount * vatPortion, 2, MidpointRounding.AwayFromZero);
+        var refundBase = request.Amount - refundVat;
+
+        var deferredAcc = await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
+            ?? await FindAccountAsync(companyId, "217");
+        var outVatAcc = doc.DepositOutputVatDeferred && doc.DepositOutputVatRecognizedAt == null
+            ? await FindAccountAsync(companyId, "21913")
+            : await FindAccountAsync(companyId, "21911");
+        var moneyAcc = await FindAccountAsync(companyId, "111");
+        if (deferredAcc == null || moneyAcc == null)
+            throw new InvalidOperationException("ไม่พบผังบัญชีขายรอรับรู้/เงินสดสำหรับคืนมัดจำ");
+
+        var when = request.RefundDate ?? DateTime.UtcNow;
+        var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+        var period = await ResolveFiscalPeriodAsync(companyId, when);
+        var je = new JournalEntry
+        {
+            CompanyId = companyId, EntryNumber = entryNumber, EntryDate = when,
+            JournalType = JournalType.General,
+            Description = $"คืนเงินมัดจำ - {doc.DocumentNumber}" + (string.IsNullOrWhiteSpace(request.Reason) ? "" : $" ({request.Reason})"),
+            Reference = doc.DocumentNumber, Status = JournalEntryStatus.Posted,
+            TotalDebit = request.Amount, TotalCredit = request.Amount,
+            CreatedBy = actor, IsAutoGenerated = true, SourceDocumentId = doc.Id,
+            FiscalPeriodId = period?.Id, ProjectId = doc.ProjectId,
+        };
+        _db.JournalEntries.Add(je);
+        var ln = 1;
+        // Dr ขายรอรับรู้ (กลับรายการรายได้รับล่วงหน้า)
+        _db.JournalEntryLines.Add(new JournalEntryLine {
+            JournalEntryId = je.Id, AccountId = deferredAcc.Id,
+            DebitAmount = refundBase, CreditAmount = 0,
+            Description = "คืนมัดจำ - กลับขายรอรับรู้", LineOrder = ln++ });
+        // Dr ภาษีขาย (ใบลดหนี้ — กลับ output VAT ที่เคยรับ)
+        if (refundVat > 0 && outVatAcc != null)
+            _db.JournalEntryLines.Add(new JournalEntryLine {
+                JournalEntryId = je.Id, AccountId = outVatAcc.Id,
+                DebitAmount = refundVat, CreditAmount = 0,
+                Description = "คืนมัดจำ - กลับภาษีขาย (ใบลดหนี้)", LineOrder = ln++ });
+        // Cr เงินสด/ธนาคาร
+        _db.JournalEntryLines.Add(new JournalEntryLine {
+            JournalEntryId = je.Id, AccountId = moneyAcc.Id,
+            DebitAmount = 0, CreditAmount = request.Amount,
+            Description = "คืนเงินมัดจำให้ลูกค้า", LineOrder = ln++ });
+
+        doc.DepositRefundedAmount += request.Amount;
+        doc.DepositRefundedAt = when;
+        doc.DepositRefundReason = request.Reason;
+        await _db.SaveChangesAsync();
+        var updated = await GetDocumentAsync(companyId, documentId);
+        await FireWebhookAsync(companyId, "deposit.refunded", updated);
+        return updated;
+    }
+
+    public async Task<DocumentResponse> ApplyDepositToInvoiceAsync(
+        Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor)
+    {
+        var invoice = await _db.Documents
+            .Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้");
+        var deposit = await _db.Documents
+            .Include(d => d.Lines).Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.Id == request.DepositDocumentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสารมัดจำ");
+        if (!deposit.IsDeposit)
+            throw new InvalidOperationException("เอกสารที่อ้างไม่ใช่เงินมัดจำ");
+        if (deposit.ContactId != invoice.ContactId)
+            throw new InvalidOperationException("มัดจำกับใบแจ้งหนี้ต้องเป็นลูกค้ารายเดียวกัน");
+
+        // รับรู้รายได้จากมัดจำ (Dr ขายรอรับรู้/Cr รายได้) — ใช้ฐานไม่รวม VAT
+        var vatPortion = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
+        var baseAmt = Math.Round(request.Amount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);
+        await RealizeDepositAsync(companyId, deposit.Id,
+            new RealizeDepositRequest(baseAmt, request.ApplyDate, null), actor);
+
+        // ลด BalanceDue ของใบแจ้งหนี้ตามยอดมัดจำที่จ่ายมาแล้ว (gross — มัดจำ
+        // จ่ายเงินจริงมาแล้ว ถือเป็น prepayment ของใบนี้)
+        invoice.PaidAmount += request.Amount;
+        invoice.BalanceDue = Math.Max(0m, invoice.TotalAmount - invoice.PaidAmount);
+        if (invoice.BalanceDue <= 0.005m && invoice.Status == DocumentStatus.Approved)
+            invoice.Status = DocumentStatus.Paid;
+        deposit.DepositAppliedToDocumentId = invoiceId;
+
+        await _db.SaveChangesAsync();
+        var updated = await GetDocumentAsync(companyId, invoiceId);
+        await FireWebhookAsync(companyId, "deposit.applied", updated);
+        return updated;
+    }
+
+    public async Task<SuggestPvAccountingResponse> SuggestPaymentVoucherAccountingAsync(
+        Guid companyId, SuggestPvAccountingRequest request, CancellationToken ct = default)
+    {
+        // AI ปิดอยู่/inject ไม่ได้ → คืนผลว่าง (เคารพ kill-switch กฎเหล็ก #1)
+        if (_aiAugmenter == null || request.Lines.Count == 0)
+            return new SuggestPvAccountingResponse(
+                request.Lines.Select(l => new SuggestPvAccountingLineResult(
+                    l.TempId, l.CurrentAccountCode, null,
+                    Array.Empty<string>(), null, false, null)).ToList(),
+                Array.Empty<string>(), UsedAi: false);
+
+        // map tempId → temp Guid (augmenter signature ใช้ LineId เป็น Guid)
+        var tempMap = request.Lines.ToDictionary(_ => Guid.NewGuid(), l => l);
+        var lineInputs = tempMap.Select(kv =>
+            (LineId: kv.Key, kv.Value.Description, kv.Value.Amount, kv.Value.CurrentAccountCode)
+        ).ToList();
+
+        var bulk = await _aiAugmenter.SuggestAllPaymentVoucherAccountingAsync(
+            companyId,
+            request.SourceInvoiceId ?? Guid.Empty,
+            request.VendorName, request.VendorTaxId, request.VendorIndustry,
+            lineInputs,
+            string.IsNullOrWhiteSpace(request.Currency) ? "THB" : request.Currency,
+            ct);
+
+        // Validate ผังที่แนะนำว่ามีจริงในผังของบริษัท (anti-hallucination guard
+        // ตามกฎเหล็ก #1) — ถ้าไม่มี ไม่ส่งกลับเป็น answer
+        var allCodes = (await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
+            .Select(a => a.AccountCode).ToListAsync(ct)).ToHashSet();
+
+        var results = tempMap.Select(kv =>
+        {
+            var line = kv.Value;
+            if (!bulk.ByLineId.TryGetValue(kv.Key, out var sugg))
+                return new SuggestPvAccountingLineResult(
+                    line.TempId, line.CurrentAccountCode, null,
+                    Array.Empty<string>(), null, false, null);
+            var ans = !string.IsNullOrWhiteSpace(sugg.Answer) && allCodes.Contains(sugg.Answer!)
+                ? sugg.Answer
+                : line.CurrentAccountCode;
+            return new SuggestPvAccountingLineResult(
+                line.TempId, ans, sugg.Confidence,
+                sugg.Alternatives, sugg.Reasoning, sugg.UsedAi, sugg.FeedbackId);
+        }).ToList();
+
+        return new SuggestPvAccountingResponse(results, bulk.CrossLineObservations, bulk.UsedAi);
+    }
+
+    public async Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId)
+    {
+        // เอกสารที่ VAT ค้าง 11640 รอใบกำกับครบ (ยังไม่ reclassify)
+        var rows = await _db.Documents
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId
+                && d.InputVatPostedAsUndue
+                && d.InputVatBecameClaimableAt == null
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+            .OrderBy(d => d.DocumentDate)
+            .ToListAsync();
+
+        var today = DateTime.UtcNow.Date;
+        return rows.Select(d =>
+        {
+            // §82/3: เคลมได้ภายใน 6 เดือนนับจากเดือนของใบกำกับ (ใช้ SupplierTaxInvoiceDate
+            // ถ้ามี ไม่งั้น DocumentDate). หมดสิทธิเมื่อพ้นสิ้นเดือนที่ 6.
+            var baseDate = d.SupplierTaxInvoiceDate ?? d.DocumentDate;
+            var windowEnd = new DateTime(baseDate.Year, baseDate.Month, 1).AddMonths(7).AddDays(-1);
+            var isExpired = today > windowEnd;
+            var monthsLeft = ((windowEnd.Year - today.Year) * 12 + windowEnd.Month - today.Month);
+            if (monthsLeft < 0) monthsLeft = 0;
+            var completeness = TaxInvoiceCompletenessChecker.Evaluate(d, d.Contact);
+            var vat = d.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+            return new UndueInputVatSummary(
+                d.Id, d.DocumentNumber, d.DocumentDate,
+                d.Contact?.Name ?? "", d.Contact?.TaxId,
+                vat,
+                (int)(today - d.DocumentDate.Date).TotalDays,
+                monthsLeft, isExpired,
+                completeness.MissingFields);
+        }).ToList();
     }
 
     public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
@@ -1251,6 +1722,26 @@ public class DocumentService : IDocumentService
                 doc.UpdatedBy = approvedBy;
                 doc.UpdatedAt = DateTime.UtcNow;
 
+                // ===== Tax Point §78/§78/1 — snapshot จุดความรับผิด VAT =====
+                // VAT period ของ ภ.พ.30 ใช้เดือนของ TaxPointDate. คำนวณเฉพาะ
+                // เอกสารที่มี VAT (มิฉะนั้นไม่เกี่ยว).
+                if (doc.VatAmount != 0)
+                    doc.TaxPointDate = TaxPointResolver.Resolve(doc);
+
+                // ===== Retention §87/3 + พ.ร.บ.บัญชี ม.10 — เก็บ 5 ปี =====
+                // นับจาก MAX(วันสิ้นรอบบัญชีของเอกสาร, วันที่เอกสาร) + 5 ปี.
+                // ใช้ simple rule: DocumentDate + 5 ปี (เพียงพอกับ floor 5 ปี;
+                // job ปิดรอบจะขยายได้ถ้าต้องการ superset).
+                doc.RetentionUntil ??= doc.DocumentDate.Date.AddYears(5);
+
+                // ===== §65 ตรี — รายจ่ายต้องห้าม (บวกกลับ ภ.ง.ด.50) =====
+                // เฉพาะเอกสารฝั่งซื้อ/ค่าใช้จ่ายที่กระทบกำไรสุทธิ.
+                if (doc.DocumentType is DocumentType.PurchaseInvoice
+                        or DocumentType.Expense or DocumentType.PaymentVoucher)
+                {
+                    await ApplySection65TerAsync(companyId, doc);
+                }
+
                 var autoPostTypes = new[] {
                     DocumentType.Invoice, DocumentType.TaxInvoice,
                     DocumentType.DebitNote, DocumentType.CreditNote,
@@ -1335,6 +1826,14 @@ public class DocumentService : IDocumentService
                 });
             }
         }
+
+        // ปิดลูปการสอน — final choice ตอนอนุมัติ: ทุกบรรทัดที่มี FeedbackId
+        // + AccountId → บันทึก choice (acceptedAi=true ถ้าตรง AI's answer,
+        // false ถ้า user แก้). RecordLineAccountFeedbackAsync เป็น idempotent
+        // (ข้ามถ้า UserChosenAnswer เคย set แล้ว) → ปลอดภัย ถ้า Update เคย fire
+        var approvedLines = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id).ToListAsync();
+        await RecordLineAccountFeedbackAsync(approvedLines);
 
         var approved = await GetDocumentAsync(companyId, documentId);
 
@@ -1675,6 +2174,14 @@ public class DocumentService : IDocumentService
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // Legal hold §87/3 + พ.ร.บ.บัญชี ม.10 — ห้ามลบจริงก่อนครบอายุเก็บ 5 ปี
+        // (เอกสารที่ approve แล้วเท่านั้นที่มี RetentionUntil; Draft ลบได้).
+        if (doc.RetentionUntil.HasValue && DateTime.UtcNow.Date < doc.RetentionUntil.Value.Date
+            && doc.Status != DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                $"ห้ามลบถาวร — เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3) ถึง {doc.RetentionUntil:dd/MM/yyyy}. " +
+                "ใช้ 'ยกเลิกเอกสาร' (Void) แทนเพื่อคงหลักฐานการตรวจสอบ");
 
         var auditSnapshot = System.Text.Json.JsonSerializer.Serialize(new
         {
@@ -3684,6 +4191,230 @@ public class DocumentService : IDocumentService
         return found;
     }
 
+    /// <summary>เลือกผังบัญชีปลายทางของภาษีซื้อ ตาม priority:
+    ///   1) <c>doc.InputVatAccountCodeOverride</c> set → ใช้ค่านั้น (treat as
+    ///      §82/5 ถ้าไม่ใช่ 116xx — ลง expense เต็มจำนวน, ไม่เข้า ภ.พ.30)
+    ///   2) Completeness §86/4 ครบ → 11610 "ภาษีซื้อ ภ.พ.30"
+    ///   3) ไม่ครบ → 11640 "ภาษีซื้อยังไม่ถึงกำหนด" (§82/3 รอใบครบ)
+    /// Fallback ถ้าไม่พบ 11640 (chart เก่าไม่มี): 11630 (Deferred) → 116 parent.
+    /// คืน <c>postedAsUndue=true</c> เฉพาะ path (3) เพื่อ track ว่าต้อง reclassify
+    /// ตอน user มาเติมใบกำกับครบ.</summary>
+    private async Task<(ChartOfAccount Account, bool PostedAsUndue)> ResolveInputVatAccountAsync(
+        Guid companyId, Document doc)
+    {
+        // (1) Override — user เลือกผังอื่น (เช่น 51000 ลงต้นทุนขาย)
+        if (!string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride))
+        {
+            var overrideAcc = await FindAccountAsync(companyId, doc.InputVatAccountCodeOverride!);
+            if (overrideAcc != null) return (overrideAcc, PostedAsUndue: false);
+            // override ชี้บัญชีที่ลบไป → fall through ใช้ default (กัน JE พัง)
+        }
+
+        // (2)/(3) Completeness check — pure function
+        var completeness = TaxInvoiceCompletenessChecker.Evaluate(doc, doc.Contact);
+
+        if (completeness.IsClaimable)
+        {
+            var claimable = await FindAccountAsync(companyId, "11610")
+                ?? await FindAccountAsync(companyId, "116")
+                ?? throw new InvalidOperationException(
+                    "ไม่พบบัญชีภาษีซื้อ (11610 หรือ 116) ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่มี VAT");
+            return (claimable, PostedAsUndue: false);
+        }
+
+        // ใบไม่ครบ → suspense 11640
+        var undue = await FindAccountAsync(companyId, "11640")
+            ?? await FindAccountAsync(companyId, "11630")  // Deferred Input VAT — fallback
+            ?? await FindAccountAsync(companyId, "116")
+            ?? throw new InvalidOperationException(
+                "ไม่พบบัญชี 11640 'ภาษีซื้อยังไม่ถึงกำหนด' ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่ใบกำกับยังไม่ครบ");
+        return (undue, PostedAsUndue: true);
+    }
+
+    /// <summary>หลัง user แก้เอกสารให้ใบกำกับครบ §86/4 — ตรวจว่าเดิม VAT
+    /// post ไป 11640 ไหม ถ้าใช่ generate adjusting JE: Dr 11610 / Cr 11640
+    /// (ย้ายมาเป็นภาษีซื้อเคลมได้). Idempotent — ถ้าครบอยู่แล้วหรือไม่เคย
+    /// suspend จะ no-op. เรียกก่อน SaveChanges ใน CompleteSupplierTaxInvoiceAsync.
+    /// คืน true ถ้า reclassify จริง (มีการสร้าง JE).</summary>
+    private async Task<bool> ReclassifyUndueInputVatAsync(Guid companyId, Document doc, string actor)
+    {
+        // ไม่เคย suspend → ไม่ต้องทำอะไร
+        if (!doc.InputVatPostedAsUndue) return false;
+        // เคย reclassify ไปแล้ว → ไม่ทำซ้ำ (idempotent)
+        if (doc.InputVatBecameClaimableAt.HasValue) return false;
+        // มี override → user ตั้งใจไม่เคลม VAT → ไม่ reclassify
+        if (!string.IsNullOrWhiteSpace(doc.InputVatAccountCodeOverride)) return false;
+        // ต้องเป็นเอกสารที่ approved แล้ว (Draft ไม่มี JE ให้ adjust)
+        if (doc.Status == DocumentStatus.Draft || doc.Status == DocumentStatus.Voided) return false;
+
+        // Reload contact ถ้ายังไม่ track (UpdateDocumentAsync อาจไม่ Include)
+        if (doc.Contact == null)
+            doc.Contact = await _db.Contacts.FirstOrDefaultAsync(c =>
+                c.Id == doc.ContactId && c.CompanyId == companyId) ?? doc.Contact!;
+
+        var completeness = TaxInvoiceCompletenessChecker.Evaluate(doc, doc.Contact);
+        if (!completeness.IsClaimable) return false;   // ยังไม่ครบ → คงอยู่ 11640
+
+        // หา VAT amount ที่เคยลงไป (= sum line.VatAmount ของบรรทัด claimable)
+        if (doc.Lines == null || doc.Lines.Count == 0)
+            doc.Lines = await _db.DocumentLines
+                .Where(l => l.DocumentId == doc.Id).ToListAsync();
+        var vatAmount = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+        if (vatAmount <= 0) return false;
+
+        var claimableAcc = await FindAccountAsync(companyId, "11610")
+            ?? await FindAccountAsync(companyId, "116");
+        var undueAcc = await FindAccountAsync(companyId, "11640")
+            ?? await FindAccountAsync(companyId, "11630");
+        if (claimableAcc == null || undueAcc == null) return false;
+
+        var now = DateTime.UtcNow;
+        var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+        var period = await ResolveFiscalPeriodAsync(companyId, now);
+        var je = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = entryNumber,
+            EntryDate = now,
+            JournalType = JournalType.General,
+            Description = $"ภาษีซื้อถึงกำหนด (ใบกำกับครบ §86/4) - {doc.DocumentNumber}",
+            Reference = doc.DocumentNumber,
+            Status = JournalEntryStatus.Posted,
+            TotalDebit = vatAmount,
+            TotalCredit = vatAmount,
+            CreatedBy = actor,
+            IsAutoGenerated = true,
+            SourceDocumentId = doc.Id,
+            FiscalPeriodId = period?.Id,
+            ProjectId = doc.ProjectId,
+        };
+        _db.JournalEntries.Add(je);
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = claimableAcc.Id,
+            DebitAmount = vatAmount, CreditAmount = 0,
+            Description = "ภาษีซื้อ (เคลม ภ.พ.30 ได้แล้ว)", LineOrder = 1,
+        });
+        _db.JournalEntryLines.Add(new JournalEntryLine
+        {
+            JournalEntryId = je.Id, AccountId = undueAcc.Id,
+            DebitAmount = 0, CreditAmount = vatAmount,
+            Description = "กลับรายการภาษีซื้อยังไม่ถึงกำหนด", LineOrder = 2,
+        });
+
+        doc.InputVatBecameClaimableAt = now;
+        // InputVatPostedAsUndue คงไว้ true เป็น historical marker —
+        // ใช้คู่ BecameClaimableAt เพื่อบอก ภ.พ.30 ว่าใช้ period ของ
+        // BecameClaimableAt (ไม่ใช่ DocumentDate) เป็น tax point
+        return true;
+    }
+
+    /// <summary>Resolve AccountCode → AccountId ใน CoA ของบริษัท. คืน null ถ้า
+    /// ไม่พบ / inactive (ป้องกัน AI hallucinate ผังที่ไม่มีจริง). cache
+    /// ใน-call ผ่าน lookup map ที่ caller เตรียมไว้.</summary>
+    private async Task<Guid?> ResolveAccountCodeAsync(Guid companyId, string? code,
+        IDictionary<string, Guid?>? cache = null)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return null;
+        if (cache != null && cache.TryGetValue(code, out var cached)) return cached;
+        var id = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AccountCode == code && a.IsActive)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync();
+        if (cache != null) cache[code] = id;
+        return id;
+    }
+
+    /// <summary>ปิดลูปการสอน local distillation model ตามกฎเหล็ก #1:
+    /// สำหรับทุกบรรทัดที่มี GlAccountAiFeedbackId + AccountId — เปรียบ
+    /// AccountCode ของ user choice กับ AiPrimaryAnswer แล้วเรียก
+    /// RecordUserChoiceAsync (acceptedAi=true ถ้าตรง, false ถ้าแก้). ทนต่อ
+    /// recorder/FX ปิด (graceful degradation เงียบ).</summary>
+    private async Task RecordLineAccountFeedbackAsync(IEnumerable<DocumentLine> lines, CancellationToken ct = default)
+    {
+        if (_feedbackRecorder == null) return;
+        var pending = lines.Where(l => l.GlAccountAiFeedbackId.HasValue && l.AccountId.HasValue).ToList();
+        if (pending.Count == 0) return;
+        var feedbackIds = pending.Select(l => l.GlAccountAiFeedbackId!.Value).Distinct().ToList();
+        var accountIds = pending.Select(l => l.AccountId!.Value).Distinct().ToList();
+        // batch load AI's original answer + chosen account code
+        var aiAnswers = await _db.AiSuggestionFeedbacks.AsNoTracking()
+            .Where(f => feedbackIds.Contains(f.Id))
+            .Select(f => new { f.Id, f.AiPrimaryAnswer, f.UserChosenAnswer })
+            .ToListAsync(ct);
+        var aiAnswerMap = aiAnswers.ToDictionary(a => a.Id);
+        var codeMap = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => accountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.AccountCode, ct);
+
+        foreach (var line in pending)
+        {
+            var fid = line.GlAccountAiFeedbackId!.Value;
+            if (!aiAnswerMap.TryGetValue(fid, out var ai)) continue;
+            // ถ้าผู้ใช้เลือกแล้ว (UserChosenAnswer != null) ก่อนหน้านี้ ไม่ทำซ้ำ
+            // (ลด noise + ป้องกัน flap จากการ save หลายครั้ง). retrain job ใช้
+            // record แรกที่ผู้ใช้ confirm เป็นหลักอยู่แล้ว.
+            if (!string.IsNullOrEmpty(ai.UserChosenAnswer)) continue;
+            if (!codeMap.TryGetValue(line.AccountId!.Value, out var chosenCode)) continue;
+            var accepted = string.Equals(chosenCode, ai.AiPrimaryAnswer, StringComparison.OrdinalIgnoreCase);
+            try
+            {
+                await _feedbackRecorder.RecordUserChoiceAsync(fid, chosenCode, accepted, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Record GL feedback failed (feedbackId={Fid})", fid);
+            }
+        }
+    }
+
+    /// <summary>คำนวณ §65 ตรี รายจ่ายต้องห้าม → เก็บ NonDeductibleAmount +
+    /// RuleJson บนเอกสาร (ไหลเข้า ภ.ง.ด.50 worksheet). hard-block กรณีไม่ระบุ
+    /// ผู้รับเงิน. NeedsConfirmation (เช่น capex) เป็นแค่ warning ไม่ block.</summary>
+    private async Task ApplySection65TerAsync(Guid companyId, Document doc)
+    {
+        // เตรียม account map (Id → code/name) สำหรับตรวจชนิดบัญชี
+        var accIds = doc.Lines.Where(l => l.AccountId.HasValue)
+            .Select(l => l.AccountId!.Value).Distinct().ToList();
+        var accInfo = accIds.Count == 0
+            ? new Dictionary<Guid, (string, string)>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => accIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+                .ToListAsync())
+                .ToDictionary(a => a.Id, a => (a.AccountCode, a.AccountName));
+
+        // context: รายได้ทั้งปี + ทุนจดทะเบียน (สำหรับ cap ค่ารับรอง)
+        var company = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == companyId);
+        var yearStart = new DateTime(doc.DocumentDate.Year, 1, 1);
+        var yearEnd = yearStart.AddYears(1);
+        var annualRevenue = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.Receipt)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && d.DocumentDate >= yearStart && d.DocumentDate < yearEnd)
+            .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
+
+        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital);
+        var payeeName = doc.Contact?.Name;
+        var payeeTaxId = doc.Contact?.TaxId;
+
+        var result = Section65TerValidator.Evaluate(doc, accInfo, payeeName, payeeTaxId, ctx);
+
+        if (result.HasHardBlock)
+            throw new InvalidOperationException(result.FirstBlockMessage
+                ?? "รายจ่ายต้องห้าม §65 ตรี — ข้อมูลไม่ครบ");
+
+        doc.NonDeductibleAmount = result.TotalAddBack;
+        doc.NonDeductibleRuleJson = result.Findings.Count > 0 ? result.ToJson() : null;
+    }
+
+    private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)
+        => await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId && p.StartDate <= date && p.EndDate >= date);
+
     /// <summary>
     /// บันทึกบัญชีอัตโนมัติเมื่ออนุมัติเอกสาร — สร้าง JournalEntry + Lines โดยตรงผ่าน DbContext
     /// (อยู่ภายใน transaction เดียวกับ ApproveDocumentAsync เพื่อความ atomic ตามหลักบัญชี)
@@ -4149,15 +4880,22 @@ public class DocumentService : IDocumentService
                 }
             }
 
-            // Dr: ภาษีซื้อ (Input VAT 116) per ภ.พ.30 — เฉพาะส่วนที่
-            // เคลมได้เท่านั้น (line.IsVatClaimable=true).
+            // Dr: ภาษีซื้อ — บัญชีปลายทางขึ้นกับ completeness §86/4 + override:
+            //   1) มี override → ใช้ user-pick (เช่น 51000 ต้นทุนขาย ตาม §82/5)
+            //   2) ใบกำกับครบ §86/4 → 11610 "ภาษีซื้อ ภ.พ.30" (เคลมได้ทันที)
+            //   3) ใบกำกับยังไม่ครบ → 11640 "ภาษีซื้อยังไม่ถึงกำหนด" (§82/3 รอ
+            //      ใบครบ; CompleteSupplierTaxInvoiceAsync จะ gen adjusting JE 11640→11610
+            //      ตอน user มาเติมข้อมูลครบ + filter ภ.พ.30 ใช้ BecameClaimableAt)
             var claimableVatPi = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
             if (claimableVatPi > 0)
             {
-                var vatInputAccount = await FindAccountAsync(companyId, "116")
-                    ?? throw new InvalidOperationException("ไม่พบบัญชีภาษีซื้อ (116) ในผังบัญชี — กรุณาเพิ่มก่อนอนุมัติเอกสารซื้อที่มี VAT");
-                if (vatInputAccount != null)
-                    AddLine(vatInputAccount.Id, claimableVatPi, 0, "ภาษีซื้อ (เคลมได้)");
+                var (vatInputAccount, postedAsUndue) = await ResolveInputVatAccountAsync(companyId, doc);
+                AddLine(vatInputAccount.Id, claimableVatPi, 0,
+                    postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
+                                  : (doc.InputVatAccountCodeOverride != null
+                                        ? $"VAT → {vatInputAccount.AccountCode} {vatInputAccount.AccountName} (override)"
+                                        : "ภาษีซื้อ (เคลมได้)"));
+                doc.InputVatPostedAsUndue = postedAsUndue;
             }
 
             // Cr: payable — role-separated (หลักบัญชีไทย):
@@ -4265,18 +5003,47 @@ public class DocumentService : IDocumentService
                         AddLine(whtAccount.Id, doc.WithholdingTaxAmount, 0, "ภาษีหัก ณ ที่จ่าย (ถูกหัก)");
                 }
 
+                // เงินมัดจำ/รับล่วงหน้า: Cr "ขายรอรับรู้" (217xx — หนี้สิน) แทน
+                // บัญชีรายได้ เพราะยังไม่รับรู้รายได้จนกว่าจะส่งมอบ (RealizeDeposit
+                // ตัด 217xx → รายได้ภายหลัง). VAT ยังถึงกำหนดทันที (ด้านล่าง).
+                ChartOfAccount? deferredAcc = null;
+                if (doc.IsDeposit)
+                {
+                    // เลือกผัง deferred: snapshot บนเอกสาร > line account (ถ้าชี้ 217xx)
+                    // > default 21712 (ค่าสินค้ารับล่วงหน้า) → 217 parent.
+                    deferredAcc = await FindAccountAsync(companyId,
+                            doc.DepositDeferredAccountCode ?? "21712")
+                        ?? await FindAccountAsync(companyId, "217");
+                    if (deferredAcc != null)
+                        doc.DepositDeferredAccountCode = deferredAcc.AccountCode;  // snapshot
+                }
+
                 foreach (var docLine in doc.Lines)
                 {
-                    var revenueAccountId = docLine.AccountId ?? defaultRevenue?.Id;
-                    if (revenueAccountId.HasValue)
-                        AddLine(revenueAccountId.Value, 0, docLine.Amount, docLine.Description, docLine.ProjectId);
+                    // มัดจำ → ขายรอรับรู้; ปกติ → รายได้ (line account หรือ default)
+                    var creditAccountId = doc.IsDeposit
+                        ? (deferredAcc?.Id ?? docLine.AccountId ?? defaultRevenue?.Id)
+                        : (docLine.AccountId ?? defaultRevenue?.Id);
+                    if (creditAccountId.HasValue)
+                        AddLine(creditAccountId.Value, 0, docLine.Amount,
+                            doc.IsDeposit ? $"รับมัดจำ/รับล่วงหน้า - {docLine.Description}" : docLine.Description,
+                            docLine.ProjectId);
                 }
 
                 if (doc.VatAmount > 0)
                 {
-                    var vatAccount = await FindAccountAsync(companyId, "21911");
+                    // มัดจำเคส Deferred (tax point ยังไม่เกิด) → Cr "ภาษีขายรอเรียก
+                    // เก็บ" 21913 (ยังไม่เข้า ภ.พ.30); เคส Immediate / ขายปกติ →
+                    // Cr "ภาษีขาย ภ.พ.30" 21911 (เข้า ภ.พ.30 ทันที). เมื่อ tax point
+                    // ของเคส deferred เกิดจริง RealizeDeposit จะย้าย 21913 → 21911.
+                    var useDeferredVat = doc.IsDeposit && doc.DepositOutputVatDeferred;
+                    var vatAccount = useDeferredVat
+                        ? (await FindAccountAsync(companyId, "21913")
+                           ?? await FindAccountAsync(companyId, "21911"))
+                        : await FindAccountAsync(companyId, "21911");
                     if (vatAccount != null)
-                        AddLine(vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย");
+                        AddLine(vatAccount.Id, 0, doc.VatAmount,
+                            useDeferredVat ? "ภาษีขายรอเรียกเก็บ (ยังไม่ถึงกำหนด §78)" : "ภาษีขาย");
                 }
             }
         }
@@ -4356,9 +5123,14 @@ public class DocumentService : IDocumentService
                 var claimableVatPv = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
                 if (claimableVatPv > 0)
                 {
-                    var vatInputAccount = await FindAccountAsync(companyId, "116");
-                    if (vatInputAccount != null)
-                        AddLine(vatInputAccount.Id, claimableVatPv, 0, "ภาษีซื้อ (เคลมได้)");
+                    // เหมือน PI — เลือก 11610/11640/override ตาม completeness §86/4
+                    var (vatInputAccount, postedAsUndue) = await ResolveInputVatAccountAsync(companyId, doc);
+                    AddLine(vatInputAccount.Id, claimableVatPv, 0,
+                        postedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด (ใบกำกับไม่ครบ §86/4)"
+                                      : (doc.InputVatAccountCodeOverride != null
+                                            ? $"VAT → {vatInputAccount.AccountCode} {vatInputAccount.AccountName} (override)"
+                                            : "ภาษีซื้อ (เคลมได้)"));
+                    doc.InputVatPostedAsUndue = postedAsUndue;
                 }
 
                 // Credit side depends on the settlement basis:
@@ -4724,7 +5496,9 @@ public class DocumentService : IDocumentService
             ProjectCostEntryId: pceByLine != null && pceByLine.TryGetValue(l.Id, out var pceId) ? pceId : (Guid?)null,
             HasProjectCostEntry: pceByLine != null && pceByLine.ContainsKey(l.Id),
             IsVatClaimable: l.IsVatClaimable,
-            VatNonClaimableReason: l.VatNonClaimableReason)).ToList(),
+            VatNonClaimableReason: l.VatNonClaimableReason,
+            AccountCode: l.Account != null ? l.Account.AccountCode : null,
+            GlAccountAiFeedbackId: l.GlAccountAiFeedbackId)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,
@@ -4762,6 +5536,8 @@ public class DocumentService : IDocumentService
         CreditNoteReason: d.CreditNoteReason,
         SupplierInvoiceNumber: d.SupplierInvoiceNumber,
         SupplierTaxInvoiceDate: d.SupplierTaxInvoiceDate,
+        HasTaxInvoiceReference: d.HasTaxInvoiceReference,
+        SupplierBranchCode: d.SupplierBranchCode,
         CreditDays: d.CreditDays,
         PaymentTerms: d.PaymentTerms,
         PaymentType: d.PaymentType,
@@ -4775,7 +5551,21 @@ public class DocumentService : IDocumentService
         ProjectCostBookedAmount: pceAmount,
         BookedProjects: bookedProjects,
         LifecycleStatus: lifecycle,
-        LifecycleReason: reason);
+        LifecycleReason: reason,
+        InputVatPostedAsUndue: d.InputVatPostedAsUndue,
+        InputVatBecameClaimableAt: d.InputVatBecameClaimableAt,
+        InputVatAccountCodeOverride: d.InputVatAccountCodeOverride,
+        IsDeposit: d.IsDeposit,
+        DepositRealizedAmount: d.DepositRealizedAmount,
+        DepositRealizedAt: d.DepositRealizedAt,
+        DepositDeferredAccountCode: d.DepositDeferredAccountCode,
+        DepositOutputVatDeferred: d.DepositOutputVatDeferred,
+        DepositOutputVatRecognizedAt: d.DepositOutputVatRecognizedAt,
+        TaxPointDate: d.TaxPointDate,
+        RetentionUntil: d.RetentionUntil,
+        NonDeductibleAmount: d.NonDeductibleAmount,
+        NonDeductibleRuleJson: d.NonDeductibleRuleJson,
+        LateReason: d.LateReason);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

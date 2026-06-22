@@ -45,8 +45,12 @@ public partial class TaxService
                      from c in cj.DefaultIfEmpty()
                      join rd in _db.Documents.AsNoTracking() on d.RelatedDocumentId equals rd.Id into rdj
                      from rd in rdj.DefaultIfEmpty()
-                     select new { d.Id, d.DocumentNumber, ContactBranch = c != null ? c.BranchCode : null, RelatedNumber = rd != null ? rd.DocumentNumber : null })
-                .ToDictionaryAsync(x => x.Id, x => new DocInfo(x.DocumentNumber, x.ContactBranch, x.RelatedNumber));
+                     // SupplierBranchCode snapshot (ลงรายงานภาษีซื้อ)
+                     // ชนะ Contact.BranchCode ปัจจุบัน ตอน PV ติ๊ก "ใช้งานใบกำกับ
+                     // ภาษี" ระบบ snapshot สาขาตอนออกใบไว้แล้ว — กัน contact
+                     // branch ถูกแก้ภายหลังแล้วรายงานย้อนหลังเพี้ยน.
+                     select new { d.Id, d.DocumentNumber, SnapshotBranch = d.SupplierBranchCode, ContactBranch = c != null ? c.BranchCode : null, RelatedNumber = rd != null ? rd.DocumentNumber : null, d.SupplierInvoiceNumber, d.SupplierTaxInvoiceDate })
+                .ToDictionaryAsync(x => x.Id, x => new DocInfo(x.DocumentNumber, x.SnapshotBranch ?? x.ContactBranch, x.RelatedNumber, x.SupplierInvoiceNumber, x.SupplierTaxInvoiceDate));
 
         var sheets = new Dictionary<string, object>();
 
@@ -85,7 +89,11 @@ public partial class TaxService
         return (ms.ToArray(), fileName);
     }
 
-    private record DocInfo(string DocumentNumber, string? ContactBranch, string? RelatedNumber);
+    // SupplierInvoiceNumber/SupplierTaxInvoiceDate = เลขที่+วันที่บน "ใบกำกับ
+    // ภาษีของผู้ขาย" — รายงานภาษีซื้อ (ฉบับที่ 104) ต้องลง "เล่มที่/เลขที่" และ
+    // "วัน เดือน ปี" ตามใบจริงของ supplier ไม่ใช่เลข/วันที่เอกสารภายในเรา.
+    private record DocInfo(string DocumentNumber, string? ContactBranch, string? RelatedNumber,
+        string? SupplierInvoiceNumber = null, DateTime? SupplierTaxInvoiceDate = null);
 
     private static readonly string[] ThaiMonths = {
         "", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -179,10 +187,20 @@ public partial class TaxService
         foreach (var l in lines)
         {
             var info = l.DocumentId.HasValue && docInfo.TryGetValue(l.DocumentId.Value, out var di) ? di : null;
+            // "วัน เดือน ปี" = วันที่บนใบกำกับของผู้ขาย (SupplierTaxInvoiceDate)
+            // ถ้ามี — ตกลงมาที่ TransactionDate (= tax point/DocumentDate) เมื่อ
+            // เอกสารเก่าไม่ได้บันทึกวันที่ใบผู้ขายไว้.
+            var invDate = info?.SupplierTaxInvoiceDate ?? l.TransactionDate;
+            // "เล่มที่/เลขที่" = เลขใบกำกับของผู้ขาย (SupplierInvoiceNumber) —
+            // RD ต้องการเลขบนใบจริง ไม่ใช่เลขเอกสารภายในระบบเรา. fallback เป็น
+            // เลขเอกสารภายในเมื่อ supplier number ว่าง (เอกสารเก่า/ข้อมูลไม่ครบ).
+            var supplierInvNo = !string.IsNullOrWhiteSpace(info?.SupplierInvoiceNumber)
+                ? info!.SupplierInvoiceNumber!
+                : (info?.DocumentNumber ?? l.Description ?? "");
             rows.Add(Row(W,
                 i++,
-                $"{(l.TransactionDate.Year + 543):D4}-{l.TransactionDate.Month:D2}-{l.TransactionDate.Day:D2}",
-                info?.DocumentNumber ?? l.Description ?? "",
+                $"{(invDate.Year + 543):D4}-{invDate.Month:D2}-{invDate.Day:D2}",
+                supplierInvNo,
                 string.IsNullOrWhiteSpace(l.TaxPayerId) ? "" : l.TaxPayerId,
                 BranchCodeOrDefault(info?.ContactBranch),
                 l.TaxPayerName ?? "",

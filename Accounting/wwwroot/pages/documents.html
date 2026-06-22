@@ -242,6 +242,85 @@
             </div>
           </div>
 
+          <!-- PV-only: "ใช้งานใบกำกับภาษี" ─ เปิดส่วนกรอกข้อมูลใบกำกับภาษี
+               ตามรายงานภาษีซื้อ (RD §86/4 + §86/14): เลขใบ, วันที่, สาขา
+               ผู้ขาย, ฐานภาษี, VAT. รองรับ 2 mode:
+                 (1) เลือกจากใบในระบบ (PurchaseInvoice ของ contact) → auto-fill
+                 (2) กรอกเอง (กรณีใบกระดาษไม่มีในระบบ)
+               flag HasTaxInvoiceReference ส่งกลับ backend; SupplierBranchCode
+               snapshot ตอนออกใบกัน Contact.BranchCode ถูกแก้ภายหลัง. -->
+          <div class="form-row payment-voucher-only" style="display:none">
+            <div class="form-group" style="width:100%">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:14px">
+                <input type="checkbox" id="fHasTaxInvoiceRef" onchange="Page.onTaxInvoiceRefToggle()" style="width:18px;height:18px">
+                <span style="font-weight:600;color:#0369a1">📋 ใช้งานใบกำกับภาษี (ขอเครดิตภาษีซื้อ ภพ.30)</span>
+                <span style="margin-left:auto;font-size:11px;color:#64748b">RD §86/4 + §86/14</span>
+              </label>
+            </div>
+          </div>
+          <div id="taxInvoiceRefSection" class="payment-voucher-only" style="display:none">
+            <div style="background:#fefce8;border:1px solid #fde047;border-left:4px solid #ca8a04;border-radius:10px;padding:14px 16px;margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <strong style="color:#854d0e;font-size:14px">📋 ข้อมูลใบกำกับภาษีของผู้ขาย</strong>
+                <span style="font-size:11px;color:#92400e">ข้อมูลนี้จะลงรายงานภาษีซื้อ ภพ.30 อัตโนมัติ</span>
+              </div>
+
+              <!-- Mode picker: เลือกจากระบบ vs กรอกเอง -->
+              <div style="display:flex;gap:14px;margin-bottom:10px;font-size:13px">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="taxInvSource" id="taxInvSrcSystem" value="system" checked onchange="Page.onTaxInvoiceSourceChange()">
+                  <span>เลือกจากใบในระบบ <span style="font-size:11px;color:#64748b">(ใบแจ้งหนี้ซื้อของ contact)</span></span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="taxInvSource" id="taxInvSrcManual" value="manual" onchange="Page.onTaxInvoiceSourceChange()">
+                  <span>กรอกข้อมูลเอง <span style="font-size:11px;color:#64748b">(ใบกระดาษไม่มีในระบบ)</span></span>
+                </label>
+              </div>
+
+              <!-- Mode 1: เลือก PurchaseInvoice → auto-fill -->
+              <div class="form-row" id="taxInvSystemPicker" style="margin-bottom:6px">
+                <div class="form-group" style="width:100%">
+                  <label class="form-label">เลือกใบแจ้งหนี้ซื้อ/ใบกำกับภาษี</label>
+                  <select class="form-select" id="fTaxInvSourceDoc" onchange="Page.onTaxInvoiceSourceDocSelect()">
+                    <option value="">-- เลือก contact ก่อน เพื่อโหลดรายการ --</option>
+                  </select>
+                  <small style="color:#64748b;font-size:11px">กรองเฉพาะใบของ contact นี้ที่ Approved/ค้างชำระ</small>
+                </div>
+              </div>
+
+              <!-- ข้อมูลตามกฎสรรพากร — กรอกได้/แก้ได้/auto-fill -->
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" placeholder="เช่น INV-2026-0042">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <input type="date" class="form-input" id="fSupplierTaxInvoiceDatePV">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
+                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:#f1f5f9" placeholder="ดึงจาก contact">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span style="color:#dc2626">*</span></label>
+                  <input type="text" class="form-input" id="fSupplierBranchCode" placeholder="00000" maxlength="5" pattern="\d{5}">
+                </div>
+              </div>
+              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:#475569;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
+                <span>💡 <b>ฐานภาษี + VAT</b> ดึงจากยอดใบ (subtotal + vat) อัตโนมัติ — ตรวจให้ตรงใบกำกับจริง</span>
+                <span id="taxInvVatPreview" style="font-weight:600;color:#0f172a"></span>
+              </div>
+              <!-- Live completeness warning — เคลม VAT ต้องมีใบกำกับครบ §86/4 -->
+              <div id="taxInvIncompleteWarn" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b">
+                ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
+                ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
+              </div>
+            </div>
+          </div>
+
           <!-- Supplier-side tax-invoice metadata — only relevant on PI/CertInLieu/PV
                where the partner issues the source invoice. JS toggles `.supplier-invoice-only`
                based on docType (see togglePurchaseFields below). -->
@@ -438,12 +517,51 @@
                   <input type="checkbox" id="fIsForeignService" style="margin:0">
                   <span title="ติ๊กเมื่อซื้อบริการจากต่างประเทศ (Google Ads / AWS / Facebook ฯลฯ) — ระบบจะรวมรายการนี้ในรายงาน ภ.พ.36 (self-assess VAT 7%) และ ภ.ง.ด.54 (WHT)">🌐 บริการต่างประเทศ (§83/6)</span>
                 </label>
+                <label style="display:none;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none" id="fIsDepositWrap">
+                  <input type="checkbox" id="fIsDeposit" style="margin:0" onchange="Page.onDepositToggle()">
+                  <span title="ติ๊กเมื่อรับเงินมัดจำ/รับล่วงหน้า ก่อนส่งมอบสินค้า/บริการ — ระบบจะลงบัญชี 'ขายรอรับรู้' (217xx) แทนรายได้ ค่อยรับรู้รายได้เมื่อส่งมอบจริงในหน้า 'เงินมัดจำ'">🤝 เงินมัดจำ/รับล่วงหน้า</span>
+                </label>
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
+                <button class="btn btn-sm btn-secondary" id="btnAiSuggestAcc" style="display:none"
+                  title="ให้ AI ช่วยเลือกผังบัญชี GL ตามรายการที่กรอก — local model เรียนรู้ต่อทุกครั้งที่ user ยืนยัน/แก้"
+                  onclick="Page.aiSuggestAccounting()">🤖 AI แนะนำผังบัญชี</button>
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
               </div>
             </div>
+            <!-- Deposit options — show when "เงินมัดจำ" ticked -->
+            <div id="depositOptions" style="display:none;margin-top:10px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
+              <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:8px">🤝 ตัวเลือกเงินมัดจำ/รับล่วงหน้า</div>
+              <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">
+                เงินที่รับจะลงเป็น "ขายรอรับรู้" (หนี้สิน) — รับรู้รายได้เมื่อส่งมอบจริงในหน้า "เงินมัดจำ"
+              </div>
+              <div style="margin-bottom:10px">
+                <div class="text-sm font-medium" style="margin-bottom:4px">จังหวะภาษีขาย (tax point §78/§78/1)</div>
+                <label style="display:block;font-size:13px;margin-bottom:4px;cursor:pointer">
+                  <input type="radio" name="fDepositVat" value="immediate" checked>
+                  ภาษีขายถึงกำหนดแล้ว — รับชำระราคา → ออกภาษีขายเข้า ภ.พ.30 ทันที (บัญชี 21911)
+                </label>
+                <label style="display:block;font-size:13px;cursor:pointer">
+                  <input type="radio" name="fDepositVat" value="deferred">
+                  ยังไม่ถึงกำหนด — เงินประกัน/ยังไม่ให้บริการ → พักที่ "ภาษีขายรอเรียกเก็บ" (21913) ยังไม่เข้า ภ.พ.30 จนกว่าจะรับรู้
+                </label>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                  <label class="text-sm font-medium">หมายเลขอ้างอิง / เลขจอง</label>
+                  <input type="text" class="form-input" id="fDepositRef" placeholder="เช่น เลขที่จอง BK-2026-001">
+                </div>
+                <div>
+                  <label class="text-sm font-medium">ผังบัญชีขายรอรับรู้ (เว้นว่าง = 21712)</label>
+                  <input type="text" class="form-input" id="fDepositDeferredAcc" placeholder="21712 / 21713">
+                </div>
+              </div>
+            </div>
+            <!-- AI accounting suggestions banner — populated by aiSuggestAccounting() -->
+            <div id="aiAccSuggestBanner" style="display:none;margin-top:10px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px"></div>
+            <!-- Shared CoA datalist (โหลด 1 ครั้งตอนเปิดฟอร์ม) -->
+            <datalist id="coaList"></datalist>
             <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
               <div id="linesBody"></div>
               <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:8px">
@@ -728,7 +846,17 @@
             + group('ค่าใช้จ่าย / ต้นทุน', expense)
             + group('หนี้สิน (เช่น คืนเงินทดรองกรรมการ, ชำระเงินกู้)', liab)
             + group('สินทรัพย์ (เช่น เงินมัดจำ, เงินทดรองจ่าย)', asset);
-        } catch(e) { this.expenseCategories = []; }
+          // เติม datalist สำหรับ per-line account picker — code → name lookup
+          // map ใช้ใน badge "AI: xxxx" ในแต่ละบรรทัด
+          this.coaByCode = {};
+          this.expenseCategories.forEach(a => { this.coaByCode[a.accountCode] = a; });
+          const dl = document.getElementById('coaList');
+          if (dl) {
+            dl.innerHTML = this.expenseCategories.map(a =>
+              `<option value="${Layout.esc(a.accountCode)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`
+            ).join('');
+          }
+        } catch(e) { this.expenseCategories = []; this.coaByCode = {}; }
         // Check if email is configured for this company
         try {
           const ec = await api.getEmailConfig();
@@ -949,6 +1077,12 @@
         }
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
+        // ถ้า "ใช้งานใบกำกับภาษี" ติ๊กอยู่ → reload รายการ PI ของ contact ใหม่
+        // + เติม Tax ID จาก contact ที่เพิ่งเลือก
+        if (document.getElementById('fHasTaxInvoiceRef')?.checked) {
+          this._fillSupplierTaxIdFromContact();
+          this._loadTaxInvoiceSourceDocs();
+        }
         // For a Payment Voucher, ask the local model whether this supplier is
         // usually paid Cash (จ่ายทันที) or Credit (เครดิต) and pre-select it.
         if (document.getElementById('fDocType')?.value === 'PaymentVoucher' && contactId) {
@@ -1392,6 +1526,140 @@
         if (lEl) lEl.textContent = label;
       },
 
+      onDepositToggle() {
+        const on = document.getElementById('fIsDeposit')?.checked || false;
+        const panel = document.getElementById('depositOptions');
+        if (panel) panel.style.display = on ? 'block' : 'none';
+      },
+      /** ผู้ใช้พิมพ์/เลือก accountCode บนบรรทัด → ถ้าต่างจากที่ AI แนะนำ
+       *  เปลี่ยน badge เป็น "✎ แก้แล้ว" (สีส้ม). บันทึก choice จริงเกิดที่
+       *  backend ตอน save (เปรียบ chosen code กับ AiPrimaryAnswer). */
+      onLineAccountInput(el) {
+        const row = el.closest('.line-card');
+        if (!row) return;
+        const badge = row.querySelector('[data-f="accountBadge"]');
+        const sugCodeEl = row.querySelector('[data-f="glAiSuggestedCode"]');
+        const suggested = sugCodeEl?.dataset?.code;
+        const code = el.value.trim();
+        // โชว์ชื่อผังด้านขวาเมื่อ valid + flag สีเขียว
+        const found = code && this.coaByCode?.[code];
+        if (!badge) return;
+        if (suggested && code && code !== suggested) {
+          badge.style.display = 'inline-block';
+          badge.style.background = '#fef3c7'; badge.style.color = '#92400e';
+          badge.textContent = `✎ แก้จาก AI: ${suggested}`;
+          badge.title = `AI แนะนำ ${suggested} — ผู้ใช้เปลี่ยนเป็น ${code} (ระบบจะบันทึก feedback ให้)`;
+        } else if (suggested && code === suggested) {
+          badge.style.display = 'inline-block';
+          badge.style.background = '#dcfce7'; badge.style.color = '#15803d';
+          badge.textContent = '✓ ตามที่ AI แนะนำ';
+          badge.title = 'AI แนะนำผังนี้ — ระบบจะบันทึกเป็น accepted';
+        } else if (found) {
+          badge.style.display = 'inline-block';
+          badge.style.background = '#e0e7ff'; badge.style.color = '#3730a3';
+          badge.textContent = found.accountName.length > 24
+            ? found.accountName.substring(0, 22) + '…' : found.accountName;
+          badge.title = found.accountName;
+        } else {
+          badge.style.display = 'none';
+        }
+      },
+      /**
+       * ขอ AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด — student-first (local model)
+       * ผ่าน orchestrator ตามกฎเหล็ก #1 Distillation Mandate. ระบบ validate
+       * ผังที่แนะนำว่ามีจริงใน CoA (anti-hallucination guard) ก่อนแสดงผล.
+       *
+       * UX: ไม่ apply อัตโนมัติ — แสดงเป็น banner แนะนำเหนือ lines table ให้
+       * ผู้ใช้ตัดสินใจเอง (สอดคล้องกฎเหล็ก #1: ปุ่ม "ยืนยัน" เด่นเป็นหลัก).
+       */
+      async aiSuggestAccounting() {
+        const banner = document.getElementById('aiAccSuggestBanner');
+        if (!banner) return;
+        const lines = [];
+        document.querySelectorAll('#linesBody .line-card').forEach((row, idx) => {
+          const desc = row.querySelector('[data-f="desc"]')?.value.trim();
+          const qty = parseFloat(row.querySelector('[data-f="qty"]')?.value || '0');
+          const price = parseFloat(row.querySelector('[data-f="price"]')?.value || '0');
+          const disc = parseFloat(row.querySelector('[data-f="disc"]')?.value || '0');
+          const amount = qty * price * (1 - disc / 100);
+          if (desc && amount > 0) lines.push({ tempId: 'line-' + idx, description: desc, amount });
+        });
+        if (lines.length === 0) {
+          Layout.toast('กรุณากรอกรายการที่มีรายละเอียดและจำนวนเงินก่อน', 'error');
+          return;
+        }
+        const contactId = document.getElementById('fContactId')?.value || null;
+        let contactName = null, contactTaxId = null;
+        if (contactId) {
+          try {
+            const c = await Layout.api().getContact(contactId);
+            contactName = c?.data?.name || null;
+            contactTaxId = c?.data?.taxId || null;
+          } catch (_) { /* ปล่อยว่าง — AI ยังถามได้แต่ไม่มี vendor context */ }
+        }
+        const sourceId = document.getElementById('fTaxInvSourceDoc')?.value || null;
+
+        banner.style.display = 'block';
+        banner.innerHTML = '<div style="color:#1e40af;font-size:13px">🤖 กำลังถาม AI…</div>';
+        try {
+          const res = await API.post(
+            `/api/companies/${Layout.getCompanyId()}/document/ai-suggest-pv-accounting`,
+            {
+              sourceInvoiceId: sourceId || null,
+              vendorName: contactName,
+              vendorTaxId: contactTaxId,
+              vendorIndustry: null,
+              currency: 'THB',
+              lines: lines
+            });
+          const data = res.data || {};
+          const items = data.lines || [];
+          const used = data.usedAi ? '🤖 AI' : '⚙️ ระบบ (local model)';
+          const observe = (data.crossLineObservations || []).filter(Boolean);
+
+          // Apply ผังที่แนะนำลงในแต่ละบรรทัด (≥0.70 ถึงจะ auto-fill;
+          // ต่ำกว่านั้นแสดงในตารางอย่างเดียวให้ผู้ใช้ดูแล้วเลือกเอง)
+          let applied = 0;
+          items.forEach((it, idx) => {
+            if (!it.accountCode) return;
+            const row = document.querySelectorAll('#linesBody .line-card')[idx];
+            if (!row) return;
+            const sugCodeEl = row.querySelector('[data-f="glAiSuggestedCode"]');
+            if (sugCodeEl) sugCodeEl.dataset.code = it.accountCode;
+            const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
+            if (fidEl && it.feedbackId) fidEl.dataset.feedbackId = it.feedbackId;
+            // Auto-fill เฉพาะ confidence ≥0.70 — ต่ำกว่าให้ผู้ใช้เลือกเอง
+            if ((it.confidence ?? 0) >= 0.70) {
+              const accInp = row.querySelector('[data-f="accountCode"]');
+              if (accInp && !accInp.value.trim()) {
+                accInp.value = it.accountCode;
+                this.onLineAccountInput(accInp);
+                applied++;
+              }
+            }
+          });
+
+          let html = `<div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:8px">${used} แนะนำผังบัญชี GL — เติมให้ ${applied}/${items.length} บรรทัด (confidence ≥70%) ส่วนที่เหลือผู้ใช้เลือกเอง</div>`;
+          html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+          html += '<thead><tr style="text-align:left;border-bottom:1px solid #93c5fd"><th style="padding:4px">บรรทัด</th><th style="padding:4px">รายละเอียด</th><th style="padding:4px">ผังที่แนะนำ</th><th style="padding:4px;text-align:right">มั่นใจ</th><th style="padding:4px">เหตุผล</th></tr></thead><tbody>';
+          items.forEach((it, idx) => {
+            const ln = lines.find(l => l.tempId === it.tempId);
+            const conf = it.confidence != null ? Math.round(it.confidence * 100) + '%' : '—';
+            const color = it.confidence >= 0.85 ? '#15803d' : it.confidence >= 0.70 ? '#ca8a04' : '#dc2626';
+            const code = it.accountCode || '—';
+            const accName = this.coaByCode?.[it.accountCode]?.accountName || '';
+            html += `<tr style="border-bottom:1px solid #dbeafe"><td style="padding:4px">${idx + 1}</td><td style="padding:4px">${Layout.esc(ln?.description || '')}</td><td style="padding:4px;font-weight:600">${Layout.esc(code)} <span style="color:#6b7280;font-weight:400">${Layout.esc(accName)}</span></td><td style="padding:4px;text-align:right;color:${color};font-weight:600">${conf}</td><td style="padding:4px;color:#475569">${Layout.esc(it.reasoning || '')}</td></tr>`;
+          });
+          html += '</tbody></table>';
+          if (observe.length) {
+            html += `<div style="margin-top:6px;font-size:11px;color:#475569">💡 ${observe.map(Layout.esc).join(' · ')}</div>`;
+          }
+          html += '<div style="margin-top:8px;font-size:11px;color:#64748b">หมายเหตุ: AI เติมเฉพาะที่มั่นใจ ≥70% — ผู้ใช้ตัดสินใจขั้นสุดท้าย ทุกครั้งที่ save ระบบจะบันทึกผลให้ local model เรียนรู้ต่อ</div>';
+          banner.innerHTML = html;
+        } catch (e) {
+          banner.innerHTML = `<div style="color:#dc2626;font-size:13px">ขอแนะนำไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
+      },
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
@@ -1444,6 +1712,24 @@
         const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
         const paidSection = document.getElementById('paidOnIssueSection');
         if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // AI แนะนำผังบัญชี GL — เฉพาะเอกสารฝั่งซื้อ (Expense / PI / PV) ที่มี
+        // line description ให้ AI จับคู่กับ chart of accounts
+        const aiAccBtn = document.getElementById('btnAiSuggestAcc');
+        if (aiAccBtn) {
+          const purchaseLike = ['Expense', 'PurchaseInvoice', 'PaymentVoucher', 'CertificateInLieu'];
+          aiAccBtn.style.display = purchaseLike.includes(docType) ? '' : 'none';
+        }
+
+        // เงินมัดจำ/รับล่วงหน้า — แสดงเฉพาะใบเสร็จ/ใบสำคัญรับ (รับเงินก่อนส่งมอบ)
+        const depositWrap = document.getElementById('fIsDepositWrap');
+        if (depositWrap) {
+          const isReceipt = docType === 'Receipt' || docType === 'ReceiptVoucher';
+          depositWrap.style.display = isReceipt ? 'inline-flex' : 'none';
+          if (!isReceipt) {
+            const cb = document.getElementById('fIsDeposit'); if (cb) cb.checked = false;
+          }
+          this.onDepositToggle();
+        }
         // Reset checkbox when the section hides so a stale "paid" state
         // doesn't fire on the next save of a non-applicable type.
         if (paidSection && paidSection.style.display === 'none') {
@@ -1530,6 +1816,156 @@
             hint.style.color = '#b45309';
             hint.textContent = '⚠ ใบสำคัญจ่าย = จ่ายเงินจริง — ถ้าต้องการตั้งหนี้รอจ่าย ให้ใช้ "ใบบันทึกค่าใช้จ่าย" แล้วแปลงเป็นใบสำคัญจ่ายเมื่อจ่าย (เครดิตใช้ได้เฉพาะใบที่อ้างอิงเอกสารตั้งหนี้)';
           }
+        }
+      },
+
+      /**
+       * Toggle "ใช้งานใบกำกับภาษี" section บน PV. ติ๊ก = แสดงกล่องเหลือง
+       * (mode picker + เลขใบ/วันที่/Tax ID/สาขา), default mode = เลือกจาก
+       * ระบบ → โหลด PI/TaxInvoice ของ contact ลง dropdown. Default
+       * SupplierBranchCode = "00000" (สำนักงานใหญ่) ตามรูปแบบฟอร์มกรมสรรพากร.
+       */
+      onTaxInvoiceRefToggle() {
+        const checked = document.getElementById('fHasTaxInvoiceRef')?.checked;
+        document.getElementById('taxInvoiceRefSection').style.display = checked ? '' : 'none';
+        if (!checked) { this._validateTaxInvoiceClaim(); return; }
+        // Default 00000 เมื่อเปิดครั้งแรก
+        const branchInp = document.getElementById('fSupplierBranchCode');
+        if (branchInp && !branchInp.value) branchInp.value = '00000';
+        // เติม supplierTaxId จาก contact ปัจจุบัน
+        this._fillSupplierTaxIdFromContact();
+        // โหลดรายการใบของ contact ลง dropdown (mode system default)
+        this._loadTaxInvoiceSourceDocs();
+        this._updateTaxInvVatPreview();
+        // ผูก live validation กับการแก้ field ใบกำกับ (ครั้งเดียว)
+        if (!this._taxInvWatchBound) {
+          ['fSupplierInvoiceNumberPV','fSupplierTaxInvoiceDatePV','fSupplierBranchCode']
+            .forEach(id => document.getElementById(id)
+              ?.addEventListener('input', () => this._validateTaxInvoiceClaim()));
+          this._taxInvWatchBound = true;
+        }
+        this._validateTaxInvoiceClaim();
+      },
+
+      /**
+       * ตรวจว่าใบกำกับภาษีของผู้ขายครบตาม §86/4 พอจะเคลมภาษีซื้อ (ภ.พ.30) ไหม.
+       * ไม่ hard-block (backend พักไว้ 11640 ให้อยู่แล้ว) แต่เตือนชัดเจนว่าจะยัง
+       * เคลมไม่ได้จนกว่าจะครบ — ตอบโจทย์ "ติ๊กใช้เคลม VAT ไม่ได้ถ้าใบไม่ครบ".
+       * คืน true เมื่อครบ.
+       */
+      _validateTaxInvoiceClaim() {
+        const warn = document.getElementById('taxInvIncompleteWarn');
+        const checked = document.getElementById('fHasTaxInvoiceRef')?.checked;
+        if (!warn) return true;
+        if (!checked) { warn.style.display = 'none'; return true; }
+        const missing = [];
+        if (!document.getElementById('fSupplierInvoiceNumberPV')?.value.trim())
+          missing.push('เลขที่ใบกำกับ');
+        if (!document.getElementById('fSupplierTaxInvoiceDatePV')?.value)
+          missing.push('วันที่ใบกำกับ');
+        const branch = document.getElementById('fSupplierBranchCode')?.value.trim();
+        if (!branch || !/^\d{5}$/.test(branch))
+          missing.push('รหัสสาขา (5 หลัก)');
+        if (!document.getElementById('fSupplierTaxIdReadonly')?.value.trim())
+          missing.push('เลขผู้เสียภาษีผู้ขาย (จาก contact)');
+        if (missing.length === 0) { warn.style.display = 'none'; return true; }
+        document.getElementById('taxInvMissingList').textContent = 'ขาด: ' + missing.join(', ');
+        warn.style.display = 'block';
+        return false;
+      },
+
+      /**
+       * สลับ mode: system (เลือกใบในระบบ → auto-fill) vs manual (กรอกเอง).
+       * manual = ซ่อน dropdown + เปิด field ให้กรอก, system = แสดง dropdown.
+       */
+      onTaxInvoiceSourceChange() {
+        const isSystem = document.querySelector('input[name="taxInvSource"]:checked')?.value === 'system';
+        document.getElementById('taxInvSystemPicker').style.display = isSystem ? '' : 'none';
+        if (isSystem) this._loadTaxInvoiceSourceDocs();
+      },
+
+      /**
+       * โหลด PurchaseInvoice + TaxInvoice ของ contact ปัจจุบันที่ Approved/
+       * ค้างชำระ ใส่ลง dropdown เพื่อให้ user เลือกแล้ว auto-fill.
+       * Reuse endpoint /api/companies/{cid}/documents?type=PurchaseInvoice&contactId=...
+       */
+      async _loadTaxInvoiceSourceDocs() {
+        const sel = document.getElementById('fTaxInvSourceDoc');
+        if (!sel) return;
+        const contactId = document.getElementById('fContactId')?.value;
+        if (!contactId) {
+          sel.innerHTML = '<option value="">-- เลือก contact ก่อน เพื่อโหลดรายการ --</option>';
+          return;
+        }
+        sel.innerHTML = '<option value="">กำลังโหลด...</option>';
+        try {
+          const api = Layout.api();
+          // 2 types ที่อ้างได้: PurchaseInvoice (ใบแจ้งหนี้ซื้อ) + TaxInvoice ขาเข้า
+          const qs = `?contactId=${contactId}&status=Approved&pageSize=50&type=`;
+          const [pi, ti] = await Promise.all([
+            api.getDocuments(qs + 'PurchaseInvoice').then(r => r.data).catch(() => ({ items: [] })),
+            api.getDocuments(qs + 'TaxInvoice').then(r => r.data).catch(() => ({ items: [] })),
+          ]);
+          const docs = [...(pi.items || []), ...(ti.items || [])]
+            .filter(d => d.status === 'Approved' || d.status === 'PartiallyPaid');
+          this._taxInvSourceDocCache = {};
+          let html = '<option value="">-- กรอกเอง / ไม่อ้างใบในระบบ --</option>';
+          for (const d of docs) {
+            this._taxInvSourceDocCache[d.id] = d;
+            const dateLbl = (d.documentDate || '').slice(0, 10);
+            html += `<option value="${d.id}">${Layout.esc(d.documentNumber)} • ${dateLbl} • ฿${(d.totalAmount || 0).toLocaleString()}</option>`;
+          }
+          sel.innerHTML = html;
+        } catch (err) {
+          sel.innerHTML = '<option value="">โหลดไม่สำเร็จ — กรอกเองได้</option>';
+        }
+      },
+
+      /**
+       * เมื่อ user เลือกใบจาก dropdown → auto-fill เลขใบ + วันที่ + จำนวน
+       * + branch (จาก SupplierBranchCode ของใบนั้นถ้ามี ไม่งั้น 00000)
+       * + RelatedDocumentId (link ไป source).
+       */
+      onTaxInvoiceSourceDocSelect() {
+        const id = document.getElementById('fTaxInvSourceDoc')?.value;
+        if (!id || !this._taxInvSourceDocCache?.[id]) {
+          this._updateTaxInvVatPreview();
+          return;
+        }
+        const d = this._taxInvSourceDocCache[id];
+        const num = document.getElementById('fSupplierInvoiceNumberPV');
+        const dt = document.getElementById('fSupplierTaxInvoiceDatePV');
+        const br = document.getElementById('fSupplierBranchCode');
+        if (num) num.value = d.supplierInvoiceNumber || d.documentNumber || '';
+        if (dt) dt.value = (d.supplierTaxInvoiceDate || d.documentDate || '').slice(0, 10);
+        if (br) br.value = d.supplierBranchCode || '00000';
+        // เก็บ relatedDocumentId hidden ลง form state เพื่อส่งกลับ
+        this._linkedTaxInvoiceSourceId = id;
+        this._updateTaxInvVatPreview(d);
+      },
+
+      _fillSupplierTaxIdFromContact() {
+        const cid = document.getElementById('fContactId')?.value;
+        const inp = document.getElementById('fSupplierTaxIdReadonly');
+        if (!inp) return;
+        const c = (this._contacts || []).find(x => x.id === cid);
+        inp.value = c?.taxId || '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)';
+      },
+
+      _updateTaxInvVatPreview(srcDoc) {
+        const el = document.getElementById('taxInvVatPreview');
+        if (!el) return;
+        // คำนวณจาก line items ปัจจุบัน (subtotal + vat) ที่ฟอร์มคำนวณไว้
+        const sub = parseFloat(document.getElementById('fSubTotalDisplay')?.dataset?.value
+                  || document.getElementById('fSubTotal')?.value || '0') || 0;
+        const vat = parseFloat(document.getElementById('fVatAmountDisplay')?.dataset?.value
+                  || document.getElementById('fVatAmount')?.value || '0') || 0;
+        if (srcDoc) {
+          el.textContent = `ฐานภาษี ฿${(srcDoc.subTotal || 0).toLocaleString(undefined, {minimumFractionDigits: 2})} • VAT ฿${(srcDoc.vatAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+        } else if (sub || vat) {
+          el.textContent = `ฐานภาษี ฿${sub.toLocaleString(undefined, {minimumFractionDigits: 2})} • VAT ฿${vat.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+        } else {
+          el.textContent = '— เพิ่มรายการในใบเพื่อคำนวณ —';
         }
       },
 
@@ -1863,9 +2299,15 @@
             } else if (d.rdComplianceStatus === 'Warning') {
               rdBadge = `<span title="RD compliance: มีคำเตือน" style="margin-left:4px;color:#d97706;font-size:14px">🛡️</span>`;
             }
+            // Undue input VAT (§82/3) — ภาษีซื้อ post เข้า 11640 รอใบกำกับครบ
+            // ก่อนเคลม ภ.พ.30. โชว์เฉพาะตอนยังไม่ reclassify (becameClaimableAt ว่าง).
+            let undueVatBadge = '';
+            if (d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) {
+              undueVatBadge = `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
+            }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
@@ -1926,6 +2368,20 @@
           </div>
           <div class="lc-project-row">
             <select class="form-select" data-f="project" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติระบบลงค่าใช้จ่ายเข้าโครงการให้อัตโนมัติ">${projOptHtml}</select>
+          </div>
+          <!-- Per-line GL account picker — พิมพ์ code หรือชื่อเพื่อค้นจาก
+               datalist; AI ปุ่ม "🤖 AI แนะนำผังบัญชี" จะ populate ค่าให้พร้อม
+               badge "AI: xxx" และเก็บ feedbackId เพื่อปิดลูปการสอน. ผังที่ AI
+               แนะนำต้องมีจริงใน CoA (server-side guard). -->
+          <div class="lc-acc-row" style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12px">
+            <label style="color:#475569;min-width:64px">ผังบัญชี</label>
+            <input type="text" class="form-input lc-acc-input" data-f="accountCode" list="coaList"
+                   placeholder="เลือก/ค้นหาผังบัญชี…"
+                   oninput="Page.onLineAccountInput(this)"
+                   style="flex:1;font-size:13px">
+            <span class="lc-acc-badge" data-f="accountBadge" style="display:none;font-size:11px;padding:2px 8px;border-radius:8px;font-weight:600"></span>
+            <span data-f="glAiFeedbackId" hidden></span>
+            <span data-f="glAiSuggestedCode" hidden></span>
           </div>
           <div class="lc-total">
             <span style="color:#6b7280">ยอดบรรทัดนี้ (รวม VAT)</span>
@@ -2239,6 +2695,22 @@
           if (fSin) fSin.value = d.supplierInvoiceNumber || '';
           const fStd = document.getElementById('fSupplierTaxInvoiceDate');
           if (fStd) fStd.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+          // PV: เติมกล่อง "ใช้งานใบกำกับภาษี" ตอนแก้ไขเอกสารเก่า
+          const fHtr = document.getElementById('fHasTaxInvoiceRef');
+          if (fHtr) {
+            fHtr.checked = !!d.hasTaxInvoiceReference;
+            const sec = document.getElementById('taxInvoiceRefSection');
+            if (sec) sec.style.display = fHtr.checked ? '' : 'none';
+            if (fHtr.checked) {
+              const fSinPV = document.getElementById('fSupplierInvoiceNumberPV');
+              if (fSinPV) fSinPV.value = d.supplierInvoiceNumber || '';
+              const fStdPV = document.getElementById('fSupplierTaxInvoiceDatePV');
+              if (fStdPV) fStdPV.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
+              const fBr = document.getElementById('fSupplierBranchCode');
+              if (fBr) fBr.value = d.supplierBranchCode || '00000';
+              setTimeout(() => { this._fillSupplierTaxIdFromContact(); this._loadTaxInvoiceSourceDocs(); }, 50);
+            }
+          }
           const fCd = document.getElementById('fCreditDays');
           if (fCd) fCd.value = d.creditDays ?? '';
           const fPt = document.getElementById('fPaymentTerms');
@@ -2296,6 +2768,14 @@
               claimEl.style.color = claim ? '' : '#dc2626';
               claimEl.title = claim ? 'VAT เคลมได้' : `VAT ต้องห้าม — ${l.vatNonClaimableReason || 'ไม่นำเข้า ภพ.30'}`;
             }
+            // Per-line account picker — hydrate จาก server + AI feedback
+            const accInp = row.querySelector('[data-f="accountCode"]');
+            if (accInp && l.accountCode) accInp.value = l.accountCode;
+            if (l.glAccountAiFeedbackId) {
+              const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
+              if (fidEl) fidEl.dataset.feedbackId = l.glAccountAiFeedbackId;
+            }
+            if (accInp) this.onLineAccountInput(accInp);
             if (l.productCode) {
               row.dataset.productCode = l.productCode;
               if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
@@ -2416,6 +2896,14 @@
             if (!line.isVatClaimable && claim.dataset.reason)
               line.vatNonClaimableReason = claim.dataset.reason;
           }
+          // ผังบัญชี per บรรทัด (AccountCode) + AI feedbackId round-trip
+          // (กฎเหล็ก #1: เก็บ feedback ปิดลูปการสอน local model)
+          const accInp = row.querySelector('[data-f="accountCode"]');
+          const accCode = accInp?.value.trim();
+          if (accCode) line.accountCode = accCode;
+          const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
+          const fid = fidEl?.dataset?.feedbackId;
+          if (fid) line.glAccountAiFeedbackId = fid;
           lines.push(line);
         });
         if (strict && strictViolators.length) {
@@ -2459,8 +2947,25 @@
           witnessPosition: document.getElementById('fWitnessPosition')?.value || null,
           paymentDate: document.getElementById('fPaymentDate')?.value || null,
           creditNoteReason: (document.querySelector('input[name="fCreditNoteReason"]:checked')?.value) || null,
-          supplierInvoiceNumber: document.getElementById('fSupplierInvoiceNumber')?.value.trim() || null,
-          supplierTaxInvoiceDate: document.getElementById('fSupplierTaxInvoiceDate')?.value || null,
+          // PI/Expense/CertInLieu — supplier invoice fields from main row.
+          // PV เมื่อติ๊ก "ใช้งานใบกำกับภาษี" ใช้ field คู่ขนานในกล่องเหลือง
+          // (fSupplierInvoiceNumberPV / fSupplierTaxInvoiceDatePV) แทน.
+          supplierInvoiceNumber: (() => {
+            const main = document.getElementById('fSupplierInvoiceNumber')?.value.trim();
+            const pv = document.getElementById('fSupplierInvoiceNumberPV')?.value.trim();
+            const isPV = document.getElementById('fDocType').value === 'PaymentVoucher';
+            return isPV && document.getElementById('fHasTaxInvoiceRef')?.checked ? (pv || null) : (main || null);
+          })(),
+          supplierTaxInvoiceDate: (() => {
+            const main = document.getElementById('fSupplierTaxInvoiceDate')?.value;
+            const pv = document.getElementById('fSupplierTaxInvoiceDatePV')?.value;
+            const isPV = document.getElementById('fDocType').value === 'PaymentVoucher';
+            return isPV && document.getElementById('fHasTaxInvoiceRef')?.checked ? (pv || null) : (main || null);
+          })(),
+          hasTaxInvoiceReference: document.getElementById('fDocType').value === 'PaymentVoucher'
+            && document.getElementById('fHasTaxInvoiceRef')?.checked || false,
+          supplierBranchCode: document.getElementById('fHasTaxInvoiceRef')?.checked
+            ? (document.getElementById('fSupplierBranchCode')?.value.trim() || '00000') : null,
           creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
           // Only send paymentType for Payment Voucher (the only type whose
@@ -2469,7 +2974,21 @@
             ? (document.getElementById('fPaymentType')?.value || 'Cash') : null,
           pricesIncludeVat: document.getElementById('fPricesIncludeVat')?.checked || false,
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
+          // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
+          // (217xx) แทนรายได้. depositOutputVatDeferred เลือกจังหวะ tax point.
+          isDeposit: (document.getElementById('fDocType').value === 'Receipt'
+                      || document.getElementById('fDocType').value === 'ReceiptVoucher')
+                     && (document.getElementById('fIsDeposit')?.checked || false),
+          depositOutputVatDeferred:
+            (document.querySelector('input[name="fDepositVat"]:checked')?.value === 'deferred') || false,
+          depositDeferredAccountCode:
+            document.getElementById('fDepositDeferredAcc')?.value.trim() || null,
         };
+        // หมายเลขอ้างอิง/เลขจอง ของมัดจำ → เก็บใน Reference (ใช้กลับรายการ)
+        if (payload.isDeposit) {
+          const depRef = document.getElementById('fDepositRef')?.value.trim();
+          if (depRef) payload.reference = depRef;
+        }
         try {
           let savedDocId = this.editingId;
           if (this.editingId) {
@@ -2719,6 +3238,30 @@
               ${d.conversionStatus && d.conversionStatus !== 'None' ? `<div><div class="text-xs text-gray-500">สถานะการแปลง</div><div class="font-medium" style="color:${d.conversionStatus === 'Full' ? '#15803d' : '#92400e'}">${d.conversionStatus === 'Full' ? '✓ แปลงครบ' : `◐ แปลง ${(d.conversionCompletionPercent || 0).toFixed(0)}%`}</div></div>` : ''}
               ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
             </div>
+            ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) ? `
+              <div style="margin-bottom:12px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">
+                <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:4px">⏳ ภาษีซื้อยังไม่ถึงกำหนด (พักไว้ที่บัญชี 11640)</div>
+                <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">ใบกำกับภาษีซื้อยังไม่ครบตาม §86/4 — ภาษีซื้อยังเคลม ภ.พ.30 ไม่ได้ เติมเลขที่ + วันที่ + สาขาให้ครบ ระบบจะย้ายเข้า "ภาษีซื้อ ภ.พ.30" (11610) อัตโนมัติ และนับเข้ารายงานภาษีซื้อในเดือนที่ปรับ</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+                  <div><div class="text-xs text-gray-500">เลขที่ใบกำกับผู้ขาย</div><input type="text" class="form-input" id="ctiInvoiceNo" value="${this.escapeHtml(d.supplierInvoiceNumber || '')}" placeholder="เช่น INV-2026-0042"></div>
+                  <div><div class="text-xs text-gray-500">วันที่ใบกำกับ</div><input type="date" class="form-input" id="ctiInvoiceDate" value="${d.supplierTaxInvoiceDate ? new Date(d.supplierTaxInvoiceDate).toISOString().slice(0,10) : ''}"></div>
+                  <div><div class="text-xs text-gray-500">รหัสสาขา (00000=สนญ.)</div><input type="text" class="form-input" id="ctiBranchCode" value="${this.escapeHtml(d.supplierBranchCode || '')}" placeholder="00000" maxlength="5"></div>
+                </div>
+                <button class="btn btn-sm btn-primary" onclick="Page.completeTaxInvoice('${d.id}')">บันทึก + ย้ายเข้าภาษีซื้อ ภ.พ.30</button>
+              </div>` : ''}
+            ${(d.inputVatPostedAsUndue && d.inputVatBecameClaimableAt) ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;font-size:12px;color:#15803d">
+                ✓ ภาษีซื้อถึงกำหนดแล้ว — ย้ายจาก 11640 เข้า "ภาษีซื้อ ภ.พ.30" (11610) เมื่อ ${Layout.date(d.inputVatBecameClaimableAt)} (เข้ารายงานภาษีซื้อเดือนนั้น)
+              </div>` : ''}
+            ${(d.nonDeductibleAmount > 0) ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px">
+                <div style="font-size:13px;font-weight:700;color:#991b1b;margin-bottom:4px">⚠️ รายจ่ายต้องห้าม §65 ตรี — บวกกลับ ภ.ง.ด.50: ${Layout.money(d.nonDeductibleAmount)}</div>
+                <div style="font-size:12px;color:#7f1d1d">${(() => { try { return (JSON.parse(d.nonDeductibleRuleJson||'[]')).map(r => `• ${Layout.esc(r.RuleCode||r.ruleCode||'')}: ${Layout.esc(r.Message||r.message||'')}`).join('<br>'); } catch(_) { return ''; } })()}</div>
+              </div>` : ''}
+            ${(d.taxPointDate && new Date(d.taxPointDate).toISOString().slice(0,7) !== new Date(d.documentDate).toISOString().slice(0,7)) ? `
+              <div style="margin-bottom:12px;padding:10px 12px;background:#fefce8;border:1px solid #fde047;border-radius:8px;font-size:12px;color:#854d0e">
+                📅 จุดความรับผิด VAT (§78): <b>${Layout.date(d.taxPointDate)}</b> — VAT จะเข้า ภ.พ.30 เดือนนี้ (ต่างจากวันที่เอกสาร ${Layout.date(d.documentDate)})
+              </div>` : ''}
             ${(d.convertedToDocuments && d.convertedToDocuments.length) ? `
               <div style="margin-bottom:12px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
                 <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:6px">📄 เอกสารต่อเนื่อง (ออกต่อจากใบนี้)</div>
@@ -3166,6 +3709,24 @@
           this.load();
           setTimeout(() => this.edit(j.data.newDocumentId), 300);
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async completeTaxInvoice(id) {
+        // เติมใบกำกับภาษีซื้อหลังอนุมัติ → backend ย้าย 11640 → 11610 (§82/3)
+        const inv = document.getElementById('ctiInvoiceNo')?.value.trim() || '';
+        const dateRaw = document.getElementById('ctiInvoiceDate')?.value || '';
+        const branch = document.getElementById('ctiBranchCode')?.value.trim() || '';
+        if (!inv || !dateRaw) { Layout.toast('กรุณากรอกเลขที่และวันที่ใบกำกับ', 'error'); return; }
+        const body = {
+          supplierInvoiceNumber: inv,
+          supplierTaxInvoiceDate: new Date(dateRaw).toISOString(),
+          supplierBranchCode: branch || null
+        };
+        try {
+          await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`, body);
+          Layout.closeModal('detailModal');
+          Layout.toast('บันทึกใบกำกับสำเร็จ — ย้ายภาษีซื้อเข้า ภ.พ.30 แล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
       async voidDoc(id) {
         const api = Layout.api(); if (!api) return;
