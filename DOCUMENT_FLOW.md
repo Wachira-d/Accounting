@@ -107,19 +107,23 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (partial — qty subset) — `DocumentService.cs:3082` / `:3122`
 - **กันสร้างซ้ำ**: `ComputeConsumptionAsync` (`:3104`) — ตรวจ axis
   (`Delivery` / `Billing` / `None`) ที่ source line ถูกใช้ไปเท่าไหร่แล้ว
-- **คู่ที่แปลงได้** (ตาม `ConvertableTypesMap`):
+- **คู่ที่แปลงได้** (`DocumentService.ValidConversions :2808`) — exact:
   ```
-  Quotation       → Invoice / TaxInvoice / DeliveryNote / BillingNote
-  Invoice         → Receipt / TaxInvoice / BillingNote / DeliveryNote
-  TaxInvoice      → Receipt / CreditNote / DebitNote
-  BillingNote     → Receipt
-  DeliveryNote    → Invoice / TaxInvoice
+  Quotation        → Invoice / TaxInvoice / BillingNote / DeliveryNote / Receipt
+  BillingNote      → Invoice / TaxInvoice / Receipt
+  DeliveryNote     → Invoice / TaxInvoice
+  Invoice          → TaxInvoice / Receipt / ReceiptVoucher
+  TaxInvoice       → Receipt / ReceiptVoucher / CreditNote / DebitNote
+  DebitNote        → Receipt / ReceiptVoucher
+
   PurchaseRequisition → PurchaseOrder
-  PurchaseOrder   → GoodsReceiptNote / PurchaseInvoice
-  GoodsReceiptNote→ PurchaseInvoice
-  PurchaseInvoice → PaymentVoucher / DebitNote / CreditNote
-  Expense         → PaymentVoucher
+  PurchaseOrder       → GoodsReceiptNote / PurchaseInvoice
+  GoodsReceiptNote    → PurchaseInvoice
+  PurchaseInvoice     → PaymentVoucher / CreditNote / DebitNote
+  Expense             → PaymentVoucher / CreditNote / DebitNote / CertificateInLieu
+  CertificateInLieu   → PaymentVoucher
   ```
+  **Terminal** (no further conversion): `Receipt`, `ReceiptVoucher`, `CreditNote`, `PaymentVoucher`
 - **Lineage**: ลูก carry `RelatedDocumentId = source.Id`, `SourceLineId` ต่อ
   บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
@@ -168,12 +172,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - cash receipt: Dr Cash/Bank / Cr AR (หรือ Cr 217xx ถ้า `IsDeposit`)
    - payment voucher: Dr AP/Expense / Cr Cash/Bank
    - WHT: Cr 21915/21916 ตามประเภทเงินได้
-8. **Stock movements** (`:1794`) — `ApplyStockMovementsAsync(+1)`:
-   - OUT: `Invoice` / `TaxInvoice` / `Receipt` / `ReceiptVoucher` /
-     `DeliveryNote` (ใบที่ลด stock จริง)
-   - IN: `GoodsReceiptNote` / `PurchaseInvoice` (ถ้าไม่มี GRN accrual
-     ก่อน) / `CreditNote` (ที่ `CreditNoteReason = Return` เท่านั้น)
-   - **No-op**: `Quotation` / `PO` / `PR` / `BillingNote` / `DebitNote` /
+8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync :4605`) —
+   switch ตัดสินตาม `DocumentType` (`:4612`):
+   - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale)
+   - **IN (+1)**: `GoodsReceiptNote` / `PurchaseInvoice` /
+     `CreditNote when Reason==Return`
+   - `PurchaseInvoice` ที่ผูก GRN accrual แล้ว → **ข้าม** (กันนับซ้ำ
+     `:4633`)
+   - **No-op (`_ => 0`)**: ทุกประเภทอื่น — รวมถึง `Receipt`,
+     `ReceiptVoucher`, `DeliveryNote` (`DeliveryNote` ตั้งใจไม่ trigger
+     เพราะ Invoice ที่ตามมาจะ trigger ให้ — กัน double-count `:4608`),
+     `Quotation`, `PO`, `PR`, `BillingNote`, `DebitNote`, และ
      `CreditNote.Discount/Adjustment/Writeoff`
 9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
    บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
@@ -240,9 +249,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | `Invoice` | Dr AR / Cr Rev + Cr 21911 | ❌ (DN จัดการแยก) | output (เฉพาะถ้าไม่ใช่ "Cash basis" company) | `TaxPointDate` snapshot | – |
 | `TaxInvoice` | Dr AR / Cr Rev + Cr 21911 | ❌ | output | `TaxPointDate` snapshot | – |
 | `BillingNote` | ❌ (รอ Receipt) | ❌ | – | – | – |
-| `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | OUT (sales) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
-| `ReceiptVoucher` standalone | เหมือน Receipt | OUT | output | DocumentDate | รองรับ `IsDeposit` (2 เคส VAT ดู §3.7) |
-| `DeliveryNote` | ❌ | OUT | – | – | กระทบ stock อย่างเดียว |
+| `Receipt` standalone | Dr Cash / Cr Rev + Cr 21911 | ❌ (Receipt **ไม่อยู่** ใน `ApplyStockMovementsAsync` switch — ถ้าต้อง OUT ต้อง issue Invoice/TaxInvoice ก่อน) | output | DocumentDate | nullable `RelatedDocumentId` — ถ้ามีอ้าง Invoice → ไม่ count VAT ซ้ำ |
+| `ReceiptVoucher` standalone | เหมือน Receipt | ❌ (same as Receipt) | output | DocumentDate | รองรับ `IsDeposit` (2 เคส VAT ดู §3.7) |
+| `DeliveryNote` | ❌ | ❌ (ตั้งใจไม่ trigger — Invoice ที่ตามมาจะ OUT ให้, กัน double-count) | – | – | ใช้คู่กับ Invoice ใน Quotation→DN→Invoice chain |
 | `DebitNote` | Dr AR / Cr Rev + Cr VAT | ❌ | output (หรือ input ถ้า `RelatedDocumentId` เป็น purchase) | DocumentDate | บังคับมี `RelatedDocumentId` |
 | `CreditNote` | Cr AR / Dr Rev + Dr VAT | IN เฉพาะ `Reason = Return` | output (หรือ input) | DocumentDate | บังคับ `CreditNoteReason` |
 | `PurchaseRequisition` | ❌ | ❌ | – | – | internal commitment |
@@ -340,20 +349,49 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - e-Tax ที่ submitted แล้วยืดเป็น **7 ปี** (extended retention)
 
 ### 6.4 AI distillation (กฎเหล็ก #1) ที่ฝังใน flow
-| จุดเรียก AI | Feature key | Local model | Round-trip feedback |
+
+**Feature enum**: `AiFeatureKey` (`Models/Enums/AllEnums.cs:1188`) —
+**ตารางนี้ verified ตรงกับ enum จริงในโค้ด**
+
+| จุดเรียก AI | Feature key (enum) | Local model class | Round-trip feedback |
 | --- | --- | --- | --- |
-| OCR full review | `OcrFullReview` | `OcrFullReviewDistillationModel` | `SubmitCorrectionAsync` |
-| ผังบัญชี GL ต่อบรรทัด | `GlAccountClassification` | `GlAccountDistillationModel` (4-tier: vendor+keyword exact → fuzzy → company-keyword ×0.85 → industry-keyword ×0.55) | `RecordLineAccountFeedbackAsync` ตอน approve |
-| เหตุผลใบลดหนี้ | `CreditNoteReason` | `GenericFeedbackDistillationModel` | ตอน user เลือก radio |
-| แหล่งเงิน (payment channel) | `PaymentChannelSuggest` | generic | ตอน user เปลี่ยน select |
-| WHT rate per line | `WhtRateInfer` | generic | ตอน user แก้ rate |
-| Payment terms / credit days | `PaymentTermsSuggest` | generic | ตอน user แก้ |
-| Project allocation | `ProjectAllocationSuggest` | generic | ตอน user เลือก project |
-| Memo (หมายเหตุ) | `DocumentMemoGenerate` | – (essay) | – |
-| Fixed asset category | `FixedAssetCategorySuggest` | `FixedAssetAccountClassifier` (rule + AI) | ตอน user ยืนยันใน asset modal |
-| Bulk PV accounting | `BulkPvAccounting` | bespoke distillation | ตอน user save |
-| Import column match | `ImportColumnMatch` | bespoke | ตอน user map |
-| Bank statement match | `BulkBankStatementMatch` | bespoke | ตอน user reconcile |
+| OCR full review | `OcrFullReview = 22` | `GenericFeedbackDistillationModel` (register ใน Program.cs) | `SubmitCorrectionAsync` (OcrService) |
+| ผังบัญชี GL ต่อบรรทัด | `GlAccountSuggestion = 2` | `GlAccountDistillationModel.cs` (4-tier: vendor+keyword exact → fuzzy → company-keyword ×0.85 → industry-keyword ×0.55) | `RecordLineAccountFeedbackAsync` ตอน approve |
+| OCR document type label | `DocumentTypeClassification = 3` | generic | ตอน user แก้ในหน้า scan |
+| OCR target doc to create | `DocumentConversionSuggestion = 23` | generic | ตอน user เปลี่ยน targetDocType |
+| Vendor canonical match | `VendorCanonicalization = 1` | `VendorCanonDistillationModel.cs` | ตอน user เลือก contact |
+| Buyer/Seller role infer | `DocumentRoleInference = 4` | generic | – |
+| WHT category infer | `WhtCategoryInference = 5` | generic | ตอน user แก้ |
+| Line item structured parse | `LineItemStructuredParse = 6` | – (ไม่มี student — heavy AI) | – |
+| Approval warning fix | `ApprovalWarningFixSuggestion = 7` | `ApprovalWarningDistillationModel.cs` | – |
+| Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` | ตอน user reconcile |
+| Credit note reason | `CreditNoteReasonClassification = 9` | generic | ตอน user เลือก radio |
+| Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
+| Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | – |
+| Forecast narrative | `ForecastNarrative = 12` | – (essay) | – |
+| Product match | `ProductMatch = 13` | generic | ตอน user เลือก product |
+| Contact match | `ContactMatch = 14` | generic | ตอน user เลือก |
+| Payment method suggest | `PaymentMethodSuggestion = 15` | generic | ตอน user แก้ |
+| Currency + FX suggest | `CurrencyAndFxSuggestion = 16` | generic | ตอน user แก้ rate |
+| Aging explanation | `AgingExplanation = 17` | – (essay) | – |
+| Tax filing pre-check | `TaxFilingPreCheck = 18` | – (essay) | – |
+| Stock movement validation | `StockMovementValidation = 19` | generic | – |
+| **Bulk PV accounting** (ใบสำคัญจ่าย) | `PaymentVoucherAccountingSuggestion = 20` | bespoke (ใน prompts) | ตอน user save PV |
+| Manual JE line suggest | `ManualJournalSuggestion = 21` | generic | ตอน user save JE |
+| Reorder forecast | `ReorderForecast = 24` | local Croston/Holt-Winters | – |
+| Bulk bank statement match | `BulkBankStatementMatch = 25` | bespoke | – |
+| Import column match | `ImportColumnMatch = 26` | bespoke | ตอน user map |
+| Import data review | `ImportDataReview = 27` | – (essay) | – |
+| **Payment type** (Cash/Credit) | `PaymentTypeSuggestion = 28` | `PaymentTypeDistillationModel.cs` | ตอน user เปลี่ยน select |
+| OCR project match | `OcrProjectMatch = 29` | generic | – |
+| VAT type per line | `VatTypeInference = 30` | generic | ตอน user แก้ |
+| Payment terms / credit days | `PaymentTermsSuggestion = 31` | – (pure lookup, ทุกครั้งผ่าน orchestrator) | ตอน user แก้ |
+| Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | generic | ตอน user เปลี่ยน select |
+| Project allocation per line | `ProjectAllocationSuggestion = 33` | generic | ตอน user เลือก project |
+| Contact fuzzy match | `ContactFuzzyMatch = 34` | generic | – |
+| Manual JE account suggest | `ManualJeAccountSuggestion = 35` | reuse `GlAccountDistillationModel` | – |
+| Dimension allocation | `DimensionAllocationSuggestion = 36` | generic | – |
+| Asset category suggest | `AssetCategorySuggestion = 37` | rule-based keyword (no AI by default) | ตอน user แก้ใน asset modal |
 
 **Litmus test ก่อน commit**: ปิด provider ทุกตัว → feature ยังทำงานครบ 100%
 (`AiProviderConfig.IsActive = false`)
@@ -424,6 +462,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-22 — commit `65b4581`._
-_Files referenced are accurate to that revision; if behavior diverges, this_
-_doc is wrong — update it in the same PR._
+_Last verified against codebase: 2026-06-22 — รอบ 2 หลัง audit (รวม fix_
+_ConvertableTypesMap, ApplyStockMovementsAsync switch, AiFeatureKey enum)._
+_Files referenced are accurate; if behavior diverges, this doc is wrong —_
+_update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
