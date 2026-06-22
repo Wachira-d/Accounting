@@ -934,6 +934,15 @@ public class DocumentService : IDocumentService
         if (request.BookingNumber != null) doc.BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim();
         if (request.InputVatAccountCodeOverride != null) doc.InputVatAccountCodeOverride = string.IsNullOrWhiteSpace(request.InputVatAccountCodeOverride) ? null : request.InputVatAccountCodeOverride.Trim();
 
+        // ===== Fields ที่เดิม "เงียบหาย" ตอนแก้ Draft (เคยมีเฉพาะตอน Create) =====
+        // CreditNoteReason (§86/10), IsForeignService (ภ.พ.36/ภ.ง.ด.54), และชุดเงินมัดจำ.
+        // ทุก field ใช้ HasValue / != null → omit = คงค่าเดิม.
+        if (request.CreditNoteReason.HasValue) doc.CreditNoteReason = request.CreditNoteReason.Value;
+        if (request.IsForeignService.HasValue) doc.IsForeignService = request.IsForeignService.Value;
+        if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
+        if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
+        if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
+
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
         {
@@ -5683,6 +5692,7 @@ public class DocumentService : IDocumentService
         PaymentTerms: d.PaymentTerms,
         PaymentType: d.PaymentType,
         PricesIncludeVat: d.PricesIncludeVat,
+        IsForeignService: d.IsForeignService,
         RelatedDocument: upstream,
         ConvertedToDocuments: downstream,
         ConversionCompletionPercent: conversionPercent,

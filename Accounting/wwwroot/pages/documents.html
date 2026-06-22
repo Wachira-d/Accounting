@@ -1337,6 +1337,18 @@
       },
 
       // FX rate auto-fill เมื่อสกุลเงิน ≠ THB หรือ date เปลี่ยน
+      // ป้ายความซื่อสัตย์ AI (กฎเหล็ก #1) — โชว์ 🤖 เฉพาะตอน "เรียก AI ภายนอกจริง"
+      // (usedAi=true) มิฉะนั้นเป็น ⚙️ "ระบบ (local model)" เพื่อไม่หลอกผู้ใช้ว่า
+      // ทุกคำแนะนำมาจาก AI ทั้งที่ส่วนใหญ่ student/local ตอบเอง.
+      _aiLabel(d) { return (d && d.usedAi) ? '🤖 AI' : '⚙️ ระบบ'; },
+      _aiHint(d, withConf = true) {
+        const lbl = this._aiLabel(d);
+        const reason = (d && d.reasoning) ? d.reasoning : '';
+        const conf = withConf && d && d.confidence != null
+          ? ` (${Math.round((d.confidence || 0) * 100)}%)` : '';
+        return `${lbl} ${reason}${conf}`.trim();
+      },
+
       async onCurrencyOrDateChange() {
         const ccyEl = document.getElementById('fCurrency');
         const grp = document.getElementById('fxRateGroup');
@@ -1364,7 +1376,7 @@
           if (j.data.rate > 0) {
             rateEl.value = j.data.rate;
             rateEl.dataset.aiFeedbackId = j.data.feedbackId || '';
-            if (hintEl) hintEl.textContent = `🤖 ${j.data.reasoning} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            if (hintEl) hintEl.textContent = this._aiHint(j.data);
             rateEl.title = j.data.reasoning;
             rateEl.addEventListener('change', () => {
               rateEl.dataset.userTouched = '1';
@@ -1405,7 +1417,7 @@
             if (optionExists) {
               sel.value = pid;
               sel.dataset.aiFeedbackId = fbId;
-              sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+              sel.title = this._aiHint(j.data);
               sel.addEventListener('change', () => {
                 sel.dataset.userTouched = '1';
                 if (!sel.dataset.aiFeedbackId) return;
@@ -1443,7 +1455,7 @@
           if (!sel.value && optionExists) {
             sel.value = suggested;
             sel.dataset.aiFeedbackId = j.data.feedbackId || '';
-            sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            sel.title = this._aiHint(j.data);
             // mirror the change downstream — derives PaymentMethod for save
             try { this._deriveMethodFromChannel?.(); } catch {}
           }
@@ -1480,7 +1492,7 @@
           if (j.data.creditDays && !cdEl.value) {
             cdEl.value = j.data.creditDays;
             cdEl.dataset.aiFeedbackId = j.data.feedbackId || '';
-            cdEl.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            cdEl.title = this._aiHint(j.data);
             // อัปเดต fDueDate ถ้ามี + ยังว่าง
             const dateEl = document.getElementById('fDate');
             const dueEl = document.getElementById('fDueDate');
@@ -1534,8 +1546,9 @@
           if (notesEl) {
             notesEl.value = j.data.memo;
             notesEl.dataset.aiFeedbackId = j.data.feedbackId || '';
-            notesEl.title = `🤖 (${Math.round((j.data.confidence || 0) * 100)}%)`;
-            if (typeof Layout.toast === 'function') Layout.toast('AI สร้างหมายเหตุแล้ว — แก้ไขได้ตามต้องการ');
+            notesEl.title = this._aiHint(j.data, true);
+            if (typeof Layout.toast === 'function')
+              Layout.toast((j.data.usedAi ? 'AI' : 'ระบบ') + 'สร้างหมายเหตุแล้ว — แก้ไขได้ตามต้องการ');
           }
         } catch (e) {
           if (typeof Layout.toast === 'function') Layout.toast('AI memo generation failed', 'error');
@@ -1615,7 +1628,7 @@
           if (vatSel.value !== suggested) {
             vatSel.value = suggested;
             vatSel.dataset.aiFeedbackId = j.data.feedbackId || '';
-            vatSel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            vatSel.title = this._aiHint(j.data);
             this.calcSum();
           }
         } catch { /* best-effort */ }
@@ -1662,7 +1675,7 @@
             this._lastPaymentTypeFeedbackId = j.data.feedbackId || null;
             const hint = document.querySelector('#paymentTypeHint span');
             if (hint && j.data.reasoning)
-              hint.textContent = '🤖 ' + j.data.reasoning + ' (' + Math.round((j.data.confidence || 0) * 100) + '%)';
+              hint.textContent = this._aiHint(j.data);
           }
         } catch (e) { /* suggestion is best-effort */ }
       },
@@ -2037,6 +2050,13 @@
         const tbl = document.getElementById('linesTable');
         if (!tbl) return;
         const docType = document.getElementById('fDocType')?.value;
+        // อัปเดต data-doc-side ตาม docType ปัจจุบัน (ไม่ใช่แค่ตอนเปิด modal) —
+        // ก่อนหน้านี้ผูกกับปุ่ม +รายรับ/+รายจ่าย ทำให้ผู้ใช้ที่สลับประเภทเอกสาร
+        // ในฟอร์มเดียว (เช่นเปิดรายรับแล้วเปลี่ยนเป็น PurchaseInvoice) คอลัมน์
+        // "เคลม VAT" §82/5 หายไป → ติ๊กภาษีซื้อต้องห้ามรายบรรทัดไม่ได้ (ลงบัญชีผิด)
+        const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice',
+          'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
+        if (docType) tbl.dataset.docSide = expenseTypes.includes(docType) ? 'expense' : 'revenue';
         let off = false;
         if (docType === 'PaymentVoucher') {
           off = !document.getElementById('fHasTaxInvoiceRef')?.checked;
@@ -3060,6 +3080,27 @@
           // the select is disabled in edit mode — useful context for
           // the operator.
           this.onDocTypeChange();
+          // ซื้อบริการต่างประเทศ + เงินมัดจำ + เหตุผลใบลดหนี้ — hydrate fields ที่
+          // เพิ่งทำให้แก้ได้ตอน Draft (เดิมเปิดมาแก้แล้วค่าเหล่านี้เงียบหาย).
+          // ทำหลัง onDocTypeChange เพราะมันคุมการแสดง/reset checkbox มัดจำ.
+          const fFs = document.getElementById('fIsForeignService');
+          if (fFs) fFs.checked = !!d.isForeignService;
+          const fDep = document.getElementById('fIsDeposit');
+          if (fDep) {
+            fDep.checked = !!d.isDeposit;
+            const vatVal = d.depositOutputVatDeferred ? 'deferred' : 'immediate';
+            const vatRadio = document.querySelector(`input[name="fDepositVat"][value="${vatVal}"]`);
+            if (vatRadio) vatRadio.checked = true;
+            const fdAcc = document.getElementById('fDepositDeferredAcc');
+            if (fdAcc) fdAcc.value = d.depositDeferredAccountCode || '';
+            const fdRef = document.getElementById('fDepositRef');
+            if (fdRef && d.isDeposit) fdRef.value = d.reference || '';
+            this.onDepositToggle();
+          }
+          if (d.creditNoteReason) {
+            const cnRadio = document.querySelector(`input[name="fCreditNoteReason"][value="${d.creditNoteReason}"]`);
+            if (cnRadio) cnRadio.checked = true;
+          }
           // Re-apply แหล่งเงิน + หมวดค่าใช้จ่าย หลัง onDocTypeChange + หลัง
           // async suggest (setValue→onContactChange) settle — ค่าที่บันทึก
           // ต้องชนะ suggestion เสมอ

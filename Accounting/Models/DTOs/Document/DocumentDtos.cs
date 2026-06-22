@@ -158,7 +158,16 @@ public record UpdateDocumentRequest(
     DateTime? DeliveryDate = null,
     DateTime? OwnershipTransferDate = null,
     DateTime? ServiceUsedDate = null,
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    // ===== Fields ที่เดิมแก้ไม่ได้ตอน update (เคยมีเฉพาะ Create) =====
+    // ทั้งหมด nullable → omit = คงค่าเดิม. แก้ได้เฉพาะตอน Draft (service guard).
+    // CreditNoteReason: เหตุผลใบลดหนี้ (§86/10). IsForeignService: ภ.พ.36/ภ.ง.ด.54.
+    // IsDeposit + DepositDeferredAccountCode + DepositOutputVatDeferred: เงินมัดจำ.
+    CreditNoteReason? CreditNoteReason = null,
+    bool? IsForeignService = null,
+    bool? IsDeposit = null,
+    string? DepositDeferredAccountCode = null,
+    bool? DepositOutputVatDeferred = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -359,6 +368,8 @@ public record DocumentResponse(
     // the UI shows a due date / outstanding balance for a Payment Voucher.
     PaymentType? PaymentType = null,
     bool PricesIncludeVat = false,
+    // ภ.พ.36 / ภ.ง.ด.54 — ซื้อบริการจากต่างประเทศ. Echo กลับมาเพื่อ form hydration.
+    bool IsForeignService = false,
     // ===== Conversion lineage =====
     // Source-side view (this doc was converted from another): RelatedDocumentId
     // already carries the upstream id; the populated brief lets the UI render

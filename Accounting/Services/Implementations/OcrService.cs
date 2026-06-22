@@ -3594,6 +3594,11 @@ public class OcrService : IOcrService
             decimal whtAssigned = 0;
 
             int lineOrder = 1;
+            // ปิดลูปการสอน local model (กฎเหล็ก #1): แนบ feedbackId ระดับ scan ไว้
+            // บรรทัดแรก เพื่อให้ตอน user ยืนยัน/แก้ผัง ApproveDocument เรียก
+            // RecordLineAccountFeedback ได้ — เดิม OCR สร้างเอกสารแล้ว feedback หาย
+            // ระบบเลยไม่เคยเรียนรู้จากผัง GL ที่ AI เดาให้.
+            var glFeedbackAttached = false;
             for (var i = 0; i < items.Count; i++)
             {
                 var item = items[i];
@@ -3647,6 +3652,15 @@ public class OcrService : IOcrService
                     whtAssigned += lineWht;
                 }
 
+                // แนบ feedbackId ระดับ scan ให้บรรทัดแรกที่ใช้ผัง GL จาก AI
+                // (1 feedback row = 1 บรรทัด เพื่อไม่ให้บันทึก choice ซ้ำ).
+                Guid? lineGlFeedbackId = null;
+                if (!glFeedbackAttached && result.GlAccountAiFeedbackId.HasValue && lineAccountId.HasValue)
+                {
+                    lineGlFeedbackId = result.GlAccountAiFeedbackId;
+                    glFeedbackAttached = true;
+                }
+
                 document.Lines.Add(new DocumentLine
                 {
                     LineOrder = lineOrder++,
@@ -3662,6 +3676,7 @@ public class OcrService : IOcrService
                     WithholdingTaxRate = whtRate,
                     WithholdingTaxAmount = lineWht,
                     AccountId = lineAccountId,
+                    GlAccountAiFeedbackId = lineGlFeedbackId,
                     ProductCode = lineProductCode,
                     SourceLineId = lineSourceLineId,
                     ProjectId = item.ProjectId,
@@ -3694,6 +3709,9 @@ public class OcrService : IOcrService
                 // Scan-level suggested debit GL — previously this branch left
                 // the account empty even when the classifier knew the answer.
                 AccountId = scanDebitAccountId,
+                // ปิดลูปการสอน local model (กฎเหล็ก #1) — บรรทัดสรุปใบเดียว
+                // แนบ feedbackId ระดับ scan ไว้ ให้ approve เรียนรู้ผัง GL.
+                GlAccountAiFeedbackId = scanDebitAccountId.HasValue ? result.GlAccountAiFeedbackId : null,
             });
         }
 

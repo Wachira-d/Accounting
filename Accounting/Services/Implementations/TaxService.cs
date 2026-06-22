@@ -16,7 +16,7 @@ public partial class TaxService : ITaxService
     {
         { "40(1)", 3m },   // เงินเดือน ค่าจ้าง (Salary, Wages)
         { "40(2)", 3m },   // ค่านายหน้า (Commission)
-        { "40(3)", 5m },   // ค่าลิขสิทธิ์ (Royalties)
+        { "40(3)", 3m },   // ค่าสิทธิ์/ลิขสิทธิ์ (Royalties) — ท.ป.4 หัก 3% (ทั้งบุคคลและนิติบุคคลไทย)
         { "40(4)a", 15m }, // ดอกเบี้ย (Interest)
         { "40(4)b", 10m }, // เงินปันผล (Dividends)
         { "40(5)", 5m },   // ค่าเช่า (Rent - property)
