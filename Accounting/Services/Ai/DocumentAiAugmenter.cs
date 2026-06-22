@@ -300,6 +300,9 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                               (l.AccountCode != null ? $" → {l.AccountCode}" : "")))
                       : "");
 
+            // โหลด business context — กฎเหล็ก #1: ส่งบริบทที่เกี่ยวข้องให้ครบ
+            var bizCtx = await Prompts.CompanyBusinessContextLoader.LoadAsync(_db, companyId, ct);
+
             var req = GlAccountPrompt.Build(
                 companyId, vendorName, vendorTaxId, vendorIndustry,
                 enrichedDescription, amount, currency,
@@ -308,7 +311,8 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 featureKey: AiFeatureKey.PaymentVoucherAccountingSuggestion,
                 localModelVersion: "ExpenseCategoryLearner-v1",
                 sourceEntityType: "Document", sourceEntityId: sourceInvoiceId,
-                whtRecognitionBasis: "Cash");
+                whtRecognitionBasis: "Cash",
+                businessContext: bizCtx);
 
             var resp = await _orchestrator.AskAsync(req, ct);
             return Convert(resp);
@@ -390,8 +394,13 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             var lineInputs = lines.Select(l => new BulkPvAccountingPrompt.LineInput(
                 l.LineId.ToString(), l.Description, l.Amount, l.CurrentAccountCode)).ToList();
 
+            // โหลด business context (ดูคำอธิบายใน CompanyBusinessContextLoader)
+            // — AI ใช้ตัดสินใจตามสายธุรกิจ + pattern จริงของ tenant.
+            var bizCtx = await Prompts.CompanyBusinessContextLoader.LoadAsync(_db, companyId, ct);
+
             var req = BulkPvAccountingPrompt.Build(companyId, sourceInvoiceId,
-                vendor, src, lineInputs, candidates, history, currency);
+                vendor, src, lineInputs, candidates, history, currency,
+                businessContext: bizCtx);
             var resp = await _orchestrator.AskAsync(req, ct);
 
             var parsed = ParseBulkPvResponse(resp, lines);
