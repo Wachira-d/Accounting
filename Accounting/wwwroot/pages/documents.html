@@ -442,9 +442,8 @@
             <div class="form-group">
               <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
                 <span>หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></span>
-                <button type="button" id="fExpenseCategoryAiBtn" onclick="Page.askAiExpenseCategory(event)"
-                        style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit">
-                  🤖 AI
+                <button type="button" id="fExpenseCategoryAiBtn" class="btn-ai" onclick="Page.askAiExpenseCategory(event)">
+                  🤖 ให้ AI ช่วย
                 </button>
               </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
@@ -489,9 +488,8 @@
               <!-- 🤖 AI ขอความเห็นเลือก CN reason. ปรากฏเฉพาะตอนกำลังแก้
                    CN ที่มีอยู่ (มี id) — สำหรับ CN ใหม่ที่ยังไม่ save ปุ่มจะ
                    no-op เพราะ AI ต้องอ่าน lines + original invoice. -->
-              <button type="button" id="cnReasonAiBtn" onclick="Page.askAiCnReason(event)"
-                      style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">
-                🤖 ขอความเห็น AI
+              <button type="button" id="cnReasonAiBtn" class="btn-ai" onclick="Page.askAiCnReason(event)">
+                🤖 ให้ AI ช่วย
               </button>
             </div>
             <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
@@ -586,9 +584,9 @@
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
-                <button class="btn btn-sm btn-secondary" id="btnAiSuggestAcc" style="display:none"
+                <button class="btn btn-ai" id="btnAiSuggestAcc" style="display:none"
                   title="ให้ AI ช่วยเลือกผังบัญชี GL ตามรายการที่กรอก — local model เรียนรู้ต่อทุกครั้งที่ user ยืนยัน/แก้"
-                  onclick="Page.aiSuggestAccounting()">🤖 AI แนะนำผังบัญชี</button>
+                  onclick="Page.aiSuggestAccounting()">🤖 ให้ AI ช่วยเลือกผังบัญชี</button>
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
               </div>
             </div>
@@ -649,7 +647,7 @@
           <div class="form-row">
             <div class="form-group" style="flex:1">
               <label class="form-label" data-i18n="common.note">หมายเหตุ
-                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
+                <button type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
               </label>
               <input type="text" class="form-input" id="fNotes">
             </div>

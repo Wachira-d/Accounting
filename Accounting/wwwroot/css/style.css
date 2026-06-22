@@ -113,6 +113,14 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .btn-danger:hover { background: #DC2626; }
 .btn-ghost { background: transparent; color: var(--gray-600); }
 .btn-ghost:hover { background: var(--gray-100); }
+/* ปุ่ม "ถาม/ให้ AI ช่วย" — สไตล์เดียวทั้งระบบ (เดิม inline 4 แบบไม่เหมือนกัน).
+   สีเหลืองอำพันสื่อว่าเป็น action ของ AI/ระบบแนะนำ ไม่ใช่ปุ่มบันทึกหลัก. */
+.btn-ai {
+  background: #fef3c7; color: #92400e; border: 1px solid #fde047;
+  padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: inherit; line-height: 1.2;
+}
+.btn-ai:hover { background: #fde68a; }
 .btn-white { background: #fff; color: var(--gray-800); box-shadow: var(--shadow-sm); }
 .btn-white:hover { box-shadow: var(--shadow); }
 .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }

@@ -581,10 +581,11 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         var sb = new System.Text.StringBuilder();
         var totalServiceAmount = docs.Sum(d => d.SubTotal);
-        // §83/6: self-assessed VAT = 7% × ฐานบริการ (gross-up หากในเอกสาร
-        // มี VAT แล้ว → ใช้ d.VatAmount โดยตรง; ถ้ายัง not VAT → คำนวณ
-        // 7% ของ SubTotal)
-        var totalSelfVat = docs.Sum(d => d.VatAmount > 0 ? d.VatAmount : Math.Round(d.SubTotal * 0.07m, 2));
+        // §83/6: self-assessed VAT = อัตรามาตรฐาน × ฐานบริการ. ใช้ Company.VatRate
+        // (default 7%) แทน hardcode 0.07 เพื่อให้สอดคล้องกับการคำนวณ VAT ทั้งระบบ
+        // (gross-up หากในเอกสารมี VAT แล้ว → ใช้ d.VatAmount โดยตรง)
+        var vatRate = (company.VatRate > 0 ? company.VatRate : 7m) / 100m;
+        var totalSelfVat = docs.Sum(d => d.VatAmount > 0 ? d.VatAmount : Math.Round(d.SubTotal * vatRate, 2));
 
         sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.พ.36|{period}|{docs.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
         int seq = 1;
@@ -592,7 +593,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         {
             var docDate = $"{d.DocumentDate.Day:D2}/{d.DocumentDate.Month:D2}/{d.DocumentDate.Year + 543}";
             var serviceAmt = d.SubTotal;
-            var vatAmt = d.VatAmount > 0 ? d.VatAmount : Math.Round(serviceAmt * 0.07m, 2);
+            var vatAmt = d.VatAmount > 0 ? d.VatAmount : Math.Round(serviceAmt * vatRate, 2);
             var supplierName = d.Contact?.Name ?? "—";
             var country = d.Contact?.Province ?? "Foreign";
             // D|Seq|SupplierName|SupplierCountry|InvoiceDate|InvoiceNumber|ServiceAmount|VatAmount|Description
