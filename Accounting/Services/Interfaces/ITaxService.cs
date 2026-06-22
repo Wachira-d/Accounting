@@ -22,6 +22,10 @@ public interface ITaxService
     /// <summary>ส่งออกรายงานภาษีเป็นไฟล์ Excel (.xlsx) — VAT แยกชีตภาษีขาย/ภาษีซื้อ</summary>
     Task<(byte[] Content, string FileName)> ExportTaxReportXlsxAsync(Guid companyId, Guid reportId);
 
+    /// <summary>คำนวณ ภ.พ.30 เป็น TaxReport ชั่วคราว (ไม่ persist) — ใช้ตรรกะ
+    /// เดียวกับหน้าจอ/Excel เพื่อให้ไฟล์ยื่น (CSV) ตรงกับที่ผู้ใช้เห็นทุกบรรทัด.</summary>
+    Task<Models.Entities.TaxReport> ComputeVatReportAsync(Guid companyId, int year, int month);
+
     // Task 4 of ERP upgrade
     Task<Models.Entities.VatDeferral> DeferInputVatAsync(Guid companyId, Guid documentId, int deferredToPeriod, string? reason, string userId);
     Task UnlockTaxFilingAsync(Guid companyId, Guid reportId, string userId, string reason);

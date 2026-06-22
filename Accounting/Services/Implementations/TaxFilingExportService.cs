@@ -11,10 +11,12 @@ namespace Accounting.Services.Implementations;
 public class TaxFilingExportService : ITaxFilingExportService
 {
     private readonly AccountingDbContext _db;
+    private readonly ITaxService _taxService;
 
-    public TaxFilingExportService(AccountingDbContext db)
+    public TaxFilingExportService(AccountingDbContext db, ITaxService taxService)
     {
         _db = db;
+        _taxService = taxService;
     }
 
     // ภาษาไทยใน RD/SSO e-Filing portal ใช้ TIS-620 หรือ UTF-8 ไม่มี BOM —
@@ -242,145 +244,77 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportPp30Async(Guid companyId, int year, int month)
     {
-        var company = await GetCompanyAsync(companyId);
-        var startDate = new DateTime(year, month, 1);
-        var endDate = startDate.AddMonths(1).AddDays(-1);
         var thaiYear = year + 543;
 
-        // ฝั่งขาย: ใบกำกับภาษี/ใบแจ้งหนี้ + ใบเสร็จ-ใบกำกับภาษีของการขายเงินสด
-        // (Receipt/ReceiptVoucher แบบ standalone — ค้าปลีก/บริการที่ออกใบเสร็จเป็น
-        // ใบกำกับภาษี). ใบเสร็จที่อ้าง Invoice/TaxInvoice เดิม (RelatedDocumentId
-        // != null) ไม่นับซ้ำ — ใบกำกับต้นทางรับ output VAT ไปแล้ว.
-        // มัดจำ 2 เคสตาม tax point (§78/§78/1):
-        //   • Immediate (DepositOutputVatDeferred=false) → tax point = วันรับเงิน
-        //     → เข้า ภ.พ.30 ตาม DocumentDate (รวมในชุด "ปกติ" ด้านล่าง).
-        //   • Deferred (DepositOutputVatDeferred=true) → ยังไม่เกิด tax point →
-        //     ไม่เข้า ภ.พ.30 จนกว่า DepositOutputVatRecognizedAt ถูกตั้ง (ส่งมอบ/
-        //     ออกใบกำกับ) แล้วเข้าเดือนนั้น.
-        var salesBase = _db.Documents
-            .Include(d => d.Lines).Include(d => d.Contact)
-            .Where(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.Invoice
-                    || d.DocumentType == DocumentType.TaxInvoice
-                    || ((d.DocumentType == DocumentType.Receipt
-                         || d.DocumentType == DocumentType.ReceiptVoucher)
-                        && d.RelatedDocumentId == null))
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.VatAmount > 0);
+        // ⬇️ Single source of truth: ใช้ตรรกะการคำนวณ ภ.พ.30 ตัวเดียวกับหน้าจอ +
+        // Excel export (TaxService.ComputeVatReportAsync) แทนการ re-implement
+        // การคัดเอกสารเองในนี้ — เดิม 2 ทางต่างกัน (CSV นับ Invoice/ไม่หัก §82/5/
+        // ไม่รวม CN-DN/filter VatAmount>0) ทำให้ "ไฟล์ที่ยื่น ≠ ที่ผู้ใช้เห็น".
+        // ตอนนี้ทั้งคู่ดึงจาก TaxReportLine ชุดเดียวกัน → ตรงกัน 100%.
+        var report = await _taxService.ComputeVatReportAsync(companyId, year, month);
+        var lines = report.Lines.OrderBy(l => l.LineOrder).ToList();
 
-        // ปกติ + มัดจำ Immediate: tax point = DocumentDate (ตัดมัดจำ deferred ออก)
-        var normalSales = await salesBase
-            .Where(d => !(d.IsDeposit && d.DepositOutputVatDeferred)
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate)
-            .ToListAsync();
-        // มัดจำ deferred ที่ภาษีขายถึงกำหนดแล้ว (RecognizedAt อยู่ในงวด)
-        var recognizedDeferred = await salesBase
-            .Where(d => d.IsDeposit && d.DepositOutputVatDeferred
-                && d.DepositOutputVatRecognizedAt != null
-                && d.DepositOutputVatRecognizedAt >= startDate
-                && d.DepositOutputVatRecognizedAt <= endDate)
-            .ToListAsync();
-        var salesDocs = normalSales.Concat(recognizedDeferred)
-            .OrderBy(d => d.DepositOutputVatRecognizedAt ?? d.DocumentDate)
-            .ToList();
-
-        // ภาษีซื้อเข้า ภ.พ.30 ตาม "tax point" ไม่ใช่ DocumentDate เสมอ (§82/3):
-        //   • เอกสารปกติ (ใบกำกับครบตั้งแต่ approve) → tax point = DocumentDate
-        //   • เอกสารที่ตอน approve ใบไม่ครบ → VAT ค้าง 11640 "ยังไม่ถึงกำหนด"
-        //     เคลมไม่ได้จนกว่าใบครบ → tax point = InputVatBecameClaimableAt
-        //     (เดือนที่ระบบ reclassify 11640→11610). ยังไม่ครบ (BecameClaimableAt
-        //     == null) → ไม่เข้ารายงานเลย — ห้ามเคลมภาษีซื้อจากใบที่ไม่สมบูรณ์.
-        var commonPurchase = _db.Documents
-            .Include(d => d.Lines).Include(d => d.Contact)
-            .Where(d => d.CompanyId == companyId
-                && (d.DocumentType == DocumentType.PurchaseInvoice
-                    || d.DocumentType == DocumentType.Expense
-                    || d.DocumentType == DocumentType.CertificateInLieu)
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.VatAmount > 0);
-
-        // เอกสารปกติ: ไม่เคยค้าง 11640 → คัดตาม DocumentDate
-        var normalPurchase = await commonPurchase
-            .Where(d => !d.InputVatPostedAsUndue
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate)
-            .ToListAsync();
-
-        // เอกสารที่เคยค้าง 11640 แล้ว reclassify แล้ว → คัดตามเดือนที่ถึงกำหนด
-        var reclassifiedPurchase = await commonPurchase
-            .Where(d => d.InputVatPostedAsUndue
-                && d.InputVatBecameClaimableAt != null
-                && d.InputVatBecameClaimableAt >= startDate
-                && d.InputVatBecameClaimableAt <= endDate)
-            .ToListAsync();
-
-        // tax point สำหรับ sort/แสดงวันที่: BecameClaimableAt ถ้ามี, ไม่งั้น DocumentDate
-        var purchaseDocs = normalPurchase.Concat(reclassifiedPurchase)
-            .OrderBy(d => d.InputVatBecameClaimableAt ?? d.DocumentDate)
-            .ToList();
-
-        decimal totalOutputBase = 0, totalOutputVat = 0, totalInputBase = 0, totalInputVat = 0;
+        // เติมเลขใบกำกับผู้ขาย + สาขา จาก Document (TaxReportLine เก็บแต่ DocumentId).
+        var docIds = lines.Where(l => l.DocumentId.HasValue).Select(l => l.DocumentId!.Value).Distinct().ToList();
+        var docInfo = docIds.Count == 0
+            ? new Dictionary<Guid, (string? SupplierInvoiceNo, string? BranchCode)>()
+            : await (from d in _db.Documents.AsNoTracking()
+                     where d.CompanyId == companyId && docIds.Contains(d.Id)
+                     join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id into cj
+                     from c in cj.DefaultIfEmpty()
+                     select new { d.Id, d.SupplierInvoiceNumber, Snapshot = d.SupplierBranchCode, ContactBranch = c != null ? c.BranchCode : null })
+                .ToDictionaryAsync(x => x.Id, x => ((string?)x.SupplierInvoiceNumber, (string?)(x.Snapshot ?? x.ContactBranch)));
 
         // CSV escape: ห่อ "..." ถ้ามี , หรือ " หรือขึ้นบรรทัด — RD parser ปฏิบัติตาม RFC 4180.
         static string Csv(string s) => s.Contains(',') || s.Contains('"') || s.Contains('\n')
             ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
+        string Date(DateTime t) => $"{t.Day:D2}/{t.Month:D2}/{thaiYear}";
+
+        // แยกฝั่งด้วยตัวจัด side ตัวเดียวกับ Excel (TaxService.LineSide) — กัน
+        // CN/DN ฝั่งซื้อหลุดไปฝั่งขาย. ตัด §82/5 (IsExcluded) ออกจากไฟล์ยื่น.
+        var saleLines = lines.Where(l => TaxService.LineSide(l) == "output").ToList();
+        var purchaseLines = lines.Where(l => TaxService.LineSide(l) == "input" && !l.IsExcluded).ToList();
 
         var sale = new StringBuilder();
         sale.AppendLine("ลำดับ,วันที่,เลขที่ใบกำกับ,ชื่อผู้ซื้อ,เลขประจำตัวผู้เสียภาษี,สาขา,มูลค่าสินค้า/บริการ,จำนวนภาษี");
         int s1 = 1;
-        foreach (var doc in salesDocs)
+        foreach (var l in saleLines)
         {
-            var b = doc.SubTotal - doc.DiscountAmount;
-            // วันที่ในรายงาน = tax point §78/§78/1: มัดจำ deferred → RecognizedAt;
-            // ขายปกติ → TaxPointDate (MIN ส่งมอบ/โอน/รับเงิน/ออกใบ) ที่ snapshot
-            // ตอน approve; fallback DocumentDate (เอกสารเก่าก่อนมี TaxPointDate).
-            var taxPoint = doc.DepositOutputVatRecognizedAt ?? doc.TaxPointDate ?? doc.DocumentDate;
-            var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
-            sale.AppendLine($"{s1++},{d},{Csv(doc.DocumentNumber)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
-            totalOutputBase += b; totalOutputVat += doc.VatAmount;
+            var branch = (l.DocumentId.HasValue && docInfo.TryGetValue(l.DocumentId.Value, out var di) ? di.BranchCode : null) ?? "00000";
+            // เลขที่ใบกำกับ = Description (มีเลขเอกสาร + ป้าย CN/DN) เพื่อให้ตรงกับจอ
+            sale.AppendLine($"{s1++},{Date(l.TransactionDate)},{Csv(l.Description ?? "")},{Csv(l.TaxPayerName ?? "")},{l.TaxPayerId ?? ""},{branch},{l.IncomeAmount:F2},{l.TaxAmount:F2}");
         }
 
         var purchase = new StringBuilder();
         purchase.AppendLine("ลำดับ,วันที่,เลขที่ใบกำกับ,ชื่อผู้ขาย,เลขประจำตัวผู้เสียภาษี,สาขา,มูลค่าสินค้า/บริการ,จำนวนภาษี");
         int p1 = 1;
-        foreach (var doc in purchaseDocs)
+        foreach (var l in purchaseLines)
         {
-            var b = doc.SubTotal - doc.DiscountAmount;
-            // วันที่ในรายงาน = tax point: ใบที่ reclassify จาก 11640 แสดงวันที่
-            // ถึงกำหนด (เดือนที่เคลมได้จริง) ไม่ใช่ DocumentDate เดิม. แต่ใบปกติ
-            // ใช้วันที่บนใบกำกับของผู้ขาย (SupplierTaxInvoiceDate) เป็นหลัก.
-            var taxPoint = doc.InputVatBecameClaimableAt
-                ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
-            var d = $"{taxPoint.Day:D2}/{taxPoint.Month:D2}/{thaiYear}";
-            // เลขที่ใบกำกับ = เลขบนใบของผู้ขาย (RD ต้องการเลขจริง) — fallback
-            // เลขเอกสารภายในเมื่อ supplier number ว่าง.
-            var invNo = !string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber)
-                ? doc.SupplierInvoiceNumber! : doc.DocumentNumber;
-            purchase.AppendLine($"{p1++},{d},{Csv(invNo)},{Csv(doc.Contact?.Name ?? "")},{doc.Contact?.TaxId ?? ""},{doc.SupplierBranchCode ?? doc.Contact?.BranchCode ?? "00000"},{b:F2},{doc.VatAmount:F2}");
-            totalInputBase += b; totalInputVat += doc.VatAmount;
+            string? supplierNo = null, branch = null;
+            if (l.DocumentId.HasValue && docInfo.TryGetValue(l.DocumentId.Value, out var di))
+            { supplierNo = di.SupplierInvoiceNo; branch = di.BranchCode; }
+            // เลขที่ใบกำกับ = เลขบนใบผู้ขาย (RD ต้องการเลขจริง) — fallback Description
+            var invNo = !string.IsNullOrWhiteSpace(supplierNo) ? supplierNo! : (l.Description ?? "");
+            purchase.AppendLine($"{p1++},{Date(l.TransactionDate)},{Csv(invNo)},{Csv(l.TaxPayerName ?? "")},{l.TaxPayerId ?? ""},{branch ?? "00000"},{l.IncomeAmount:F2},{l.TaxAmount:F2}");
         }
 
+        // ยอดรวม = ค่าจาก report (รวม CN/DN, หัก §82/5, รวมเครดิตยกมา) → ตรงกับจอ.
         var summary = new StringBuilder();
         summary.AppendLine("รายการ,จำนวน");
-        summary.AppendLine($"ภาษีขาย (Output VAT),{totalOutputVat:F2}");
-        summary.AppendLine($"ภาษีซื้อ (Input VAT),{totalInputVat:F2}");
-        summary.AppendLine($"ภาษีที่ต้องชำระ (Net VAT),{(totalOutputVat - totalInputVat):F2}");
+        summary.AppendLine($"ภาษีขาย (Output VAT),{report.OutputVat:F2}");
+        summary.AppendLine($"ภาษีซื้อ (Input VAT),{report.InputVat:F2}");
+        summary.AppendLine($"ภาษีที่ต้องชำระ/ขอคืน (Net VAT),{report.NetVat:F2}");
 
-        // §87(3) Chronological enforcement — ตรวจว่าทุกใบเรียงวันที่ tax point
-        // จริง. ระบบ sort by tax point อยู่แล้ว แต่ flag เมื่อมีเอกสารที่
-        // tax point ย้อนกลับ (เกิดจาก deferred ที่ถูก reclassify ภายหลัง) →
-        // surface ใน Summary เพื่อให้นักบัญชีตัดสินใจก่อนยื่นจริง.
+        // §87(3) Chronological — flag เอกสารที่ tax point ย้อนกลับ
         DateTime? prevDate = null;
         int outOfOrderCount = 0;
-        foreach (var doc in salesDocs.Concat(purchaseDocs).OrderBy(d => d.DocumentNumber))
+        foreach (var l in saleLines.Concat(purchaseLines))
         {
-            var tp = doc.DepositOutputVatRecognizedAt ?? doc.InputVatBecameClaimableAt
-                ?? doc.TaxPointDate ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
-            if (prevDate.HasValue && tp < prevDate.Value) outOfOrderCount++;
-            prevDate = tp;
+            if (prevDate.HasValue && l.TransactionDate < prevDate.Value) outOfOrderCount++;
+            prevDate = l.TransactionDate;
         }
         summary.AppendLine($"เอกสารเรียงเวลาย้อนกลับ (§87(3) chronological),{outOfOrderCount}");
 
-        // Bundle 3 CSV in a zip — RD's tooling can pull each separately.
         using var zipStream = new MemoryStream();
         using (var archive = new System.IO.Compression.ZipArchive(zipStream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
         {
@@ -389,11 +323,12 @@ public class TaxFilingExportService : ITaxFilingExportService
             await WriteZipEntryAsync(archive, "Summary.csv", summary.ToString());
         }
 
-        var netVat = totalOutputVat - totalInputVat;
+        var netVat = report.NetVat;
+        var totalBase = saleLines.Sum(l => l.IncomeAmount) + purchaseLines.Sum(l => l.IncomeAmount);
         return new TaxFilingExportResult(
             "PP30", "ภ.พ.30", $"PP30_{year}{month:D2}.zip", "application/zip", zipStream.ToArray(),
-            salesDocs.Count + purchaseDocs.Count, totalOutputBase + totalInputBase, netVat,
-            $"ภ.พ.30 เดือน {month}/{year} ภาษีขาย {totalOutputVat:N2} ภาษีซื้อ {totalInputVat:N2} สุทธิ {netVat:N2} บาท (Sale.csv + Purchase.csv + Summary.csv)");
+            saleLines.Count + purchaseLines.Count, totalBase, netVat,
+            $"ภ.พ.30 เดือน {month}/{year} ภาษีขาย {report.OutputVat:N2} ภาษีซื้อ {report.InputVat:N2} สุทธิ {netVat:N2} บาท (Sale.csv + Purchase.csv + Summary.csv)");
     }
 
     private static async Task WriteZipEntryAsync(System.IO.Compression.ZipArchive archive, string name, string content)

@@ -300,7 +300,10 @@ public partial class TaxService : ITaxService
                     IncomeAmount = -doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                     TaxAmount = -doc.VatAmount,
-                    DocumentId = doc.Id
+                    DocumentId = doc.Id,
+                    // tag side ให้ LineSide จัด CN ฝั่งซื้อเข้า "รายงานภาษีซื้อ"
+                    // ถูกต้อง (เดิม IncomeTypeCode = null → ตกไปฝั่งขายเสมอ)
+                    IncomeTypeCode = isPurchaseSide ? "INPUT" : null
                 });
             }
             // DebitNote — increases output/input VAT
@@ -581,6 +584,29 @@ public partial class TaxService : ITaxService
         report.NetVat = outputVat - inputVat - vatCreditCarryforward;
     }
 
+    /// <summary>คำนวณรายงานภาษีมูลค่าเพิ่ม (ภ.พ.30) เป็น TaxReport ชั่วคราว
+    /// (ไม่ persist) — ใช้ตรรกะตัวเดียวกับที่บันทึก/แสดงบนจอ 100% เพื่อให้
+    /// "ไฟล์ที่ยื่น (CSV) == ที่ผู้ใช้เห็นบนจอ" (กันเคส screen ≠ filed).
+    /// dedup กับ report อื่นที่ persist แล้ว, รวม CN/DN, หักภาษีซื้อต้องห้าม
+    /// §82/5, มัดจำ deferred, JE ที่ไม่มี source doc — ครบเหมือน GenerateVatReport.</summary>
+    public async Task<TaxReport> ComputeVatReportAsync(Guid companyId, int year, int month)
+    {
+        var startDate = new DateTime(year, month, 1);
+        var endDate = startDate.AddMonths(1).AddDays(-1);
+        // Id ใหม่ (ไม่ใช่ Guid.Empty) เพื่อให้ dedup `TaxReportId != report.Id`
+        // กรองเฉพาะ report ที่ persist แล้ว — report ชั่วคราวนี้ไม่ถูกเก็บลง DB.
+        var report = new TaxReport
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = companyId,
+            TaxType = TaxType.VAT,
+            Year = year,
+            Month = month,
+        };
+        await GenerateVatReport(companyId, startDate, endDate, report);
+        return report;
+    }
+
     private async Task GenerateWhtReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
     {
         var docs = await _db.Documents
@@ -774,9 +800,44 @@ public partial class TaxService : ITaxService
         var entertainmentCap = Math.Min(10_000_000m, Math.Max(revenueLimit, capitalLimit));
         var entertainmentExcess = Math.Max(0, entertainmentExpense - entertainmentCap);
 
-        // Net profit before tax — เพิ่มส่วนเกิน entertainment ที่หักไม่ได้
-        // กลับเข้ามา (tax addition / รายการบวกกลับ §65 ทวิ).
-        var netProfitBeforeTax = totalRevenue - totalExpenses + entertainmentExcess;
+        // §65 ตรี — รายจ่ายต้องห้ามอื่น ๆ ที่ Section65TerValidator คำนวณตอน approve
+        // (ค่าปรับ/เบี้ยปรับ, รายจ่ายส่วนตัว, ไม่มีผู้รับเงิน, capex ลงเป็น expense ฯลฯ)
+        // เก็บใน Document.NonDeductibleAmount + breakdown ใน NonDeductibleRuleJson.
+        // เดิม CIT บวกกลับเฉพาะค่ารับรอง (4) annual cap ด้านบน → ข้ออื่นหลุดหมด
+        // ทำให้กำไรสุทธิทางภาษีต่ำเกินจริง (เสี่ยงประเมินเพิ่ม + เบี้ยปรับ).
+        // ตัด RD-65ter(4) ออกเพราะคิด annual cap ไปแล้ว (กัน double count).
+        var nonDeductDocs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId
+                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && d.NonDeductibleAmount > 0)
+            .Select(d => new { d.NonDeductibleAmount, d.NonDeductibleRuleJson })
+            .ToListAsync();
+        decimal section65TerAddBack = 0m;
+        foreach (var nd in nonDeductDocs)
+        {
+            if (string.IsNullOrWhiteSpace(nd.NonDeductibleRuleJson))
+            {
+                section65TerAddBack += nd.NonDeductibleAmount;   // ไม่มี breakdown → บวกทั้งก้อน
+                continue;
+            }
+            try
+            {
+                using var jdoc = System.Text.Json.JsonDocument.Parse(nd.NonDeductibleRuleJson);
+                foreach (var el in jdoc.RootElement.EnumerateArray())
+                {
+                    var code = el.TryGetProperty("RuleCode", out var rc) ? rc.GetString() : null;
+                    if (code == "RD-65ter(4)") continue;   // entertainment คิด annual cap แล้ว
+                    if (el.TryGetProperty("AddBackAmount", out var ab) && ab.TryGetDecimal(out var amt))
+                        section65TerAddBack += amt;
+                }
+            }
+            catch { section65TerAddBack += nd.NonDeductibleAmount; }   // JSON เพี้ยน → fallback ทั้งก้อน
+        }
+
+        // Net profit before tax — เพิ่มส่วนเกิน entertainment + รายจ่ายต้องห้าม §65 ตรี
+        // ที่หักไม่ได้ กลับเข้ามา (tax addition / รายการบวกกลับ).
+        var netProfitBeforeTax = totalRevenue - totalExpenses + entertainmentExcess + section65TerAddBack;
 
         // Query previous year's CIT report for tax credit carryforward
         var previousYearCit = await _db.TaxReports
@@ -857,6 +918,19 @@ public partial class TaxService : ITaxService
                     TaxAmount = 0
                 });
             }
+        }
+
+        // §65 ตรี — บวกกลับรายจ่ายต้องห้ามอื่น (จาก validator ตอน approve)
+        if (section65TerAddBack > 0)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = "➕ บวกกลับ รายจ่ายต้องห้าม §65 ตรี (ค่าปรับ/ส่วนตัว/ไม่มีผู้รับเงิน ฯลฯ)",
+                IncomeAmount = section65TerAddBack,
+                TaxAmount = 0
+            });
         }
 
         report.Lines.Add(new TaxReportLine
