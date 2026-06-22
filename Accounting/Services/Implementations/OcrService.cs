@@ -1587,7 +1587,7 @@ public class OcrService : IOcrService
                         {
                             var hits = openPos.Where(p =>
                                     p.DocumentNumber.Length >= 4
-                                    && extractedText.Contains(p.DocumentNumber, StringComparison.OrdinalIgnoreCase))
+                                    && (extractedText ?? "").Contains(p.DocumentNumber, StringComparison.OrdinalIgnoreCase))
                                 .ToList();
                             if (hits.Count == 1)
                             {

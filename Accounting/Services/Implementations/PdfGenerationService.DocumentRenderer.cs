@@ -45,7 +45,8 @@ public partial class PdfGenerationService
         var titleText = template.CustomTitle ?? GetDocumentTitle(doc.DocumentType, lang);
         // Receipt + VAT > 0 → ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4); IsDeposit → ต่อท้าย "(เงินมัดจำ)"
         if (template.CustomTitle == null
-            && (doc.DocumentType == DocumentType.Receipt || doc.DocumentType == DocumentType.ReceiptVoucher)
+            && (doc.DocumentType == Accounting.Models.Enums.DocumentType.Receipt
+                || doc.DocumentType == Accounting.Models.Enums.DocumentType.ReceiptVoucher)
             && doc.VatAmount > 0)
         {
             titleText = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
