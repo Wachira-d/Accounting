@@ -263,6 +263,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   "ลูกค้านี้มีมัดจำคงค้าง XXX" + ปุ่ม "หักมัดจำจากใบนี้" (เฉพาะ
   `editingId != null` — ต้องบันทึกใบก่อนถึงจะ apply ได้) → เปิด picker modal
   เลือกใบมัดจำ + ยอด → `applyDeposit` endpoint
+- **Booking-match auto-suggest**: เมื่อใบปลายทางและใบมัดจำมี `BookingNumber`
+  เดียวกัน (เคส PMS/POS/CRM: ลูกค้าจอง BK-2026-001 → จ่ายมัดจำ → ออกใบกำกับ) →
+  - banner โชว์ badge เพิ่ม "✓ N ใบ booking ตรงกัน (XXX บาท)"
+  - ปุ่มเปลี่ยน label เป็น "หักมัดจำที่ booking ตรงกัน"
+  - picker modal sort booking-match ขึ้นบนสุด + prefix "✓" + option label
+    มี `· booking BK-XXX`
+  - ถ้าตรง 1 ใบ → **auto-select** + เติมยอดสูงสุดให้ → ผู้ใช้กดบันทึกได้เลย
+    (กฎเหล็ก #3 spirit: ระบบเติมให้ครบ ผู้ใช้แค่ยืนยัน)
+  - `fBookingNumber` มี `onchange/onblur` → re-render banner live เมื่อพิมพ์
+- **DTO field**: `DepositSummary.BookingNumber` (เพิ่มล่าสุด — เดิมมีแต่
+  `Reference`) populate ใน `GetDepositsAsync` (`DocumentService.cs:1278`)
 
 ---
 

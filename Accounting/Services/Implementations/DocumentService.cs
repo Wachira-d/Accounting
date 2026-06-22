@@ -1275,7 +1275,8 @@ public class DocumentService : IDocumentService
                 d.DepositRealizedAt,
                 (int)(now.Date - d.DocumentDate.Date).TotalDays,
                 st, d.DepositDeferredAccountCode,
-                d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt);
+                d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt,
+                d.BookingNumber);
         });
         if (!string.IsNullOrWhiteSpace(status))
             list = list.Where(x => string.Equals(x.Status, status, StringComparison.OrdinalIgnoreCase));

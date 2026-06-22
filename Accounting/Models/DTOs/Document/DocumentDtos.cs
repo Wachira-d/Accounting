@@ -268,7 +268,10 @@ public record DepositSummary(
     // ภาษีขาย: false = ถึงกำหนดแล้ว (21911/ภ.พ.30); true = รอเรียกเก็บ (21913)
     bool OutputVatDeferred,
     // วันที่ภาษีขาย deferred ถูกรับรู้เข้า ภ.พ.30 (null = ยังไม่รับรู้)
-    DateTime? OutputVatRecognizedAt);
+    DateTime? OutputVatRecognizedAt,
+    // เลขจอง (BookingNumber) — ผูกกับใบปลายทางที่ booking เดียวกัน;
+    // UI ใช้ highlight + auto-suggest มัดจำเมื่อ user กรอก booking ตรงกัน
+    string? BookingNumber = null);
 
 /// <summary>สรุปเอกสารที่ภาษีซื้อค้างอยู่ที่ 11640 "ยังไม่ถึงกำหนด" รอใบกำกับ
 /// ครบ §86/4. MonthsLeft = เดือนเหลือก่อนหมดสิทธิเคลม (§82/3 6 เดือนนับจาก
