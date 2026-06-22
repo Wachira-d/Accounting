@@ -3466,6 +3466,17 @@ public class OcrService : IOcrService
             catch { /* malformed suggestion JSON — line GL stays empty */ }
         }
 
+        // ── Pre-fill: ใบกำกับภาษีของผู้ขาย (RD §86/4 + §86/14) ──
+        // เอกสารฝั่งซื้อที่มี VAT + เลขใบ → บันทึกเลข/วัน/สาขาใบผู้ขาย +
+        // ติ๊ก HasTaxInvoiceReference เพื่อให้ขึ้นรายงานภาษีซื้อ ภพ.30 ทันที
+        // (เดิมใส่แค่ Reference → ฟอร์มแก้ไขโชว์ "ขาดเลขใบกำกับ" + ภาษีซื้อ
+        // ค้าง 11640). PV ใช้ flag HasTaxInvoiceReference; PI/Expense ใช้
+        // SupplierInvoiceNumber/Date ตรง ๆ.
+        var bookSupplierInvoice = !isSalesSide
+            && (docType is DocumentType.PaymentVoucher or DocumentType.PurchaseInvoice or DocumentType.Expense)
+            && !string.IsNullOrWhiteSpace(result.ExtractedDocumentNumber)
+            && ((result.ExtractedVatAmount ?? 0) > 0 || !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId));
+
         // Transaction holds the per-tenant advisory lock for the duration
         // of the sequence-number assignment + insert, so concurrent OCR
         // creations don't collide.
@@ -3507,6 +3518,14 @@ public class OcrService : IOcrService
             CertificateReason = docType == DocumentType.CertificateInLieu
                 ? "ผู้ขาย/ผู้รับเงินไม่สามารถออกใบเสร็จรับเงินได้" : null,
             CertifierName = certifierName,
+            // ใบกำกับภาษีของผู้ขาย — เติมจาก OCR ให้ฟอร์มไม่โชว์ "ขาดเลขใบ"
+            // + ภาษีซื้อขึ้น ภพ.30 ได้เลย (ไม่ค้าง 11640 โดยไม่จำเป็น)
+            HasTaxInvoiceReference = bookSupplierInvoice && docType == DocumentType.PaymentVoucher,
+            SupplierInvoiceNumber = bookSupplierInvoice ? result.ExtractedDocumentNumber : null,
+            SupplierTaxInvoiceDate = bookSupplierInvoice ? result.ExtractedDate : null,
+            SupplierBranchCode = bookSupplierInvoice ? "00000" : null,
+            // หมวดค่าใช้จ่ายระดับเอกสาร = ผังเดบิตที่ AI/ผู้ใช้เลือก
+            ExpenseCategoryId = !isSalesSide ? scanDebitAccountId : null,
             CreatedBy = createdBy
         };
 
