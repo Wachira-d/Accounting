@@ -303,6 +303,16 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             // โหลด business context — กฎเหล็ก #1: ส่งบริบทที่เกี่ยวข้องให้ครบ
             var bizCtx = await Prompts.CompanyBusinessContextLoader.LoadAsync(_db, companyId, ct);
 
+            // Durable-goods/consumables deterministic prior — ดู
+            // DurableGoodsHeuristic + GlAccountPrompt rule 7. เครื่องปริ้นท์
+            // → 12210 (Asset) ไม่ใช่ 54420 (วัสดุสิ้นเปลือง)
+            var (priorCode, priorConf) = DurableGoodsHeuristic.Predict(lineDescription, amount, candidates);
+            if (priorCode != null && (localBestAccountCode == null || (localConfidence ?? 0m) < priorConf))
+            {
+                localBestAccountCode = priorCode;
+                localConfidence = priorConf;
+            }
+
             var req = GlAccountPrompt.Build(
                 companyId, vendorName, vendorTaxId, vendorIndustry,
                 enrichedDescription, amount, currency,
@@ -410,9 +420,30 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             // to parse + so the UI's per-line "user picked X" can flow
             // into per-line training labels.
             var withChildIds = new Dictionary<Guid, DocumentAiSuggestion>(parsed.ByLineId.Count);
+            // Pre-build candidate prompt list for heuristic override
+            var heuristicCandidates = candidates.Select(c =>
+                new Prompts.GlAccountPrompt.AccountCandidate(c.Code, c.Name, c.Type, true)).ToList();
+            // Mutable working dict — เริ่มจากผล AI แล้ว override ตรงไหนผิด
+            var byLineWorking = parsed.ByLineId.ToDictionary(kv => kv.Key, kv => kv.Value);
             foreach (var l in lines)
             {
-                if (!parsed.ByLineId.TryGetValue(l.LineId, out var sugg))
+                // ⭐ Override AI ถ้า heuristic durable-goods ชัด — เครื่องปริ้นท์/
+                // คอมพิวเตอร์/... → 12xxx (Asset). กัน AI ตอบ "วัสดุสิ้นเปลือง"
+                // ผิด. ถ้า heuristic confidence ≥0.85 และต่างจาก AI answer →
+                // override (heuristic deterministic, AI สามารถผิดได้)
+                var (priorCode, priorConf) = DurableGoodsHeuristic.Predict(
+                    l.Description, l.Amount, heuristicCandidates);
+                if (byLineWorking.TryGetValue(l.LineId, out var aiSugg)
+                    && priorCode != null && priorConf >= 0.85m
+                    && !string.Equals(aiSugg.Answer, priorCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    byLineWorking[l.LineId] = aiSugg with {
+                        Answer = priorCode,
+                        Confidence = priorConf,
+                        Reasoning = $"[heuristic override §65 ตรี (5)] {priorCode} (เครื่องใช้ทน/durable goods). เดิม AI แนะนำ {aiSugg.Answer}",
+                    };
+                }
+                if (!byLineWorking.TryGetValue(l.LineId, out var sugg))
                 {
                     withChildIds[l.LineId] = Fallback(null, null);
                     continue;

@@ -332,6 +332,20 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                     a.AccountCode, a.AccountName, a.AccountType.ToString(), a.IsActive))
                 .ToListAsync(ct);
 
+            // ⭐ Deterministic Fixed-Asset/Supplies prior — กันเคสที่ AI
+            // เคยพลาด: "เครื่องปริ้นท์" → 54420 ค่าวัสดุสิ้นเปลือง (ผิด!).
+            // ตรวจ keyword durable goods → bias ไปทาง 12xxx (Fixed Asset)
+            // และ keyword consumables → 5xxxx. ตั้งเป็น hint local เพื่อให้
+            // orchestrator short-circuit ที่ ≥0.85 confidence (ไม่ต้องเรียก AI).
+            // ถ้าผัง 12xxx ไม่มีจริงในผังบริษัท → ตกไปใช้ AI ตามเดิม.
+            var (priorCode, priorConf) = DurableGoodsHeuristic.Predict(
+                lineDescription, amount, candidates);
+            if (priorCode != null && (localBestAccountCode == null || localConfidence < priorConf))
+            {
+                localBestAccountCode = priorCode;
+                localConfidence = priorConf;
+            }
+
             // Vendor's historical accounts (last 24 mo) — strong signal.
             var since = DateTime.UtcNow.AddMonths(-VendorHistoryLookbackMonths);
             // OcrCategoryMapping keys on VendorKey (TaxId-preferred,
