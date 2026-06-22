@@ -207,6 +207,19 @@ public class FixedAssetService : IFixedAssetService
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
 
+    /// <summary>คืน list สินทรัพย์ที่ระบบ auto-register จาก PV/PI/Expense
+    /// แล้ว NeedsReview=true (ยังไม่ผ่านการยืนยันจากผู้ใช้). UI โชว์ banner
+    /// เตือน + บังคับให้กรอก UsefulLifeMonths/DepreciationMethod/Location
+    /// ก่อนถึงจะเริ่มคิดค่าเสื่อมจริงได้.</summary>
+    public async Task<List<FixedAssetResponse>> GetNeedsReviewAsync(Guid companyId)
+    {
+        var items = await _db.FixedAssets.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.NeedsReview)
+            .OrderByDescending(a => a.CreatedAt)
+            .ToListAsync();
+        return items.Select(MapToResponse).ToList();
+    }
+
     public async Task<FixedAssetResponse> UpdateAsync(Guid companyId, Guid assetId, UpdateFixedAssetRequest request)
     {
         var asset = await _db.FixedAssets
@@ -222,6 +235,12 @@ public class FixedAssetService : IFixedAssetService
         if (request.DepreciationExpenseAccountId.HasValue) asset.DepreciationExpenseAccountId = request.DepreciationExpenseAccountId;
         if (request.AccumulatedDepreciationAccountId.HasValue) asset.AccumulatedDepreciationAccountId = request.AccumulatedDepreciationAccountId;
         if (request.ProjectId.HasValue) asset.ProjectId = request.ProjectId;
+
+        // เมื่อผู้ใช้ "ยืนยัน" สินทรัพย์ที่ระบบ auto-register (กดบันทึกในหน้า edit)
+        // → ปลดธง NeedsReview เพื่อออกจาก "รอตรวจสอบ" queue. ไม่ใช่ field ใน DTO
+        // เพื่อกัน client เผลอเซ็ตกลับเป็น true; ใช้ implicit semantics ที่ว่า
+        // "การเปิดมาแก้แล้วบันทึก = การตรวจสอบสินทรัพย์ตัวนี้แล้ว".
+        if (asset.NeedsReview) asset.NeedsReview = false;
 
         await _db.SaveChangesAsync();
         return MapToResponse(asset);

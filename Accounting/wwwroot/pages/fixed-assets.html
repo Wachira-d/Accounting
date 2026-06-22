@@ -41,6 +41,12 @@
       .type-tab .ct { background:rgba(255,255,255,.25); border-radius:10px; padding:1px 7px; margin-left:4px; font-size:11px; }
       .type-tab:not(.active) .ct { background:#cbd5e1; color:#475569; }
     </style>
+    <!-- Banner "รอตรวจสอบ" — สำหรับสินทรัพย์ที่ระบบสร้างอัตโนมัติจาก
+         ใบสำคัญจ่าย/ใบแจ้งหนี้ซื้อ ที่ผู้ใช้ยังไม่ "ยืนยัน" รายละเอียด
+         (NeedsReview=true). กฎเหล็ก #2 + TFRS for NPAEs บทที่ 10 —
+         อายุการใช้งาน + วิธีคิดค่าเสื่อมต้องผ่านการพิจารณาก่อนใช้จริง. -->
+    <div id="needsReviewBanner" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #f59e0b;border-radius:10px;padding:14px 16px;margin-bottom:14px"></div>
+
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหาสินทรัพย์..." id="searchInput" oninput="Page.load()">
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
@@ -281,6 +287,9 @@
     const statusMap = { Active:'ใช้งาน', Disposed:'จำหน่าย', FullyDepreciated:'หมดค่าเสื่อม', WrittenOff:'ตัดจำหน่าย' };
     const Page = {
       page: 1, allAssets: [], _currentAsset: null, _accounts: [], currentType: '',
+      showOnlyNeedsReview: false,
+      filterNeedsReview() { this.showOnlyNeedsReview = true; this.load(); },
+      clearNeedsReviewFilter() { this.showOnlyNeedsReview = false; this.load(); },
       async init() {
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('ทะเบียนสินทรัพย์');
@@ -442,11 +451,34 @@
             const el = document.getElementById('ct-' + t); if (el) el.textContent = counts[t];
           });
 
-          const items = this.currentType ? all.filter(a => (a.assetType || 'Tangible') === this.currentType) : all;
+          // Banner "รอตรวจสอบ" (NeedsReview) — สินทรัพย์ที่ระบบสร้างอัตโนมัติ
+          // จากใบสำคัญจ่าย/ใบแจ้งหนี้ซื้อ ที่ผู้ใช้ยังไม่ "ยืนยัน" อายุการใช้งาน +
+          // วิธีคิดค่าเสื่อม (กฎ TFRS for NPAEs บทที่ 10 + กฎเหล็ก #2)
+          const needsReview = all.filter(a => a.needsReview);
+          const banner = document.getElementById('needsReviewBanner');
+          if (banner) {
+            if (needsReview.length === 0) {
+              banner.style.display = 'none';
+            } else {
+              banner.style.display = '';
+              banner.innerHTML = `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span style="font-size:24px">⚠️</span>
+                  <div style="flex:1;min-width:200px">
+                    <div style="font-weight:700;color:#92400e">มีสินทรัพย์ ${needsReview.length} รายการ ที่ระบบสร้างให้อัตโนมัติแต่ยังไม่ผ่านการยืนยัน</div>
+                    <div style="font-size:12px;color:#78350f">ระบบใส่ค่าเริ่มต้นไว้ (อายุการใช้งาน · วิธีคิดค่าเสื่อม) — กรุณาเปิดแก้และยืนยันก่อนค่าเสื่อมจะคำนวณได้ถูกต้อง</div>
+                  </div>
+                  <button class="btn btn-sm btn-warning" onclick="Page.filterNeedsReview()">ดูเฉพาะที่รอตรวจสอบ</button>
+                  ${this.showOnlyNeedsReview ? `<button class="btn btn-sm btn-ghost" onclick="Page.clearNeedsReviewFilter()">แสดงทั้งหมด</button>` : ''}
+                </div>`;
+            }
+          }
+          let items = this.currentType ? all.filter(a => (a.assetType || 'Tangible') === this.currentType) : all;
+          if (this.showOnlyNeedsReview) items = items.filter(a => a.needsReview);
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
-          tbody.innerHTML = items.map(a => `<tr>
-            <td class="font-medium">${a.assetCode}</td>
+          tbody.innerHTML = items.map(a => `<tr${a.needsReview ? ' style="background:#fffbeb"' : ''}>
+            <td class="font-medium">${a.assetCode}${a.needsReview ? ' <span title="ระบบสร้างให้อัตโนมัติ — กรุณาตรวจสอบรายละเอียดก่อนใช้งาน" style="background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">⚠️ รอตรวจ</span>' : ''}</td>
             <td>${a.name}<div style="font-size:11px;color:#64748b">${this._typeLabel(a.assetType || 'Tangible')}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div></td>
             <td>${a.category || '-'}</td>
             <td>${Layout.date(a.purchaseDate)}</td>
@@ -456,7 +488,7 @@
             <td>${Layout.statusBadge(a.status)}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button>
-              ${a.status === 'Active' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${a.id}')" data-i18n="common.edit">แก้ไข</button>` : ''}
+              ${a.status === 'Active' ? `<button class="btn btn-sm ${a.needsReview ? 'btn-primary' : 'btn-ghost'}" onclick="Page.openEdit('${a.id}')">${a.needsReview ? 'ตรวจสอบและยืนยัน' : 'แก้ไข'}</button>` : ''}
             </td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = '';  // server paging disabled while we filter client-side

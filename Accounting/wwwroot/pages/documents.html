@@ -246,6 +246,11 @@
               </div>
             </div>
           </div>
+          <!-- มัดจำคงค้างของลูกค้านี้ — แสดงเฉพาะฝั่ง sales (Invoice/TaxInvoice)
+               ที่มีมัดจำรอ. ปุ่ม "หักมัดจำ" เปิด picker เลือกใบมัดจำ + ระบุยอด
+               → เรียก applyDeposit (Realize 217xx + ลด BalanceDue + ย้าย VAT
+               21913→21911 ถ้า deferred). -->
+          <div id="contactDepositBanner" style="display:none;background:#ecfdf5;border:1px solid #6ee7b7;border-left:4px solid #10b981;border-radius:10px;padding:12px 14px;margin-bottom:14px"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
@@ -1292,8 +1297,128 @@
           if (isSales) {
             this.checkBadDebtRisk(contactId);
             this.suggestDiscount(contactId);
+            // เช็คมัดจำคงค้างของลูกค้านี้ — TaxInvoice/Invoice ดึงมาหักได้
+            // (ApplyDepositToInvoiceAsync ใน backend) ก่อนหน้านี้มี endpoint
+            // พร้อมแต่ UI ไม่เคยใช้ ผู้ใช้ต้องไปหน้า deposits manually
+            this.checkContactDeposits(contactId);
+          } else {
+            // เปลี่ยน contact ออกจาก sales → ซ่อน banner มัดจำ (กันค้าง)
+            const dep = document.getElementById('contactDepositBanner');
+            if (dep) dep.style.display = 'none';
           }
         }
+      },
+
+      /** เช็คมัดจำคงค้างของลูกค้า (`GetContactDepositSummaryAsync`) —
+       *  ถ้ามียอดคงค้าง → โชว์ banner ในฟอร์ม Invoice/TaxInvoice ให้ผู้ใช้กด
+       *  "หักมัดจำ" เปิด picker เลือกใบมัดจำ + ยอด แล้วเรียก applyDeposit
+       *  (Realize + ลด BalanceDue ใน 1 ขั้น). กลับรายการครบ §78 + §86/10
+       *  (VAT 21913 → 21911 ถ้า deferred) */
+      async checkContactDeposits(contactId) {
+        const banner = document.getElementById('contactDepositBanner');
+        if (!banner) return;
+        try {
+          const api = Layout.api(); if (!api) return;
+          const r = await api.getContactDepositSummary(contactId);
+          const summary = r?.data;
+          // แสดงเฉพาะตอน "สร้างใหม่" (this.editingId == null) เพราะ
+          // editor เปิดเอกสารเดิม → applyDeposit ใช้กับ docId นั้น (ดีกว่าทำ
+          // ตอนสร้าง) แต่ถ้าใบยัง draft ยังมีโอกาส apply หลังบันทึก
+          if (!summary || !summary.totalOutstanding || summary.totalOutstanding < 0.005) {
+            banner.style.display = 'none';
+            return;
+          }
+          this._contactDepositSummary = summary;
+          banner.style.display = '';
+          banner.innerHTML = `
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <span style="font-size:24px">💰</span>
+              <div style="flex:1;min-width:200px">
+                <div style="font-weight:700;color:#065f46">ลูกค้านี้มีมัดจำคงค้าง <span style="font-size:18px">${Layout.money(summary.totalOutstanding)}</span></div>
+                <div style="font-size:12px;color:#047857">${summary.deposits?.length || 0} ใบ — สามารถหักออกจากใบนี้ได้หลังบันทึก</div>
+              </div>
+              ${this.editingId ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">หักมัดจำจากใบนี้</button>` : `<span style="font-size:11px;color:#047857;font-style:italic">บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ</span>`}
+            </div>`;
+        } catch { /* best-effort */ }
+      },
+
+      /** เปิด picker modal เลือกใบมัดจำ + ระบุยอดที่หัก แล้วเรียก applyDeposit
+       *  (1 deposit ต่อครั้ง — ผู้ใช้ apply หลายใบทีละครั้ง). */
+      openApplyDeposit() {
+        const s = this._contactDepositSummary;
+        if (!s || !s.deposits?.length) { Layout.toast('ไม่มีมัดจำคงค้าง', 'error'); return; }
+        if (!this.editingId) { Layout.toast('กรุณาบันทึกใบนี้ก่อน', 'error'); return; }
+        let modal = document.getElementById('applyDepositModal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'applyDepositModal';
+          modal.className = 'modal-overlay';
+          modal.innerHTML = `
+            <div class="modal" style="max-width:560px">
+              <div class="modal-header">
+                <h3 class="modal-title">💰 หักเงินมัดจำเข้าใบแจ้งหนี้</h3>
+                <button class="modal-close" onclick="Layout.closeModal('applyDepositModal')">&times;</button>
+              </div>
+              <div class="modal-body">
+                <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#065f46">
+                  ระบบจะ <strong>รับรู้รายได้</strong>จากมัดจำ (Dr 217xx ขายรอรับรู้ / Cr รายได้) + <strong>ลดยอดคงค้าง</strong>ของใบนี้ทันที — ถ้ามัดจำเป็น VAT deferred จะย้าย 21913→21911 ให้ครบ
+                </div>
+                <div class="form-group">
+                  <label class="form-label">เลือกใบมัดจำ <span class="req">*</span></label>
+                  <select class="form-select" id="adDepositId">
+                    <option value="">— เลือก —</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">ยอดที่หัก (รวม VAT) <span class="req">*</span></label>
+                  <input type="number" step="0.01" min="0" class="form-input" id="adAmount">
+                  <div class="form-help" id="adAmountHint" style="color:#64748b"></div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">วันที่หัก</label>
+                  <input type="date" class="form-input" id="adDate">
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="Layout.closeModal('applyDepositModal')">ยกเลิก</button>
+                <button class="btn btn-primary" onclick="Page.submitApplyDeposit()">หักมัดจำ</button>
+              </div>
+            </div>`;
+          document.body.appendChild(modal);
+        }
+        const sel = document.getElementById('adDepositId');
+        sel.innerHTML = '<option value="">— เลือก —</option>' + s.deposits.map(d =>
+          `<option value="${d.depositDocumentId}" data-outstanding="${d.outstandingAmount}">${Layout.esc(d.documentNumber)} · ${Layout.date(d.documentDate)} · คงเหลือ ${Layout.money(d.outstandingAmount)}</option>`).join('');
+        sel.onchange = () => {
+          const opt = sel.options[sel.selectedIndex];
+          const out = parseFloat(opt?.dataset?.outstanding || '0') || 0;
+          document.getElementById('adAmount').value = out.toFixed(2);
+          document.getElementById('adAmount').max = out;
+          document.getElementById('adAmountHint').textContent = out > 0 ? `สูงสุด ${Layout.money(out)}` : '';
+        };
+        document.getElementById('adAmount').value = '';
+        document.getElementById('adDate').value = Layout.toDateInput(new Date());
+        Layout.openModal('applyDepositModal');
+      },
+
+      async submitApplyDeposit() {
+        const api = Layout.api(); if (!api || !this.editingId) return;
+        const depositId = document.getElementById('adDepositId').value;
+        const amount = parseFloat(document.getElementById('adAmount').value);
+        const dateRaw = document.getElementById('adDate').value;
+        if (!depositId) { Layout.toast('กรุณาเลือกใบมัดจำ', 'error'); return; }
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุยอดที่หัก', 'error'); return; }
+        try {
+          await api.applyDeposit(this.editingId, {
+            depositDocumentId: depositId, amount,
+            applyDate: dateRaw ? new Date(dateRaw).toISOString() : null
+          });
+          Layout.closeModal('applyDepositModal');
+          Layout.toast('หักมัดจำสำเร็จ — ระบบรับรู้รายได้ + ลดยอดคงค้างแล้ว');
+          // refresh deposit summary + reload doc detail
+          await this.checkContactDeposits(document.getElementById('fContactId').value);
+          if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+        } catch (e) { Layout.toast(e.message || 'หักมัดจำไม่สำเร็จ', 'error'); }
       },
 
       async checkBadDebtRisk(contactId) {
@@ -3802,6 +3927,12 @@
             await api.approveDocument(id, { acknowledgeWarnings: !!acknowledge });
             Layout.closeModal('detailModal');
             Layout.toast('อนุมัติเอกสารสำเร็จ');
+            // ถ้าเอกสารฝั่งซื้อ (PV/PI/Expense) ที่มีบรรทัดลงผัง PPE → ระบบ
+            // auto-register สินทรัพย์ NeedsReview=true. เด้ง modal ถามผู้ใช้
+            // ให้เปิดไปเติมรายละเอียดทันที (กฎเหล็ก #2 + TFRS for NPAEs บทที่ 10).
+            // ไม่ block — ผู้ใช้กดข้ามได้ แต่จะมี badge เตือนในหน้าทะเบียน
+            // สินทรัพย์จนกว่าจะยืนยัน
+            await this._maybePromptFixedAssetReview();
             await this.load();
           } catch (e) {
             if (e.status === 422 && e.body && e.body.data && Array.isArray(e.body.data.warnings)) {
@@ -3912,6 +4043,38 @@
             Writeoff: 'ตัดยอด (Writeoff)',
           })[v] || v,
         });
+      },
+
+      /** หลังอนุมัติเอกสารฝั่งซื้อ (PV/PI/Expense) ที่มีบรรทัดลงผัง PPE →
+       *  ระบบ auto-register สินทรัพย์ตั้ง NeedsReview=true. ดึง list มา check:
+       *  ถ้ามีรายการใหม่ค้างอยู่ → toast เด่น + ปุ่มลัดไปทะเบียนสินทรัพย์.
+       *  ไม่ block flow แต่ทำให้ผู้ใช้รู้ตัวและตามไปยืนยันได้ (Litmus test
+       *  TFRS for NPAEs บทที่ 10: UsefulLifeYears ต้องผ่านการพิจารณา) */
+      async _maybePromptFixedAssetReview() {
+        try {
+          const api = Layout.api(); if (!api) return;
+          const r = await api.getAssetsNeedsReview();
+          const list = r?.data || [];
+          if (!list.length) return;
+          // โชว์ toast เด่นพร้อมปุ่ม "ไปยืนยัน" (custom — ไม่ block ที่ Layout.toast)
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:1000;background:#fef3c7;border:2px solid #f59e0b;border-radius:12px;padding:16px 20px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-width:420px;animation:fadeIn .2s';
+          wrap.innerHTML = `
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-size:28px">⚠️</span>
+              <div style="flex:1">
+                <div style="font-weight:700;color:#78350f;margin-bottom:4px">มีสินทรัพย์ ${list.length} รายการ รอยืนยัน</div>
+                <div style="font-size:12px;color:#92400e;margin-bottom:10px">ระบบสร้างให้อัตโนมัติจากเอกสารที่อนุมัติ — กรุณาตรวจสอบอายุการใช้งาน + วิธีคิดค่าเสื่อมก่อนเริ่มลงตารางจริง</div>
+                <div style="display:flex;gap:8px">
+                  <a href="/pages/fixed-assets.html" class="btn btn-sm btn-warning">ไปยืนยันสินทรัพย์ →</a>
+                  <button class="btn btn-sm btn-ghost" onclick="this.closest('div[style*=\\'position:fixed\\']').remove()">ภายหลัง</button>
+                </div>
+              </div>
+            </div>`;
+          document.body.appendChild(wrap);
+          // auto-dismiss 12 วินาที (เผื่อ user เห็นแล้วไม่กด แต่ไม่อยากให้ค้าง)
+          setTimeout(() => wrap.remove(), 12000);
+        } catch { /* best-effort */ }
       },
 
       _showApprovalWarnings(docId, warnings, aiHints, onConfirm) {

@@ -189,6 +189,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    12310 → สร้าง `FixedAsset` ที่ `Status = Active, NeedsReview = true` พร้อม
    suggested `UsefulLifeMonths` + depreciation method (`StraightLine` default,
    ที่ดิน → `None`)
+   - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
+     `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
+     `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
+     "ไปยืนยันสินทรัพย์" (auto-dismiss 12s)
+   - **Banner ที่หน้าทะเบียนสินทรัพย์** (`fixed-assets.html`): list สินทรัพย์
+     `NeedsReview=true` ติด badge "⚠️ รอตรวจ" + row สีเหลือง + ปุ่ม
+     "ตรวจสอบและยืนยัน" (primary) — เปิดแก้เลย
+   - **Auto-clear**: เมื่อผู้ใช้กด save ใน edit-asset modal → `Update` ปลด
+     `NeedsReview = false` อัตโนมัติ (FixedAssetService.cs Update +
+     implicit confirmation semantics — ไม่ใช่ field ใน DTO กัน client เผลอเซ็ตกลับ)
 10. **Audit log** — append-only row + hash chain (`PrevHash + RowHash SHA-256`)
 11. **Document number lock** — `IsDocumentNumberLocked = true` (กันแก้ภายหลัง)
 
@@ -237,7 +247,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   Dr 217xx / Cr รายได้ (41xxx/42xxx); ถ้า deferred → ย้าย 21913 → 21911
   พร้อม `DepositOutputVatRecognizedAt = now`
 - **Refund**: `RefundDepositAsync` → reverse + ออกใบลดหนี้ภาษีขาย
-- **Apply**: `ApplyDepositToInvoiceAsync` → offset prepayment กับใบสุดท้าย
+- **Apply**: `ApplyDepositToInvoiceAsync` (`:1389`) → ใน 1 transaction:
+  1. คำนวณ `vatPortion = deposit.VatAmount / deposit.TotalAmount`
+  2. เรียก `RealizeDepositAsync` ด้วยฐานไม่รวม VAT (`amount × (1−vatPortion)`)
+     → Dr 217xx ขายรอรับรู้ / Cr รายได้ + (ถ้า deferred) ย้าย 21913→21911
+  3. ลด `invoice.BalanceDue` ตามยอด `amount` (gross — มัดจำจ่ายเงินจริงแล้ว
+     ถือเป็น prepayment)
+  4. ถ้า BalanceDue ≤ 0.005 → ตั้ง `Status = Paid`
+  5. mark `deposit.DepositAppliedToDocumentId = invoiceId` (1 ใบมัดจำ → 1 ใบ
+     ปลายทาง; ถ้า apply หลายใบต้องเรียกหลายครั้ง)
+  6. Fire webhook `deposit.applied`
+- **UX**: ตอนผู้ใช้เลือก contact ในฟอร์ม Invoice/TaxInvoice/Receipt/Quotation/
+  BillingNote → `onContactChange` เรียก `checkContactDeposits(contactId)` →
+  ถ้า `GetContactDepositSummaryAsync` คืน outstanding > 0 → โชว์ banner เขียว
+  "ลูกค้านี้มีมัดจำคงค้าง XXX" + ปุ่ม "หักมัดจำจากใบนี้" (เฉพาะ
+  `editingId != null` — ต้องบันทึกใบก่อนถึงจะ apply ได้) → เปิด picker modal
+  เลือกใบมัดจำ + ยอด → `applyDeposit` endpoint
 
 ---
 
@@ -462,7 +487,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-22 — รอบ 2 หลัง audit (รวม fix_
-_ConvertableTypesMap, ApplyStockMovementsAsync switch, AiFeatureKey enum)._
+_Last verified against codebase: 2026-06-22 — รอบ 3 (เพิ่ม UX force-review_
+_fixed asset หลังอนุมัติ PV/PI/Expense + UX apply deposit จาก TaxInvoice/Invoice)._
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

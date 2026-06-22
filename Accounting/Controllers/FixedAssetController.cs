@@ -34,6 +34,19 @@ public class FixedAssetController : ControllerBase
         return Ok(new ApiResponse<FixedAssetResponse>(true, result));
     }
 
+    /// <summary>สินทรัพย์ที่ระบบสร้างอัตโนมัติจาก PV/PI ที่ผู้ใช้ยังไม่ได้
+    /// "ยืนยัน" (NeedsReview=true) — บังคับเติมอายุการใช้งาน + วิธีคิดค่าเสื่อม
+    /// + รายละเอียดอื่นก่อนถึงจะลงตารางคิดค่าเสื่อมจริง (กฎเหล็ก #2 §65 ตรี
+    /// + TFRS for NPAEs บทที่ 10 ที่ระบุ UsefulLifeYears ต้องผ่านการพิจารณา).
+    /// คืน list สั้น + จำนวน — UI โชว์ป้าย badge ที่ sidebar + banner ใน
+    /// หน้ารายการสินทรัพย์.</summary>
+    [HttpGet("needs-review")]
+    public async Task<ActionResult<ApiResponse<List<FixedAssetResponse>>>> GetNeedsReview(Guid companyId)
+    {
+        var result = await _assetService.GetNeedsReviewAsync(companyId);
+        return Ok(new ApiResponse<List<FixedAssetResponse>>(true, result));
+    }
+
     [HttpPost]
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Create(
         Guid companyId, [FromBody] CreateFixedAssetRequest request)
