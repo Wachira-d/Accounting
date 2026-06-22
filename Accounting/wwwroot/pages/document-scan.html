@@ -1937,6 +1937,7 @@
                   <option value="ค่าเดินทาง" ${scan.expenseCategory === 'ค่าเดินทาง' ? 'selected' : ''}>ค่าเดินทาง</option>
                   <option value="ค่าที่ปรึกษา" ${scan.expenseCategory === 'ค่าที่ปรึกษา' ? 'selected' : ''}>ค่าที่ปรึกษา</option>
                   <option value="ค่าประกัน" ${scan.expenseCategory === 'ค่าประกัน' ? 'selected' : ''}>ค่าประกัน</option>
+                  <option value="สินทรัพย์ถาวร" ${scan.expenseCategory === 'สินทรัพย์ถาวร' ? 'selected' : ''}>สินทรัพย์ถาวร (อุปกรณ์/คอม/รถ/...)</option>
                   <option value="อื่นๆ" ${scan.expenseCategory === 'อื่นๆ' ? 'selected' : ''}>อื่นๆ</option>
                 </select>
               </div>
@@ -2318,6 +2319,9 @@
           'ค่าเดินทาง': '5401',
           'ค่าที่ปรึกษา': '5502',
           'ค่าประกัน': '5800',
+          // "สินทรัพย์ถาวร" — มีหลายผัง (12210/12220/12240/...) ไม่บังคับ
+          // เปลี่ยน debit account; ปล่อยให้ผู้ใช้/AI suggestion เลือกที่ถูกประเภท
+          'สินทรัพย์ถาวร': null,
           'อื่นๆ': '5901',
         };
         return map[category] || null;
@@ -2335,6 +2339,10 @@
       //      ค่าซ่อมแซม via the keyword "ซ่อม".
       _mapAccountCodeToCategory(code) {
         if (!code) return null;
+        // ⭐ Fixed Asset (12xxx) — เครื่องปริ้นท์/คอม/รถ/... ลงผังสินทรัพย์ถาวร
+        // ตรวจก่อนหา expense keyword (กัน "อุปกรณ์สำนักงาน" 12210 หลุดไปลง
+        // "ค่าวัสดุสำนักงาน" ผ่าน substring "สำนักงาน")
+        if (/^12\d{3}/.test(code) || /^123\d{2}/.test(code)) return 'สินทรัพย์ถาวร';
         const acct = (this._allAccounts || []).find(a => a.accountCode === code);
         const name = acct?.accountName || '';
         // Keyword match has higher precision than prefix (custom CoA),
@@ -2342,6 +2350,12 @@
         // avoid "ค่าซ่อมรถยนต์" also matching "ค่าเดินทาง" through
         // the "รถ" substring.
         const keywordMap = [
+          // Fixed Asset keywords (ตรวจก่อน expense — กัน "อุปกรณ์สำนักงาน"
+          // ตกลง "ค่าวัสดุสำนักงาน" ผ่าน substring "สำนักงาน")
+          { kw: ['อุปกรณ์', 'เครื่องใช้', 'คอมพิวเตอร์', 'ยานพาหนะ', 'เครื่องจักร',
+                 'เครื่องตกแต่ง', 'อาคาร', 'ที่ดิน', 'ซอฟต์แวร์',
+                 'equipment', 'computer', 'vehicle', 'machinery', 'building',
+                 'land', 'software', 'furniture', 'fixture'], cat: 'สินทรัพย์ถาวร' },
           { kw: ['ซ่อม', 'บำรุงรักษา', 'repair'], cat: 'ค่าซ่อมแซม' },
           { kw: ['ขนส่ง', 'จัดส่ง', 'shipping', 'delivery', 'freight'], cat: 'ค่าขนส่ง' },
           { kw: ['โฆษณา', 'การตลาด', 'ad', 'marketing'], cat: 'ค่าโฆษณา' },
