@@ -63,6 +63,41 @@
     @media (min-width: 769px) {
       .line-card .lc-fields { grid-template-columns: 0.8fr 0.7fr 1.1fr 0.8fr 0.8fr 0.6fr; }
     }
+
+    /* ===== Document form — sectioned layout ===== */
+    #formModal .modal { max-width: 960px; }
+    /* sticky footer so ยกเลิก/บันทึก อยู่ติดมือเสมอ ไม่ต้องเลื่อนหา */
+    #formModal .modal-footer {
+      position: sticky; bottom: 0; background: #fff; z-index: 5;
+      box-shadow: 0 -4px 12px -8px rgba(0,0,0,.25);
+    }
+    /* section divider — หัวข้อโซน แบ่งฟอร์มเป็นสัดส่วนชัดเจน (standalone,
+       ไม่ wrap div เพื่อไม่กระทบ logic แสดง/ซ่อน field ตามประเภทเอกสาร) */
+    .doc-section-head {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 14px; font-weight: 700; color: var(--gray-800);
+      margin: 22px 0 14px; padding-bottom: 9px;
+      border-bottom: 2px solid var(--gray-100);
+    }
+    .doc-section-head:first-child { margin-top: 2px; }
+    .doc-section-head .dsh-icon {
+      width: 26px; height: 26px; border-radius: 7px; flex: 0 0 26px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--primary); color: #fff; font-size: 14px;
+    }
+    .doc-section-head .dsh-sub {
+      font-weight: 400; font-size: 11px; color: var(--gray-500); margin-left: auto;
+    }
+    /* uniform callout (PV / CN / cert / deposit / tax-point) — คงสีบ่งบอก
+       ความหมาย แต่ padding/มุม/ฟอนต์ เท่ากัน ดูเป็นระบบเดียวกัน */
+    .doc-callout { border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; }
+    /* form grid spacing พอดี — ไม่อึดอัด ไม่ห่างเกิน */
+    #formModal .form-row { gap: 14px; margin-bottom: 2px; }
+    #formModal .form-group { margin-bottom: 12px; }
+    @media (max-width: 640px) {
+      #formModal .form-row { grid-template-columns: 1fr; }
+      .doc-section { padding: 14px 14px 2px; }
+    }
   </style>
 </head>
 <body>
@@ -157,6 +192,7 @@
           <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
         </div>
         <div class="modal-body">
+          <div class="doc-section-head"><span class="dsh-icon">🧾</span> ข้อมูลเอกสาร &amp; คู่ค้า</div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
               <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
@@ -214,6 +250,8 @@
               <input type="text" class="form-input" id="fBookingNumber" placeholder="เช่น BK-2026-001, RSV-12345">
             </div>
           </div>
+          <div class="doc-section-head"><span class="dsh-icon">💰</span> การเงิน · บัญชี · ภาษี
+            <span class="dsh-sub">ช่องทางเงิน · ผังบัญชี · VAT/ภาษีซื้อ-ขาย</span></div>
           <!-- Tax Point §78/§78/1 — จุดความรับผิด VAT. แสดงเฉพาะเอกสารที่มี VAT
                (ขาย/ซื้อ). ถ้าระบุ ระบบใช้ MIN กับวันรับเงิน/ออกใบ คำนวณ tax point
                → ภ.พ.30 เข้าเดือนที่ถูกต้องตามกฎหมาย. ปล่อยว่าง = ใช้วันที่เอกสาร. -->
@@ -386,30 +424,6 @@
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
             </div>
           </div>
-          <div class="form-row">
-            <div class="form-group" style="flex:1">
-              <label class="form-label" data-i18n="common.note">หมายเหตุ
-                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
-              </label>
-              <input type="text" class="form-input" id="fNotes">
-            </div>
-          </div>
-
-          <!-- File attachments — queued at create time, flushed via the
-               attachments API once the document id is known. Operators
-               were previously forced to save the doc first, reopen it,
-               then go to the detail modal to attach evidence. -->
-          <div class="form-row">
-            <div class="form-group" style="flex:1">
-              <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
-              <input type="file" class="form-input" id="fAttachments" multiple
-                     accept="image/*,application/pdf"
-                     onchange="Page.onAttachmentsPicked(this)"
-                     style="padding:6px">
-              <div id="fAttachmentsPreview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
-              <div style="font-size:11px;color:#64748b;margin-top:4px">เลือกได้หลายไฟล์ — อัปโหลดจะทำตอนกดบันทึก (สูงสุด 25 MB/ไฟล์)</div>
-            </div>
-          </div>
 
           <!-- Cash-sale shortcut: ขายเงินสด + บริการ ตามประมวลรัษฎากร §78/1
                ต้องออกใบกำกับภาษีตอนได้รับเงิน — flow default ของระบบ
@@ -521,9 +535,11 @@
             </div>
           </details>
 
-          <div style="margin-top:16px">
+          <div class="doc-section-head"><span class="dsh-icon">📦</span> รายการสินค้า / บริการ
+            <span class="dsh-sub">พิมพ์รายละเอียดเพื่อค้นหาสินค้า · ราคา/VAT เติมอัตโนมัติ</span></div>
+          <div style="margin-top:4px">
             <div class="flex items-center justify-between" style="margin-bottom:8px;gap:12px;flex-wrap:wrap">
-              <label class="form-label" style="margin:0">รายการสินค้า/บริการ</label>
+              <label class="form-label" style="margin:0;font-weight:600">เพิ่มรายการ</label>
               <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569;cursor:pointer;user-select:none">
                   <input type="checkbox" id="fStrictProducts" checked style="margin:0">
@@ -590,12 +606,38 @@
             </div>
           </div>
 
-          <div style="margin-top:16px;text-align:right">
-            <div class="text-sm">ยอดรวมก่อน VAT: <strong id="sumSubTotal">0.00</strong></div>
-            <div class="text-sm">VAT: <strong id="sumVat">0.00</strong></div>
-            <div class="text-sm">หัก ณ ที่จ่าย: <strong id="sumWht">0.00</strong></div>
-            <div class="text-lg font-bold" style="margin-top:4px">ยอดสุทธิ: <span id="sumTotal">0.00</span></div>
-            <div id="sumTotalWords" style="font-size:11px;color:#6b7280;margin-top:2px;font-style:italic"></div>
+          <div style="margin-top:16px;display:flex;justify-content:flex-end">
+            <div style="min-width:280px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px;text-align:right">
+              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal">0.00</strong></div>
+              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">VAT</span><strong id="sumVat">0.00</strong></div>
+              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht">0.00</strong></div>
+              <div class="font-bold" style="display:flex;justify-content:space-between;gap:24px;margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-200);font-size:18px;color:var(--primary)"><span>ยอดสุทธิ</span><span id="sumTotal">0.00</span></div>
+              <div id="sumTotalWords" style="font-size:11px;color:#6b7280;margin-top:4px;font-style:italic"></div>
+            </div>
+          </div>
+
+          <!-- ── โซน 4: รายละเอียดเพิ่มเติม (หมายเหตุ + ไฟล์แนบ) — ย้ายมาท้าย
+               หลังยอดรวม เพื่อ flow: ข้อมูล → การเงิน → รายการ → ยอด → เพิ่มเติม ── -->
+          <div class="doc-section-head"><span class="dsh-icon">📝</span> รายละเอียดเพิ่มเติม
+            <span class="dsh-sub">หมายเหตุ · ไฟล์แนบ (ไม่บังคับ)</span></div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label" data-i18n="common.note">หมายเหตุ
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
+              </label>
+              <input type="text" class="form-input" id="fNotes">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
+              <input type="file" class="form-input" id="fAttachments" multiple
+                     accept="image/*,application/pdf"
+                     onchange="Page.onAttachmentsPicked(this)"
+                     style="padding:6px">
+              <div id="fAttachmentsPreview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
+              <div style="font-size:11px;color:#64748b;margin-top:4px">เลือกได้หลายไฟล์ — อัปโหลดจะทำตอนกดบันทึก (สูงสุด 25 MB/ไฟล์)</div>
+            </div>
           </div>
 
           <!-- Send via email (visible only if email configured) -->
