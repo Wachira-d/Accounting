@@ -139,6 +139,18 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .form-error { font-size: 13px; color: var(--danger); margin-top: 4px; }
 .form-hint { font-size: 13px; color: var(--gray-500); margin-top: 4px; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+/* ===== Form-row layout variants — สำหรับฟิลด์ขนาดไม่เท่ากัน =====
+   ใช้แทน inline flex:N เมื่อแถวมีฟิลด์สั้น (รหัสสาขา 5 หลัก, จำนวนวัน 3 หลัก,
+   วันที่, อัตราภาษี) คู่กับฟิลด์ยาว (description, address) — กันช่องสั้น
+   ยืดเต็มแถวเปลืองพื้นที่. ทุก variant ตกเป็น single column บนมือถือ. */
+.form-row-3      { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }   /* 3 ฟิลด์ขนาดเท่ากัน (วันที่ 3 ตัว) */
+.form-row-2-1    { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }       /* ฟิลด์ยาว + ฟิลด์สั้น (ชื่อ + วันที่) */
+.form-row-1-2    { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }       /* ฟิลด์สั้น + ฟิลด์ยาว */
+.form-row-3-1    { display: grid; grid-template-columns: 3fr 1fr; gap: 16px; }       /* ฟิลด์ยาว + numeric สั้น */
+.form-row-auto-1 { display: grid; grid-template-columns: minmax(180px, max-content) 1fr; gap: 16px; }   /* booking/code + remaining */
+/* ฟิลด์เดี่ยวที่ไม่อยากกินเต็มแถว (เช่น booking 15 อักษร, branch 5 หลัก) */
+.fg-narrow { max-width: 240px; }
+.fg-mid    { max-width: 360px; }
 .form-checkbox { display: flex; align-items: center; gap: 8px; }
 .form-checkbox input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); }
 

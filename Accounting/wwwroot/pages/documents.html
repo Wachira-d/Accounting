@@ -74,28 +74,42 @@
     /* section divider — หัวข้อโซน แบ่งฟอร์มเป็นสัดส่วนชัดเจน (standalone,
        ไม่ wrap div เพื่อไม่กระทบ logic แสดง/ซ่อน field ตามประเภทเอกสาร) */
     .doc-section-head {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 14px; font-weight: 700; color: var(--gray-800);
-      margin: 22px 0 14px; padding-bottom: 9px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 15px; font-weight: 700; color: var(--gray-800);
+      margin: 28px 0 16px; padding-bottom: 10px;
       border-bottom: 2px solid var(--gray-100);
     }
-    .doc-section-head:first-child { margin-top: 2px; }
+    .doc-section-head:first-child { margin-top: 4px; }
     .doc-section-head .dsh-icon {
-      width: 26px; height: 26px; border-radius: 7px; flex: 0 0 26px;
+      width: 30px; height: 30px; border-radius: 8px; flex: 0 0 30px;
       display: inline-flex; align-items: center; justify-content: center;
-      background: var(--primary); color: #fff; font-size: 14px;
+      background: var(--primary); color: #fff; font-size: 15px;
     }
     .doc-section-head .dsh-sub {
-      font-weight: 400; font-size: 11px; color: var(--gray-500); margin-left: auto;
+      font-weight: 400; font-size: 12px; color: var(--gray-500); margin-left: auto;
     }
     /* uniform callout (PV / CN / cert / deposit / tax-point) — คงสีบ่งบอก
        ความหมาย แต่ padding/มุม/ฟอนต์ เท่ากัน ดูเป็นระบบเดียวกัน */
     .doc-callout { border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; }
-    /* form grid spacing พอดี — ไม่อึดอัด ไม่ห่างเกิน */
-    #formModal .form-row { gap: 14px; margin-bottom: 2px; }
-    #formModal .form-group { margin-bottom: 12px; }
+    /* form grid spacing — rhythm สม่ำเสมอ. แทน 2px เดิมที่ทำให้แถวติดกัน
+       ใช้ 14px ทั้ง gap (ระหว่าง field ในแถว) + margin-bottom (ระหว่างแถว) →
+       proportion สมมาตร อ่านง่าย ไม่อัดแน่น */
+    #formModal .form-row,
+    #formModal .form-row-3,
+    #formModal .form-row-2-1,
+    #formModal .form-row-1-2,
+    #formModal .form-row-3-1,
+    #formModal .form-row-auto-1 { gap: 14px; margin-bottom: 14px; }
+    #formModal .form-group { margin-bottom: 0; }   /* row คุม spacing แทน */
+    /* Stack form-row variants ทุกตัวเป็นคอลัมน์เดียวบนมือถือ */
     @media (max-width: 640px) {
-      #formModal .form-row { grid-template-columns: 1fr; }
+      #formModal .form-row,
+      #formModal .form-row-3,
+      #formModal .form-row-2-1,
+      #formModal .form-row-1-2,
+      #formModal .form-row-3-1,
+      #formModal .form-row-auto-1 { grid-template-columns: 1fr; }
+      #formModal .fg-narrow, #formModal .fg-mid { max-width: none; }
       .doc-section { padding: 14px 14px 2px; }
     }
 
@@ -194,8 +208,10 @@
     <div id="pagination"></div>
 
     <!-- Create Modal -->
+    <!-- Modal กว้าง 960px กำหนดใน CSS (#formModal .modal) — เอา inline style ออก
+         เดิม 900px ถูก override ทำให้ค่าตายอยู่ในโค้ดเปล่า ๆ -->
     <div class="modal-overlay" id="formModal">
-      <div class="modal" style="max-width:900px">
+      <div class="modal">
         <div class="modal-header">
           <h3 class="modal-title">สร้างเอกสาร</h3>
           <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
@@ -257,10 +273,11 @@
           </div>
           <!-- เลขจอง (Booking) — ผูกเอกสารหลายใบเข้าด้วยกัน (มัดจำ→ใบสุดท้าย→ใบเสร็จ).
                PMS โรงแรม / POS ร้าน / CRM ส่ง booking key มา; ระบบ index ไว้
-               สำหรับ query รวมเอกสาร. -->
+               สำหรับ query รวมเอกสาร. ใช้ .fg-mid จำกัดความกว้าง 360px —
+               booking key ปกติ 10-15 อักษร, ไม่ต้องยืดเต็มแถว -->
           <div class="form-row">
-            <div class="form-group" style="width:100%">
-              <label class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:#6b7280;font-size:11px">— optional</span></label>
+            <div class="form-group fg-mid">
+              <label class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:var(--gray-500);font-size:11px">— optional</span></label>
               <input type="text" class="form-input" id="fBookingNumber" placeholder="เช่น BK-2026-001, RSV-12345" onchange="Page.onBookingNumberChange()" onblur="Page.onBookingNumberChange()">
             </div>
           </div>
@@ -271,7 +288,8 @@
                → ภ.พ.30 เข้าเดือนที่ถูกต้องตามกฎหมาย. ปล่อยว่าง = ใช้วันที่เอกสาร. -->
           <details id="taxPointSection" style="display:none;margin-bottom:12px;background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:8px 12px">
             <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#854d0e">📅 จุดความรับผิด VAT (Tax Point §78) — ปล่อยว่างได้ ระบบใช้วันที่เอกสาร</summary>
-            <div class="form-row" style="margin-top:8px">
+            <!-- 3 date fields → ใช้ .form-row-3 (เดิม form-row=2col ทำให้ field ที่ 3 ตก row) -->
+            <div class="form-row-3" style="margin-top:8px">
               <div class="form-group"><label class="form-label" data-help="วันส่งมอบสินค้า — §78 ขายสินค้า: tax point = วันแรกสุดของ ส่งมอบ/โอนกรรมสิทธิ์/รับเงิน/ออกใบ">วันส่งมอบสินค้า</label><input type="date" class="form-input" id="fDeliveryDate"></div>
               <div class="form-group"><label class="form-label" data-help="วันโอนกรรมสิทธิ์ (ถ้าต่างจากส่งมอบ)">วันโอนกรรมสิทธิ์</label><input type="date" class="form-input" id="fOwnershipTransferDate"></div>
               <div class="form-group"><label class="form-label" data-help="วันที่ใช้บริการ/บริการเสร็จ — §78/1 บริการ: tax point = วันแรกสุดของ รับเงิน/ออกใบ/ใช้บริการ">วันใช้บริการ</label><input type="date" class="form-input" id="fServiceUsedDate"></div>
@@ -321,19 +339,19 @@
                  (2) กรอกเอง (กรณีใบกระดาษไม่มีในระบบ)
                flag HasTaxInvoiceReference ส่งกลับ backend; SupplierBranchCode
                snapshot ตอนออกใบกัน Contact.BranchCode ถูกแก้ภายหลัง. -->
-          <div class="form-row payment-voucher-only" style="display:none">
-            <div class="form-group" style="width:100%">
+          <!-- Master switch — เต็มแถวจริง ๆ (เดิมใช้ form-row 2-col แล้ว
+               เซ็ต width:100% ทำให้ col 2 เปล่าเสียพื้นที่. ใช้ div ตรงๆ) -->
+          <div class="payment-voucher-only form-group" style="display:none;width:100%">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:14px">
                 <input type="checkbox" id="fHasTaxInvoiceRef" onchange="Page.onTaxInvoiceRefToggle()" style="width:18px;height:18px">
                 <span style="font-weight:600;color:#0369a1">📋 มีใบกำกับภาษีซื้อ — ขอเครดิตภาษีซื้อ (ภ.พ.30)</span>
-                <span style="margin-left:auto;font-size:11px;color:#64748b">RD §86/4 + §86/14</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--gray-500)">RD §86/4 + §86/14</span>
               </label>
-              <div style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.5">
+              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.5">
                 เปิด = บันทึกข้อมูลใบกำกับของผู้ขาย + ภาษีซื้อขึ้น ภ.พ.30 ·
                 ทุกบรรทัด <b>เคลม VAT อัตโนมัติ</b> — ติ๊กออกเฉพาะบรรทัดที่กฎหมายห้าม
                 (ค่ารับรอง / น้ำมันรถยนต์นั่ง §82/5) ที่คอลัมน์ "เคลม VAT" ในรายการ
               </div>
-            </div>
           </div>
           <div id="taxInvoiceRefSection" class="payment-voucher-only" style="display:none">
             <div style="background:#fefce8;border:1px solid #fde047;border-left:4px solid #ca8a04;border-radius:10px;padding:14px 16px;margin-bottom:10px">
@@ -366,29 +384,33 @@
               </div>
 
               <!-- ข้อมูลตามกฎสรรพากร — กรอกได้/แก้ได้/auto-fill -->
-              <div class="form-row">
+              <!-- เลขใบ (ยาว) + วันที่ (สั้น) → 2:1 -->
+              <div class="form-row-2-1">
                 <div class="form-group">
-                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span class="req">*</span></label>
                   <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" placeholder="เช่น INV-2026-0042">
                 </div>
                 <div class="form-group">
-                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span class="req">*</span></label>
                   <input type="date" class="form-input" id="fSupplierTaxInvoiceDatePV">
                 </div>
               </div>
-              <div class="form-row">
+              <!-- TaxId (13 digit) + Branch (5 digit) → 2:1 (TaxId ยาวกว่า) -->
+              <div class="form-row-2-1">
                 <div class="form-group">
                   <label class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
-                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:#f1f5f9" placeholder="ดึงจาก contact">
+                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:var(--gray-100)" placeholder="ดึงจาก contact">
                 </div>
                 <div class="form-group">
-                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span style="color:#dc2626">*</span></label>
+                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span class="req">*</span></label>
                   <input type="text" class="form-input" id="fSupplierBranchCode" placeholder="00000" maxlength="5" pattern="\d{5}">
                 </div>
               </div>
-              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:#475569;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
+              <!-- 2-col grid (info ซ้าย + preview ขวา) แทน flex space-between ที่
+                   ทำให้ preview กระเด็นไปไกลบนจอกว้าง + wrap แล้วเว้น gap แปลก -->
+              <div style="background:#fff;border:1px solid var(--gray-200);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:var(--gray-600);display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center">
                 <span>💡 <b>ฐานภาษี + VAT</b> ดึงจากยอดใบ (subtotal + vat) อัตโนมัติ — ตรวจให้ตรงใบกำกับจริง</span>
-                <span id="taxInvVatPreview" style="font-weight:600;color:#0f172a"></span>
+                <span id="taxInvVatPreview" style="font-weight:600;color:var(--gray-800)"></span>
               </div>
               <!-- Live completeness warning — เคลม VAT ต้องมีใบกำกับครบ §86/4 -->
               <div id="taxInvIncompleteWarn" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b">
@@ -423,7 +445,8 @@
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
           </div>
-          <div class="form-row supplier-invoice-only" style="display:none">
+          <!-- วันเครดิต (3 digit) + เทอม (free text) → 1:2 ratio -->
+          <div class="form-row-1-2 supplier-invoice-only" style="display:none">
             <div class="form-group">
               <label class="form-label" data-help="จำนวนวันเครดิตที่ตกลง — ถ้ากรอกแต่ไม่ใส่ 'วันครบกำหนด' ระบบจะคำนวณให้อัตโนมัติ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
               <input type="number" class="form-input" id="fCreditDays" min="0" max="365" placeholder="เช่น 30">
@@ -520,8 +543,9 @@
           <!-- CertificateInLieu-specific fields -->
           <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
             <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
-            <div class="form-row">
-              <div class="form-group" style="flex:2"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ *</label>
+            <!-- เหตุผล (ยาว) + วันที่ (สั้น) → 2-1 ratio แทน flex:2 inline -->
+            <div class="form-row-2-1">
+              <div class="form-group"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ <span class="req">*</span></label>
                 <input type="text" class="form-input" id="fCertReason" placeholder="เช่น ผู้ขายไม่สามารถออกใบเสร็จได้ / จ่ายค่าเดินทางให้บุคคลภายนอก">
               </div>
               <div class="form-group"><label class="form-label">วันที่จ่ายเงิน</label>
@@ -529,7 +553,7 @@
               </div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง *</label>
+              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง <span class="req">*</span></label>
                 <input type="text" class="form-input" id="fCertifierName" placeholder="ชื่อ-นามสกุล">
               </div>
               <div class="form-group"><label class="form-label">ตำแหน่งผู้รับรอง</label>
@@ -629,19 +653,26 @@
             <datalist id="coaList"></datalist>
             <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
               <div id="linesBody"></div>
-              <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:8px">
+              <div id="linesHint" style="font-size:11px;color:var(--gray-500);margin-top:8px">
                 💡 พิมพ์ในช่อง "รายละเอียด" อย่างน้อย 2 ตัวอักษรเพื่อค้นหาสินค้า/บริการ — ราคาและ VAT จะถูกเติมให้อัตโนมัติ
               </div>
             </div>
           </div>
 
+          <!-- ยอดสรุป — ฝั่งขวา, 320px (ขึ้นจาก 280px) ให้พื้นที่ตัวเลขยาวพอ.
+               แต่ละแถวใช้ grid 2-col แทน space-between ทำให้ label/value
+               aligned ตรงกันเป๊ะทุกแถว ไม่ปริ้นออกไปทางขวาแบบไม่สมดุล -->
           <div style="margin-top:16px;display:flex;justify-content:flex-end">
-            <div style="min-width:280px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px;text-align:right">
-              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal">0.00</strong></div>
-              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">VAT</span><strong id="sumVat">0.00</strong></div>
-              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht">0.00</strong></div>
-              <div class="font-bold" style="display:flex;justify-content:space-between;gap:24px;margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-200);font-size:18px;color:var(--primary)"><span>ยอดสุทธิ</span><span id="sumTotal">0.00</span></div>
-              <div id="sumTotalWords" style="font-size:11px;color:#6b7280;margin-top:4px;font-style:italic"></div>
+            <div style="width:320px;max-width:100%;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px">
+              <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:14px">
+                <span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal" style="text-align:right">0.00</strong>
+                <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
+                <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr auto;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-200);font-size:18px;font-weight:700;color:var(--primary)">
+                <span>ยอดสุทธิ</span><span id="sumTotal" style="text-align:right">0.00</span>
+              </div>
+              <div id="sumTotalWords" style="font-size:11px;color:var(--gray-500);margin-top:4px;font-style:italic;text-align:right"></div>
             </div>
           </div>
 
@@ -649,24 +680,22 @@
                หลังยอดรวม เพื่อ flow: ข้อมูล → การเงิน → รายการ → ยอด → เพิ่มเติม ── -->
           <div class="doc-section-head"><span class="dsh-icon">📝</span> รายละเอียดเพิ่มเติม
             <span class="dsh-sub">หมายเหตุ · ไฟล์แนบ (ไม่บังคับ)</span></div>
-          <div class="form-row">
-            <div class="form-group" style="flex:1">
-              <label class="form-label" data-i18n="common.note">หมายเหตุ
-                <button type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
-              </label>
-              <input type="text" class="form-input" id="fNotes">
-            </div>
+          <!-- ฟิลด์เดี่ยวเต็มแถว — เอา wrapper form-row ที่ unnecessary ออก,
+               ไม่ใช้ flex:1 inline (ปล่อย .form-input width:100% เป็น default) -->
+          <div class="form-group">
+            <label class="form-label" data-i18n="common.note">หมายเหตุ
+              <button type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
+            </label>
+            <input type="text" class="form-input" id="fNotes">
           </div>
-          <div class="form-row">
-            <div class="form-group" style="flex:1">
-              <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
-              <input type="file" class="form-input" id="fAttachments" multiple
-                     accept="image/*,application/pdf"
-                     onchange="Page.onAttachmentsPicked(this)"
-                     style="padding:6px">
-              <div id="fAttachmentsPreview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
-              <div style="font-size:11px;color:#64748b;margin-top:4px">เลือกได้หลายไฟล์ — อัปโหลดจะทำตอนกดบันทึก (สูงสุด 25 MB/ไฟล์)</div>
-            </div>
+          <div class="form-group">
+            <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
+            <input type="file" class="form-input" id="fAttachments" multiple
+                   accept="image/*,application/pdf"
+                   onchange="Page.onAttachmentsPicked(this)"
+                   style="padding:6px">
+            <div id="fAttachmentsPreview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
+            <div class="form-help">เลือกได้หลายไฟล์ — อัปโหลดจะทำตอนกดบันทึก (สูงสุด 25 MB/ไฟล์)</div>
           </div>
 
           <!-- Send via email (visible only if email configured) -->
@@ -677,8 +706,8 @@
             </div>
             <div id="sendEmailFields" style="display:none">
               <div class="form-row">
-                <div class="form-group" style="flex:1"><label class="form-label">ถึง <span style="color:#dc2626">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
-                <div class="form-group" style="flex:1"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
+                <div class="form-group"><label class="form-label">ถึง <span class="req">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
+                <div class="form-group"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
               </div>
               <div class="form-group">
                 <label class="form-label">หัวข้อ <span id="fEmailSubjLockBadge" style="display:none;background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">RD บังคับ</span></label>
@@ -2142,7 +2171,7 @@
           const sizeKb = Math.round(f.size / 1024);
           const isImage = f.type.startsWith('image/');
           return `<span style="display:inline-flex;align-items:center;gap:6px;background:#eef2ff;color:#3730a3;padding:4px 10px;border-radius:14px;font-size:12px">
-            ${isImage ? '🖼️' : '📄'} ${(f.name || '').slice(0, 40)} <span style="color:#94a3b8;font-size:11px">(${sizeKb} KB)</span>
+            ${isImage ? '🖼️' : '📄'} ${(f.name || '').slice(0, 40)} <span style="color:var(--gray-500);font-size:11px">(${sizeKb} KB)</span>
             <button type="button" onclick="Page._removeQueuedAttachment(${i})" style="background:none;border:none;cursor:pointer;color:#6366f1;padding:0 2px">×</button>
           </span>`;
         }).join('');
@@ -4160,7 +4189,7 @@
           if (!hint || !hint.usedAi) {
             return `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.6">
               <div>⚠️ ${Layout.esc(w)}</div>
-              ${hint ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px">🤖 AI ไม่พร้อม — ดูข้อมูลข้างต้นเท่านั้น</div>' : ''}
+              ${hint ? '<div style="font-size:11px;color:var(--gray-500);margin-top:4px">🤖 AI ไม่พร้อม — ดูข้อมูลข้างต้นเท่านั้น</div>' : ''}
             </li>`;
           }
           const badgeColor = hint.primary === 'Block' ? '#dc2626' : (hint.primary === 'Edit' ? '#d97706' : '#16a34a');
@@ -4801,11 +4830,11 @@
               <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">🔗 ลำดับเอกสารที่เกี่ยวข้อง</div>
               <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">
                 ${parentInfo ? renderDoc(parentInfo, '⬅ ต้นทาง') : ''}
-                ${parentInfo ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                ${parentInfo ? '<span style="color:var(--gray-500);margin:0 4px">→</span>' : ''}
                 <span style="padding:6px 12px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;font-size:12px;font-weight:600;color:#1e40af;margin:2px">
                   📄 (เอกสารนี้)
                 </span>
-                ${children.length > 0 ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                ${children.length > 0 ? '<span style="color:var(--gray-500);margin:0 4px">→</span>' : ''}
                 ${children.map(c => renderDoc(c, '➡ ปลายทาง')).join('')}
               </div>
             </div>`;
