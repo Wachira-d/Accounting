@@ -902,8 +902,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             var en = (langOverride ?? template.Language) == "en";
             sb.AppendLine("<div style='margin-top:16px;border-top:1px solid #cbd5e1;padding-top:5px;font-size:10.5px;color:#334155'>");
+            // JE EntryNumber ใช้ counter ของ JV/PV/RV ที่ต่างกับ DocumentNumber
+            // (เช่น doc PV-202606-0017 → JE PV-202606-0026 → สับสน). ใช้ doc
+            // number เป็น reference แทน + แสดง JE no เฉพาะ entry ที่ persist จริง
+            var refLabel = gl.EntryNumber.StartsWith("(") ? gl.EntryNumber   // projected — "(ประมาณการ — ก่อนอนุมัติ)"
+                : $"{(en ? "ref" : "อ้างอิง")} {WebUtility.HtmlEncode(doc.DocumentNumber)} · {(en ? "JE" : "เลขที่ JE")} {WebUtility.HtmlEncode(gl.EntryNumber)}";
             sb.AppendLine($"<span style='font-weight:700;color:#64748b'>{(en ? "Posting" : "การบันทึกบัญชี")}</span> " +
-                $"<span style='color:#94a3b8'>{WebUtility.HtmlEncode(gl.EntryNumber)} · {gl.EntryDate:dd/MM/yy}</span>");
+                $"<span style='color:#94a3b8'>{refLabel} · {gl.EntryDate:dd/MM/yy}</span>");
             foreach (var l in gl.Lines)
             {
                 var isDr = l.Debit != 0;
@@ -1368,16 +1373,19 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             .watermark {{ position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 90px; color: rgba(0,0,0,{t.WatermarkOpacity}); z-index: -1; white-space: nowrap; }}
             .watermark-void {{ color: rgba(220,38,38,0.20); font-weight: 800; font-size: 120px; letter-spacing: 10px; z-index: 999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 
-            /* Header: logo left, company details fill remaining width */
-            .header {{ display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:12px;border-radius:6px;" : "")} }}
-            .logo {{ flex: 0 0 auto; object-fit: contain; }}
+            /* Header: logo left, company details fill remaining width.
+               ลดขนาดให้กระชับขึ้น (เดิม header bar ใหญ่กิน 1/4 หน้า). cap
+               logo สูงสุดที่ 22mm กันรูปยักษ์ขยายเต็มซ้าย */
+            .header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 10px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:8px 10px;border-radius:5px;" : "")} }}
+            .logo {{ flex: 0 0 auto; object-fit: contain; max-width: 22mm !important; max-height: 22mm !important; }}
             .company-info {{ flex: 1 1 auto; }}
-            .company-info > div {{ margin: 1px 0; }}
-            .company-name {{ font-size: 20px; font-weight: 700; color: {t.AccentColor}; line-height: 1.2; }}
-            .company-name-en {{ font-size: 15px; color: #666; }}
+            .company-info > div {{ margin: 0; line-height: 1.25; }}
+            .company-name {{ font-size: 16px; font-weight: 700; color: {t.AccentColor}; line-height: 1.15; }}
+            .company-name-en {{ font-size: 12px; color: #666; }}
 
-            /* Title + doc meta */
-            .doc-title {{ text-align: center; font-size: {t.TitleFontSize}px; font-weight: 700; color: {t.AccentColor}; margin: 16px 0 12px; border-bottom: 2px solid {t.AccentColor}; padding-bottom: 6px; }}
+            /* Title + doc meta — cap ที่ 22px เพื่อกันชื่อยักษ์ (template เก่า
+               อาจตั้ง TitleFontSize 30+ ผ่าน wizard) */
+            .doc-title {{ text-align: center; font-size: min({t.TitleFontSize}px, 22px); font-weight: 700; color: {t.AccentColor}; margin: 10px 0 8px; border-bottom: 1.5px solid {t.AccentColor}; padding-bottom: 4px; letter-spacing: 0.5px; }}
             .doc-info {{ display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 14px; }}
             .doc-info > div {{ white-space: nowrap; }}
 

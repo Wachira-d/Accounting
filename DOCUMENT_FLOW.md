@@ -186,9 +186,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      `CreditNote.Discount/Adjustment/Writeoff`
 9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
    บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
-   12310 → สร้าง `FixedAsset` ที่ `Status = Active, NeedsReview = true` พร้อม
-   suggested `UsefulLifeMonths` + depreciation method (`StraightLine` default,
-   ที่ดิน → `None`)
+   12310 → **group ตาม AccountId** → 1 group = 1 `FixedAsset` (TFRS for NPAEs
+   บทที่ 10: ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม/setup ฯลฯ = ต้นทุนที่ทำ
+   ให้พร้อมใช้ — รวมเป็น cost ของ asset หลัก ไม่แยก asset)
+   - main line = บรรทัดแรกใน group ที่ description ไม่ใช่ auxiliary keyword
+   - cost = sum ของทุก line ใน group (รวม aux)
+   - asset Description log auxiliary breakdown ไว้ audit trail
+   - `Status = Active, NeedsReview = true` พร้อม suggested `UsefulLifeMonths`
+     + depreciation method (`StraightLine` default, ที่ดิน → `None`)
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
