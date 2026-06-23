@@ -138,6 +138,11 @@ public class FxRevaluationService : IFxRevaluationService
                 Direction = (d.DocumentType == DocumentType.PurchaseInvoice
                              || d.DocumentType == DocumentType.Expense) ? "AP" : "AR",
             });
+
+        // NOTE: Bank/Cash FCY revaluation = future work — ต้องเก็บ booked rate
+        // ต่อ movement (BankTransaction.ExchangeRate snapshot) เพื่อคำนวณ
+        // carrying value ที่แท้จริง. ตอนนี้ FX reval ครอบ AR/AP ตาม TFRS NPAEs
+        // §19 ครบ — bank FCY ผู้ใช้ต้อง post adjusting JE manual
         foreach (var g in groups)
         {
             var cur = g.Key.Currency!;
