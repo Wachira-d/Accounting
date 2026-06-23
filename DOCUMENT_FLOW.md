@@ -601,9 +601,19 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-23 — รอบ 9 (CMS payment-gateway_
-_webhook receiver + POS Z/X-Report + Stock unify ผ่าน IProductService +_
-_OverdueDunningJob 3 ระดับ + Dashboard action alerts + e-Tax bulk retry +_
-_§82/3 LateReason gate + Duplicate doc detection + 11 composite indexes)._
+_Last verified against codebase: 2026-06-23 — รอบ 10 (NotificationEngine_
+_consolidate + ApprovalService migration via NotifyUserAsync +_
+_NotificationContext.RecipientUserId + PiiMask helper +_
+_FX bank reval scope note)._
+
+## รายการที่ผ่านมาเรียงตามรอบ
+
+| รอบ | Theme | Key items |
+| --- | --- | --- |
+| 6 | e-Tax XML ครบสุด | line ChargeAmount ถอด VAT, TaxBasis แก้, PDF format |
+| 7 | Multi-currency มัดจำ + audit | FX guard, hash chain weekly verifier, recurring template validate, §65 ตรี(4) YTD, §82/5(6) override |
+| 8 | Option-1 reclassify + CMS sync | line GL reclassify-JE, PV Cash auto-approve all channels, CMS ConfirmPaymentAsync 6-step, PrePayment booking IsDeposit 217xx |
+| 9 | CMS gap close + perf | payment-gateway webhook, POS Z/X-Report, Stock unify, OverdueDunningJob, Dashboard alerts, e-Tax retry, §82/3 LateReason, dup-doc detect, 11 indexes |
+| 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
