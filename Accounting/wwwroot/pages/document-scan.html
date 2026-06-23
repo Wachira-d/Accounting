@@ -3348,11 +3348,13 @@
           && !!(scan.extractedVatAmount || scan.extractedVendorTaxId);
 
         // ค่าที่ผู้ใช้/AI เลือกใน review ก่อนกดสร้าง — ดึงจาก dropdown เพื่อ
-        // round-trip กลับฟอร์ม (revExpenseCategory, revDebitAccount,
-        // revPaymentChannel ที่หน้า scan แสดง). graceful: ไม่มี → null
+        // round-trip กลับฟอร์ม. แหล่งเงิน = "บัญชีเครดิต" (revCreditAccount)
+        // ที่ผู้ใช้เลือกในหน้า review. BUGFIX: เดิมอ่าน id "revPaymentChannel"
+        // ที่ไม่มีจริง → ได้ null เสมอ → ฟอร์มตกเป็นเงินสด default แม้ผู้ใช้
+        // เลือกแหล่งเงินไว้แล้ว.
         const reviewedCategory = document.getElementById('revExpenseCategory')?.value || null;
         const reviewedDebitAcc = document.getElementById('revDebitAccount')?.value || null;
-        const reviewedPaymentCh = document.getElementById('revPaymentChannel')?.value || null;
+        const reviewedPaymentCh = document.getElementById('revCreditAccount')?.value || null;
         // AI's suggested account code (from scan.suggestedAccounts) — ใช้
         // resolve เป็น accountId ฝั่ง form ถ้า review dropdown ว่าง
         const suggestedDebitCode = scan.suggestedAccounts?.debitAccountCode || null;

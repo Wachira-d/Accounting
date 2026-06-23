@@ -417,18 +417,6 @@
                 ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
                 ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
               </div>
-              <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่
-                   เคลม VAT — ลงเป็นต้นทุน/ค่าใช้จ่ายแทน ตาม §82/5) -->
-              <details style="margin-top:10px;font-size:12px">
-                <summary style="cursor:pointer;color:#64748b;font-weight:600;user-select:none">⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชีของ VAT (กรณีไม่เคลม)</summary>
-                <div style="margin-top:8px;padding:10px 12px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px">
-                  <label class="form-label" style="font-size:12px">ผังบัญชี VAT ปลายทาง <span style="color:#6b7280;font-weight:400">(เว้นว่าง = ตามระบบ 11610 หรือ 11640 ตามความครบของใบ)</span></label>
-                  <input type="text" class="form-input" id="fInputVatAccountCodeOverride" list="coaList" placeholder="เช่น 51000 (ต้นทุนขาย) หรือ 54xxx (ค่าใช้จ่าย) — ใช้เมื่อไม่ขอเคลม VAT" style="font-size:13px">
-                  <div style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.5">
-                    เลือกผัง 5xxxx (ค่าใช้จ่าย/ต้นทุน) เมื่อต้องการ <b>รวม VAT เข้าเป็นต้นทุน</b> (ไม่เคลม ภ.พ.30) — เช่น §82/5(1) ใบไม่ครบ, §82/5(3) ค่ารับรอง
-                  </div>
-                </div>
-              </details>
             </div>
           </div>
 
@@ -455,6 +443,21 @@
               <label class="form-label" data-help="ข้อความบรรยายเทอมจ่าย ใช้พิมพ์บนเอกสาร เช่น Net 30 / 2/10 Net 30 / EOM+15">เทอมจ่าย (label)</label>
               <input type="text" class="form-input" id="fPaymentTerms" placeholder="เช่น Net 30">
             </div>
+          </div>
+          <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่เคลม VAT —
+               ลงเป็นต้นทุน/ค่าใช้จ่ายแทน ตาม §82/5). ย้ายออกจากกล่อง "ใช้งานใบ
+               กำกับภาษี/เคลม VAT" มาเป็น block อิสระระดับเอกสาร (.input-vat-only)
+               เพราะ override นี้ใช้ "ตอนไม่เคลม" จึงไม่ควรอยู่ใต้ติ๊กเคลม.
+               แสดงสำหรับเอกสารฝั่งซื้อทุกชนิดที่มี input VAT (PI/Expense/PV/CertInLieu). -->
+          <div class="input-vat-only" style="display:none;margin-bottom:14px">
+            <details style="font-size:12px">
+              <summary style="cursor:pointer;color:var(--gray-600);font-weight:600;user-select:none">⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชีปลายทางของ VAT ซื้อ (กรณีไม่เคลม)</summary>
+              <div style="margin-top:8px;padding:10px 12px;background:var(--gray-50);border:1px dashed var(--gray-300);border-radius:6px">
+                <label class="form-label" style="font-size:12px">ผังบัญชี VAT ปลายทาง <span style="color:var(--gray-500);font-weight:400">(เว้นว่าง = ตามระบบ 11610 หรือ 11640 ตามความครบของใบ)</span></label>
+                <input type="text" class="form-input fg-mid" id="fInputVatAccountCodeOverride" list="coaList" placeholder="เช่น 51000 / 54xxx" style="font-size:13px">
+                <div class="form-help">เลือกผัง 5xxxx (ค่าใช้จ่าย/ต้นทุน) เมื่อต้องการ <b>รวม VAT เข้าเป็นต้นทุน</b> (ไม่เคลม ภ.พ.30) — เช่น §82/5(1) ใบไม่ครบ, §82/5(3) ค่ารับรอง</div>
+              </div>
+            </details>
           </div>
           <div class="form-row advanced-only">
             <div class="form-group">
@@ -1207,9 +1210,28 @@
         if (payload.paymentChannelCode) {
           const fpc = document.getElementById('fPaymentChannel');
           if (fpc) {
+            const code = payload.paymentChannelCode;
             // ลอง bank:<id> ก่อน (ถ้า code ตรง bank accounts) ไม่งั้น account:<id>
-            const bank = (this.bankAccounts || []).find(b => b.accountCode === payload.paymentChannelCode);
-            const acc = !bank ? (this.paymentChannels || []).find(a => a.accountCode === payload.paymentChannelCode) : null;
+            const bank = (this.bankAccounts || []).find(b => b.accountCode === code);
+            let acc = !bank ? (this.paymentChannels || []).find(a => a.accountCode === code) : null;
+            // Fallback: code ที่ผู้ใช้เลือกใน OCR อาจเป็นบัญชีนอก dropdown
+            // (เช่น 21230 เจ้าหนี้กรรมการ — หนี้สิน ที่ไม่อยู่ใน payment channel
+            // list มาตรฐาน). ค้นจาก coaByCode (โหลดผัง Expense/Liability/Asset
+            // ครบแล้ว) → เพิ่ม option เข้า dropdown แบบ dynamic แล้วเลือก —
+            // เดิม resolve ไม่ได้เลย ค่าเลย fallback เป็นเงินสด default
+            if (!bank && !acc && this.coaByCode && this.coaByCode[code]) {
+              acc = this.coaByCode[code];
+              const optVal = `account:${acc.id}`;
+              if (![...fpc.options].some(o => o.value === optVal)) {
+                const o = document.createElement('option');
+                o.value = optVal;
+                o.textContent = `${acc.accountCode} - ${acc.accountName}`;
+                fpc.appendChild(o);
+              }
+              // ใส่เข้า cache เพื่อให้ _deriveMethodFromChannel หาเจอ
+              this.paymentChannels = this.paymentChannels || [];
+              if (!this.paymentChannels.some(p => p.id === acc.id)) this.paymentChannels.push(acc);
+            }
             const wantValue = bank ? `bank:${bank.id}` : (acc ? `account:${acc.id}` : null);
             if (wantValue && [...fpc.options].some(o => o.value === wantValue)) {
               fpc.value = wantValue;
@@ -2109,6 +2131,13 @@
         });
         if (isPV) this.onPaymentTypeChange();
         // (onPaymentTypeChange defined on Page — see below)
+        // ตัวเลือกขั้นสูง "เปลี่ยนผังบัญชี VAT กรณีไม่เคลม" — แสดงสำหรับเอกสาร
+        // ฝั่งซื้อทุกชนิดที่มี input VAT (PI/Expense/PV/CertInLieu) ไม่ผูกกับ
+        // การติ๊กเคลม VAT (override นี้ใช้ "ตอนไม่เคลม" จึงต้องเข้าถึงได้เสมอ)
+        const inputVatTypes = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'CertificateInLieu'];
+        document.querySelectorAll('.input-vat-only').forEach(el => {
+          el.style.display = inputVatTypes.includes(docType) ? '' : 'none';
+        });
         // Show/hide CertificateInLieu section
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = docType === 'CertificateInLieu' ? '' : 'none';
