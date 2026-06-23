@@ -3627,29 +3627,55 @@ public class OcrService : IOcrService
 
         if (items.Count > 0)
         {
-            // 🔧 Reconcile line amounts กับ header subtotal — เคสที่ OCR แกะ
-            // ราคาต่อหน่วยจาก "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
-            // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72).
-            // วิธีที่ "ตรงกับใบจริง + ซื่อสัตย์": ใส่เป็น "ส่วนลด %" ต่อบรรทัด —
-            // ราคา/หน่วยคงเป็นราคาเต็มตามใบ (9890), ส่วนลด 6.07%, ยอดหลังลด 9289.72.
-            // ดีกว่าการเขียนทับราคาเป็น 9289.72 ลอย ๆ (ซ่อนส่วนลดที่มีจริง).
-            // ยอด header = authoritative. เก็บ % ไว้ใส่ DocumentLine.DiscountPercent.
-            var hdrSubTotal = result.ExtractedSubTotal ?? 0m;
+            // 🔧 Reconcile line amounts — แยก 4 case (เลิกใส่ "ส่วนลด" มั่วๆ
+            // เคสจริงเคยตีค่าขนส่ง 50฿ ใน OfficeMate เป็นส่วนลด 600฿ ผิดทั้งใบ):
+            //   (A) ราคารวม VAT แล้ว (Unit Price Incl.VAT) — linesGross อยู่
+            //       ระหว่าง subtotal กับ total → ตั้ง PricesIncludeVat + ถ้ามี
+            //       ส่วนต่างเพิ่ม line "(OCR ไม่อ่าน — น่าจะเป็นค่าขนส่ง)"
+            //   (B) ราคาแยก VAT มาตรฐาน — linesGross ≈ subtotal → ไม่ทำอะไร
+            //   (C) มีส่วนลดจริง — linesGross > total → ใส่ DiscountAmount
+            //   (D) OCR ขาด — linesGross < subtotal → ไม่ทำอะไร (user แก้เอง)
+            var hdrSub   = result.ExtractedSubTotal   ?? 0m;
+            var hdrTotal = result.ExtractedTotalAmount ?? 0m;
+            var hdrVatHdr = result.ExtractedVatAmount  ?? 0m;
             var grossSum = items.Sum(x =>
                 (x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m)));
-            decimal docDiscountPercent = 0m;
-            if (hdrSubTotal > 0m && grossSum > hdrSubTotal + 1m)
+            const decimal TOL = 1m;
+            var pricesIncludeVatFlag = hdrSub > 0m && hdrTotal > 0m && grossSum > 0m
+                && grossSum > hdrSub + TOL && grossSum <= hdrTotal + TOL;
+
+            decimal docDiscountPercent = 0m;   // ใช้เฉพาะ case C
+            if (pricesIncludeVatFlag)
             {
-                // เฉพาะ gross > subtotal (มีส่วนลดจริง) — ไม่ใส่ส่วนลดติดลบกรณี
-                // OCR แกะราคาขาด (gross < subtotal)
-                docDiscountPercent = Math.Round((grossSum - hdrSubTotal) / grossSum * 100m, 2);
-                // ปรับ item.Amount เป็นยอดหลังลด → VAT proration คิดบนยอดสุทธิถูกต้อง
+                // Case A — set flag ที่ document ภายหลัง (ผ่านตัวแปร)
+                document.PricesIncludeVat = true;
+                // ถ้า linesGross < total → มี line ที่ OCR ไม่อ่าน
+                var missing = Math.Round(hdrTotal - grossSum, 2);
+                if (missing > TOL)
+                {
+                    var inferredRate = hdrSub > 0m
+                        ? Math.Round(hdrVatHdr / hdrSub * 100m, 1)
+                        : 7m;
+                    items.Add(new OcrExtractedLineItem
+                    {
+                        Description = "(OCR ไม่อ่านบรรทัดนี้ — น่าจะเป็นค่าขนส่ง/บริการอื่น ตรวจสอบใบจริง)",
+                        Quantity = 1m,
+                        UnitPrice = missing,
+                        Amount = missing,
+                    });
+                }
+            }
+            else if (grossSum > hdrTotal + TOL && hdrTotal > 0m)
+            {
+                // Case C: มีส่วนลดจริง
+                docDiscountPercent = Math.Round((grossSum - hdrTotal) / grossSum * 100m, 2);
                 foreach (var it in items)
                 {
                     var gross = it.UnitPrice.HasValue ? it.UnitPrice.Value * (it.Quantity ?? 1m) : (it.Amount ?? 0m);
                     it.Amount = Math.Round(gross * (1m - docDiscountPercent / 100m), 2);
                 }
             }
+            // Case B/D: ไม่ปรับ items
 
             // Pro-rate the header VAT across lines by amount share (the
             // paper rarely itemises VAT per line). Remainder lands on the

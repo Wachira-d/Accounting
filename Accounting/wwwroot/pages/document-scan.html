@@ -3336,49 +3336,64 @@
         // Always provide at least one row so the user has somewhere to start.
         if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
 
-        // pricesIncludeVat: ใบเสร็จไทยส่วนมากราคารวม VAT แล้ว — heuristic
-        // จาก extractedTotalAmount ≈ extractedSubTotal (subtotal เป็นยอดรวม).
-        // ประกาศก่อน reconcile block เพราะใช้เลือกฐานเทียบส่วนลด (กัน TDZ).
+        // pricesIncludeVat: ตรวจจาก math 3 ทาง (heuristic เดิมพลาดเคส "Incl.VAT
+        // บนคอลัมน์ราคา" เพราะใช้แค่ |total−subtotal|<1):
+        //   (A) ราคารวม VAT — linesGross > subtotal และ ≤ total (ห่างไม่เกิน
+        //       ยอดบรรทัดที่ OCR อาจไม่อ่าน)
+        //   (B) ราคาแยก VAT — linesGross ≈ subtotal (มาตรฐาน)
+        //   (C) มีส่วนลด — linesGross > total (เกินยอดสุทธิ)
+        //   (D) OCR แกะราคาขาด — linesGross < subtotal
+        // ประกาศก่อน reconcile (กัน TDZ).
+        const hdrSub   = Number(scan.extractedSubTotal) || 0;
+        const hdrTotal = Number(scan.extractedTotalAmount) || 0;
+        const hdrVat   = Number(scan.extractedVatAmount) || 0;
+        const _linesGross = lines.reduce((s, l) =>
+          s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1), 0);
+        const TOL = 1;   // บาท
         let pricesIncludeVat = false;
-        if (scan.extractedTotalAmount && scan.extractedSubTotal && scan.extractedVatAmount) {
-          const sumNet = scan.extractedSubTotal + scan.extractedVatAmount;
-          pricesIncludeVat = Math.abs(scan.extractedTotalAmount - scan.extractedSubTotal) < 1
-            && Math.abs(scan.extractedSubTotal - sumNet) > 1;
+        if (hdrSub > 0 && hdrTotal > 0 && _linesGross > 0
+            && _linesGross > hdrSub + TOL && _linesGross <= hdrTotal + TOL) {
+          // Case A: ราคารวม VAT — เคส OfficeMate/PEAK ที่ Unit Price = Incl.VAT
+          pricesIncludeVat = true;
         }
 
-        // 🔧 Reconcile lines กับ header subtotal — เคสที่ OCR แกะราคา
-        // ต่อหน่วยจากบรรทัด "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
-        // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72).
-        // วิธีที่ "ตรงกับใบจริง + ซื่อสัตย์": ใส่เป็น "ส่วนลด %" ต่อบรรทัด
-        // (ราคา/หน่วยคงเป็นราคาเต็มตามใบ 9890, ส่วนลด 6.07%, ยอดหลังลด 9289.72)
-        // แทนการ scale ราคาเงียบ ๆ ให้เหลือ 9289.72 ลอย ๆ ที่ผู้ใช้งง.
-        // ยอด header เป็น authoritative (มาจาก total/VAT ของใบ).
-        // เลือกฐานเทียบตาม pricesIncludeVat: ถ้าราคารวม VAT แล้ว ฐาน = ยอดรวม
-        // ทั้งสิ้น (total); ถ้ายังไม่รวม VAT ฐาน = subtotal. กัน mis-detect VAT
-        // เป็นส่วนลด (เคส pricesIncludeVat: gross รวม VAT จะมากกว่า subtotal เสมอ).
-        const discBase = pricesIncludeVat
-          ? (Number(scan.extractedTotalAmount) || 0)
-          : (Number(scan.extractedSubTotal) || 0);
-        if (discBase > 0 && lines.length > 0) {
-          const linesGross = lines.reduce((s, l) =>
-            s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1), 0);
-          // เฉพาะกรณี gross > ฐาน เกิน 1 บาท = มีส่วนลดจริง (ไม่ใช่ rounding).
-          // ถ้า gross < ฐาน (OCR แกะราคาขาด) → ไม่ใส่ส่วนลดติดลบ ปล่อยไว้
-          if (linesGross > discBase + 1) {
-            // ใส่เป็น "ยอดเงินส่วนลด" (มาตรฐานสากล + ตรงกับที่ใบระบุเป็นบาท).
-            // กระจายส่วนลดรวมตามสัดส่วน gross ของแต่ละบรรทัด, บรรทัดสุดท้าย
-            // ดูดเศษให้ผลรวมส่วนลด = (gross − ฐาน) เป๊ะ.
-            const totalDisc = Math.round((linesGross - discBase) * 100) / 100;
+        // 🔧 Reconcile: เคยใส่ "ส่วนลด" อัตโนมัติเมื่อ linesGross > subtotal
+        // เป็นการเดาที่เสี่ยง (เคสจริงเคยตีค่าขนส่งเป็นส่วนลด ผิดทั้งใบ).
+        // ตอนนี้แบ่ง 4 case ชัด ไม่ใส่ discount มั่วซั่ว:
+        if (lines.length > 0 && hdrSub > 0 && hdrTotal > 0) {
+          if (pricesIncludeVat) {
+            // Case A: ราคารวม VAT. ถ้า linesGross < total → มี line ขาด (เช่น
+            // ค่าขนส่ง 50). เพิ่ม line "OCR ไม่อ่าน — ตรวจสอบ" ยอด = ส่วนต่าง
+            // (รวม VAT แล้ว เพราะ pricesIncludeVat=true) → user เห็นบรรทัดชัด
+            const missing = Math.round((hdrTotal - _linesGross) * 100) / 100;
+            if (missing > TOL) {
+              // อัตรา VAT จาก header (ส่วนใหญ่ 7 แต่เผื่อใบที่ rate ต่าง)
+              const inferredRate = hdrSub > 0 ? Math.round((hdrVat / hdrSub) * 1000) / 10 : 7;
+              lines.push({
+                description: '(OCR ไม่อ่านบรรทัดนี้ — น่าจะเป็นค่าขนส่ง/บริการอื่น ตรวจสอบใบจริง)',
+                quantity: 1,
+                unitPrice: missing,
+                discountPercent: 0,
+                vatRate: inferredRate || 7,
+                withholdingTaxRate: 0,
+              });
+            }
+          }
+          else if (_linesGross > hdrTotal + TOL) {
+            // Case C: linesGross เกิน total = มีส่วนลดจริง (เช่น line 10,000
+            // แต่ total 9,940 = ส่วนลด 60). ใส่ discountAmount กระจายตามสัดส่วน.
+            const totalDisc = Math.round((_linesGross - hdrTotal) * 100) / 100;
             let assigned = 0;
             lines.forEach((l, i) => {
               const g = (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1);
               const d = i === lines.length - 1
                 ? Math.round((totalDisc - assigned) * 100) / 100
-                : Math.round((totalDisc * g / linesGross) * 100) / 100;
-              l.discountAmount = d;   // unitPrice คงราคาเต็ม; ระบบหักด้วยยอดนี้
+                : Math.round((totalDisc * g / _linesGross) * 100) / 100;
+              l.discountAmount = d;
               assigned += d;
             });
           }
+          // Case B/D: ไม่ทำอะไร (B = match แล้ว, D = OCR ขาด ผู้ใช้แก้เอง)
         }
 
         // Derive a due date from the credit terms the OCR read ("Net 30" →
