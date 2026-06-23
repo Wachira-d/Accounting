@@ -15,11 +15,37 @@ public class SubscriptionService : ISubscriptionService
 {
     private readonly AccountingDbContext _db;
     private readonly INotificationService _notificationService;
+    private readonly INotificationEngine? _notify;
 
-    public SubscriptionService(AccountingDbContext db, INotificationService notificationService)
+    public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _notificationService = notificationService;
+        _notify = notify;
+    }
+
+    /// <summary>duplicate audit #7 phase 2: route subscription notification ผ่าน
+    /// NotificationEngine (production) → กลับไป NotificationService legacy
+    /// ถ้าไม่ inject (test fixture). พอ phase 2 ครบจะลบ INotificationService dep ได้</summary>
+    private async Task NotifyUserAsync(Guid recipientUserId, Guid? companyId,
+        string eventKey, Models.Enums.NotificationType type, string title, string message,
+        string? actionUrl = null, string? entityType = null, Guid? entityId = null)
+    {
+        if (_notify != null && companyId.HasValue)
+        {
+            await _notify.DispatchAsync(companyId.Value, eventKey, new NotificationContext
+            {
+                Title = title, Message = message, ActionUrl = actionUrl,
+                EntityType = entityType, EntityId = entityId,
+                BellType = type, RecipientUserId = recipientUserId,
+            });
+        }
+        else
+        {
+            await _notificationService.SendAsync(recipientUserId, companyId, type,
+                title, message, actionUrl, entityType, entityId);
+        }
     }
 
     // ==================== Trial Management ====================
@@ -1334,7 +1360,8 @@ public class SubscriptionService : ISubscriptionService
 
         foreach (var adminId in adminUsers)
         {
-            await _notificationService.SendAsync(adminId, companyId,
+            await NotifyUserAsync(adminId, companyId,
+                Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
                 NotificationType.SubscriptionPaymentPending,
                 "มีการชำระเงิน Subscription รอตรวจสอบ",
                 $"การชำระเงิน {paymentNumber} จำนวน {request.Amount:N2} THB รอการตรวจสอบ",
@@ -1524,14 +1551,16 @@ public class SubscriptionService : ISubscriptionService
 
             if (ownerUserId != Guid.Empty)
             {
-                await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+                await NotifyUserAsync(ownerUserId, sub.CompanyId,
+                    Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
                     NotificationType.SubscriptionPaymentApproved,
                     "การชำระเงินได้รับการอนุมัติ",
                     $"การชำระเงิน {payment.PaymentNumber} ได้รับการอนุมัติ Subscription ต่ออายุถึง {newEndDate:dd/MM/yyyy}",
                     $"/subscription",
                     "SubscriptionPayment", payment.Id);
 
-                await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+                await NotifyUserAsync(ownerUserId, sub.CompanyId,
+                    Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
                     NotificationType.SubscriptionRenewed,
                     "ต่ออายุ Subscription สำเร็จ",
                     $"Subscription plan {payment.RequestedPlan} ต่ออายุถึง {newEndDate:dd/MM/yyyy}",
@@ -1561,7 +1590,8 @@ public class SubscriptionService : ISubscriptionService
 
             if (ownerUserId != Guid.Empty)
             {
-                await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+                await NotifyUserAsync(ownerUserId, sub.CompanyId,
+                    Models.Constants.NotificationEvents.SubscriptionPaymentFailed,
                     NotificationType.SubscriptionPaymentRejected,
                     "การชำระเงินถูกปฏิเสธ",
                     $"การชำระเงิน {payment.PaymentNumber} ถูกปฏิเสธ: {request.RejectionReason}",
@@ -1735,7 +1765,15 @@ public class SubscriptionService : ISubscriptionService
 
         if (ownerUserId != Guid.Empty)
         {
-            await _notificationService.SendAsync(ownerUserId, sub.CompanyId,
+            var evt = type switch
+            {
+                NotificationType.SubscriptionExpiring => Models.Constants.NotificationEvents.SubscriptionExpired,
+                NotificationType.SubscriptionRenewed => Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
+                NotificationType.SubscriptionPaymentApproved => Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
+                NotificationType.SubscriptionPaymentRejected => Models.Constants.NotificationEvents.SubscriptionPaymentFailed,
+                _ => Models.Constants.NotificationEvents.SubscriptionExpired,
+            };
+            await NotifyUserAsync(ownerUserId, sub.CompanyId, evt,
                 type, title, message, "/subscription", "Subscription", sub.Id);
         }
     }

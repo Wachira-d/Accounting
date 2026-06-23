@@ -63,6 +63,14 @@ public static class NotificationEvents
     public const string ApprovalGranted    = "approval.granted";
     public const string ApprovalRejected   = "approval.rejected";
 
+    // ===== Subscription / billing =====
+    public const string SubscriptionTrialStarted    = "subscription.trial_started";
+    public const string SubscriptionTrialEnding     = "subscription.trial_ending";
+    public const string SubscriptionPaymentSucceeded = "subscription.payment_succeeded";
+    public const string SubscriptionPaymentFailed   = "subscription.payment_failed";
+    public const string SubscriptionExpired         = "subscription.expired";
+    public const string SubscriptionLimitReached    = "subscription.limit_reached";
+
     // ===== CMS =====
     public const string SitePublishSucceeded = "site.publish_succeeded";
     public const string SitePublishFailed    = "site.publish_failed";

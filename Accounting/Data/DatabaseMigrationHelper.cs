@@ -208,6 +208,12 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxXmlOutputPath" varchar(500) NULL;
             """,
 
+            // ===== PDPA ม.26 — widen Employee PII columns เพื่อรองรับ ciphertext =====
+            // (Base64 of nonce 12 + ciphertext 13 + tag 16 = ~56 chars + prefix)
+            """ALTER TABLE "Employees" ALTER COLUMN "CitizenId" TYPE varchar(200);""",
+            """ALTER TABLE "Employees" ALTER COLUMN "TaxId" TYPE varchar(200);""",
+            """ALTER TABLE "Employees" ALTER COLUMN "PassportNumber" TYPE varchar(200);""",
+
             // ===== CompanySettings: §82/5(6) vehicle dealer override =====
             """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "IsVehicleDealer" boolean NOT NULL DEFAULT false;

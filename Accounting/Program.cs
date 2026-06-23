@@ -53,6 +53,13 @@ if (string.IsNullOrEmpty(jwtSecret))
 // Write back to configuration so JwtHelper.GenerateToken() uses the same key
 builder.Configuration["Jwt:Secret"] = jwtSecret;
 
+// PDPA ม.26 — configure EncryptedColumnConverter ก่อน DbContext build
+// เพื่อให้ EF ValueConverter ใช้ key จริง (มิฉะนั้น default dev key)
+var encryptionKey = Environment.GetEnvironmentVariable("ENCRYPTION_KEY")
+    ?? builder.Configuration["Security:EncryptionKey"];
+if (!string.IsNullOrWhiteSpace(encryptionKey))
+    Accounting.Helpers.EncryptedColumnConverter.Configure(encryptionKey);
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
