@@ -230,6 +230,21 @@ public class CmsCommerceController : ControllerBase
         return Ok(new ApiResponse<Guid?>(true, documentId, msg));
     }
 
+    /// <summary>ยืนยันรับเงินจากออเดอร์ออนไลน์ — 6 ขั้นรวด: confirm payment +
+    /// sync ERP + approve doc (auto JE) + record cash receipt + deduct stock +
+    /// e-Tax. ใช้กับทั้ง admin "ยืนยันสลิป" และ webhook gateway.</summary>
+    [HttpPost("orders/{orderId:guid}/confirm-payment")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    public async Task<ActionResult<ApiResponse<bool>>> ConfirmPayment(
+        Guid companyId, Guid siteId, Guid orderId, [FromQuery] Guid? paymentId = null)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var ok = await _commerceService.ConfirmPaymentAsync(companyId, siteId, orderId, paymentId, userId);
+        if (!ok) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบออเดอร์"));
+        return Ok(new ApiResponse<bool>(true, true,
+            "ยืนยันรับเงินสำเร็จ — สร้าง JE, ตัด stock, e-Tax (ถ้าเปิด) เรียบร้อย"));
+    }
+
     // ====================================================================
     // PUBLIC payment endpoints — called by the storefront's customer-facing
     // order-success page after a guest places an order. AllowAnonymous
