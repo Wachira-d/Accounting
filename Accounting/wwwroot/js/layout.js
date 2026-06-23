@@ -1807,8 +1807,42 @@ const Layout = {
   },
 
   // Modal helpers
-  openModal(id) { document.getElementById(id).classList.add('active'); },
+  openModal(id) {
+    document.getElementById(id).classList.add('active');
+    this._ensureModalKeyboardWired();
+  },
   closeModal(id) { document.getElementById(id).classList.remove('active'); },
+
+  /** Wire keyboard shortcuts สำหรับทุก modal ในระบบ (one-time global listener):
+   *  • Escape → ปิด modal บนสุดที่กำลังเปิด
+   *  • Enter ในช่อง input/select (ไม่ใช่ textarea, ไม่กด Shift+Enter) → trigger
+   *    ปุ่ม primary (.btn-primary คนสุดท้ายใน modal-footer ของ modal นั้น)
+   *  ทำให้ทุก form ในระบบใช้ keyboard ปกติได้ทันที ไม่ต้องเดินสาย onkeydown
+   *  ทีละ input — เปิด throughput ของผู้ใช้บน desktop ดีขึ้นมาก. */
+  _ensureModalKeyboardWired() {
+    if (this._modalKbWired) return;
+    this._modalKbWired = true;
+    document.addEventListener('keydown', e => {
+      const open = [...document.querySelectorAll('.modal-overlay.active')];
+      if (!open.length) return;
+      const top = open[open.length - 1];   // topmost = nested-friendly
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        top.classList.remove('active');
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        const t = e.target;
+        if (!t || !top.contains(t)) return;
+        const tag = (t.tagName || '').toUpperCase();
+        // textarea / contenteditable / button = ปล่อยทำงานตามปกติ
+        if (tag === 'TEXTAREA' || tag === 'BUTTON' || t.isContentEditable) return;
+        // ปุ่ม primary ตัวสุดท้ายใน footer (CTA หลัก) — กดให้
+        const cta = top.querySelector('.modal-footer .btn-primary');
+        if (cta && !cta.disabled) { e.preventDefault(); cta.click(); }
+      }
+    });
+  },
 
   // ===== Entity Timeline Modal (Phase N) =====
   // Reusable audit-history modal that any detail page can pop open via

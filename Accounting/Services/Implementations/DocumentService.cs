@@ -6121,6 +6121,48 @@ public class DocumentService : IDocumentService
         if (doc.TotalAmount >= 500_000m)
             warnings.Add($"ยอดรวมเอกสาร {doc.TotalAmount:N2} {doc.Currency} — ตรวจตัวเลขก่อนยืนยัน (จำนวนเงินสูงผิดปกติ)");
 
+        // §82/3 — ภาษีซื้อต้องเคลมภายใน 6 เดือนนับจาก tax point. ใบกำกับ
+        // ที่ใบมาช้า (vendor ส่งหลัง 6 เดือน) ระบบลงให้แต่เคลมไม่ได้ใน
+        // ภ.พ.30. เตือนตอน approve (ก่อนที่จะรู้ตอน end-of-month)
+        if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+            or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu)
+        {
+            var taxPoint = doc.TaxPointDate ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+            var monthsLate = ((today.Year - taxPoint.Year) * 12) + (today.Month - taxPoint.Month);
+            if (monthsLate > 6 && doc.VatAmount > 0)
+                warnings.Add($"§82/3: ใบกำกับเก่ากว่า 6 เดือน ({taxPoint:yyyy-MM-dd}, {monthsLate} เดือน) — ภาษีซื้อ {doc.VatAmount:N2} อาจเคลม ภ.พ.30 ไม่ได้แล้ว ตรวจ TaxPointDate / SupplierTaxInvoiceDate");
+        }
+
+        // §82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง: VAT ค่าน้ำมัน/ซ่อม/เช่าซื้อ
+        // เคลมไม่ได้ (ยกเว้นบริษัทเป็น vehicle dealer). detect จาก keyword
+        // ใน description ไม่ใช่แค่ผัง — vendor อาจไม่ตั้งผังแยก
+        if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+            or DocumentType.PaymentVoucher)
+        {
+            var vehicleKw = new[] { "น้ำมัน", "เบนซิน", "ดีเซล", "ค่าซ่อม", "อะไหล่",
+                "ค่าเช่ารถ", "ค่าน้ำมันรถ", "fuel", "gasoline", "diesel" };
+            var passengerKw = new[] { "รถยนต์", "รถเก๋ง", "sedan", "passenger" };
+            foreach (var line in doc.Lines ?? new List<DocumentLine>())
+            {
+                var d = (line.Description ?? "").ToLowerInvariant();
+                if (line.IsVatClaimable
+                    && line.VatAmount > 0
+                    && vehicleKw.Any(k => d.Contains(k.ToLowerInvariant()))
+                    && (passengerKw.Any(k => d.Contains(k.ToLowerInvariant())) || vehicleKw.Any(k => d.Contains(k))))
+                {
+                    warnings.Add($"§82/5(6): '{line.Description}' — ถ้าเป็นรถยนต์นั่ง ≤10 ที่นั่ง ภาษีซื้อ {line.VatAmount:N2} เคลมไม่ได้ ติ๊กออก '✓ เคลม VAT' ที่บรรทัดนี้ (ยกเว้นบริษัทเป็น vehicle dealer)");
+                    break;
+                }
+            }
+        }
+
+        // Expense ที่มี VAT แต่ไม่ติ๊ก "ใช้งานใบกำกับภาษี" (HasTaxInvoiceReference
+        // =false): §86/4 ไม่ครบ → เคลม VAT ไม่ได้ เตือนผู้ใช้ก่อน approve
+        if (doc.DocumentType == DocumentType.Expense
+            && doc.VatAmount > 0
+            && !doc.HasTaxInvoiceReference)
+            warnings.Add($"เอกสารค่าใช้จ่ายมี VAT {doc.VatAmount:N2} แต่ไม่ระบุข้อมูลใบกำกับ — §86/4 ไม่ครบ ภาษีซื้อจะลง 11640 (ยังไม่ถึงกำหนด) เคลมไม่ได้จนกว่าจะเติมข้อมูลใบ");
+
         // Foreign currency without explicit FX rate (means the rate was
         // either captured at create-time or fell back to BoT) — surface so
         // operator can override with the contracted rate before posting.

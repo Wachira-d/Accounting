@@ -1453,9 +1453,32 @@
                 <div style="font-size:12px;color:#047857">${summary.deposits?.length || 0} ใบ — สามารถหักออกจากใบนี้ได้หลังบันทึก</div>
                 ${matchedDeposits.length ? `<div style="margin-top:6px;font-size:13px;color:#047857;background:#a7f3d0;padding:4px 10px;border-radius:6px;display:inline-block">✓ ${matchedDeposits.length} ใบ booking ตรงกัน (${Layout.money(matchedTotal)})</div>` : ''}
               </div>
-              ${this.editingId ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">${matchedDeposits.length ? 'หักมัดจำที่ booking ตรงกัน' : 'หักมัดจำจากใบนี้'}</button>` : `<span style="font-size:11px;color:#047857;font-style:italic">บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ</span>`}
+              ${this.editingId
+                ? (matchedDeposits.length === 1
+                    // 1-click apply: booking ตรงเป๊ะ 1 ใบ → กดปุ่มเดียวจบ ไม่ต้อง
+                    // เปิด picker (กฎเหล็ก #3: ระบบเติมให้ ผู้ใช้แค่ยืนยัน)
+                    ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.quickApplyDeposit('${matchedDeposits[0].depositDocumentId}', ${matchedDeposits[0].outstandingAmount})" title="หักมัดจำใบที่ booking ตรงกัน ${matchedDeposits[0].outstandingAmount.toFixed(2)} บาท ทันที — กดอีกครั้งใน picker ถ้าอยากปรับยอด"><b>✓ หักมัดจำทันที</b> ${Layout.money(matchedDeposits[0].outstandingAmount)}</button>
+                       <button type="button" class="btn btn-sm btn-ghost" onclick="Page.openApplyDeposit()" title="ปรับยอด/เลือกใบอื่น">ปรับ…</button>`
+                    : `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">${matchedDeposits.length ? 'หักมัดจำที่ booking ตรงกัน' : 'หักมัดจำจากใบนี้'}</button>`)
+                : `<span style="font-size:11px;color:#047857;font-style:italic">บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ</span>`}
             </div>`;
         } catch { /* best-effort */ }
+      },
+
+      /** 1-click apply เมื่อมัดจำ booking match เป๊ะ 1 ใบ — ข้าม picker
+       *  (กฎเหล็ก #3 spirit). ใช้ outstandingAmount ของใบนั้นทันที. */
+      async quickApplyDeposit(depositId, outstanding) {
+        const api = Layout.api(); if (!api || !this.editingId) return;
+        if (!confirm(`ยืนยันหักมัดจำ ${Layout.money(outstanding)} จากใบนี้?`)) return;
+        try {
+          await api.applyDeposit(this.editingId, {
+            depositDocumentId: depositId, amount: outstanding,
+            applyDate: new Date().toISOString()
+          });
+          Layout.toast('หักมัดจำสำเร็จ — รับรู้รายได้ + ลดยอดคงค้างแล้ว');
+          await this.checkContactDeposits(document.getElementById('fContactId').value);
+          if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+        } catch (e) { Layout.toast(e.message || 'หักมัดจำไม่สำเร็จ', 'error'); }
       },
 
       /** เปิด picker modal เลือกใบมัดจำ + ระบุยอดที่หัก แล้วเรียก applyDeposit
