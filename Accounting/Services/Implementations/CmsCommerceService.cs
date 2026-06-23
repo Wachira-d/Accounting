@@ -18,10 +18,12 @@ public class CmsCommerceService : ICmsCommerceService
     private readonly IImageProcessingService? _images;
     private readonly IDocumentService? _docService;
     private readonly IEtaxInvoiceService? _etaxService;
+    private readonly IProductService? _productService;
 
     public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger,
         IConfiguration config, IImageProcessingService? images = null,
-        IDocumentService? docService = null, IEtaxInvoiceService? etaxService = null)
+        IDocumentService? docService = null, IEtaxInvoiceService? etaxService = null,
+        IProductService? productService = null)
     {
         _db = db;
         _logger = logger;
@@ -29,6 +31,7 @@ public class CmsCommerceService : ICmsCommerceService
         _images = images;
         _docService = docService;
         _etaxService = etaxService;
+        _productService = productService;
     }
 
     // ===== Products =====
@@ -1109,33 +1112,62 @@ public class CmsCommerceService : ICmsCommerceService
 
         if (order == null) return false;
 
+        // Route ผ่าน IProductService.AdjustStockAsync (single source of truth
+        // ตาม duplicate audit #5) — ใช้ advisory lock + atomic txn + validation
+        // เหมือนกันทั่วระบบ. CMS-specific เหลือแค่ตรวจ StockBehavior +
+        // mark line.StockDeducted (audit trail per line)
         foreach (var line in order.Lines.Where(l => !l.StockDeducted))
         {
             var product = line.SiteProduct.Product;
-            if (line.SiteProduct.StockBehavior == StockBehavior.InStockOnly)
+            // CMS guard: บางสินค้าเป็น PreOrder ปล่อยติดลบได้ — ProductService
+            // จะ throw ถ้า OUT แล้วติดลบ (โหมด strict). ตอนนี้ CMS guard เฉพาะ
+            // InStockOnly + ปล่อยอย่างอื่นไป AdjustStockAsync จะ enforce อีกชั้น
+            if (line.SiteProduct.StockBehavior != StockBehavior.InStockOnly
+                && product.CurrentStock < line.Quantity)
             {
-                if (product.CurrentStock < line.Quantity)
-                {
-                    _logger.LogWarning("Insufficient stock for product {ProductId}: requested {Qty}, available {Stock}",
-                        product.Id, line.Quantity, product.CurrentStock);
-                    throw new InvalidOperationException($"Insufficient stock for product '{product.Name}' (available: {product.CurrentStock})");
-                }
+                // PreOrder / Backorder: skip AdjustStockAsync (จะ throw) แต่ mark
+                // line ว่าตัดแล้ว เพื่อกัน loop ซ้ำ
+                line.StockDeducted = true;
+                _logger.LogInformation("Skipping stock deduct for pre-order line {LineId} product {ProductId}",
+                    line.Id, product.Id);
+                continue;
             }
 
-            product.CurrentStock -= line.Quantity;
-            line.StockDeducted = true;
-
-            _db.StockMovements.Add(new StockMovement
+            try
             {
-                CompanyId = companyId,
-                ProductId = product.Id,
-                MovementType = "OUT",
-                Quantity = line.Quantity,
-                BalanceAfter = product.CurrentStock,
-                Reference = $"WEB-Order-{order.OrderNumber}",
-                Notes = "Online order line",
-                MovementDate = DateTime.UtcNow
-            });
+                if (_productService != null)
+                {
+                    await _productService.AdjustStockAsync(companyId, new Models.DTOs.Product.StockAdjustmentRequest(
+                        ProductId: product.Id,
+                        Quantity: line.Quantity,
+                        MovementType: "OUT",
+                        UnitCost: null,
+                        Reference: $"WEB-Order-{order.OrderNumber}",
+                        Notes: "Online order line"
+                    ), "storefront-customer");
+                }
+                else
+                {
+                    // Fallback (DI ไม่ inject — เช่น test fixture): ทำเอง
+                    product.CurrentStock -= line.Quantity;
+                    _db.StockMovements.Add(new StockMovement
+                    {
+                        CompanyId = companyId, ProductId = product.Id,
+                        MovementType = "OUT", Quantity = line.Quantity,
+                        BalanceAfter = product.CurrentStock,
+                        Reference = $"WEB-Order-{order.OrderNumber}",
+                        Notes = "Online order line", MovementDate = DateTime.UtcNow
+                    });
+                }
+                line.StockDeducted = true;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "Stock deduct rejected for line {LineId} product {ProductId}",
+                    line.Id, product.Id);
+                throw new InvalidOperationException(
+                    $"สต็อกไม่พอสำหรับ '{product.Name}' — {ex.Message}", ex);
+            }
         }
 
         await _db.SaveChangesAsync();

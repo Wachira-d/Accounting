@@ -480,6 +480,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBa
 builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();

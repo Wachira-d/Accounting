@@ -49,6 +49,12 @@ public static class NotificationEvents
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
     public const string AuditChainTampered      = "audit.chain_tampered";
+    /// <summary>หนังสือทวงหนี้ AR ที่ใบเกิน 30/60/90 วัน — ส่งผ่าน
+    /// OverdueDunningJob ตามลำดับขั้น. กัน spam: ส่งซ้ำได้เฉพาะข้ามขั้น +
+    /// ≥7 วันจาก LastDunningSentAt. recipient = Accounting + Owner role</summary>
+    public const string OverdueDunningReminder  = "ar.dunning.reminder";   // 30d
+    public const string OverdueDunningFirst     = "ar.dunning.first";      // 60d
+    public const string OverdueDunningFinal     = "ar.dunning.final";      // 90d
 
     // ===== CMS =====
     public const string SitePublishSucceeded = "site.publish_succeeded";
@@ -81,6 +87,9 @@ public static class NotificationEvents
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
+        ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
+        ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),
+        ("Accounting", OverdueDunningFinal, "AR เกิน 90 วัน — ส่งหนังสือทวงหนี้ครั้งสุดท้าย"),
         ("CMS",      SitePublishSucceeded, "เผยแพร่เว็บไซต์สำเร็จ"),
         ("CMS",      SitePublishFailed,    "เผยแพร่เว็บไซต์ล้มเหลว"),
     };

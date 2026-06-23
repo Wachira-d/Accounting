@@ -73,6 +73,36 @@ public class EtaxController : ControllerBase
         return Ok(new ApiResponse<EtaxInvoiceResponse>(true, result, "ส่งกรมสรรพากรสำเร็จ"));
     }
 
+    /// <summary>Bulk-retry e-Tax ทั้งหมดที่ Status=Failed — ใช้เมื่อ RD portal
+    /// กลับมา online หลังขัดข้อง หรือแก้ certificate แล้ว. คืน count
+    /// success/fail per id. ภายในวันที่ 15 ของเดือนถัดไปต้องส่งครบ
+    /// (ETDA 3-2560). admin dashboard เรียกได้ทีเดียว.</summary>
+    [HttpPost("retry-failed")]
+    public async Task<ActionResult<ApiResponse<EtaxRetryResultDto>>> RetryFailed(Guid companyId,
+        [FromQuery] int limit = 100)
+    {
+        var failed = await _etaxService.GetAllAsync(companyId, Models.Enums.EtaxStatus.Failed,
+            new PagedRequest { Page = 1, PageSize = Math.Clamp(limit, 1, 500) });
+        var successes = new List<string>(); var failures = new List<EtaxRetryFailureDto>();
+        foreach (var e in failed.Items)
+        {
+            try
+            {
+                await _etaxService.SubmitToRevenueAsync(companyId, e.Id);
+                successes.Add(e.DocumentNumber);
+            }
+            catch (Exception ex)
+            { failures.Add(new EtaxRetryFailureDto(e.Id, e.DocumentNumber, ex.Message)); }
+        }
+        return Ok(new ApiResponse<EtaxRetryResultDto>(true,
+            new EtaxRetryResultDto(failed.Total, successes.Count, failures.Count, successes, failures),
+            $"Retry e-Tax: สำเร็จ {successes.Count}/{failed.Total} ฉบับ"));
+    }
+
+    public sealed record EtaxRetryResultDto(int TotalAttempted, int SuccessCount,
+        int FailureCount, List<string> SuccessDocNumbers, List<EtaxRetryFailureDto> Failures);
+    public sealed record EtaxRetryFailureDto(Guid Id, string DocNumber, string ErrorMessage);
+
     [HttpGet("{etaxId:guid}/xml")]
     public async Task<ActionResult> GetXml(Guid companyId, Guid etaxId)
     {

@@ -1126,6 +1126,13 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "AgingLastEvaluatedAt" timestamp with time zone NULL;
             """,
+            // OverdueDunningJob — track last dunning send + level (1/2/3)
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "LastDunningSentAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "LastDunningLevel" int NULL;
+            """,
             // Undue Input VAT (§82/3) — PV/PurchaseInvoice ที่ใบกำกับยังไม่ครบ §86/4
             // → VAT post เข้า 11640 ก่อน, รอ user มาแก้ครบแล้ว gen adjusting JE
             // Dr 11610 / Cr 11640. BecameClaimableAt = tax-point จริงสำหรับ ภ.พ.30.
