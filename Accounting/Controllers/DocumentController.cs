@@ -321,6 +321,29 @@ public class DocumentController : ControllerBase
         }
     }
 
+    /// <summary>เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่ approved แล้ว
+    /// — Expense/PI/PV เท่านั้น. สร้าง reclassify-JE คู่ใหม่ (Dr ผังใหม่ /
+    /// Cr ผังเก่า) ในงวดเดิม. trial balance ก่อน-หลังตรง. ใบกำกับ/ใบเสร็จ
+    /// ห้ามใช้ตาม §86/4 (ต้อง void+ออกใหม่). ดู gate ใน
+    /// DocumentService.ReclassifyLineAccountAsync</summary>
+    [HttpPost("{documentId:guid}/reclassify-line")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ReclassifyLine(
+        Guid companyId, Guid documentId, [FromBody] ReclassifyLineRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // ใช้ permission เดียวกับ Approve — reclassify มี GL impact ต้องระดับเดียวกัน
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์เปลี่ยนผังบัญชีเอกสาร {docType} (ต้องการ Document.Approve)");
+        var result = await _documentService.ReclassifyLineAccountAsync(
+            companyId, documentId, request.LineId, request.NewAccountId,
+            request.Reason, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            "เปลี่ยนผังบัญชีสำเร็จ (สร้าง JE คู่ใหม่ลงงวดเดิม)"));
+    }
+
     [HttpPost("{documentId:guid}/void")]
     public async Task<ActionResult<ApiResponse<string>>> VoidDocument(Guid companyId, Guid documentId)
     {

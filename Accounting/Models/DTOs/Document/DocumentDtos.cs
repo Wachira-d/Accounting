@@ -500,7 +500,10 @@ public record DocumentLineResponse(
     string? AccountCode = null,
     // FeedbackId ของ AI suggestion ที่เคยให้ผังบรรทัดนี้ — frontend ต้อง
     // round-trip กลับมาตอน update เพื่อให้ backend ปิดลูปการสอน local model
-    Guid? GlAccountAiFeedbackId = null);
+    Guid? GlAccountAiFeedbackId = null,
+    // ชื่อผังบัญชี (denormalized) — ใช้ใน reclassify modal แสดงผังเดิม +
+    // detail table ระบุชื่อบัญชีคู่กับ code
+    string? AccountName = null);
 
 // ===== Flexible / partial document conversion =====
 
@@ -546,6 +549,10 @@ public record DocumentLineFulfillmentResponse(
 public record ContactBrief(Guid Id, string Name, string? TaxId);
 
 public record ApproveDocumentRequest(string? Notes, bool AcknowledgeWarnings = false);
+
+/// <summary>เปลี่ยนผังบัญชีของ DocumentLine.AccountId หลัง approved
+/// — ระบบจะ post reclassify-JE (Dr ผังใหม่/Cr ผังเก่า) อัตโนมัติ.</summary>
+public record ReclassifyLineRequest(Guid LineId, Guid NewAccountId, string? Reason);
 
 /// <summary>Returned on the first approve attempt when pre-approval checks
 /// produced soft warnings (legal/correct but unusual). Operator reviews the

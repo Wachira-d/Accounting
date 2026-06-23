@@ -1986,6 +1986,170 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่ approved แล้ว
+    /// แบบ "reclassify" — ไม่แก้เอกสารต้นฉบับ. ระบบ post JE คู่ใหม่
+    /// Dr ผังใหม่ / Cr ผังเก่า (ด้วยยอด line.Amount = ฐานก่อน VAT) ลงงวด
+    /// เดียวกับ doc.DocumentDate เพื่อให้ trial balance ก่อน–หลังตรงทุกบัญชี
+    /// แล้วอัปเดต line.AccountId เพื่อให้รายงานต่อจากนี้ key ตามผังใหม่.
+    /// VAT/WHT อยู่บัญชีแยก (11610/21915/21911) ไม่กระทบ.
+    ///
+    /// Gate (ทั้งหมดต้องผ่าน):
+    /// - DocumentType ∈ {Expense, PurchaseInvoice, PaymentVoucher} เท่านั้น
+    ///   (TaxInvoice/Receipt/CN/DN ห้ามตาม §86/4)
+    /// - Status ∈ {Approved, Sent, PartiallyPaid, Paid} (Draft = แก้ได้
+    ///   ปกติผ่าน UpdateDocument)
+    /// - FiscalPeriod ของ doc.DocumentDate ยัง Open
+    /// - ไม่มีเอกสารปลายทางอ้าง (RelatedDocumentId → docId)
+    /// - ไม่มี Payment ลงแล้ว
+    /// - ไม่อยู่ใน TaxReport ที่ Status=Submitted หรือ Filed (ภพ.30 ยื่นแล้ว)
+    /// - ไม่ได้ submit e-Tax (EtaxInvoice.SubmittedAt != null)</summary>
+    public async Task<DocumentResponse> ReclassifyLineAccountAsync(
+        Guid companyId, Guid documentId, Guid lineId,
+        Guid newAccountId, string? reason, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var allowedTypes = new[] {
+            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher
+        };
+        if (!allowedTypes.Contains(doc.DocumentType))
+            throw new InvalidOperationException(
+                $"เอกสารประเภท {doc.DocumentType} ห้ามแก้ผังบัญชีหลังอนุมัติ — " +
+                "ใบกำกับ/ใบเสร็จ/ใบเพิ่ม-ลดหนี้ ตาม §86/4 ต้องยกเลิกแล้วออกใบใหม่");
+
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
+                       or DocumentStatus.Rejected or DocumentStatus.Cancelled)
+            throw new InvalidOperationException(
+                $"เอกสาร Status={doc.Status} ไม่อยู่ในขั้นที่ reclassify ได้ " +
+                "(Draft = แก้ผ่านฟอร์มปกติ, Voided/Rejected/Cancelled = สร้างใหม่)");
+
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId
+            && p.StartDate <= doc.DocumentDate && p.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"วันที่เอกสารอยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — " +
+                "ผังบัญชีของงวดที่ปิดแก้ไม่ได้ (กัน trial balance ย้อนหลังพัง)");
+
+        var hasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == documentId
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted);
+        if (hasDownstream)
+            throw new InvalidOperationException(
+                "มีเอกสารปลายทาง (เช่น ใบสำคัญจ่าย/ใบลดหนี้) อ้างเอกสารนี้แล้ว — " +
+                "ยกเลิกเอกสารปลายทางก่อน หรือใช้วิธี void+ออกใบใหม่แทน");
+
+        var hasPayments = await _db.Payments.AsNoTracking().AnyAsync(p =>
+            p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted);
+        if (hasPayments)
+            throw new InvalidOperationException(
+                "เอกสารนี้มีการบันทึกชำระเงินไปแล้ว — ยกเลิกการชำระก่อนถึงจะแก้ผังได้");
+
+        var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
+            l.DocumentId == documentId
+            && l.TaxReport.CompanyId == companyId
+            && (l.TaxReport.Status == TaxReportStatus.Submitted
+                || l.TaxReport.Status == TaxReportStatus.Filed));
+        if (inSubmittedReport)
+            throw new InvalidOperationException(
+                "เอกสารอยู่ในรายงานภาษีที่ยื่นสรรพากรแล้ว — แก้ไม่ได้ " +
+                "(ต้องออก ภพ.30 เพิ่มเติม/แก้ไขผ่าน amended return)");
+
+        var hasSubmittedEtax = await _db.EtaxInvoices.AsNoTracking().AnyAsync(e =>
+            e.DocumentId == documentId && e.SubmittedAt != null);
+        if (hasSubmittedEtax)
+            throw new InvalidOperationException(
+                "เอกสารนี้ส่ง e-Tax XML ไปสรรพากรแล้ว — แก้ไม่ได้");
+
+        var line = doc.Lines.FirstOrDefault(l => l.Id == lineId)
+            ?? throw new KeyNotFoundException("ไม่พบบรรทัดในเอกสาร");
+        if (!line.AccountId.HasValue)
+            throw new InvalidOperationException(
+                "บรรทัดนี้ไม่มีผังบัญชีเดิม — กรอกผัง + reapprove แทน");
+        if (line.AccountId.Value == newAccountId)
+            return await GetDocumentAsync(companyId, documentId);   // no-op
+
+        var newAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.Id == newAccountId && a.CompanyId == companyId && a.IsActive)
+            ?? throw new InvalidOperationException("ผังบัญชีใหม่ไม่มีในระบบหรือถูกปิดใช้");
+        var oldAccount = await _db.ChartOfAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == line.AccountId.Value)
+            ?? throw new InvalidOperationException("ไม่พบผังบัญชีเดิม");
+
+        var amount = line.Amount;   // ฐานก่อน VAT — ที่ JE เดิมลงเข้าผังเก่า
+        if (amount <= 0.005m)
+        {
+            // line ที่ Amount=0 ไม่กระทบ GL — แค่อัปเดต field ก็พอ
+            line.AccountId = newAccountId;
+            await _db.SaveChangesAsync();
+            return await GetDocumentAsync(companyId, documentId);
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
+            var je = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = entryNumber,
+                EntryDate = doc.DocumentDate,
+                JournalType = JournalType.General,
+                Description = $"Reclassify ผังบัญชี — {doc.DocumentNumber} " +
+                              $"'{line.Description}' ({oldAccount.AccountCode} → {newAccount.AccountCode})" +
+                              (string.IsNullOrWhiteSpace(reason) ? "" : $" • {reason}"),
+                Reference = doc.DocumentNumber,
+                Status = JournalEntryStatus.Posted,
+                TotalDebit = amount,
+                TotalCredit = amount,
+                CreatedBy = actor,
+                IsAutoGenerated = true,
+                SourceDocumentId = doc.Id,
+                FiscalPeriodId = period?.Id,
+                ProjectId = doc.ProjectId,
+            };
+            _db.JournalEntries.Add(je);
+            _db.JournalEntryLines.Add(new JournalEntryLine
+            {
+                JournalEntryId = je.Id,
+                AccountId = newAccount.Id,
+                DebitAmount = amount,
+                CreditAmount = 0,
+                Description = $"Dr {newAccount.AccountCode} — {newAccount.AccountName}",
+                LineOrder = 1,
+            });
+            _db.JournalEntryLines.Add(new JournalEntryLine
+            {
+                JournalEntryId = je.Id,
+                AccountId = oldAccount.Id,
+                DebitAmount = 0,
+                CreditAmount = amount,
+                Description = $"Cr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)",
+                LineOrder = 2,
+            });
+
+            line.AccountId = newAccountId;
+            doc.UpdatedAt = DateTime.UtcNow;
+            doc.UpdatedBy = actor;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        _logger.LogInformation(
+            "Reclassified line {LineId} of {DocNumber}: {OldCode} → {NewCode} by {Actor}",
+            lineId, doc.DocumentNumber, oldAccount.AccountCode, newAccount.AccountCode, actor);
+
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
     /// <summary>
     /// ยกเลิกเอกสาร — เก็บเอกสารต้นฉบับไว้ + สร้าง reversal JE ตามมาตรฐานบัญชีไทย
     /// (กลับรายการ Dr↔Cr, link OriginalEntryId↔ReversedByEntryId).
@@ -5805,7 +5969,8 @@ public class DocumentService : IDocumentService
             IsVatClaimable: l.IsVatClaimable,
             VatNonClaimableReason: l.VatNonClaimableReason,
             AccountCode: l.Account != null ? l.Account.AccountCode : null,
-            GlAccountAiFeedbackId: l.GlAccountAiFeedbackId)).ToList(),
+            GlAccountAiFeedbackId: l.GlAccountAiFeedbackId,
+            AccountName: l.Account != null ? l.Account.AccountName : null)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,

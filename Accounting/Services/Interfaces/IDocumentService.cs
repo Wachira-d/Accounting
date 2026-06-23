@@ -59,6 +59,16 @@ public interface IDocumentService
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings);
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
     Task VoidDocumentAsync(Guid companyId, Guid documentId);
+
+    /// <summary>เปลี่ยนผังบัญชีของบรรทัดในเอกสารที่อนุมัติแล้ว (Expense / PI /
+    /// PV / JournalEntry เท่านั้น) โดยไม่แตะเลขเอกสาร / ยอด / VAT / contact
+    /// — ระบบจะ post reclassify-JE คู่ใหม่ (Dr ผังใหม่ / Cr ผังเก่า) ลงงวด
+    /// เดิม audit trail ครบ. ผ่าน gate compliance: FiscalPeriod=Open, ไม่มี
+    /// เอกสารปลายทาง, ไม่มี Payment, ไม่อยู่ใน TaxReport=Submitted, ไม่ได้
+    /// ส่ง e-Tax. ห้ามใช้กับ TaxInvoice/Receipt/CN/DN (กฎหมาย §86/4
+    /// — ต้อง void+ออกใบใหม่)</summary>
+    Task<DocumentResponse> ReclassifyLineAccountAsync(Guid companyId, Guid documentId,
+        Guid lineId, Guid newAccountId, string? reason, string actor);
     /// <summary>ลบเอกสารถาวร: เฉพาะ Draft ที่ยังไม่กระทบบัญชี</summary>
     Task DeleteDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด (journal, payment, WHT, eTax) — เหมือนไม่เคยสร้าง</summary>
