@@ -371,7 +371,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             .FirstOrDefaultAsync();
         if (je != null)
         {
-            var lines = await _db.JournalEntryLines.AsNoTracking()
+            var rawLines = await _db.JournalEntryLines.AsNoTracking()
                 .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
                 .OrderBy(l => l.LineOrder)
                 .Select(l => new GlPostingLine(
@@ -379,13 +379,40 @@ public partial class PdfGenerationService : IPdfGenerationService
                     l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
                     l.DebitAmount, l.CreditAmount))
                 .ToListAsync();
-            if (lines.Count > 0)
-                return new GlPostingSummary(je.EntryNumber, je.EntryDate, lines, je.TotalDebit, je.TotalCredit);
+            if (rawLines.Count > 0)
+                return new GlPostingSummary(je.EntryNumber, je.EntryDate,
+                    ConsolidateGlLines(rawLines), je.TotalDebit, je.TotalCredit);
         }
 
         // ยังไม่มี JE จริง (Draft/ยังไม่อนุมัติ) → "ประมาณการ" จากข้อมูลเอกสาร
         // ให้ผู้ใช้ตรวจ Dr/Cr ก่อนอนุมัติ (ยอด+ผังจริงเกิดหลังอนุมัติ)
         return await BuildProjectedGlAsync(companyId, document);
+    }
+
+    /// <summary>รวมบรรทัด GL ที่ลงผังเดียวกัน + ทิศเดียวกัน (Dr/Cr) เป็นบรรทัด
+    /// เดียว — footer ตรวจสอบจะ tie กับยอดบนเอกสารชัด (เช่น ค่าสินค้า+ค่าขนส่ง
+    /// ที่ capitalize เข้า 12210 ทั้งคู่ → รวมเป็น Dr 12210 ยอดเดียว = ยอดรวม
+    /// ก่อน VAT). คง LineOrder แรกของแต่ละกลุ่มเป็นลำดับ.</summary>
+    private static List<GlPostingLine> ConsolidateGlLines(List<GlPostingLine> lines)
+    {
+        var result = new List<GlPostingLine>();
+        var seen = new Dictionary<string, int>();   // key → index ใน result
+        foreach (var l in lines)
+        {
+            var isDr = l.Debit != 0m;
+            var key = $"{l.AccountCode}|{l.AccountName}|{(isDr ? "D" : "C")}";
+            if (seen.TryGetValue(key, out var idx))
+            {
+                var ex = result[idx];
+                result[idx] = ex with { Debit = ex.Debit + l.Debit, Credit = ex.Credit + l.Credit };
+            }
+            else
+            {
+                seen[key] = result.Count;
+                result.Add(l);
+            }
+        }
+        return result;
     }
 
     /// <summary>GL ประมาณการสำหรับเอกสารที่ยังไม่อนุมัติ (ยังไม่มี JournalEntry).
@@ -488,9 +515,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         lines.Add(new GlPostingLine(contra.Code, contra.Name,
             isSales ? contraAmt : 0m, isPurchase ? contraAmt : 0m));
 
-        var totalDr = lines.Sum(l => l.Debit);
-        var totalCr = lines.Sum(l => l.Credit);
-        return new GlPostingSummary("(ประมาณการ — ก่อนอนุมัติ)", doc.DocumentDate, lines, totalDr, totalCr);
+        // รวมบรรทัดผังเดียวกัน (เช่น สินค้า+ค่าขนส่ง → 12210) ให้ tie กับยอดบน
+        var consolidated = ConsolidateGlLines(lines);
+        var totalDr = consolidated.Sum(l => l.Debit);
+        var totalCr = consolidated.Sum(l => l.Credit);
+        return new GlPostingSummary("(ประมาณการ — ก่อนอนุมัติ)", doc.DocumentDate, consolidated, totalDr, totalCr);
     }
 
     /// <summary>Resolve the signers for a document, aligned positionally to the
