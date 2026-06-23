@@ -326,6 +326,18 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `CertificateSerialNumber` + `SignedAt`
 - **Submission**: cron ส่ง batch ภายในวันที่ 15 ของเดือนถัดไป →
   `SubmittedToRdAt`
+- **ยอดเงิน (CII summation) — ต้อง ex-VAT ทั้งหมด** (`BuildLineItem` +
+  summation `:667`):
+  - per-line: `ChargeAmount` (unit price) + `ActualAmount` (discount) ถอด VAT
+    เมื่อ `PricesIncludeVat=true` (`UnitPrice / (1+rate)`) → สอดคล้องกับ
+    `BasisAmount`/`NetLineTotalAmount` (ex-VAT) ในบรรทัดเดียวกัน
+  - `LineTotalAmount = doc.SubTotal` (net of discount = Σ NetLineTotalAmount)
+  - `AllowanceTotalAmount = 0` (ส่วนลดเป็น line-level แสดงต่อบรรทัด ไม่ใช่ doc)
+  - `TaxBasisTotalAmount = doc.SubTotal` (เดิม `SubTotal − Discount` หักซ้ำ
+    เพราะ SubTotal net อยู่แล้ว → TaxBasis+Tax ≠ Grand → RD reject)
+  - `GrandTotalAmount = SubTotal + VAT` (ไม่ใช่ `doc.TotalAmount` ที่หัก WHT —
+    WHT แยกตอนจ่าย ไม่ใช่ face value ใบกำกับ)
+  - invariant: `LineTotal − Allowance = TaxBasis` และ `TaxBasis + Tax = Grand` ✓
 
 ### 5.3 รายงานภาษี
 | รายงาน | Service / Method | Source data |
@@ -500,7 +512,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-22 — รอบ 5 (per-line discount เป็น_
-_ยอดเงิน/% มาตรฐานสากล + OCR ใส่ส่วนลดจากใบแทน scale ราคา)._
+_Last verified against codebase: 2026-06-22 — รอบ 6 (e-Tax XML ยอดเงิน ex-VAT_
+_ครบ: line ChargeAmount/discount ถอด VAT + แก้ TaxBasis หักส่วนลดซ้ำ + PDF_
+_column ราคา/หน่วย รวม VAT)._
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

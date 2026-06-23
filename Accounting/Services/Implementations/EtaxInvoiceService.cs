@@ -664,23 +664,33 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             summationElements.Add(new XElement(ram + "OriginalInformationAmount",
                 originalAmount.ToString("0.##", CultureInfo.InvariantCulture)));
         }
+        // ⚠️ doc.SubTotal เป็น "net of discount" อยู่แล้ว (DocumentService:562
+        // subTotal += NetAmount = gross − discount) และ VatAmount คิดบน net.
+        // ดังนั้น:
+        //   LineTotalAmount = SubTotal (net, = Σ NetLineTotalAmount ต่อบรรทัด)
+        //   AllowanceTotalAmount = 0 (ส่วนลดเป็น line-level แสดงใน
+        //     SpecifiedTradeAllowanceCharge ต่อบรรทัดแล้ว — ไม่ใช่ doc-level)
+        //   TaxBasisTotalAmount = SubTotal (ไม่หักส่วนลดซ้ำ — เดิม
+        //     SubTotal − DiscountAmount หักซ้ำ → TaxBasis+Tax ≠ Grand → RD reject)
+        //   GrandTotalAmount = SubTotal + VAT (= TaxBasis + Tax). ไม่ใช้
+        //     doc.TotalAmount เพราะหัก WHT ออก (WHT แยกตอนจ่าย ไม่ใช่ face value
+        //     ของใบกำกับ) → ถ้าใช้จะทำให้ TaxBasis+Tax ≠ Grand เมื่อมี WHT
+        var inv2 = CultureInfo.InvariantCulture;
         summationElements.Add(new XElement(ram + "LineTotalAmount",
-            doc.SubTotal.ToString("0.##", CultureInfo.InvariantCulture)));
+            doc.SubTotal.ToString("0.##", inv2)));
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
-            // Difference between current and original
             var diff = doc.SubTotal - (originalDoc?.SubTotal ?? doc.SubTotal);
             summationElements.Add(new XElement(ram + "DifferenceInformationAmount",
-                diff.ToString("0.##", CultureInfo.InvariantCulture)));
+                diff.ToString("0.##", inv2)));
         }
-        summationElements.Add(new XElement(ram + "AllowanceTotalAmount",
-            doc.DiscountAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+        summationElements.Add(new XElement(ram + "AllowanceTotalAmount", "0.00"));
         summationElements.Add(new XElement(ram + "TaxBasisTotalAmount",
-            (doc.SubTotal - doc.DiscountAmount).ToString("0.##", CultureInfo.InvariantCulture)));
+            doc.SubTotal.ToString("0.##", inv2)));
         summationElements.Add(new XElement(ram + "TaxTotalAmount",
-            doc.VatAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+            doc.VatAmount.ToString("0.##", inv2)));
         summationElements.Add(new XElement(ram + "GrandTotalAmount",
-            doc.TotalAmount.ToString("0.##", CultureInfo.InvariantCulture)));
+            (doc.SubTotal + doc.VatAmount).ToString("0.##", inv2)));
 
         // Header trade tax
         var headerTradeTax = new XElement(ram + "ApplicableTradeTax",
@@ -712,7 +722,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
         // Line items (last in CII per ETDA — after Settlement)
         var lineItems = doc.Lines.OrderBy(l => l.LineOrder).Select((line, idx) =>
-            BuildLineItem(ram, line, idx + 1, currency)).ToList<object>();
+            BuildLineItem(ram, line, idx + 1, currency, doc.PricesIncludeVat)).ToList<object>();
 
         // Context parameter — ER3-2560 with scheme attributes
         var contextParameter = new XElement(ram + "GuidelineSpecifiedDocumentContextParameter",
@@ -1011,12 +1021,23 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private static XElement BuildLineItem(XNamespace ram, DocumentLine line, int lineNo, string currency)
+    private static XElement BuildLineItem(XNamespace ram, DocumentLine line, int lineNo, string currency, bool pricesIncludeVat)
     {
         var inv = CultureInfo.InvariantCulture;
         var unitCode = MapUnitCode(line.Unit);
-        var lineSubTotal = line.Amount;
-        var lineWithVat = line.Amount + line.VatAmount;
+        var lineSubTotal = line.Amount;                 // ex-VAT (DocumentService คำนวณแยก VAT แล้ว)
+        var lineWithVat = line.Amount + line.VatAmount; // incl-VAT
+        // e-Tax XML ใช้ฐาน ex-VAT ทั้งบรรทัด. เมื่อ pricesIncludeVat=true ค่า
+        // UnitPrice/DiscountAmount ที่เก็บเป็น "รวม VAT" → ต้องถอด VAT ก่อนใส่
+        // XML ไม่งั้น ChargeAmount/ActualAmount (incl) จะไม่สอดคล้องกับ
+        // BasisAmount/NetLineTotal (ex) → math ในบรรทัดไม่ตรง RD reject ได้
+        var rateFactor = 1m + (line.VatRate / 100m);
+        var chargeAmount = pricesIncludeVat && line.VatRate > 0
+            ? Math.Round(line.UnitPrice / rateFactor, 2, MidpointRounding.AwayFromZero)
+            : line.UnitPrice;
+        var discountActual = pricesIncludeVat && line.VatRate > 0
+            ? Math.Round(line.DiscountAmount / rateFactor, 2, MidpointRounding.AwayFromZero)
+            : line.DiscountAmount;
 
         return new XElement(ram + "IncludedSupplyChainTradeLineItem",
             new XElement(ram + "AssociatedDocumentLineDocument",
@@ -1027,7 +1048,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             new XElement(ram + "SpecifiedLineTradeAgreement",
                 new XElement(ram + "GrossPriceProductTradePrice",
                     new XElement(ram + "ChargeAmount",
-                        line.UnitPrice.ToString("0.##", inv)))),
+                        chargeAmount.ToString("0.##", inv)))),
             new XElement(ram + "SpecifiedLineTradeDelivery",
                 new XElement(ram + "BilledQuantity",
                     new XAttribute("unitCode", unitCode),
@@ -1043,7 +1064,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                     // Per ETDA samples: always "false" with ActualAmount=0 when no discount.
                     // We only emit allowance lines (discounts), so always false.
                     new XElement(ram + "ChargeIndicator", "false"),
-                    new XElement(ram + "ActualAmount", line.DiscountAmount.ToString("0.##", inv))),
+                    new XElement(ram + "ActualAmount", discountActual.ToString("0.##", inv))),
                 new XElement(ram + "SpecifiedTradeSettlementLineMonetarySummation",
                     new XElement(ram + "TaxTotalAmount", line.VatAmount.ToString("0.##", inv)),
                     new XElement(ram + "NetLineTotalAmount",

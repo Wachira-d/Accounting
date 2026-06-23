@@ -30,7 +30,10 @@ public record EtaxPdfMetadata(
     string? ApprovedByName = null,
     string? ApprovedBySignatureBase64 = null,
     DateTime? ApprovedAt = null,
-    string? Notes = null);
+    string? Notes = null,
+    // ราคารวม VAT (Unit Price Incl.VAT) — label column ในตาราง "(รวม VAT)" +
+    // amount ที่พิมพ์ = qty × price − disc (รวม VAT) เพื่อให้ math ในใบตรงตัวเอง
+    bool PricesIncludeVat = false);
 
 public record EtaxPdfLineItem(
     int LineNo,
