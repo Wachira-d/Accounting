@@ -10,7 +10,10 @@ namespace Accounting.Services.Implementations;
 public class ApprovalService : IApprovalService
 {
     private readonly AccountingDbContext _db;
+    /// <summary>Legacy inbox writer — เหลือไว้สำหรับ user-specific event ที่
+    /// ยังไม่ migrate. Production code ทุกแห่ง dispatch ผ่าน _notify แล้ว.</summary>
     private readonly INotificationService _notificationService;
+    private readonly INotificationEngine? _notify;
     /// <summary>Resolved lazily to avoid the circular ctor dependency
     /// IDocumentService ↔ IApprovalService (DocumentService may also want
     /// to call SubmitForApprovalAsync in the future).</summary>
@@ -20,11 +23,35 @@ public class ApprovalService : IApprovalService
     private const int EscalationTimeoutHours = 48;
 
     public ApprovalService(AccountingDbContext db, INotificationService notificationService,
-        IServiceProvider services)
+        IServiceProvider services, INotificationEngine? notify = null)
     {
         _db = db;
         _notificationService = notificationService;
         _services = services;
+        _notify = notify;
+    }
+
+    /// <summary>Migration helper — route ผ่าน NotificationEngine ถ้า inject
+    /// แล้ว (production), fallback ไป NotificationService ถ้าไม่ (test fixture).
+    /// duplicate audit #7 phase 1: consolidate dispatch path.</summary>
+    private async Task NotifyUserAsync(Guid recipientUserId, Guid companyId,
+        string eventKey, Models.Enums.NotificationType type, string title, string message,
+        string? actionUrl, string? entityType, Guid? entityId)
+    {
+        if (_notify != null)
+        {
+            await _notify.DispatchAsync(companyId, eventKey, new NotificationContext
+            {
+                Title = title, Message = message, ActionUrl = actionUrl,
+                EntityType = entityType, EntityId = entityId,
+                BellType = type, RecipientUserId = recipientUserId,
+            });
+        }
+        else
+        {
+            await _notificationService.SendAsync(recipientUserId, companyId, type,
+                title, message, actionUrl, entityType, entityId);
+        }
     }
 
     // ==================== Rules ====================
@@ -234,7 +261,8 @@ public class ApprovalService : IApprovalService
 
         // Notify first approver
         var firstStep = rule.Steps.OrderBy(s => s.StepOrder).First();
-        await _notificationService.SendAsync(firstStep.ApproverUserId, companyId,
+        await NotifyUserAsync(firstStep.ApproverUserId, companyId,
+            Models.Constants.NotificationEvents.ApprovalRequired,
             NotificationType.ApprovalRequired,
             "มีรายการรอการอนุมัติ",
             $"มี {entityType} รอการอนุมัติจากคุณ",
@@ -308,7 +336,8 @@ public class ApprovalService : IApprovalService
                 }
             }
 
-            await _notificationService.SendAsync(request.RequestedByUserId, companyId,
+            await NotifyUserAsync(request.RequestedByUserId, companyId,
+                Models.Constants.NotificationEvents.ApprovalRejected,
                 NotificationType.ApprovalRequired,
                 "คำขออนุมัติถูกปฏิเสธ",
                 $"คำขออนุมัติ {request.EntityType} ถูกปฏิเสธ: {actionRequest.Comments}",
@@ -322,7 +351,8 @@ public class ApprovalService : IApprovalService
             {
                 request.OverallStatus = ApprovalStatus.Approved;
 
-                await _notificationService.SendAsync(request.RequestedByUserId, companyId,
+                await NotifyUserAsync(request.RequestedByUserId, companyId,
+                    Models.Constants.NotificationEvents.ApprovalGranted,
                     NotificationType.ApprovalRequired,
                     "คำขออนุมัติได้รับการอนุมัติแล้ว",
                     $"คำขออนุมัติ {request.EntityType} ได้รับการอนุมัติแล้ว",
@@ -336,7 +366,8 @@ public class ApprovalService : IApprovalService
                 var nextAction = request.Actions.FirstOrDefault(a => a.StepOrder == request.CurrentStep);
                 if (nextAction != null)
                 {
-                    await _notificationService.SendAsync(nextAction.ApproverUserId, companyId,
+                    await NotifyUserAsync(nextAction.ApproverUserId, companyId,
+                        Models.Constants.NotificationEvents.ApprovalRequired,
                         NotificationType.ApprovalRequired,
                         "มีรายการรอการอนุมัติ",
                         $"มี {request.EntityType} รอการอนุมัติจากคุณ (ขั้นตอนที่ {request.CurrentStep})",
@@ -423,7 +454,8 @@ public class ApprovalService : IApprovalService
             if (currentAction == null) continue;
 
             // Send reminder notification
-            await _notificationService.SendAsync(currentAction.ApproverUserId, request.CompanyId,
+            await NotifyUserAsync(currentAction.ApproverUserId, request.CompanyId,
+                Models.Constants.NotificationEvents.ApprovalRequired,
                 NotificationType.SecurityAlert,
                 "แจ้งเตือน: คำขออนุมัติค้าง",
                 $"คำขออนุมัติ {request.EntityType} รอการดำเนินการเกิน {EscalationTimeoutHours} ชั่วโมง",

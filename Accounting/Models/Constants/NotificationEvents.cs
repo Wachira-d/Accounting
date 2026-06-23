@@ -56,6 +56,13 @@ public static class NotificationEvents
     public const string OverdueDunningFirst     = "ar.dunning.first";      // 60d
     public const string OverdueDunningFinal     = "ar.dunning.final";      // 90d
 
+    // ===== Approval workflow (multi-step) =====
+    /// <summary>มีรายการรอการอนุมัติของผู้รับ — recipient = ApproverUserId
+    /// แบบ user-specific (NotificationEngine resolver รองรับ UserId override)</summary>
+    public const string ApprovalRequired   = "approval.required";
+    public const string ApprovalGranted    = "approval.granted";
+    public const string ApprovalRejected   = "approval.rejected";
+
     // ===== CMS =====
     public const string SitePublishSucceeded = "site.publish_succeeded";
     public const string SitePublishFailed    = "site.publish_failed";
@@ -90,6 +97,9 @@ public static class NotificationEvents
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),
         ("Accounting", OverdueDunningFinal, "AR เกิน 90 วัน — ส่งหนังสือทวงหนี้ครั้งสุดท้าย"),
+        ("Approval", ApprovalRequired, "มีรายการรอการอนุมัติ"),
+        ("Approval", ApprovalGranted, "อนุมัติคำขอแล้ว"),
+        ("Approval", ApprovalRejected, "ปฏิเสธคำขอ"),
         ("CMS",      SitePublishSucceeded, "เผยแพร่เว็บไซต์สำเร็จ"),
         ("CMS",      SitePublishFailed,    "เผยแพร่เว็บไซต์ล้มเหลว"),
     };

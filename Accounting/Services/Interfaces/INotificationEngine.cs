@@ -47,4 +47,10 @@ public class NotificationContext
     /// <summary>NotificationType used for the in-app bell row (legacy
     /// enum). Defaults to System when omitted.</summary>
     public Models.Enums.NotificationType BellType { get; set; } = Models.Enums.NotificationType.System;
+
+    /// <summary>Override recipient resolver — เมื่อระบุ จะส่งหา user คนนี้
+    /// คนเดียว (skip role resolution). ใช้กับ approval / subscription event
+    /// ที่ผู้รับเป็น user ตัวเฉพาะที่ระบบรู้ตัวอยู่แล้ว (ApprovalAction.ApproverUserId).
+    /// Engine ยัง apply per-user channel preferences ตามปกติ.</summary>
+    public Guid? RecipientUserId { get; set; }
 }

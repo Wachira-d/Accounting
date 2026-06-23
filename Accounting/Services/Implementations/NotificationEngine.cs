@@ -62,6 +62,15 @@ public class NotificationEngine : INotificationEngine
                 .Where(s => s.CompanyId == companyId && s.EventKey == eventKey
                     && (s.EnableSystem || s.EnableEmail || s.EnableLine))
                 .ToListAsync();
+            // ถ้า caller ระบุ RecipientUserId override + ไม่มี NotificationSettings
+            // ใน event นี้ → ใช้ default channels (System+Email) สำหรับ user
+            // คนนั้น แทนที่จะ no-op. ใช้กับ approval/subscription event
+            // ที่ recipient เป็น user รู้ตัวอยู่แล้ว ไม่ใช่ role.
+            if (settings.Count == 0 && context.RecipientUserId.HasValue)
+            {
+                await DispatchDirectAsync(companyId, eventKey, context.RecipientUserId.Value, context);
+                return;
+            }
             if (settings.Count == 0) return;
 
             // recipientKey → effective (channels + Recipient). Key combines
@@ -252,6 +261,31 @@ public class NotificationEngine : INotificationEngine
             .Select(cu => cu.UserId)
             .ToListAsync();
         return byPermission.Concat(byRole).Distinct().ToList();
+    }
+
+    /// <summary>Direct user dispatch — bypass NotificationSettings (role-based)
+    /// สำหรับ event ที่ recipient เป็น user รู้ตัวอยู่แล้ว (Approval/Subscription).
+    /// ยัง apply per-user preference suppression + check user active.</summary>
+    private async Task DispatchDirectAsync(Guid companyId, string eventKey,
+        Guid recipientUserId, NotificationContext context)
+    {
+        var user = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == recipientUserId && u.Status != UserStatus.Inactive)
+            .Select(u => new { u.Id, u.Email, u.FullName, u.LineUserId })
+            .FirstOrDefaultAsync();
+        if (user == null) return;
+        if (context.ActorUserId == recipientUserId) return;   // ไม่ notify ตัวเอง
+
+        var pp = await _db.NotificationPreferences.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.EventKey == eventKey
+                && p.UserId == recipientUserId);
+        var supSys = pp?.SuppressSystem ?? false;
+        var supEmail = pp?.SuppressEmail ?? false;
+
+        if (!supSys)
+            await DispatchSystemAsync(recipientUserId, companyId, context);
+        if (!supEmail && !string.IsNullOrWhiteSpace(user.Email))
+            await DispatchEmailAsync(companyId, user.Email!, user.FullName, context);
     }
 
     // ===== Channel dispatchers =====
