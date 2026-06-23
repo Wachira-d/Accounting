@@ -601,10 +601,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-23 — รอบ 10 (NotificationEngine_
-_consolidate + ApprovalService migration via NotifyUserAsync +_
-_NotificationContext.RecipientUserId + PiiMask helper +_
-_FX bank reval scope note)._
+_Last verified against codebase: 2026-06-23 — รอบ 11 (PDPA encrypt-at-rest_
+_+ PiiMask integration + Subscription notification migrate + DSR endpoints_
+_access/portability/rectify/erase + Multi-warehouse callable + ProductLot_
+_verified + JournalEntryBuilder fluent abstraction)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 
@@ -615,5 +615,6 @@ _FX bank reval scope note)._
 | 8 | Option-1 reclassify + CMS sync | line GL reclassify-JE, PV Cash auto-approve all channels, CMS ConfirmPaymentAsync 6-step, PrePayment booking IsDeposit 217xx |
 | 9 | CMS gap close + perf | payment-gateway webhook, POS Z/X-Report, Stock unify, OverdueDunningJob, Dashboard alerts, e-Tax retry, §82/3 LateReason, dup-doc detect, 11 indexes |
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
+| 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
