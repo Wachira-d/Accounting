@@ -192,8 +192,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - main line = บรรทัดแรกใน group ที่ description ไม่ใช่ auxiliary keyword
    - cost = sum ของทุก line ใน group (รวม aux)
    - asset Description log auxiliary breakdown ไว้ audit trail
+   - **AssetCode = "DRAFT-{guid:14}"** placeholder (ไม่กิน counter)
+     → user กดยืนยันใน `FixedAssetService.UpdateAsync` → generate
+     `FA-yyyyMM-####` จริง (gap-free, ลำดับตามเวลายืนยัน)
    - `Status = Active, NeedsReview = true` พร้อม suggested `UsefulLifeMonths`
      + depreciation method (`StraightLine` default, ที่ดิน → `None`)
+   - **Delete guard** (`FixedAssetService.DeleteAsync`):
+     • block ถ้า AccumulatedDepreciation > 0 หรือมี posted depreciation
+       → ต้อง Dispose/WriteOff
+     • block ถ้า `SourceDocumentId.Status` ไม่ใช่ Voided/Rejected → ต้อง
+       ยกเลิกเอกสารต้นทางก่อน (กัน orphan GL — Dr 12210 ใน JE ของใบยังอยู่
+       แต่ asset register หาย)
+   - **Void cascade** (`VoidDocumentAsync` step 7-asset): asset ของ doc ที่
+     `NeedsReview=true` + ไม่มี posted dep → ลบ inline (ไม่เรียก DeleteAsync
+     เพราะ source.Status ยังไม่ save), asset ที่ยืนยันแล้ว → log warning
+     ไม่ลบ ผู้ใช้ต้อง dispose/write-off เอง
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด

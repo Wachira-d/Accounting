@@ -2099,6 +2099,43 @@ public class DocumentService : IDocumentService
                 doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedAt = DateTime.UtcNow;
 
+                // 7-asset) Cascade FixedAsset ที่ AutoRegister มาจาก doc นี้:
+                //   • ยังไม่ยืนยัน (NeedsReview=true) + ไม่มี posted dep → ลบ
+                //     เลย (รวม projected dep) — ถือเป็น orphan placeholder
+                //     ที่ user ยังไม่ commit
+                //   • ยืนยันแล้ว (NeedsReview=false) → ปล่อย + log warning
+                //     ให้ user ตัดสิน dispose/write-off เองด้วย UI
+                // inline delete — ไม่เรียก FixedAssetService.DeleteAsync เพราะ
+                // guard ของมันจะ block (source doc.Status ใน DB ยังไม่ Voided
+                // เพราะ SaveChangesAsync ยังไม่รัน)
+                var ourAssets = await _db.FixedAssets
+                    .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId)
+                    .ToListAsync();
+                foreach (var asset in ourAssets)
+                {
+                    if (!asset.NeedsReview)
+                    {
+                        _logger.LogWarning(
+                            "Doc {Doc} void: asset {Code} ยืนยันแล้ว — ไม่ลบ ผู้ใช้ต้อง dispose/write-off ด้วยตนเอง",
+                            documentId, asset.AssetCode);
+                        continue;
+                    }
+                    var hasPostedDep = await _db.AssetDepreciations
+                        .AnyAsync(d => d.FixedAssetId == asset.Id && d.IsPosted && !d.IsDeleted);
+                    if (hasPostedDep)
+                    {
+                        _logger.LogWarning(
+                            "Doc {Doc} void: asset {Code} (NeedsReview) มีค่าเสื่อม posted — ไม่ลบ",
+                            documentId, asset.AssetCode);
+                        continue;
+                    }
+                    var projectedDeps = await _db.AssetDepreciations
+                        .Where(d => d.FixedAssetId == asset.Id)
+                        .ToListAsync();
+                    _db.AssetDepreciations.RemoveRange(projectedDeps);
+                    _db.FixedAssets.Remove(asset);
+                }
+
                 // 7a) Reset stateful posting flags ที่ตั้งตอน approve. ถ้าไม่ reset
                 //     แล้ว user re-approve doc นี้ในอนาคต logic จะข้ามขั้นที่
                 //     ควรรัน (เช่น undue VAT ถูก mark claimable ไปแล้ว → re-
@@ -4575,7 +4612,12 @@ public class DocumentService : IDocumentService
             var assetDesc = $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}"
                 + (auxDescs.Count > 0 ? $" (รวม: {string.Join(", ", auxDescs)})" : "");
 
-            var assetCode = await GenerateAssetCodeAsync(companyId);
+            // ยังไม่ออกเลขจริงตอน NeedsReview — ใส่ placeholder "DRAFT-{guid}"
+            // เพื่อไม่ให้กิน counter (gap-free). เลขจริง FA-yyyyMM-#### จะออก
+            // ตอน user กดบันทึกในหน้า edit (FixedAssetService.UpdateAsync ตอน
+            // NeedsReview=true → false). ถ้า user ลบ asset ที่ยังเป็น DRAFT
+            // ก่อนยืนยัน จะไม่กระทบลำดับเลขของ asset อื่น
+            var assetCode = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
             try
             {
                 await _fixedAssets.CreateAsync(companyId, new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
