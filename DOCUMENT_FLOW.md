@@ -129,7 +129,50 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
   FileAttachment` (`CascadeAttachmentsAsync :3077`)
 
-### 2.5 Recurring
+### 2.5 CMS (เว็บไซต์ของฉัน) — Storefront commerce + booking
+- **Order flow** (`CmsCommerceService.cs`):
+  - Customer checkout → `SiteOrder` + upload สลิป → `RecordPaymentSlipAsync`
+    สร้าง `SiteOrderPayment` Status=`Pending`
+  - Admin/webhook ยืนยันรับเงิน → `ConfirmPaymentAsync` (`POST /orders/{id}/confirm-payment`)
+    ทำงาน 6 ขั้นรวด (idempotent):
+    1. `SiteOrderPayment.Status = Confirmed` + `Order.PaidAmount/PaidAt`
+    2. `SyncOrderToErpAsync` ถ้ายังไม่ sync — ใช้ `IDocumentService.CreateDocumentAsync`
+       (เลข gap-free §86/4, tax point, VAT validation ครบ)
+    3. `IDocumentService.ApproveDocumentAsync` → auto-post JE
+       (Dr AR / Cr Revenue + Cr Output VAT 21911)
+    4. `IDocumentService.CreatePaymentAsync` → Dr Cash/Bank / Cr AR (เคลียร์ลูกหนี้)
+    5. `DeductStockAsync` — idempotent ตาม `line.StockDeducted` flag
+    6. `IEtaxInvoiceService.GenerateAsync` ถ้า `RequestTaxInvoice + EtaxEnabled`
+  - ทุก step fault-tolerant: ล้มเหลว → log + ไม่ rollback step ก่อนหน้า
+- **Booking flow** (`CmsBookingService.SyncBookingToErpAsync`):
+  - Map `BookingType` → DocumentType:
+    - `Lead/Appointment` → `Quotation` (Draft, รอ admin confirm)
+    - `Guaranteed` → `TaxInvoice` (Approved + JE auto)
+    - `PrePayment` → `Receipt` ที่ `IsDeposit=true` → Cr 217xx ขายรอรับรู้
+      + Cr 21911 VAT (§78/1 รับชำระแล้ว → เข้า ภพ.30 ทันที)
+      ต่อมา realize ด้วย `RealizeDepositAsync` ตัด 217xx → 41000
+- **Gap (ยัง TODO)**:
+  - Payment reconciliation (match `SiteOrderPayment.Reference` กับ bank statement)
+  - Webhook gateway (Stripe/PromptPay) → ตอนนี้ admin กดยืนยันสลิปเอง
+
+### 2.6 POS (Point of Sale)
+- **Method**: `PosService.CompleteOrderAsync` (`Services/Implementations/PosService.Orders.cs:908`)
+- **Auto JE ทันที** ตอน complete order (ไม่ผ่าน Draft):
+  - Dr Cash 1011 / Bank 1012 / Credit Card 1131 (ตาม PaymentMethod)
+  - Cr Sales Revenue 41000 (net of VAT)
+  - Cr Output VAT 21911 (7%)
+  - Cr Tip Liability 2160 (ถ้ามี)
+  - Dr COGS / Cr Inventory (สินค้าที่ track stock)
+- **Tax Invoice** (deferred): `IssueTaxInvoiceAsync` → สร้าง Document ใน
+  Status=Approved (กัน JE ซ้อน) + เรียก `EtaxInvoiceService`
+- **Refund/Void**: reverse JE + return stock
+- **Offline sync**: `SyncOfflineOrderAsync(ClientOrderId)` dedup
+- **Gap (ยัง TODO)**:
+  - Z-report consolidation (ปัจจุบัน 1 JE/order, ไม่มี shift-end batch)
+  - มัดจำ/booking (217xx flow ยังไม่ enabled ฝั่ง POS)
+  - WHT tip §50 ทวิ (เกิน 1,000/รอบ — niche)
+
+### 2.7 Recurring
 - **Service**: `RecurringTransactionService.cs:41`
 - ความถี่: `Daily / Weekly / BiWeekly / Monthly / Quarterly / SemiAnnual / Annual`
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
@@ -558,8 +601,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-23 — รอบ 7 (multi-currency_
-_มัดจำ FX guard, audit hash chain weekly verifier, recurring template_
-_validate, §65 ตรี(4) YTD cap, §82/5(6) vehicle dealer override)._
+_Last verified against codebase: 2026-06-23 — รอบ 8 (option-1 reclassify_
+_line GL post-approve + ใบสำคัญจ่าย Cash auto-approve ทุก channel +_
+_CMS storefront ConfirmPaymentAsync 6-step orchestrator + CMS booking_
+_route ผ่าน IDocumentService + PrePayment booking = IsDeposit 217xx)._
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
