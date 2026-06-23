@@ -740,9 +740,12 @@
           district: document.getElementById('fDistrict').value || null,
           province: document.getElementById('fProvince').value || null,
           postalCode: document.getElementById('fPostalCode').value || null,
-          phone: document.getElementById('fPhone').value || null,
-          email: document.getElementById('fEmail').value || null,
-          contactPerson: document.getElementById('fContactPerson').value || null,
+          // ส่งค่า trim ตรง ๆ (ไม่ใช่ value||null) — เมื่อผู้ใช้ลบจนว่างจะส่ง ""
+          // ให้ backend "ล้างค่า" ได้ (เดิมส่ง null → backend ตี null = ไม่เปลี่ยน
+          // → ลบเบอร์แล้วเปิดมายังขึ้นค่าเดิม). backend normalize ""→null เอง.
+          phone: document.getElementById('fPhone').value.trim(),
+          email: document.getElementById('fEmail').value.trim(),
+          contactPerson: document.getElementById('fContactPerson').value.trim(),
           // GL overrides — empty string maps to null on Create (skips
           // pinning) and to Guid.Empty on Update (explicitly clears
           // the existing pin per the UpdateContactAsync semantics).
