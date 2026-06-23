@@ -2099,6 +2099,29 @@ public class DocumentService : IDocumentService
                 doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedAt = DateTime.UtcNow;
 
+                // 7a) Reset stateful posting flags ที่ตั้งตอน approve. ถ้าไม่ reset
+                //     แล้ว user re-approve doc นี้ในอนาคต logic จะข้ามขั้นที่
+                //     ควรรัน (เช่น undue VAT ถูก mark claimable ไปแล้ว → re-
+                //     approve จะไม่ลง 11640 ใหม่). ทุก field reset ที่นี่จะถูก
+                //     "เริ่มใหม่" ตอน re-approve เหมือนใบใหม่ผ่าน flow ปกติ.
+                doc.InputVatPostedAsUndue = false;
+                doc.InputVatBecameClaimableAt = null;
+
+                // 7b) Deposit (Receipt/ReceiptVoucher IsDeposit=true): reset
+                //     state realize/refund/recognize. JE reversal ใน step 2
+                //     กลับยอดบัญชี 217xx/21911/21913 แล้ว แต่ field document-
+                //     level เหล่านี้ถ้าไม่เคลียร์ GetDepositsAsync จะยังโชว์
+                //     สถานะ "Partial/Realized" หลัง void → UI/รายงานเพี้ยน.
+                if (doc.IsDeposit)
+                {
+                    doc.DepositRealizedAmount = 0m;
+                    doc.DepositRealizedAt = null;
+                    doc.DepositOutputVatRecognizedAt = null;
+                    doc.DepositRefundedAmount = 0m;
+                    doc.DepositRefundedAt = null;
+                    doc.DepositAppliedToDocumentId = null;
+                }
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
