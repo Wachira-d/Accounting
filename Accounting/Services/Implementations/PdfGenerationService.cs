@@ -362,11 +362,16 @@ public partial class PdfGenerationService : IPdfGenerationService
     private async Task<GlPostingSummary?> LoadGlPostingAsync(Guid companyId, Document document)
     {
         var documentId = document.Id;
+        // เลือก "การลงบัญชีต้นทาง" ของเอกสารเสมอ — OriginalEntryId == null คือ
+        // JE forward (Dr/Cr ปกติ). กัน bug: ตอน void เอกสารระบบสร้าง reversal JE
+        // (กลับ Dr↔Cr → Cr 12210/Cr 11610) ซึ่ง ReversedByEntryId ก็ == null
+        // เหมือนกัน + ใหม่กว่า → query เดิมหยิบ reversal มาแสดงผิด (footer ขึ้น
+        // Cr 12210 แทน Dr). เพิ่มเงื่อนไข OriginalEntryId == null ตัด reversal ออก.
         var je = await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
-                        && !j.IsDeleted && j.ReversedByEntryId == null)
+                        && !j.IsDeleted && j.OriginalEntryId == null)
             .OrderByDescending(j => j.Status == JournalEntryStatus.Posted)
-            .ThenByDescending(j => j.EntryDate)
+            .ThenBy(j => j.EntryDate)
             .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.TotalCredit })
             .FirstOrDefaultAsync();
         if (je != null)
