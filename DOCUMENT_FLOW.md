@@ -601,9 +601,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-23 — รอบ 8 (option-1 reclassify_
-_line GL post-approve + ใบสำคัญจ่าย Cash auto-approve ทุก channel +_
-_CMS storefront ConfirmPaymentAsync 6-step orchestrator + CMS booking_
-_route ผ่าน IDocumentService + PrePayment booking = IsDeposit 217xx)._
+_Last verified against codebase: 2026-06-23 — รอบ 9 (CMS payment-gateway_
+_webhook receiver + POS Z/X-Report + Stock unify ผ่าน IProductService +_
+_OverdueDunningJob 3 ระดับ + Dashboard action alerts + e-Tax bulk retry +_
+_§82/3 LateReason gate + Duplicate doc detection + 11 composite indexes)._
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
