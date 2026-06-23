@@ -3336,6 +3336,34 @@
         // Always provide at least one row so the user has somewhere to start.
         if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
 
+        // 🔧 Reconcile lines กับ header subtotal — เคสที่ OCR แกะราคา
+        // ต่อหน่วยจากบรรทัด "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
+        // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72
+        // เพราะมีส่วนลด/discount).  ถ้าไม่ปรับ → ฟอร์มคำนวณ 9890×1.07 = 10,582
+        // ไม่ตรงกับ header total 9940 (ผู้ใช้สับสน เพราะยอดในฟอร์ม ≠ ใบจริง).
+        // วิธีแก้: scale line amounts ตามอัตราส่วน เพื่อให้ sum = header subtotal
+        // ยอดจริงจาก header เป็น authoritative (มาจาก total/VAT ของใบ).
+        const hdrSubTotal = Number(scan.extractedSubTotal) || 0;
+        if (hdrSubTotal > 0 && lines.length > 0) {
+          const linesSubTotal = lines.reduce((s, l) =>
+            s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1), 0);
+          // เกิน 1 บาท (ไม่ใช่แค่ rounding) → prorate
+          if (linesSubTotal > 0 && Math.abs(linesSubTotal - hdrSubTotal) > 1) {
+            const scale = hdrSubTotal / linesSubTotal;
+            let assigned = 0;
+            lines.forEach((l, i) => {
+              const isLast = i === lines.length - 1;
+              const qty = Number(l.quantity) || 1;
+              // last line absorbs remainder ให้ sum ตรง exact
+              const newAmount = isLast
+                ? Math.round((hdrSubTotal - assigned) * 100) / 100
+                : Math.round((Number(l.unitPrice) || 0) * qty * scale * 100) / 100;
+              l.unitPrice = qty > 0 ? Math.round((newAmount / qty) * 100) / 100 : newAmount;
+              assigned += newAmount;
+            });
+          }
+        }
+
         // Derive a due date from the credit terms the OCR read ("Net 30" →
         // PaymentTermsDays = 30) so AR/AP documents land with วันครบกำหนด
         // already filled. OCR doesn't read an explicit due date, so this is

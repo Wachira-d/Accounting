@@ -3621,6 +3621,34 @@ public class OcrService : IOcrService
 
         if (items.Count > 0)
         {
+            // 🔧 Reconcile line amounts กับ header subtotal — เคสที่ OCR แกะ
+            // ราคาต่อหน่วยจาก "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
+            // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal
+            // 9289.72 เพราะมีส่วนลด). ถ้าไม่ปรับ → เอกสารที่สร้างไม่ตรง
+            // header ที่ผู้ใช้เห็นในใบจริง. ปรับ Amount/UnitPrice ของแต่ละ
+            // บรรทัดให้ scale ตามอัตราส่วน + เก็บ remainder ลงบรรทัดสุดท้าย.
+            // ยอดจาก header = authoritative (มาจาก total ของใบ).
+            var hdrSubTotal = result.ExtractedSubTotal ?? 0m;
+            var unscaledSum = items.Sum(x => x.Amount ?? 0m);
+            if (hdrSubTotal > 0m && unscaledSum > 0m
+                && Math.Abs(unscaledSum - hdrSubTotal) > 1m)
+            {
+                decimal scaleAssigned = 0m;
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var origAmt = items[i].Amount ?? 0m;
+                    var qty = items[i].Quantity ?? 1m;
+                    decimal newAmt;
+                    if (i == items.Count - 1)
+                        newAmt = Math.Round(hdrSubTotal - scaleAssigned, 2);
+                    else
+                        newAmt = Math.Round(origAmt * hdrSubTotal / unscaledSum, 2);
+                    items[i].Amount = newAmt;
+                    if (qty > 0m) items[i].UnitPrice = Math.Round(newAmt / qty, 2);
+                    scaleAssigned += newAmt;
+                }
+            }
+
             // Pro-rate the header VAT across lines by amount share (the
             // paper rarely itemises VAT per line). Remainder lands on the
             // last line so the lines sum exactly to the header VAT.
