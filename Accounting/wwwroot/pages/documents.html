@@ -267,6 +267,9 @@
                → เรียก applyDeposit (Realize 217xx + ลด BalanceDue + ย้าย VAT
                21913→21911 ถ้า deferred). -->
           <div id="contactDepositBanner" style="display:none;background:#ecfdf5;border:1px solid #6ee7b7;border-left:4px solid #10b981;border-radius:10px;padding:12px 14px;margin-bottom:14px"></div>
+          <!-- §82/5 — เตือนเมื่อเอกสารต้นทางเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/
+               ใบเสร็จ ที่ไม่ใช่ใบกำกับเต็มรูป §86/4). มาจาก OCR handoff. -->
+          <div id="vatClaimWarnBanner" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#991b1b;line-height:1.7"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
@@ -351,6 +354,10 @@
                 เปิด = บันทึกข้อมูลใบกำกับของผู้ขาย + ภาษีซื้อขึ้น ภ.พ.30 ·
                 ทุกบรรทัด <b>เคลม VAT อัตโนมัติ</b> — ติ๊กออกเฉพาะบรรทัดที่กฎหมายห้าม
                 (ค่ารับรอง / น้ำมันรถยนต์นั่ง §82/5) ที่คอลัมน์ "เคลม VAT" ในรายการ
+                <br>⚠️ <b>ต้องเป็น "ใบกำกับภาษีเต็มรูป" (§86/4)</b> เท่านั้น — มีคำว่า
+                "ใบกำกับภาษี" + ชื่อ/ที่อยู่/เลขผู้เสียภาษีของ<u>บริษัทเรา (ผู้ซื้อ)</u> ครบ.
+                <b>ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ (ไม่มีชื่อผู้ซื้อ) เคลมไม่ได้</b>
+                (§82/5(1)(2)) — ต้องขอใบกำกับเต็มรูปจากผู้ขาย
               </div>
           </div>
           <div id="taxInvoiceRefSection" class="payment-voucher-only" style="display:none">
@@ -1119,6 +1126,15 @@
         }
         if (payload.reference) document.getElementById('fRef').value = payload.reference;
         if (payload.notes) document.getElementById('fNotes').value = payload.notes;
+
+        // §82/5 — banner เตือนเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/ใบเสร็จ)
+        if (payload.inputVatClaimWarning) {
+          const vb = document.getElementById('vatClaimWarnBanner');
+          if (vb) {
+            vb.style.display = '';
+            vb.innerHTML = `<div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้</div>${Layout.esc(payload.inputVatClaimWarning)}<div style="margin-top:6px;font-size:12px">💡 ถ้าไม่เคลม: ใช้ "⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชี VAT" ด้านล่าง เลือกผัง 5xxxx เพื่อรวม VAT เป็นต้นทุน/ค่าใช้จ่าย</div>`;
+          }
+        }
 
         // PV "ใช้งานใบกำกับภาษี" (RD §86/4 + §86/14) — เติมเลขที่/วันที่/สาขา
         // ของใบกำกับผู้ขายจาก OCR ติ๊กกล่องและเปิด section "กรอกข้อมูลเอง"

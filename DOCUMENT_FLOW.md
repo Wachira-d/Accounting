@@ -440,6 +440,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | --- | --- | --- |
 | §86/4 completeness (PI/Expense/PV) | `TaxInvoiceCompletenessChecker` | ถ้าไม่ครบ → input VAT ลง 11640 (undue) |
 | §82/5 prohibited input VAT | `ChartOfAccount.InputVatClaimable` + per-line `IsVatClaimable` | flag claim=false, แยกออกจาก ภ.พ.30 + แสดง "🚫 §82/5" line |
+| §82/5(1)(2) non-full-tax-invoice | `OcrDocumentRoleInferrer.Infer` → `InputVatClaimable/InputVatClaimWarning` | OCR ตรวจ "ใบกำกับภาษีอย่างย่อ §86/6" หรือ "ใบเสร็จ/บิลเงินสด ไม่ใช่ §86/4" + มี VAT → เขียน `[VAT-CLAIM]` ลง ProcessingNotes; review UI + form แสดง banner แดง "เคลม VAT ไม่ได้ — ขอใบกำกับเต็มรูป"; ไม่ auto-ติ๊ก "ขอเครดิตภาษีซื้อ" |
 | §82/3 6-month window | `TaxFilingExportService.ExportPp30Async` + `GenerateVatReport` | เกิน 6 เดือน → block claim หรือ require `LateReason` |
 | §86/9–86/10 CN/DN | `CreditNote/DebitNote` flow | required `RelatedDocumentId` + `CreditNoteReason` (CN); cap ≤ original |
 | §78 / §78/1 tax point | `TaxPointResolver` | snapshot ตอน approve |
@@ -498,7 +499,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-22 — รอบ 3 (เพิ่ม UX force-review_
-_fixed asset หลังอนุมัติ PV/PI/Expense + UX apply deposit จาก TaxInvoice/Invoice)._
+_Last verified against codebase: 2026-06-22 — รอบ 4 (เพิ่ม §82/5(1)(2) gate:_
+_OCR ตรวจใบกำกับอย่างย่อ/ใบเสร็จ ที่เคลม VAT ไม่ได้ + เตือนผู้ใช้ใน review/form)._
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

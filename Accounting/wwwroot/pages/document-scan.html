@@ -1766,9 +1766,25 @@
             }
           }
 
+          // §82/5 VAT-claim warning — ดึงข้อความ [VAT-CLAIM] ที่ backend
+          // ใส่ใน processingNotes (ใบกำกับอย่างย่อ/ใบเสร็จ ที่เคลม VAT ไม่ได้)
+          // → แสดงเป็น banner แดงเด่น เตือนผู้ใช้ก่อนสร้างเอกสาร
+          let vatClaimBanner = '';
+          {
+            const m = (scan.processingNotes || '').match(/\[VAT-CLAIM\]\s*([^\n]+)/);
+            if (m) {
+              vatClaimBanner = `
+                <div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;color:#991b1b;line-height:1.7">
+                  <div style="font-weight:700;margin-bottom:4px">🚫 ภาษีซื้อเอกสารนี้เคลมไม่ได้</div>
+                  ${Layout.esc(m[1])}
+                </div>`;
+            }
+          }
+
           document.getElementById('reviewBody').innerHTML = `
             ${imagePreview}
             ${dbdBanner}
+            ${vatClaimBanner}
             <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:12px;color:#1e3a8a;line-height:1.6">
               <strong>&#x1F4A1; การสอนระบบ:</strong> หากมีข้อมูลที่ระบบแกะไม่ถูกต้อง แก้ไขในช่องด้านล่างแล้วกดปุ่ม "บันทึก &amp; สอนระบบ"
               ระบบจะจดจำตำแหน่งและคำใกล้เคียงในเอกสาร ครั้งต่อไปจาก vendor นี้จะแกะข้อมูลถูกต้องอัตโนมัติ
@@ -3342,10 +3358,14 @@
         // ใบของผู้ขาย (เลขที่/วันที่/สาขา) ให้ฟอร์มเติมอัตโนมัติ. ปกติเลขที่
         // ใบกำกับของผู้ขาย = extractedDocumentNumber, วันที่ = extractedDate,
         // สาขา = "00000" สำนักงานใหญ่ (95%) — ผู้ใช้แก้ภายหลังได้
+        // §82/5 — ถ้าเอกสารเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/ใบเสร็จ) ไม่ต้อง
+        // auto-ติ๊ก "ขอเครดิตภาษีซื้อ" ให้ — ผู้ใช้ติ๊กเองทีหลังถ้าขอใบเต็มรูปมา
+        const vatNotClaimable = /\[VAT-CLAIM\]/.test(scan.processingNotes || '');
         const hasSupplierInvoice = (targetType === 'PaymentVoucher'
               || targetType === 'PurchaseInvoice' || targetType === 'Expense')
           && !!scan.extractedDocumentNumber
-          && !!(scan.extractedVatAmount || scan.extractedVendorTaxId);
+          && !!(scan.extractedVatAmount || scan.extractedVendorTaxId)
+          && !vatNotClaimable;
 
         // ค่าที่ผู้ใช้/AI เลือกใน review ก่อนกดสร้าง — ดึงจาก dropdown เพื่อ
         // round-trip กลับฟอร์ม. แหล่งเงิน = "บัญชีเครดิต" (revCreditAccount)
@@ -3410,6 +3430,12 @@
           whtRate: scan.whtRate || null,
           // OCR confidence + AI feedback IDs → frontend แสดง badge "🤖 AI"
           glAccountAiFeedbackId: scan.glAccountAiFeedbackId || null,
+          // §82/5 — คำเตือนเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/ใบเสร็จ) → ฟอร์ม
+          // แสดง banner + ไม่เปิดเคลมให้อัตโนมัติ
+          inputVatClaimWarning: (() => {
+            const m = (scan.processingNotes || '').match(/\[VAT-CLAIM\]\s*([^\n]+)/);
+            return m ? m[1] : null;
+          })(),
           createdAt: Date.now(),
         };
 

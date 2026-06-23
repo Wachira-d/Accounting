@@ -667,6 +667,19 @@ public class OcrService : IOcrService
                 extractedData.TargetDocumentType = role.TargetDocType.ToString();
                 foreach (var r in role.Reasons)
                     extractedData.ReasoningTrace.Add("[Role] " + r);
+
+                // §82/5 — เตือนผู้ใช้เมื่อเอกสารที่ได้รับ "เคลมภาษีซื้อไม่ได้"
+                // (ใบกำกับภาษีอย่างย่อ / ใบเสร็จ-บิลเงินสด ที่ไม่ใช่ใบกำกับเต็มรูป).
+                // เตือนเฉพาะตอนมี VAT จริง (ไม่มี VAT = ไม่มีอะไรให้เคลมอยู่แล้ว).
+                // เก็บลง ProcessingNotes (โชว์ในหน้า review + carry ผ่าน handoff)
+                // ด้วย prefix [VAT-CLAIM] ให้ frontend ดึงมาแสดงเป็น banner ได้.
+                var docVat = extractedData.VatAmount ?? 0m;
+                if (role.InputVatClaimable == false && docVat > 0 && !string.IsNullOrEmpty(role.InputVatClaimWarning))
+                {
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                        + "\n[VAT-CLAIM] " + role.InputVatClaimWarning;
+                    extractedData.ReasoningTrace.Add("[VAT-CLAIM] " + role.InputVatClaimWarning);
+                }
             }
 
             // Store zone analysis info for debugging — these never change after this point

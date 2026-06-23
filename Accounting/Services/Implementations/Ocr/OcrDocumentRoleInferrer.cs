@@ -25,7 +25,14 @@ public static class OcrDocumentRoleInferrer
         string OurRole,                 // "Buyer" | "Seller"
         DocumentType TargetDocType,
         decimal RoleConfidence,         // 0.0 — 1.0
-        List<string> Reasons);
+        List<string> Reasons,
+        // ฝั่งซื้อ: เอกสารที่ได้รับใช้เคลมภาษีซื้อ (input VAT) ได้หรือไม่ตาม
+        // §82/5. false เมื่อเป็นใบกำกับภาษีอย่างย่อ (§82/5(2)) หรือใบเสร็จ/
+        // บิลเงินสดที่ไม่ใช่ใบกำกับภาษีเต็มรูป §86/4 (§82/5(1)). null = ไม่ทราบ
+        // (ไม่มี marker ชัด / ฝั่งขาย).
+        bool? InputVatClaimable = null,
+        // คำแนะนำผู้ใช้เมื่อเคลมไม่ได้ — อธิบายว่าทำไม + ต้องทำอย่างไร
+        string? InputVatClaimWarning = null);
 
     public static InferenceResult Infer(
         string rawText,
@@ -300,7 +307,43 @@ public static class OcrDocumentRoleInferrer
         var reasonRole = role == "Buyer" ? "เราเป็นผู้ซื้อ" : "เราเป็นผู้ขาย";
         reasons.Add($"{reasonRole} + กระดาษคือ {(scanned?.ToString() ?? "ไม่ระบุ")} → ควรสร้าง {target} ในระบบ");
 
-        return new InferenceResult(scanned, role, target, roleConf, reasons);
+        // ─── Input VAT claimability (§82/5) — ฝั่งซื้อเท่านั้น ───────────────
+        // เคลมภาษีซื้อได้ต้องมี "ใบกำกับภาษีเต็มรูป" §86/4 (มีคำว่าใบกำกับภาษี +
+        // ชื่อ/ที่อยู่/เลขผู้เสียภาษีทั้งผู้ขาย-ผู้ซื้อ). เอกสารต่อไปนี้เคลมไม่ได้:
+        //   • ใบกำกับภาษีอย่างย่อ §86/6 → §82/5(2) ห้ามเคลม (ผู้ซื้อ)
+        //   • ใบเสร็จ/บิลเงินสด ที่ไม่ใช่ใบกำกับภาษีเต็มรูป → §82/5(1)
+        // หมายเหตุ: "ใบกำกับภาษีอย่างย่อ" มีคำว่า "ใบกำกับภาษี" → ต้องแยกชัด.
+        bool? inputVatClaimable = null;
+        string? inputVatWarning = null;
+        if (role == "Buyer")
+        {
+            var hasFullTaxInvoice = hasTaxInvoice && !hasAbbrevTaxInvoice;
+            if (hasAbbrevTaxInvoice)
+            {
+                inputVatClaimable = false;
+                inputVatWarning =
+                    "เอกสารนี้เป็น \"ใบกำกับภาษีอย่างย่อ\" (§86/6) — นำภาษีซื้อมาเคลม ภ.พ.30 ไม่ได้ "
+                    + "ตาม §82/5(2). หากต้องการเคลม VAT ให้ขอ \"ใบกำกับภาษีเต็มรูป\" (§86/4) จากผู้ขาย "
+                    + "ที่ระบุชื่อ-ที่อยู่-เลขประจำตัวผู้เสียภาษีของบริษัทเรา (ผู้ซื้อ) ครบ. "
+                    + "ถ้าไม่ขอ → VAT จะถูกรวมเป็นต้นทุน/ค่าใช้จ่าย (หักภาษีเงินได้ได้ตามปกติ).";
+            }
+            else if ((hasReceipt || hasCashBill) && !hasFullTaxInvoice)
+            {
+                inputVatClaimable = false;
+                inputVatWarning =
+                    "เอกสารนี้เป็นใบเสร็จรับเงิน/บิลเงินสด ไม่ใช่ \"ใบกำกับภาษีเต็มรูป\" (§86/4) — "
+                    + "นำภาษีซื้อมาเคลม ภ.พ.30 ไม่ได้ ตาม §82/5(1). ขอ \"ใบกำกับภาษีเต็มรูป\" จากผู้ขาย "
+                    + "(ต้องมีคำว่า \"ใบกำกับภาษี\" + ชื่อ/ที่อยู่/เลขผู้เสียภาษีของผู้ซื้อ) จึงจะเคลมได้. "
+                    + "ถ้าไม่ขอ → VAT รวมเป็นต้นทุน/ค่าใช้จ่าย.";
+            }
+            else if (hasFullTaxInvoice)
+            {
+                inputVatClaimable = true;
+            }
+        }
+
+        return new InferenceResult(scanned, role, target, roleConf, reasons,
+            inputVatClaimable, inputVatWarning);
     }
 
     private static bool TaxIdMatches(string? a, string? b)
