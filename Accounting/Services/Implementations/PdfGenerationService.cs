@@ -88,7 +88,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // for internal audit. Was previously fetched CLIENT-side only, so the
         // server PDF/HTML never showed it — this wires it into both renderers.
         var gl = settings?.ShowGlEntryOnDocument == true
-            ? await LoadGlPostingAsync(companyId, document.Id) : null;
+            ? await LoadGlPostingAsync(companyId, document) : null;
 
         // e-Tax path: render template-styled (สีส้ม) + PDF/A conformance →
         // inject XML. ผลลัพธ์ = หน้าตาเหมือน preview + ฝัง XML ยื่นภาษีได้.
@@ -162,7 +162,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
         var gl = settings?.ShowGlEntryOnDocument == true
-            ? await LoadGlPostingAsync(companyId, document.Id) : null;
+            ? await LoadGlPostingAsync(companyId, document) : null;
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
     }
 
@@ -359,8 +359,9 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// entry) for the end-of-document Dr/Cr summary. Prefers the Posted entry;
     /// excludes reversed entries. Returns null when the doc has no journal yet
     /// (e.g. still Draft) so the block is simply omitted.</summary>
-    private async Task<GlPostingSummary?> LoadGlPostingAsync(Guid companyId, Guid documentId)
+    private async Task<GlPostingSummary?> LoadGlPostingAsync(Guid companyId, Document document)
     {
+        var documentId = document.Id;
         var je = await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
                         && !j.IsDeleted && j.ReversedByEntryId == null)
@@ -368,18 +369,128 @@ public partial class PdfGenerationService : IPdfGenerationService
             .ThenByDescending(j => j.EntryDate)
             .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.TotalCredit })
             .FirstOrDefaultAsync();
-        if (je == null) return null;
+        if (je != null)
+        {
+            var lines = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
+                .OrderBy(l => l.LineOrder)
+                .Select(l => new GlPostingLine(
+                    l.Account != null ? l.Account.AccountCode : "",
+                    l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
+                    l.DebitAmount, l.CreditAmount))
+                .ToListAsync();
+            if (lines.Count > 0)
+                return new GlPostingSummary(je.EntryNumber, je.EntryDate, lines, je.TotalDebit, je.TotalCredit);
+        }
 
-        var lines = await _db.JournalEntryLines.AsNoTracking()
-            .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
-            .OrderBy(l => l.LineOrder)
-            .Select(l => new GlPostingLine(
-                l.Account != null ? l.Account.AccountCode : "",
-                l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
-                l.DebitAmount, l.CreditAmount))
-            .ToListAsync();
+        // ยังไม่มี JE จริง (Draft/ยังไม่อนุมัติ) → "ประมาณการ" จากข้อมูลเอกสาร
+        // ให้ผู้ใช้ตรวจ Dr/Cr ก่อนอนุมัติ (ยอด+ผังจริงเกิดหลังอนุมัติ)
+        return await BuildProjectedGlAsync(companyId, document);
+    }
+
+    /// <summary>GL ประมาณการสำหรับเอกสารที่ยังไม่อนุมัติ (ยังไม่มี JournalEntry).
+    /// ครอบเคสหลัก sales/purchase. CN/DN/PO/PR ข้าม (side กำกวม/ไม่ลง GL).
+    /// label "(ประมาณการ — ก่อนอนุมัติ)" กันสับสนกับ posting จริง.</summary>
+    private async Task<GlPostingSummary?> BuildProjectedGlAsync(Guid companyId, Document doc)
+    {
+        if (doc.Lines == null || doc.Lines.Count == 0) return null;
+        var salesTypes = new[] { DocumentType.Quotation, DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.BillingNote };
+        var purchaseTypes = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu, DocumentType.GoodsReceiptNote };
+        bool isSales = salesTypes.Contains(doc.DocumentType);
+        bool isPurchase = purchaseTypes.Contains(doc.DocumentType);
+        if (!isSales && !isPurchase) return null;
+
+        var accIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).ToList();
+        if (doc.ExpenseCategoryId.HasValue) accIds.Add(doc.ExpenseCategoryId.Value);
+        var accById = accIds.Count == 0 ? new Dictionary<Guid, (string Code, string Name)>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && accIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName }).ToListAsync())
+                .ToDictionary(a => a.Id, a => (a.AccountCode, a.AccountName));
+        async Task<(string Code, string Name)> ByCode(string code, string fallbackName)
+        {
+            var a = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.AccountCode == code)
+                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+            return a != null ? (a.AccountCode, a.AccountName) : (code, fallbackName);
+        }
+
+        var lines = new List<GlPostingLine>();
+        decimal lineNet = 0m;
+        foreach (var l in doc.Lines)
+        {
+            var amt = l.Amount;
+            if (amt == 0m) continue;
+            lineNet += amt;
+            (string Code, string Name) acc =
+                (l.AccountId.HasValue && accById.TryGetValue(l.AccountId.Value, out var a1)) ? a1
+                : (doc.ExpenseCategoryId.HasValue && accById.TryGetValue(doc.ExpenseCategoryId.Value, out var a2)) ? a2
+                : ("", l.Description ?? (isSales ? "รายได้" : "ค่าใช้จ่าย"));
+            lines.Add(new GlPostingLine(acc.Code, acc.Name,
+                isPurchase ? amt : 0m, isSales ? amt : 0m));
+        }
         if (lines.Count == 0) return null;
-        return new GlPostingSummary(je.EntryNumber, je.EntryDate, lines, je.TotalDebit, je.TotalCredit);
+
+        if (doc.VatAmount != 0m)
+        {
+            if (isPurchase)
+            {
+                var code = doc.InputVatAccountCodeOverride
+                    ?? (doc.InputVatPostedAsUndue ? "11640" : "11610");
+                var v = await ByCode(code, doc.InputVatPostedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด" : "ภาษีซื้อ");
+                lines.Add(new GlPostingLine(v.Code, v.Name, doc.VatAmount, 0m));
+            }
+            else
+            {
+                var code = doc.DepositOutputVatDeferred ? "21913" : "21911";
+                var v = await ByCode(code, doc.DepositOutputVatDeferred ? "ภาษีขายรอเรียกเก็บ" : "ภาษีขาย");
+                lines.Add(new GlPostingLine(v.Code, v.Name, 0m, doc.VatAmount));
+            }
+        }
+
+        if (doc.WithholdingTaxAmount != 0m)
+        {
+            if (isPurchase)
+            {
+                var w = await ByCode("21510", "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                lines.Add(new GlPostingLine(w.Code, w.Name, 0m, doc.WithholdingTaxAmount));
+            }
+            else
+            {
+                var w = await ByCode("11910", "ภาษีถูกหัก ณ ที่จ่าย");
+                lines.Add(new GlPostingLine(w.Code, w.Name, doc.WithholdingTaxAmount, 0m));
+            }
+        }
+
+        var gross = lineNet + doc.VatAmount;
+        var contraAmt = gross - doc.WithholdingTaxAmount;
+        (string Code, string Name) contra;
+        if (doc.BankAccountId.HasValue)
+        {
+            var b = await _db.BankAccounts.AsNoTracking()
+                .Where(x => x.Id == doc.BankAccountId.Value)
+                .Select(x => new { x.AccountName }).FirstOrDefaultAsync();
+            contra = ("", b?.AccountName ?? "เงินฝากธนาคาร");
+        }
+        else if (doc.PaymentAccountId.HasValue)
+        {
+            var p = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.Id == doc.PaymentAccountId.Value)
+                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+            contra = p != null ? (p.AccountCode, p.AccountName) : ("", "เงินสด");
+        }
+        else if (doc.PaymentType == PaymentType.Credit || (doc.PaymentType == null && isSales))
+            contra = isPurchase ? await ByCode("21210", "เจ้าหนี้การค้า") : await ByCode("11210", "ลูกหนี้การค้า");
+        else
+            contra = await ByCode("11110", "เงินสด");
+        lines.Add(new GlPostingLine(contra.Code, contra.Name,
+            isSales ? contraAmt : 0m, isPurchase ? contraAmt : 0m));
+
+        var totalDr = lines.Sum(l => l.Debit);
+        var totalCr = lines.Sum(l => l.Credit);
+        return new GlPostingSummary("(ประมาณการ — ก่อนอนุมัติ)", doc.DocumentDate, lines, totalDr, totalCr);
     }
 
     /// <summary>Resolve the signers for a document, aligned positionally to the
