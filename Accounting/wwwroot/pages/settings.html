@@ -570,33 +570,15 @@
       <div class="form-group form-checkbox"><input type="checkbox" id="sEnableApiAccess"><label for="sEnableApiAccess">เปิดใช้งาน API Access (สร้าง API Key เชื่อมต่อระบบภายนอก)</label></div>
       <div class="form-group"><label class="form-label">จำนวน API Key สูงสุด</label><input type="number" class="form-input" id="sMaxApiKeys" value="5" min="1" max="20" style="max-width:120px"></div>
 
-      <!-- ===== API Key Manager (acc_ keys) =====
-           acc_ key ผูกกับ user จริง (CreatedByUserId) → ใช้กับ OCR flow
-           (create-document/approve) ได้ ต่างจาก int_ key (integration) ที่ผูก
-           กับ integration id ไม่ใช่ user จึงสร้าง/อนุมัติเอกสารแทน user ไม่ได้. -->
-      <div style="margin-top:20px;padding-top:16px;border-top:1px dashed #cbd5e1">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div>
-            <div style="font-weight:600;font-size:14px">🔑 API Keys ของบริษัท (acc_)</div>
-            <div style="font-size:12px;color:#64748b">ใช้ส่ง header <code>X-Api-Key</code> เรียก API — เช่น OCR สร้าง/อนุมัติเอกสารอัตโนมัติ</div>
-          </div>
-          <button class="btn btn-primary btn-sm" id="btnCreateApiKey" onclick="Page.openCreateApiKey()">+ สร้าง API Key</button>
-        </div>
-        <div style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px 10px;margin-bottom:10px">
-          ⚠️ <b>int_ key ใช้กับ OCR flow ไม่ได้</b> — int_ เป็น integration key (ผูก integration ไม่ใช่ user)
-          ใช้ได้แค่ sync ข้อมูล. งานที่ต้อง "สร้าง/อนุมัติเอกสารแทนผู้ใช้" (เช่น OCR create-document/approve)
-          ต้องใช้ <b>acc_ key</b> ที่สร้างจากปุ่มนี้ (ผูกกับบัญชีผู้ใช้ของคุณ)
-        </div>
-        <!-- อธิบายความต่าง acc_ vs int_ ให้ชัด + cross-link (ระบบมี API 2 แบบ) -->
-        <div style="font-size:12px;color:#0c4a6e;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:10px 12px;margin-bottom:10px;line-height:1.7">
-          <b>📌 ระบบมี API key 2 แบบ — ใช้คนละงาน:</b><br>
-          • <b>acc_ (หน้านี้)</b> = ให้<u>สคริปต์/automation ของคุณเอง</u>เรียก API ของเรา
-          (เช่น OCR สร้าง-อนุมัติเอกสาร, n8n, custom script) — ผูกกับ user, กำหนดสิทธิ์ละเอียดได้<br>
-          • <b>int_</b> = เชื่อม<u>ระบบภายนอก</u> (POS/PMS/ERP/e-commerce) ให้ <u>sync ข้อมูลเข้า</u>
-          พร้อม mapping ผังบัญชี + sync log → จัดการที่เมนู
-          <a href="/pages/integrations.html" style="color:#0369a1;font-weight:600">🔗 เชื่อมต่อระบบ</a>
-        </div>
-        <div id="apiKeysList"><div class="text-gray-400" style="font-size:13px;padding:8px 0">— เปิด API Access แล้วกด "สร้าง API Key" —</div></div>
+      <!-- API Key (acc_) จัดการที่หน้า "Webhooks & API" → แท็บ API Keys
+           (โซน Developer/API). ที่นี่เป็นแค่ master switch + ลิงก์ — กันมี
+           ตัวจัดการ key ซ้ำ 2 ที่ (เคยซ้ำ ทำให้สับสน) -->
+      <div style="margin-top:16px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:13px;color:#0c4a6e;line-height:1.7">
+        🔑 <b>สร้าง/จัดการ API Key</b> (สำหรับให้สคริปต์/automation ของคุณเรียก REST API เช่น OCR สร้าง-อนุมัติเอกสาร)
+        ทำที่หน้า <a href="/pages/webhooks.html" style="color:#0369a1;font-weight:600">Webhooks &amp; API → แท็บ API Keys</a>
+        — เปิดสวิตช์ "API Access" ด้านบนก่อน แล้วจึงสร้าง key ได้<br>
+        <span style="color:#64748b;font-size:12px">หมายเหตุ: API key 2 แบบ — <b>acc_</b> (สคริปต์เราเรียก API) จัดการที่ Webhooks &amp; API ·
+        <b>int_</b> (เชื่อมระบบภายนอก POS/ERP มา sync) จัดการที่ <a href="/pages/integrations.html" style="color:#0369a1">เชื่อมต่อระบบ</a></span>
       </div>
     </div>
 
@@ -1608,90 +1590,9 @@
           // API Access
           document.getElementById('sEnableApiAccess').checked = s.enableApiAccess || false;
           document.getElementById('sMaxApiKeys').value = s.maxApiKeys || 5;
-          this.loadApiKeys();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
-      // ===== API Key Manager (acc_ keys) =====
-      async loadApiKeys() {
-        const api = Layout.api(); if (!api) return;
-        const box = document.getElementById('apiKeysList');
-        if (!box) return;
-        try {
-          const r = await api.getApiKeys();
-          const keys = r?.data || [];
-          if (!keys.length) {
-            box.innerHTML = '<div class="text-gray-400" style="font-size:13px;padding:8px 0">— ยังไม่มี API key — กด "สร้าง API Key"</div>';
-            return;
-          }
-          box.innerHTML = `<table class="table" style="font-size:13px"><thead><tr>
-              <th>ชื่อ</th><th>Prefix</th><th>สิทธิ์</th><th>ใช้ล่าสุด</th><th>สถานะ</th><th></th>
-            </tr></thead><tbody>${keys.map(k => `
-            <tr>
-              <td class="font-medium">${Layout.esc(k.name || '')}</td>
-              <td><code>${Layout.esc(k.keyPrefix || '')}…</code></td>
-              <td style="font-size:11px">${[k.canRead?'อ่าน':null,k.canWrite?'เขียน':null,k.canDelete?'ลบ':null].filter(Boolean).join(' · ')||'—'}</td>
-              <td style="font-size:11px;color:#64748b">${k.lastUsedAt?Layout.date(k.lastUsedAt):'ยังไม่เคยใช้'}</td>
-              <td>${k.status==='Active'||k.status===0?'<span style="color:#16a34a">●</span> ใช้งาน':'<span style="color:#dc2626">●</span> ปิด'}</td>
-              <td class="text-right">${(k.status==='Active'||k.status===0)?`<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.revokeApiKey('${k.id}','${Layout.esc(k.name||'')}')">เพิกถอน</button>`:''}</td>
-            </tr>`).join('')}</tbody></table>`;
-        } catch (e) {
-          box.innerHTML = `<div style="color:#dc2626;font-size:13px;padding:8px 0">${Layout.esc(e.message||'โหลดไม่สำเร็จ')}</div>`;
-        }
-      },
-      openCreateApiKey() {
-        if (!document.getElementById('sEnableApiAccess').checked) {
-          Layout.toast('กรุณาเปิด "API Access" + กดบันทึกก่อน แล้วจึงสร้าง key', 'error');
-          return;
-        }
-        document.getElementById('akName').value = '';
-        document.getElementById('akCanWrite').checked = true;   // OCR ต้องเขียนได้
-        document.getElementById('akCanDelete').checked = false;
-        document.getElementById('akExpires').value = '';
-        document.getElementById('akResult').style.display = 'none';
-        document.getElementById('akForm').style.display = 'block';
-        document.getElementById('akCreateBtn').style.display = '';
-        Layout.openModal('apiKeyModal');
-      },
-      async submitCreateApiKey() {
-        const api = Layout.api(); if (!api) return;
-        const name = document.getElementById('akName').value.trim();
-        if (!name) { Layout.toast('กรุณาตั้งชื่อ key', 'error'); return; }
-        // APIAccess(1<<5=32) + DocumentEngine(1<<3=8) — สิทธิ์ที่ OCR ต้องใช้
-        const allowedFeatures = 32 | 8;
-        const expRaw = document.getElementById('akExpires').value;
-        try {
-          const r = await api.createApiKey({
-            name,
-            expiresAt: expRaw ? new Date(expRaw).toISOString() : null,
-            allowedFeatures,
-            allowedIpAddresses: null,
-            rateLimitPerMinute: 60,
-            canRead: true,
-            canWrite: document.getElementById('akCanWrite').checked,
-            canDelete: document.getElementById('akCanDelete').checked,
-          });
-          const raw = r?.data?.apiKey || '';
-          // โชว์ key ครั้งเดียว — copy ได้
-          document.getElementById('akForm').style.display = 'none';
-          document.getElementById('akResult').style.display = 'block';
-          document.getElementById('akCreateBtn').style.display = 'none';
-          document.getElementById('akRawKey').value = raw;
-          await this.loadApiKeys();
-        } catch (e) { Layout.toast(e.message || 'สร้างไม่สำเร็จ', 'error'); }
-      },
-      copyApiKey() {
-        const el = document.getElementById('akRawKey');
-        el.select();
-        try { navigator.clipboard.writeText(el.value); Layout.toast('คัดลอกแล้ว'); }
-        catch { document.execCommand('copy'); Layout.toast('คัดลอกแล้ว'); }
-      },
-      async revokeApiKey(id, name) {
-        if (!confirm(`เพิกถอน API key "${name}"? ระบบที่ใช้ key นี้จะใช้ไม่ได้ทันที`)) return;
-        const api = Layout.api(); if (!api) return;
-        try { await api.revokeApiKey(id); Layout.toast('เพิกถอนแล้ว'); await this.loadApiKeys(); }
-        catch (e) { Layout.toast(e.message || 'เพิกถอนไม่สำเร็จ', 'error'); }
-      },
       async uploadLogo() {
         const api = Layout.api(); if (!api) return;
         const fileInput = document.getElementById('logoFile');
@@ -1825,55 +1726,5 @@
     Page.init();
   </script>
 
-  <!-- API Key create modal — แสดง raw key ครั้งเดียวหลังสร้าง -->
-  <div class="modal-overlay" id="apiKeyModal">
-    <div class="modal" style="max-width:520px">
-      <div class="modal-header">
-        <h3 class="modal-title">🔑 สร้าง API Key (acc_)</h3>
-        <button class="modal-close" onclick="Layout.closeModal('apiKeyModal')">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div id="akForm">
-          <div class="form-group">
-            <label class="form-label">ชื่อ key <span class="req">*</span></label>
-            <input type="text" class="form-input" id="akName" placeholder="เช่น OCR Automation, n8n sync">
-            <div class="form-help">ตั้งชื่อให้รู้ว่าใช้กับระบบไหน เผื่อต้องเพิกถอนภายหลัง</div>
-          </div>
-          <div class="form-row">
-            <div class="form-group form-checkbox"><input type="checkbox" id="akCanWrite" checked><label for="akCanWrite">เขียนได้ (สร้าง/อนุมัติเอกสาร — OCR ต้องเปิด)</label></div>
-            <div class="form-group form-checkbox"><input type="checkbox" id="akCanDelete"><label for="akCanDelete">ลบได้</label></div>
-          </div>
-          <div class="form-group fg-mid">
-            <label class="form-label">วันหมดอายุ <span style="color:var(--gray-500);font-weight:400;font-size:11px">(เว้นว่าง = ไม่หมดอายุ)</span></label>
-            <input type="date" class="form-input" id="akExpires">
-          </div>
-          <div style="font-size:12px;color:#1e40af;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 10px">
-            💡 key นี้จะผูกกับ<b>บัญชีผู้ใช้ของคุณ</b> — เอกสารที่สร้างผ่าน key จะถือว่าคุณเป็นผู้สร้าง/อนุมัติ
-          </div>
-        </div>
-        <div id="akResult" style="display:none">
-          <div style="font-size:13px;color:#065f46;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:12px;margin-bottom:12px">
-            ✅ สร้างสำเร็จ — <b>คัดลอก key นี้เก็บไว้เดี๋ยวนี้</b> ระบบจะไม่แสดงอีก (เก็บแบบ hash)
-          </div>
-          <div class="form-group">
-            <label class="form-label">API Key</label>
-            <div style="display:flex;gap:6px">
-              <input type="text" class="form-input" id="akRawKey" readonly style="font-family:monospace;font-size:12px">
-              <button class="btn btn-secondary btn-sm" onclick="Page.copyApiKey()" style="white-space:nowrap">📋 คัดลอก</button>
-            </div>
-          </div>
-          <div style="font-size:12px;color:#475569;background:var(--gray-50);border:1px dashed var(--gray-300);border-radius:6px;padding:10px;line-height:1.7">
-            <b>วิธีใช้:</b> ส่ง HTTP header<br>
-            <code>X-Api-Key: acc_...</code><br>
-            แนบไปกับทุก request เช่น <code>POST /api/companies/{companyId}/ocr/{scanId}/create-document</code>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="Layout.closeModal('apiKeyModal')" id="akCloseBtn">ปิด</button>
-        <button class="btn btn-primary" id="akCreateBtn" onclick="Page.submitCreateApiKey()">สร้าง key</button>
-      </div>
-    </div>
-  </div>
 </body>
 </html>
