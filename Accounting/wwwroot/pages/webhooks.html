@@ -115,8 +115,15 @@
     <!-- API Keys Tab -->
     <div id="tab-apikeys" style="display:none">
       <div class="page-header">
-        <div><h2 class="page-title">API Keys</h2><p class="page-subtitle">จัดการ API Keys สำหรับเชื่อมต่อระบบภายนอก (REST API)</p></div>
+        <div><h2 class="page-title">API Keys (acc_)</h2><p class="page-subtitle">API Key สำหรับให้สคริปต์/automation ของคุณเรียก REST API (เช่น OCR สร้าง-อนุมัติเอกสาร, n8n)</p></div>
         <button class="btn btn-primary" onclick="Page.openCreateApiKey()">+ สร้าง API Key</button>
+      </div>
+      <div style="font-size:12.5px;color:#0c4a6e;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 14px;margin-bottom:14px;line-height:1.7">
+        📌 <b>นี่คือ acc_ key</b> — ผูกกับบัญชีผู้ใช้ของคุณ ใช้สร้าง/อนุมัติเอกสารแทนคุณได้ (เช่น OCR).
+        ส่ง header <code>X-Api-Key: acc_...</code> ทุก request. ต้องเปิด "API Access" ที่
+        <a href="/pages/settings.html" style="color:#0369a1;font-weight:600">ตั้งค่า</a> ก่อนสร้าง.<br>
+        ถ้าต้องการเชื่อม<u>ระบบภายนอก</u> (POS/PMS/ERP) ให้ sync ข้อมูลเข้า + mapping บัญชี → ใช้ int_ key ที่
+        <a href="/pages/integrations.html" style="color:#0369a1;font-weight:600">🔗 เชื่อมต่อระบบ</a>
       </div>
       <div class="table-container">
         <table class="table">
@@ -390,14 +397,19 @@ const Page = {
       const items = res.data?.items || res.data || [];
       const tbody = document.getElementById('apikeyBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มี API Key</td></tr>'; return; }
-      tbody.innerHTML = items.map(k => `<tr>
+      tbody.innerHTML = items.map(k => {
+        // DTO ส่ง k.status (enum string: "Active"/"Revoked"/"Expired") —
+        // เดิม badge เช็ค k.isActive/k.isRevoked ที่ไม่มีอยู่จริง → แสดง
+        // "ใช้งาน" เสมอ ทำให้ key ที่เพิกถอนแล้วดูเหมือนยังอยู่
+        const isActive = k.status === 'Active';
+        return `<tr${isActive ? '' : ' style="opacity:.55"'}>
         <td class="font-medium">${Layout.esc(k.name || '-')}</td>
         <td><code style="background:var(--gray-100);padding:2px 6px;border-radius:4px;font-size:12px">${Layout.esc(k.keyPrefix || k.key?.substring(0,12) || '***')}...</code></td>
         <td>${Layout.date(k.createdAt)}</td>
         <td>${k.lastUsedAt ? Layout.date(k.lastUsedAt) : 'ยังไม่เคยใช้'}</td>
-        <td>${Layout.statusBadge(k.isActive !== false && !k.isRevoked ? 'Active' : 'Inactive')}</td>
-        <td><button class="btn btn-sm btn-danger" onclick="Page.revokeApiKey('${k.id}')">เพิกถอน</button></td>
-      </tr>`).join('');
+        <td>${Layout.statusBadge(isActive ? 'Active' : 'Inactive')}${k.status === 'Revoked' ? ' <span style="font-size:11px;color:#dc2626">เพิกถอนแล้ว</span>' : k.status === 'Expired' ? ' <span style="font-size:11px;color:#d97706">หมดอายุ</span>' : ''}</td>
+        <td>${isActive ? `<button class="btn btn-sm btn-danger" onclick="Page.revokeApiKey('${k.id}')">เพิกถอน</button>` : '<span class="text-gray-400" style="font-size:12px">—</span>'}</td>
+      </tr>`; }).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
@@ -409,7 +421,18 @@ const Page = {
 
   async saveApiKey() {
     const api = Layout.api(); if (!api) return;
-    const data = { name: document.getElementById('akName').value, expiresAt: document.getElementById('akExpiry').value || null, permissions: { read: document.getElementById('akPermRead').checked, write: document.getElementById('akPermWrite').checked, delete: document.getElementById('akPermDelete').checked } };
+    // DTO CreateApiKeyRequest = flat canRead/canWrite/canDelete + allowedFeatures
+    // (เดิมส่ง permissions:{} ผิด shape → key ถูกสร้างด้วย default CanWrite=false
+    // → เรียก OCR สร้าง/อนุมัติเอกสารไม่ได้). allowedFeatures = APIAccess(32)
+    // | DocumentEngine(8) = 40 สำหรับงาน REST/OCR
+    const data = {
+      name: document.getElementById('akName').value,
+      expiresAt: document.getElementById('akExpiry').value || null,
+      allowedFeatures: 40,
+      canRead: document.getElementById('akPermRead').checked,
+      canWrite: document.getElementById('akPermWrite').checked,
+      canDelete: document.getElementById('akPermDelete').checked,
+    };
     if (!data.name) { Layout.toast('กรุณากรอกชื่อ', 'error'); return; }
     try {
       const res = await api.createApiKey(data);
