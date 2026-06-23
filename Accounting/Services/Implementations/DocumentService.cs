@@ -3549,9 +3549,12 @@ public class DocumentService : IDocumentService
         if (request.PostalCode != null) contact.PostalCode = request.PostalCode;
         if (request.CountryCode != null) contact.CountryCode = request.CountryCode;
         contact.Address = request.Address ?? ComposeAddress(contact);
-        if (request.Phone != null) contact.Phone = request.Phone;
-        if (request.Email != null) contact.Email = request.Email;
-        if (request.ContactPerson != null) contact.ContactPerson = request.ContactPerson;
+        // Phone/Email/ContactPerson: ผู้ใช้ "ลบจนว่าง" ต้องล้างค่าได้ — frontend
+        // ส่ง "" เมื่อ cleared. normalize ""/whitespace → null (เก็บ null สะอาด
+        // กว่า ""). null ที่แท้จริง (omit) = ไม่เปลี่ยน; "" = ล้าง.
+        if (request.Phone != null) contact.Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
+        if (request.Email != null) contact.Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
+        if (request.ContactPerson != null) contact.ContactPerson = string.IsNullOrWhiteSpace(request.ContactPerson) ? null : request.ContactPerson.Trim();
         if (request.IsActive.HasValue) contact.IsActive = request.IsActive.Value;
         // Per-contact GL overrides — record.Nullable<Guid> can't tell
         // "unset" from "explicitly clear to default", so we treat null
