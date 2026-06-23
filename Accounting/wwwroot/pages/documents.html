@@ -1310,6 +1310,13 @@
             try { this.onLineAccountInput?.(accInp); } catch (_) {}
           }
         });
+        // ปิดลูปการสอน local model (กฎเหล็ก #1) — แนบ feedbackId ระดับ scan ให้
+        // บรรทัดแรก เพื่อให้ save() ส่งกลับ → ApproveDocument เรียนรู้ผัง GL.
+        // (ตรงกับ Path B "สร้างทันที" ที่แนบให้บรรทัดแรก; เดิม Path A ทำหาย)
+        if (payload.glAccountAiFeedbackId) {
+          const firstFid = document.querySelector('#linesBody .line-card [data-f="glAiFeedbackId"]');
+          if (firstFid) firstFid.dataset.feedbackId = payload.glAccountAiFeedbackId;
+        }
         if (!document.querySelector('#linesBody .line-card')) this.addLine();
         this.calcSum();
 
