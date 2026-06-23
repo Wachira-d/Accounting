@@ -3539,7 +3539,13 @@ public class OcrService : IOcrService
         // (เดิมใส่แค่ Reference → ฟอร์มแก้ไขโชว์ "ขาดเลขใบกำกับ" + ภาษีซื้อ
         // ค้าง 11640). PV ใช้ flag HasTaxInvoiceReference; PI/Expense ใช้
         // SupplierInvoiceNumber/Date ตรง ๆ.
+        // §82/5 — เอกสารที่เคลมภาษีซื้อไม่ได้ (ใบกำกับอย่างย่อ §86/6 / ใบเสร็จ
+        // ที่ไม่ใช่ใบกำกับเต็มรูป) จะถูก tag [VAT-CLAIM] ใน ProcessingNotes ตอน
+        // scan. ห้ามเปิด "ใช้งานใบกำกับภาษี" อัตโนมัติ (จะกลายเป็นเคลม VAT ผิด
+        // กฎหมาย). ให้ตรงกับ Path A ที่ไม่ auto-ติ๊กเคลมในเคสนี้.
+        var vatNotClaimable = (result.ProcessingNotes ?? "").Contains("[VAT-CLAIM]");
         var bookSupplierInvoice = !isSalesSide
+            && !vatNotClaimable
             && (docType is DocumentType.PaymentVoucher or DocumentType.PurchaseInvoice or DocumentType.Expense)
             && !string.IsNullOrWhiteSpace(result.ExtractedDocumentNumber)
             && ((result.ExtractedVatAmount ?? 0) > 0 || !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId));
