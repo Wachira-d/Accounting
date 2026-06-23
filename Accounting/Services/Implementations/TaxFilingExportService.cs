@@ -263,7 +263,9 @@ public class TaxFilingExportService : ITaxFilingExportService
                      join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id into cj
                      from c in cj.DefaultIfEmpty()
                      select new { d.Id, d.SupplierInvoiceNumber, Snapshot = d.SupplierBranchCode, ContactBranch = c != null ? c.BranchCode : null })
-                .ToDictionaryAsync(x => x.Id, x => ((string?)x.SupplierInvoiceNumber, (string?)(x.Snapshot ?? x.ContactBranch)));
+                .ToDictionaryAsync(x => x.Id, x => (
+                    SupplierInvoiceNo: (string?)x.SupplierInvoiceNumber,
+                    BranchCode: (string?)(x.Snapshot ?? x.ContactBranch)));
 
         // CSV escape: ห่อ "..." ถ้ามี , หรือ " หรือขึ้นบรรทัด — RD parser ปฏิบัติตาม RFC 4180.
         static string Csv(string s) => s.Contains(',') || s.Contains('"') || s.Contains('\n')
