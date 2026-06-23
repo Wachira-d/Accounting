@@ -1139,6 +1139,15 @@
               if (el) el.value = Layout.dateInput(payload.supplierTaxInvoiceDate); } catch (_) {}
           }
           setVal('fSupplierBranchCode', payload.supplierBranchCode || '00000');
+          // เติม supplierTaxId จาก OCR handoff โดยตรง — กันเคสที่ contact เดิม
+          // ใน DB ยังไม่มี TaxId (ถูก match จากชื่อ ตอน OCR backfill ไม่ทัน)
+          // _fillSupplierTaxIdFromContact จะ override ทีหลังถ้าหา TaxId จาก
+          // contact ได้ — แต่ถ้าหาไม่ได้ ค่าจาก handoff ยังคงอยู่ ผู้ใช้เห็น
+          // เลขจริงแทน "(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี)"
+          if (payload.supplierTaxId) {
+            const taxInp = document.getElementById('fSupplierTaxIdReadonly');
+            if (taxInp) taxInp.value = payload.supplierTaxId;
+          }
           // อัพเดต VAT preview + completeness validation
           try { this._updateTaxInvVatPreview?.(); } catch (_) {}
           try { this._validateTaxInvoiceClaim?.(); } catch (_) {}
@@ -2391,6 +2400,11 @@
         const cid = document.getElementById('fContactId')?.value;
         const inp = document.getElementById('fSupplierTaxIdReadonly');
         if (!inp) return;
+        // ถ้า field มี TaxId 13 หลักที่ valid อยู่แล้ว (เช่นมาจาก OCR handoff
+        // ที่เติมไว้ก่อน) ไม่ต้อง overwrite — กันเคส contact เดิมยังไม่มี TaxId
+        // แล้วเราไปลบทับด้วย "(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี)"
+        const cur = (inp.value || '').replace(/\D/g, '');
+        if (cur.length === 13) return;
         // หา contact จาก autocomplete cache (this._selectedContact ถ้าเพิ่ง
         // เลือก) → fallback list (this.contacts) → fallback fetch ตรง
         // (กรณี contact เพิ่งสร้างจาก OCR ยังไม่อยู่ในแคชหน้า)
@@ -2399,16 +2413,26 @@
           : (this.contacts || []).find(x => x.id === cid);
         if (c?.taxId) { inp.value = c.taxId; return; }
         // ไม่พบในแคช — fetch ตรงจาก server (เคส OCR สร้าง contact ใหม่)
+        // ก่อน fetch เก็บค่าปัจจุบันเป็น fallback (เคสที่ field มีค่าจาก OCR
+        // handoff แต่ไม่ 13 หลัก เช่นมี dash) เพื่อกัน "(กำลังโหลด...)" ค้าง
+        const priorValue = inp.value;
         inp.value = '(กำลังโหลด...)';
         if (!cid) { inp.value = '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)'; return; }
         Layout.api()?.getContact(cid)
           .then(r => {
             const taxId = r?.data?.taxId;
-            inp.value = taxId || '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)';
+            // ถ้า contact ไม่มี TaxId แต่ก่อนหน้านี้มี value (เช่นจาก OCR
+            // handoff) — เก็บค่านั้นไว้ ดีกว่าโชว์ข้อความ "ยังไม่มี"
+            inp.value = taxId
+              || (priorValue && priorValue !== '(กำลังโหลด...)' ? priorValue
+                  : '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)');
             // cache ลง this._selectedContact ใช้รอบหน้า
             if (taxId) this._selectedContact = { id: cid, name: r.data.name, taxId };
           })
-          .catch(() => { inp.value = '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)'; });
+          .catch(() => {
+            inp.value = (priorValue && priorValue !== '(กำลังโหลด...)' ? priorValue
+              : '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)');
+          });
       },
 
       _updateTaxInvVatPreview(srcDoc) {

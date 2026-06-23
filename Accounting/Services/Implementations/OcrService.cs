@@ -1513,32 +1513,41 @@ public class OcrService : IOcrService
                         + $"\n[Manual Review Required] ไม่สามารถยืนยัน TaxID {extractedData.VendorTaxId} จาก DBD/RD และข้อมูลผู้ขายไม่เพียงพอ — กรุณาตรวจสอบและสร้าง Contact ด้วยตนเอง";
                 }
             }
-            if (!contactJustCreated
-                && scanResult.MatchedContactId.HasValue
-                && (extractedData.DbdCanonicalName != null
-                    || !string.IsNullOrWhiteSpace(extractedData.VendorPhone)
-                    || !string.IsNullOrWhiteSpace(extractedData.VendorAddress)))
+            // Backfill ข้อมูลใน contact เดิม. แยก 2 step:
+            //   (1) TaxId — รันเสมอเมื่อ OCR แกะได้ + contact ยังไม่มี (เคสปกติ
+            //       ที่ vendor ถูก match จากชื่อ ตั้งแต่ตอนสร้าง contact แต่ไม่มี
+            //       TaxId). เดิมติด gate ของ DBD/Phone/Address ทำให้ใบที่
+            //       แกะได้แค่ TaxId + Name หลุดการ backfill → user เปิดฟอร์ม
+            //       มาเห็น "(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี)" ทั้งที่ OCR มี.
+            //   (2) DBD enrichment fields (address/phone/email/branch) — รัน
+            //       เฉพาะตอนมีข้อมูล (กันเขียนทับด้วยค่าว่าง).
+            if (!contactJustCreated && scanResult.MatchedContactId.HasValue)
             {
-                // Existing contact: enrich missing fields from DBD + OCR without
-                // overwriting user-entered data. We only fill blanks, never
-                // replace — the user's manual edits are always authoritative.
                 var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == scanResult.MatchedContactId);
                 if (existing != null)
                 {
                     bool changed = false;
+                    // (1) TaxId — unconditional fill ถ้าว่าง
                     if (string.IsNullOrWhiteSpace(existing.TaxId) && !string.IsNullOrEmpty(extractedData.VendorTaxId))
                     { existing.TaxId = extractedData.VendorTaxId; changed = true; }
-                    if (string.IsNullOrWhiteSpace(existing.Address))
+                    // (2) DBD / phone / address enrichment — gated ตามเดิม
+                    var hasDbdOrContacts = extractedData.DbdCanonicalName != null
+                        || !string.IsNullOrWhiteSpace(extractedData.VendorPhone)
+                        || !string.IsNullOrWhiteSpace(extractedData.VendorAddress);
+                    if (hasDbdOrContacts)
                     {
-                        var addr = extractedData.DbdAddress ?? extractedData.VendorAddress;
-                        if (!string.IsNullOrEmpty(addr)) { existing.Address = addr; changed = true; }
+                        if (string.IsNullOrWhiteSpace(existing.Address))
+                        {
+                            var addr = extractedData.DbdAddress ?? extractedData.VendorAddress;
+                            if (!string.IsNullOrEmpty(addr)) { existing.Address = addr; changed = true; }
+                        }
+                        if (string.IsNullOrWhiteSpace(existing.Phone) && !string.IsNullOrWhiteSpace(extractedData.VendorPhone))
+                        { existing.Phone = extractedData.VendorPhone; changed = true; }
+                        if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(extractedData.VendorEmail))
+                        { existing.Email = extractedData.VendorEmail; changed = true; }
+                        if (string.IsNullOrWhiteSpace(existing.BranchCode) && !string.IsNullOrWhiteSpace(extractedData.VendorBranchCode))
+                        { existing.BranchCode = extractedData.VendorBranchCode; changed = true; }
                     }
-                    if (string.IsNullOrWhiteSpace(existing.Phone) && !string.IsNullOrWhiteSpace(extractedData.VendorPhone))
-                    { existing.Phone = extractedData.VendorPhone; changed = true; }
-                    if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(extractedData.VendorEmail))
-                    { existing.Email = extractedData.VendorEmail; changed = true; }
-                    if (string.IsNullOrWhiteSpace(existing.BranchCode) && !string.IsNullOrWhiteSpace(extractedData.VendorBranchCode))
-                    { existing.BranchCode = extractedData.VendorBranchCode; changed = true; }
                     if (changed)
                     {
                         existing.UpdatedBy = extractedData.DbdMatched ? "OCR-DbdEnrich" : "OCR-Enrich";
@@ -3395,6 +3404,20 @@ public class OcrService : IOcrService
                 };
                 _db.Contacts.Add(newContact);
                 contactId = newContact.Id;
+            }
+            // Backfill TaxId เข้า contact เดิม — เคสที่ vendor "ABC จำกัด" ถูก
+            // match จากชื่อ (fuzzy / canonical) ตั้งแต่ตอน OCR ก่อนหน้า ตอนนั้น
+            // contact ถูกสร้าง/มีอยู่แล้วแบบไม่มี TaxId แต่ OCR รอบนี้แกะ TaxId
+            // ได้จากใบ → อัปเดตให้ contact ครบ §86/4 (ไม่ต้องให้ user ไปแก้
+            // มือในหน้า Contacts) — สอดคล้องกับ backfill ที่มีอยู่ใน
+            // ProcessScanAsync :1529 ที่อาจไม่ทันรอบนี้.
+            if (contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
+            {
+                var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId.Value);
+                if (existing != null && string.IsNullOrWhiteSpace(existing.TaxId))
+                {
+                    existing.TaxId = result.ExtractedVendorTaxId.Trim();
+                }
             }
         }
 
