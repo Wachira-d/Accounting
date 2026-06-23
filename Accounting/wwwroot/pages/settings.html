@@ -85,11 +85,11 @@
       </div>
 
       <div class="form-row">
-        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span style="color:red">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
+        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span class="req">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
         <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span style="color:red">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
+        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span class="req">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
         <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
         <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
       </div>
@@ -373,7 +373,7 @@
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="form-group"><label class="form-label">วันที่ได้รับอนุมัติ</label><input type="date" class="form-input" id="sEtaxByEmailRegDate"></div>
             <div class="form-group"><label class="form-label">เลขรหัสรับรอง (ถ้ามี)</label><input type="text" class="form-input" id="sEtaxByEmailRegNumber"></div>
-            <div class="form-group"><label class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span style="color:red">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
+            <div class="form-group"><label class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span class="req">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
             <div class="form-group">
               <label class="form-label">CC สรรพากร (Time Stamp) <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">ETDA กำหนด</span></label>
               <input type="email" class="form-input" id="sEtaxByEmailRdCc" value="csemail@etax.teda.th" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
@@ -478,7 +478,7 @@
           <div class="form-group"><label class="form-label">Tenant ID</label><input type="text" class="form-input" id="msTenantId" placeholder="GUID หรือ contoso.onmicrosoft.com"></div>
           <div class="form-group"><label class="form-label">Client ID (App ID)</label><input type="text" class="form-input" id="msClientId"></div>
           <div class="form-group"><label class="form-label">Client Secret</label><input type="password" class="form-input" id="msClientSecret"></div>
-          <div class="form-group"><label class="form-label">Sender Mailbox (UPN) <span style="color:red">*</span></label><input type="email" class="form-input" id="msSenderUpn" placeholder="invoice@yourtenant.com"></div>
+          <div class="form-group"><label class="form-label">Sender Mailbox (UPN) <span class="req">*</span></label><input type="email" class="form-input" id="msSenderUpn" placeholder="invoice@yourtenant.com"></div>
         </div>
       </div>
 
