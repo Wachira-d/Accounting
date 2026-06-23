@@ -220,6 +220,41 @@ public class FixedAssetService : IFixedAssetService
         return items.Select(MapToResponse).ToList();
     }
 
+    /// <summary>ลบสินทรัพย์ที่ลงทะเบียนผิด (เช่น auto-register แยกผิด/ซ้ำ).
+    /// guard: ห้ามลบถ้าคิดค่าเสื่อมจริงไปแล้ว (มี posted depreciation หรือ
+    /// AccumulatedDepreciation > 0 หรือ disposed/written-off) — ต้อง Dispose/
+    /// WriteOff แทน. ต้นทุน asset มาจากเอกสารต้นทาง (PostAcquisitionJournalEntry
+    /// =false ตอน auto-register) → ลบ record ไม่กระทบ GL. ลบ projected
+    /// depreciation rows (unposted) ที่ผูกอยู่ด้วย.</summary>
+    public async Task DeleteAsync(Guid companyId, Guid assetId)
+    {
+        var asset = await _db.FixedAssets
+            .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
+
+        if (asset.AccumulatedDepreciation > 0m)
+            throw new InvalidOperationException(
+                "ลบไม่ได้ — สินทรัพย์นี้คิดค่าเสื่อมไปแล้ว กรุณาใช้ 'จำหน่าย' หรือ 'ตัดจำหน่าย' แทน");
+        if (asset.Status is not AssetStatus.Active)
+            throw new InvalidOperationException(
+                "ลบไม่ได้ — สินทรัพย์นี้ถูกจำหน่าย/ตัดจำหน่ายแล้ว");
+
+        // กันลบ asset ที่มี depreciation ลง JE จริงแล้ว (posted)
+        var hasPosted = await _db.AssetDepreciations
+            .AnyAsync(d => d.FixedAssetId == assetId && d.IsPosted && !d.IsDeleted);
+        if (hasPosted)
+            throw new InvalidOperationException(
+                "ลบไม่ได้ — มีค่าเสื่อมที่ลงบัญชีแล้ว กรุณาใช้ 'จำหน่าย' หรือ 'ตัดจำหน่าย' แทน");
+
+        // ลบ projected depreciation rows (unposted) แล้วลบ asset
+        var projectedDeps = await _db.AssetDepreciations
+            .Where(d => d.FixedAssetId == assetId)
+            .ToListAsync();
+        _db.AssetDepreciations.RemoveRange(projectedDeps);
+        _db.FixedAssets.Remove(asset);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<FixedAssetResponse> UpdateAsync(Guid companyId, Guid assetId, UpdateFixedAssetRequest request)
     {
         var asset = await _db.FixedAssets

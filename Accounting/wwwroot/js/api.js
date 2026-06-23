@@ -491,6 +491,7 @@ const API = {
       getAssetsNeedsReview: () => API.get(`${base}/fixedasset/needs-review`),
       createAsset: (d) => API.post(`${base}/fixedasset`, d),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
+      deleteAsset: (id) => API.del(`${base}/fixedasset/${id}`),
       disposeAsset: (id, d) => API.post(`${base}/fixedasset/${id}/dispose`, d),
       writeOffAsset: (id, d) => API.post(`${base}/fixedasset/${id}/writeoff`, d),
       adjustAssetLife: (id, d) => API.put(`${base}/fixedasset/${id}/adjust-life`, d),

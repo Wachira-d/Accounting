@@ -489,6 +489,7 @@
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button>
               ${a.status === 'Active' ? `<button class="btn btn-sm ${a.needsReview ? 'btn-primary' : 'btn-ghost'}" onclick="Page.openEdit('${a.id}')">${a.needsReview ? 'ตรวจสอบและยืนยัน' : 'แก้ไข'}</button>` : ''}
+              ${a.status === 'Active' && (a.accumulatedDepreciation || 0) === 0 ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.deleteAsset('${a.id}','${Layout.esc(a.name||'')}')" title="ลบสินทรัพย์ที่ลงทะเบียนผิด (เฉพาะที่ยังไม่คิดค่าเสื่อม)">ลบ</button>` : ''}
             </td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = '';  // server paging disabled while we filter client-side
@@ -529,6 +530,12 @@
         document.getElementById('fPostAcq').checked = false;
         this.toggleAcqRow();
         Layout.openModal('formModal');
+      },
+      async deleteAsset(id, name) {
+        if (!confirm(`ลบสินทรัพย์ "${name}"?\n\nใช้เฉพาะกรณีลงทะเบียนผิด/ซ้ำ (ยังไม่คิดค่าเสื่อม) — ไม่กระทบบัญชี เพราะต้นทุนมาจากเอกสารต้นทาง.\nถ้าต้องการเลิกใช้สินทรัพย์ที่ใช้งานจริง ให้ใช้ "จำหน่าย/ตัดจำหน่าย" แทน`)) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.deleteAsset(id); Layout.toast('ลบสินทรัพย์สำเร็จ'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;
