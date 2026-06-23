@@ -134,7 +134,8 @@ public partial class PdfGenerationService
             ApprovedByName: approvedByName,
             ApprovedBySignatureBase64: approvedBySignature,
             ApprovedAt: approvedAt,
-            Notes: document.Notes);
+            Notes: document.Notes,
+            PricesIncludeVat: document.PricesIncludeVat);
     }
 
     public byte[] BuildEtaxPdfA3WithEmbeddedXml(string xmlContent, EtaxPdfMetadata metadata)
@@ -360,12 +361,14 @@ public partial class PdfGenerationService
                 static IContainer HeaderCell(IContainer x) =>
                     x.Background(Colors.Grey.Lighten2).Padding(4).DefaultTextStyle(t => t.SemiBold().FontSize(9));
 
+                // ราคารวม VAT → label "(รวม VAT)" + amount = qty × price − disc
+                // (รวม VAT) — math ในตารางตรวจสอบได้ในตัวเอง (มาตรฐานสากล)
                 h.Cell().Element(HeaderCell).AlignCenter().Text("ลำดับ");
                 h.Cell().Element(HeaderCell).Text("รายการ");
                 h.Cell().Element(HeaderCell).AlignRight().Text("จำนวน");
                 h.Cell().Element(HeaderCell).AlignCenter().Text("หน่วย");
-                h.Cell().Element(HeaderCell).AlignRight().Text("ราคา/หน่วย");
-                h.Cell().Element(HeaderCell).AlignRight().Text("รวมเงิน");
+                h.Cell().Element(HeaderCell).AlignRight().Text(m.PricesIncludeVat ? "ราคา/หน่วย (รวม VAT)" : "ราคา/หน่วย");
+                h.Cell().Element(HeaderCell).AlignRight().Text(m.PricesIncludeVat ? "รวมเงิน (รวม VAT)" : "รวมเงิน");
             });
 
             foreach (var line in lines)
@@ -373,6 +376,9 @@ public partial class PdfGenerationService
                 static IContainer BodyCell(IContainer x) =>
                     x.BorderBottom(0.3f).BorderColor(Colors.Grey.Lighten1).PaddingVertical(3).PaddingHorizontal(4);
 
+                var printedAmount = m.PricesIncludeVat
+                    ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
+                    : line.Amount;
                 table.Cell().Element(BodyCell).AlignCenter().Text(line.LineNo.ToString()).FontSize(9);
                 table.Cell().Element(BodyCell).Column(d =>
                 {
@@ -383,7 +389,7 @@ public partial class PdfGenerationService
                 table.Cell().Element(BodyCell).AlignRight().Text(line.Quantity.ToString("N2", inv)).FontSize(9);
                 table.Cell().Element(BodyCell).AlignCenter().Text(line.Unit).FontSize(9);
                 table.Cell().Element(BodyCell).AlignRight().Text(line.UnitPrice.ToString("N2", inv)).FontSize(9);
-                table.Cell().Element(BodyCell).AlignRight().Text(line.Amount.ToString("N2", inv)).FontSize(9);
+                table.Cell().Element(BodyCell).AlignRight().Text(printedAmount.ToString("N2", inv)).FontSize(9);
             }
         });
     }

@@ -497,13 +497,18 @@ public partial class PdfGenerationService
                     if (align == "right") tx.AlignRight();
                     else if (align == "center") tx.AlignCenter();
                 }
+                // ราคารวม VAT → label "(รวม VAT)" + แสดง amount แบบรวม VAT
+                // ให้ math ในตารางตรวจสอบยอดได้ในตัวเอง (มาตรฐาน OfficeMate/
+                // Tesco/Makro/Big C). เดิมราคา/หน่วย incl + จำนวนเงิน ex →
+                // ผู้อ่านงงเพราะคำนวณยังไงก็ไม่ตรง.
+                var inclVat = doc.PricesIncludeVat;
                 if (t.ShowLineNumber) Th("#", "center");
                 Th("รายการ");
                 Th("จำนวน", "right");
                 if (t.ShowUnit) Th("หน่วย", "center");
-                Th("ราคา/หน่วย", "right");
+                Th(inclVat ? "ราคา/หน่วย (รวม VAT)" : "ราคา/หน่วย", "right");
                 if (t.ShowDiscount) Th("ส่วนลด", "right");
-                Th("จำนวนเงิน", "right");
+                Th(inclVat ? "จำนวนเงิน (รวม VAT)" : "จำนวนเงิน", "right");
             });
 
             // TableBorderStyle ตาม template: Full = กรอบทุกด้าน, HeaderOnly
@@ -527,13 +532,19 @@ public partial class PdfGenerationService
                     if (align == "right") tx.AlignRight();
                     else if (align == "center") tx.AlignCenter();
                 }
+                // ราคารวม VAT: amount ที่แสดง = qty × price − discount (รวม
+                // VAT) เพื่อให้สอดคล้องกับ label header. backend Amount เป็น
+                // ex-VAT สำหรับ GL/ภพ.30 ไม่กระทบ.
+                var printedAmount = doc.PricesIncludeVat
+                    ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
+                    : line.Amount;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
                 Td(line.Description ?? "");
                 Td(line.Quantity.ToString("N2"), "right");
                 if (t.ShowUnit) Td(line.Unit ?? "", "center");
                 Td(line.UnitPrice.ToString("N2"), "right");
                 if (t.ShowDiscount) Td(line.DiscountAmount.ToString("N2"), "right");
-                Td(line.Amount.ToString("N2"), "right");
+                Td(printedAmount.ToString("N2"), "right");
                 idx++;
             }
         });

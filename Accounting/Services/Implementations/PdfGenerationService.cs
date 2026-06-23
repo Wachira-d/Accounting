@@ -650,20 +650,34 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowContactEmail && doc.Contact.Email != null) sb.AppendLine($"<div>Email: {doc.Contact.Email}</div>");
         sb.AppendLine("</div>");
 
-        // Line Items Table
+        // Line Items Table — ถ้าราคารวม VAT (pricesIncludeVat) ทั้งคอลัมน์
+        // "ราคา/หน่วย" และ "จำนวนเงิน" แสดงแบบรวม VAT (math ในตารางถูก
+        // qty × unit − disc = amount) + label ชัดว่า "(รวม VAT)" — มาตรฐาน
+        // OfficeMate/Tesco/Makro/Big C. summary ท้ายค่อยแยกฐาน-VAT ตาม §86/4.
+        // เดิม UnitPrice incl + Amount ex ทำให้ math ในใบไม่ตรงตัวเอง ผู้อ่านงง.
+        var inclVat = doc.PricesIncludeVat;
+        var priceLbl = inclVat ? "ราคา/หน่วย (รวม VAT)" : "ราคา/หน่วย";
+        var amountLbl = inclVat ? "จำนวนเงิน (รวม VAT)" : "จำนวนเงิน";
+
         sb.AppendLine("<table class='items-table'><thead><tr>");
         if (template.ShowLineNumber) sb.AppendLine("<th class='center'>#</th>");
         sb.AppendLine("<th>รายการ</th>");
         sb.AppendLine("<th class='right'>จำนวน</th>");
         if (template.ShowUnit) sb.AppendLine("<th class='center'>หน่วย</th>");
-        sb.AppendLine("<th class='right'>ราคา/หน่วย</th>");
+        sb.AppendLine($"<th class='right'>{priceLbl}</th>");
         if (template.ShowDiscount) sb.AppendLine("<th class='right'>ส่วนลด</th>");
-        sb.AppendLine("<th class='right'>จำนวนเงิน</th>");
+        sb.AppendLine($"<th class='right'>{amountLbl}</th>");
         sb.AppendLine("</tr></thead><tbody>");
 
         var lineNum = 1;
         foreach (var line in doc.Lines.OrderBy(l => l.LineOrder))
         {
+            // ถ้าราคารวม VAT: จำนวนเงินที่พิมพ์ = ราคา×qty−ส่วนลด (รวม VAT) เพื่อ
+            // ให้ตารางตรวจสอบยอดได้ในตัวเอง. backend Amount เป็น ex-VAT ไว้สำหรับ
+            // GL/รายงานภาษี ไม่กระทบ — แค่หน้าพิมพ์เปลี่ยน label + ค่าที่แสดง.
+            var printedAmount = inclVat
+                ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
+                : line.Amount;
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
             sb.AppendLine($"<td>{line.Description}</td>");
@@ -671,7 +685,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (template.ShowUnit) sb.AppendLine($"<td class='center'>{line.Unit}</td>");
             sb.AppendLine($"<td class='right'>{line.UnitPrice:N2}</td>");
             if (template.ShowDiscount) sb.AppendLine($"<td class='right'>{line.DiscountAmount:N2}</td>");
-            sb.AppendLine($"<td class='right'>{line.Amount:N2}</td>");
+            sb.AppendLine($"<td class='right'>{printedAmount:N2}</td>");
             sb.AppendLine("</tr>");
         }
         sb.AppendLine("</tbody></table>");
