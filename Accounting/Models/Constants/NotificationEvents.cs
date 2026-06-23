@@ -45,6 +45,10 @@ public static class NotificationEvents
     public const string DocumentApproved        = "document.approved";
     public const string DocumentVoided          = "document.voided";
     public const string DepreciationPosted      = "depreciation.posted";
+    /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
+    /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
+    /// เพื่อสอบ DBA / raw SQL.</summary>
+    public const string AuditChainTampered      = "audit.chain_tampered";
 
     // ===== CMS =====
     public const string SitePublishSucceeded = "site.publish_succeeded";
@@ -76,6 +80,7 @@ public static class NotificationEvents
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
+        ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("CMS",      SitePublishSucceeded, "เผยแพร่เว็บไซต์สำเร็จ"),
         ("CMS",      SitePublishFailed,    "เผยแพร่เว็บไซต์ล้มเหลว"),
     };

@@ -1407,6 +1407,20 @@ public class DocumentService : IDocumentService
         if (deposit.ContactId != invoice.ContactId)
             throw new InvalidOperationException("มัดจำกับใบแจ้งหนี้ต้องเป็นลูกค้ารายเดียวกัน");
 
+        // Multi-currency guard — IAS 21: ถ้าสกุล/rate ของมัดจำกับใบแจ้งหนี้
+        // ต่างกัน ต้องคำนวณกำไรขาดทุนอัตราแลกเปลี่ยน. ระบบนี้ยังไม่ post FX
+        // gain/loss JE อัตโนมัติ → block ไว้ก่อน + แนะนำให้บันทึก JE manual
+        // (กัน GL เพี้ยนเงียบ ๆ ตอน user เปิด multi-currency)
+        if (!string.Equals(invoice.Currency, deposit.Currency, StringComparison.OrdinalIgnoreCase)
+            || Math.Abs(invoice.ExchangeRate - deposit.ExchangeRate) > 0.0001m)
+        {
+            throw new InvalidOperationException(
+                $"สกุล/อัตราแลกเปลี่ยนของมัดจำ ({deposit.Currency} @ {deposit.ExchangeRate:F4}) " +
+                $"ต่างกับใบแจ้งหนี้ ({invoice.Currency} @ {invoice.ExchangeRate:F4}) — " +
+                "ระบบยังไม่รองรับการรับรู้กำไร/ขาดทุน FX อัตโนมัติ ตาม IAS 21. " +
+                "กรุณาบันทึก JE manual หรือใช้มัดจำที่สกุลเงินเดียวกัน");
+        }
+
         // รับรู้รายได้จากมัดจำ (Dr ขายรอรับรู้/Cr รายได้) — ใช้ฐานไม่รวม VAT
         var vatPortion = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
         var baseAmt = Math.Round(request.Amount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);
