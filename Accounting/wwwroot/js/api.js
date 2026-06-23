@@ -70,6 +70,12 @@ const API = {
         console.warn('Rate limited:', url);
         return { success: false, data: null, message: this._t('api.rateLimited', 'กรุณารอสักครู่') };
       }
+      // HTTP 204 No Content — มาตรฐาน REST ของ DELETE ที่สำเร็จไม่มี body
+      // (ASP.NET Core: return NoContent()). content-type ไม่ใช่ JSON เพราะ
+      // ไม่มี body → ถือว่าสำเร็จ ไม่ต้อง parse
+      if (res.status === 204) {
+        return { success: true, data: null };
+      }
       // Check content-type to avoid parsing HTML as JSON. Accept both the
       // standard "application/json" and ASP.NET Core's ProblemDetails variant
       // "application/problem+json" — both are valid JSON the JS side can read.
