@@ -101,23 +101,23 @@
           </div>
 
           <div class="form-row">
-            <div class="form-group"><label class="form-label">รหัสสินทรัพย์ *</label><input type="text" class="form-input" id="fCode"></div>
-            <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
+            <div class="form-group"><label class="form-label" data-help="รหัสภายในใช้ติดป้าย/สแกน — ตัวอย่าง LAP-001, PRT-A4-002 (ออกอัตโนมัติได้ ถ้าตั้ง Number Series)">รหัสสินทรัพย์ *</label><input type="text" class="form-input" id="fCode"></div>
+            <div class="form-group"><label class="form-label" data-help="ชื่อทรัพย์สิน — ใช้บนทะเบียนสินทรัพย์ + JE ค่าเสื่อม (รวมยี่ห้อ/รุ่นได้)">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">หมวดหมู่</label><input type="text" class="form-input" id="fCategory" placeholder="เช่น อุปกรณ์สำนักงาน"></div>
-            <div class="form-group"><label class="form-label">ที่ตั้ง</label><input type="text" class="form-input" id="fLocation"></div>
+            <div class="form-group"><label class="form-label" data-help="หมวดสำหรับ filter/รายงาน — เช่น อุปกรณ์สำนักงาน, ยานพาหนะ, อาคาร">หมวดหมู่</label><input type="text" class="form-input" id="fCategory" placeholder="เช่น อุปกรณ์สำนักงาน"></div>
+            <div class="form-group"><label class="form-label" data-help="ห้อง/อาคาร/สาขาที่จัดเก็บ — ใช้สำหรับ stock-take สินทรัพย์">ที่ตั้ง</label><input type="text" class="form-input" id="fLocation"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันที่ซื้อ *</label><input type="date" class="form-input" id="fPurchaseDate"></div>
-            <div class="form-group"><label class="form-label">ราคาทุน *</label><input type="number" class="form-input" id="fCost" step="0.01"></div>
+            <div class="form-group"><label class="form-label" data-help="วันที่ได้มา (TFRS บทที่ 10) — ระบบใช้คำนวณค่าเสื่อมเริ่มเดือนถัดไป">วันที่ซื้อ *</label><input type="date" class="form-input" id="fPurchaseDate"></div>
+            <div class="form-group"><label class="form-label" data-help="ราคาทุน + ค่าใช้จ่ายที่ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/อบรม) ตาม TFRS บทที่ 10 ย่อหน้า 17">ราคาทุน *</label><input type="number" class="form-input" id="fCost" step="0.01"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">มูลค่าซาก</label><input type="number" class="form-input" id="fSalvage" step="0.01" value="0"></div>
-            <div class="form-group"><label class="form-label">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="fLife" value="60"></div>
+            <div class="form-group"><label class="form-label" data-help="มูลค่าซาก (residual) = ราคาคาดว่าจะขายได้ตอนสิ้นอายุใช้งาน — 0 = คิดค่าเสื่อมเต็มมูลค่า">มูลค่าซาก</label><input type="number" class="form-input" id="fSalvage" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label" data-help="อายุการใช้งานที่คาดการณ์ในหน่วย 'เดือน' — ตัวอย่าง 5 ปี = 60 เดือน • สรรพากรกำหนดอย่างน้อย: เครื่องจักร 5 ปี, รถ 5 ปี, คอม 3 ปี (สามารถยาวกว่านี้ได้ ตามอายุจริง)">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="fLife" value="60"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วิธีคิดค่าเสื่อม</label>
+            <div class="form-group"><label class="form-label" data-help="เส้นตรง = ค่าเสื่อมเท่ากันทุกเดือน (มาตรฐาน SME) • ยอดลดลง = หนักช่วงต้น (เหมาะกับสินทรัพย์ที่เสื่อมเร็ว เช่น คอม) • TFRS NPAEs บทที่ 10 ย่อหน้า 26: ที่ดิน = ไม่คิดค่าเสื่อม">วิธีคิดค่าเสื่อม</label>
               <select class="form-select" id="fMethod">
                 <option value="StraightLine">เส้นตรง (Straight Line)</option>
                 <option value="DecliningBalance">ยอดลดลง (Declining Balance)</option>
@@ -132,13 +132,13 @@
             </div>
             <div id="assetAcctHint" style="font-size:11px;color:#64748b;margin-bottom:6px"></div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">บัญชีสินทรัพย์</label>
+              <div class="form-group"><label class="form-label" data-help="ผังบัญชีฝั่งสินทรัพย์ (asset) — เช่น 12200 อุปกรณ์สำนักงาน, 12300 ยานพาหนะ. ขึ้น Dr ตอนซื้อ • ไม่ลดด้วยค่าเสื่อมโดยตรง (ลดผ่านบัญชีค่าเสื่อมสะสม)">บัญชีสินทรัพย์</label>
                 <select class="form-select" id="fAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
-              <div class="form-group"><label class="form-label">บัญชีค่าเสื่อมราคา (ค่าใช้จ่าย)</label>
+              <div class="form-group"><label class="form-label" data-help="ผังค่าใช้จ่าย (5xxx) — เช่น 5601 ค่าเสื่อมราคา • ระบบโพสต์ Dr ทุกเดือนตามอายุใช้งาน">บัญชีค่าเสื่อมราคา (ค่าใช้จ่าย)</label>
                 <select class="form-select" id="fDepExpAcct"><option value="">-- เลือกบัญชี --</option></select></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">บัญชีค่าเสื่อมราคาสะสม</label>
+              <div class="form-group"><label class="form-label" data-help="ผัง contra-asset (1xx9x) — เช่น 12290 ค่าเสื่อมสะสม-อุปกรณ์ • รับ Cr ทุกเดือน หักออกจากบัญชีสินทรัพย์เพื่อแสดง NBV ในงบ">บัญชีค่าเสื่อมราคาสะสม</label>
                 <select class="form-select" id="fAccumAcct"><option value="">-- เลือกบัญชี --</option></select></div>
               <div class="form-group"><label class="form-label">&nbsp;</label>
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:8px">

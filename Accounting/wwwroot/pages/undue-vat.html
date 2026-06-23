@@ -39,16 +39,16 @@
         <div id="completeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
         <div class="form-row">
           <div class="form-group" style="flex:1">
-            <label class="form-label">เลขที่ใบกำกับผู้ขาย</label>
+            <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขายที่ได้รับเข้ามาแล้ว — เลขนี้จะลงในรายงานภาษีซื้อ (ภพ.30 คอลัมน์ 'เลขที่ใบกำกับ')">เลขที่ใบกำกับผู้ขาย</label>
             <input type="text" class="form-input" id="cInvNo" placeholder="เช่น INV-2026-0042">
           </div>
           <div class="form-group" style="flex:1">
-            <label class="form-label">วันที่ใบกำกับ</label>
+            <label class="form-label" data-help="วันที่ในใบกำกับ — กำหนดงวด ภพ.30 ที่จะเคลม VAT (ไม่ใช่วันรับเอกสาร) ตาม §82/3 ต้องอยู่ไม่เกิน 6 เดือน นับจากเดือนที่ยื่นแบบ">วันที่ใบกำกับ</label>
             <input type="date" class="form-input" id="cInvDate">
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label">รหัสสาขาผู้ขาย (00000 = สำนักงานใหญ่)</label>
+          <label class="form-label" data-help="สาขาที่ออกใบกำกับ — 00000 = สำนักงานใหญ่, อื่นๆ = 'สาขาที่ {code}' (ประกาศอธิบดี 199) • บังคับใส่ตามใบจริง มิฉะนั้น ภพ.30 อาจไม่ผ่านตรวจ">รหัสสาขาผู้ขาย (00000 = สำนักงานใหญ่)</label>
           <input type="text" class="form-input" id="cBranch" placeholder="00000" maxlength="5">
         </div>
         <div style="font-size:12px;color:#6b7280">
