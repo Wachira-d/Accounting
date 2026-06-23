@@ -3731,7 +3731,15 @@
           } else {
             const cr = await api.createDocument(payload);
             savedDocId = cr.data?.id;
-            Layout.toast('สร้างเอกสารสำเร็จ');
+            // Backend อาจ auto-approve Cash PV → ดู status จริงในผลตอบกลับ
+            // แล้ว toast ให้สื่อสารถูก (Paid / Approved / Draft)
+            const createdStatus = cr.data?.status;
+            if (createdStatus === 'Paid')
+              Layout.toast('สร้าง + อนุมัติ + ลงบัญชี = ชำระแล้ว ครบในคลิกเดียว', 'success');
+            else if (createdStatus === 'Approved')
+              Layout.toast('สร้าง + อนุมัติเอกสารแล้ว', 'success');
+            else
+              Layout.toast('สร้างเอกสารสำเร็จ');
             // Teach the local model: record the operator's actual payment-type
             // choice against the suggestion it was shown (trains per-supplier).
             if (payload.paymentType && this._lastPaymentTypeFeedbackId) {
@@ -3788,22 +3796,6 @@
               } catch (e) {
                 Layout.toast('เอกสารบันทึกแล้ว แต่ส่งอีเมลไม่สำเร็จ: ' + e.message, 'error');
               }
-            }
-          }
-
-          // ใบสำคัญจ่าย (Cash) — ไม่ต้องให้ผู้ใช้คลิก "อนุมัติ" อีกขั้น.
-          // จ่ายเงินจริงไปแล้ว → BalanceDue=0 → Status=Paid อัตโนมัติ.
-          // เฉพาะ standalone Cash PV (ไม่ใช่ Credit ที่อ้างเอกสารตั้งหนี้)
-          // เพราะ Credit PV ผู้ใช้อาจอยากตรวจก่อน approve เพื่อเคลียร์ AP.
-          // edit ก็ skip — เปลี่ยน PV ที่ approved แล้วต้อง void→สร้างใหม่.
-          if (!this.editingId && savedDocId
-              && document.getElementById('fDocType').value === 'PaymentVoucher'
-              && (document.getElementById('fPaymentType')?.value || 'Cash') === 'Cash') {
-            try {
-              await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
-              Layout.toast('สร้างใบสำคัญจ่าย + อนุมัติ + ลงบัญชี เสร็จในคลิกเดียว', 'success');
-            } catch (e) {
-              Layout.toast('สร้างใบแล้วแต่ auto-approve ไม่สำเร็จ: ' + e.message + ' — กด "✓ อนุมัติ" ในตารางเพื่อทำต่อ', 'warning', 8000);
             }
           }
 

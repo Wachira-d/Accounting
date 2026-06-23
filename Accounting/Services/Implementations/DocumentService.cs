@@ -626,6 +626,28 @@ public class DocumentService : IDocumentService
 
             await transaction.CommitAsync();
 
+            // ใบสำคัญจ่าย (Cash) standalone — auto-approve ทันทีทุก channel
+            // (UI/OCR/API). เงินจ่ายไปจริงแล้ว BalanceDue=0 ตั้งแต่ create
+            // ไม่มีเหตุผลค้าง Draft ให้ผู้ใช้ต้องคลิก "อนุมัติ" อีกขั้น.
+            // กรณี approve ล้มเหลว (§65 ตรี ไม่ระบุผู้รับ / period closed /
+            // RequireApprovalForDocuments threshold) → log + คงค้าง Draft
+            // ให้ผู้ใช้แก้แล้ว approve เอง.
+            if (doc.DocumentType == DocumentType.PaymentVoucher
+                && doc.PaymentType == Models.Enums.PaymentType.Cash
+                && !doc.RelatedDocumentId.HasValue
+                && doc.BalanceDue <= 0.005m)
+            {
+                try
+                {
+                    await ApproveDocumentAsync(companyId, doc.Id, createdBy, acknowledgeWarnings: true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogInformation(ex,
+                        "PV Cash auto-approve skipped for {DocId} — staying Draft for manual fix", doc.Id);
+                }
+            }
+
             var created = await GetDocumentAsync(companyId, doc.Id);
             await FireWebhookAsync(companyId, "document.created", created);
             return created;
