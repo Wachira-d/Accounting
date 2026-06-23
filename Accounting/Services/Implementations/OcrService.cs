@@ -4843,6 +4843,34 @@ public class OcrService : IOcrService
         if (string.IsNullOrEmpty(rawText)) return;
         var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
 
+        // 0) Vendor email/phone fallback — ทุก path. Azure DI ไม่มี field email,
+        //    + Azure อาจไม่จับ phone เคสที่บนเอกสารระบุไม่ชัด → contact ที่สร้าง
+        //    จะ Email/Phone = null. regex หาเพิ่มจาก raw text (ไม่ทับค่าที่
+        //    Azure ตั้งมาแล้ว).
+        if (string.IsNullOrWhiteSpace(data.VendorEmail))
+        {
+            var em = VendorEmailRegex.Match(rawText);
+            if (em.Success)
+            {
+                var candidate = em.Value.Trim().TrimEnd('.', ',', ';', ':');
+                data.VendorEmail = candidate;
+                data.ReasoningTrace.Add($"[Enrich] อีเมลบนเอกสาร {candidate}");
+            }
+        }
+        if (string.IsNullOrWhiteSpace(data.VendorPhone))
+        {
+            var pm = VendorPhoneRegex.Match(rawText);
+            if (pm.Success)
+            {
+                var sane = SanePhone(pm.Groups[1].Value);
+                if (sane != null)
+                {
+                    data.VendorPhone = sane;
+                    data.ReasoningTrace.Add($"[Enrich] เบอร์โทรบนเอกสาร {sane}");
+                }
+            }
+        }
+
         // 1) Explicit due date ("ครบกำหนด 15/07/2569", "Due Date: 15/07/2026")
         //    → credit terms in days. The Net-N regex in the parser covers
         //    "เครดิต 30 วัน"; this covers papers that print a date instead.
