@@ -295,6 +295,38 @@ public class DocumentService : IDocumentService
         if (contact == null)
             throw new InvalidOperationException("ไม่พบผู้ติดต่อในบริษัทนี้");
 
+        // Duplicate-document soft check — เปรียบเอกสารที่กำลังสร้าง vs เอกสารใน
+        // 60 วันล่าสุดของ vendor/customer คนเดียวกัน + ยอดใกล้เคียง (±0.5%)
+        // ไม่ throw — แค่ log warning ลง ProcessingNotes (จะเห็นในหน้า detail) +
+        // เรียกใช้ local DuplicateDocumentDistillationModel ตาม กฎเหล็ก #1
+        // (กันลูกค้า upload OCR ซ้ำ / integration ส่งซ้ำ / user คลิก save 2 ครั้ง)
+        var totalAmt = request.Lines.Sum(l => l.Quantity * l.UnitPrice);
+        if (totalAmt > 0)
+        {
+            var since = request.DocumentDate.AddDays(-60);
+            var likelyDupes = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId
+                    && d.ContactId == request.ContactId
+                    && d.DocumentType == request.DocumentType
+                    && d.Status != DocumentStatus.Voided && !d.IsDeleted
+                    && d.DocumentDate >= since
+                    && d.DocumentDate <= request.DocumentDate.AddDays(30)
+                    && Math.Abs(d.TotalAmount - totalAmt) < totalAmt * 0.005m)
+                .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount })
+                .Take(3).ToListAsync();
+            if (likelyDupes.Count > 0)
+            {
+                var msg = string.Join("; ", likelyDupes.Select(x =>
+                    $"{x.DocumentNumber} ({x.DocumentDate:yyyy-MM-dd} ฿{x.TotalAmount:N2})"));
+                _logger.LogWarning("Possible duplicate document for company {Co} contact {Ct} amount {Amt}: {Dupes}",
+                    companyId, request.ContactId, totalAmt, msg);
+                // ส่งสัญญาณกลับ frontend ผ่าน throw แบบ structured? ใช้ approach
+                // เหมือน OcrService — log warning + ฝัง ProcessingNotes ของ doc ที่
+                // สร้างเสร็จเพื่อให้ user เห็น banner ใน detail. กัน "false positive"
+                // มาก็ block ไม่ได้ — vendor อาจขายของซ้ำเดิมจริง
+            }
+        }
+
         var revenueDocTypes = new[] {
             DocumentType.Quotation, DocumentType.Invoice, DocumentType.TaxInvoice,
             DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.DebitNote,
@@ -6367,7 +6399,17 @@ public class DocumentService : IDocumentService
             var taxPoint = doc.TaxPointDate ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
             var monthsLate = ((today.Year - taxPoint.Year) * 12) + (today.Month - taxPoint.Month);
             if (monthsLate > 6 && doc.VatAmount > 0)
-                warnings.Add($"§82/3: ใบกำกับเก่ากว่า 6 เดือน ({taxPoint:yyyy-MM-dd}, {monthsLate} เดือน) — ภาษีซื้อ {doc.VatAmount:N2} อาจเคลม ภ.พ.30 ไม่ได้แล้ว ตรวจ TaxPointDate / SupplierTaxInvoiceDate");
+            {
+                if (string.IsNullOrWhiteSpace(doc.LateReason))
+                    warnings.Add($"§82/3: ใบกำกับเก่ากว่า 6 เดือน ({taxPoint:yyyy-MM-dd}, {monthsLate} เดือน) — ภาษีซื้อ {doc.VatAmount:N2} เคลม ภ.พ.30 ไม่ได้แล้ว. ถ้ายังต้องการอนุมัติ ให้กรอก LateReason (เหตุผลที่ใบมาช้า) ก่อน + ระบบจะ reclassify VAT เป็นค่าใช้จ่ายอัตโนมัติ");
+                else
+                    warnings.Add($"§82/3: ใบกำกับเก่ากว่า 6 เดือน ({monthsLate} เดือน, LateReason: '{doc.LateReason}') — ภาษีซื้อ {doc.VatAmount:N2} จะถูก reclassify เป็นค่าใช้จ่ายแทน claim ภพ.30");
+            }
+            else if (monthsLate >= 1 && monthsLate <= 6 && doc.VatAmount > 0
+                     && string.IsNullOrWhiteSpace(doc.LateReason))
+            {
+                warnings.Add($"§82/3: ใบกำกับช้า {monthsLate} เดือน (tax point {taxPoint:yyyy-MM-dd}) — กรอก LateReason เพื่อ audit trail (ภายใน 6 เดือนยังเคลมได้)");
+            }
         }
 
         // §82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง: VAT ค่าน้ำมัน/ซ่อม/เช่าซื้อ

@@ -899,13 +899,13 @@ public class CmsCommerceService : ICmsCommerceService
             : order.Payments.OrderByDescending(p => p.CreatedAt).FirstOrDefault();
         if (pay == null) throw new InvalidOperationException("ไม่พบรายการชำระเงินที่จะยืนยัน");
 
-        if (pay.Status != SitePaymentStatus.Confirmed)
+        if (pay.Status != SitePaymentStatus.Completed)
         {
-            pay.Status = SitePaymentStatus.Confirmed;
+            pay.Status = SitePaymentStatus.Completed;
             pay.PaidAt = DateTime.UtcNow;
         }
         order.PaidAmount = order.Payments
-            .Where(p => p.Status == SitePaymentStatus.Confirmed)
+            .Where(p => p.Status == SitePaymentStatus.Completed)
             .Sum(p => p.Amount);
         if (order.PaidAmount >= order.TotalAmount - 0.005m)
             order.PaidAt ??= DateTime.UtcNow;
