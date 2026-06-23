@@ -194,7 +194,8 @@ public partial class PdfGenerationService
         EntDoc doc, EntCompany company, EntTemplate template, PdfBranding b,
         string accent, string headerBg, string headerText, string titleText)
     {
-        var titleFontSize = float.TryParse(template.TitleFontSize, out var tf) ? tf : 22f;
+        // cap title ที่ 22pt กันชื่อเอกสารยักษ์ (template wizard เก่าอาจตั้ง 30+)
+        var titleFontSize = float.TryParse(template.TitleFontSize, out var tf) ? Math.Min(tf, 22f) : 20f;
 
         switch (layout)
         {

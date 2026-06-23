@@ -2099,6 +2099,29 @@ public class DocumentService : IDocumentService
                 doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedAt = DateTime.UtcNow;
 
+                // 7a) Reset stateful posting flags ที่ตั้งตอน approve. ถ้าไม่ reset
+                //     แล้ว user re-approve doc นี้ในอนาคต logic จะข้ามขั้นที่
+                //     ควรรัน (เช่น undue VAT ถูก mark claimable ไปแล้ว → re-
+                //     approve จะไม่ลง 11640 ใหม่). ทุก field reset ที่นี่จะถูก
+                //     "เริ่มใหม่" ตอน re-approve เหมือนใบใหม่ผ่าน flow ปกติ.
+                doc.InputVatPostedAsUndue = false;
+                doc.InputVatBecameClaimableAt = null;
+
+                // 7b) Deposit (Receipt/ReceiptVoucher IsDeposit=true): reset
+                //     state realize/refund/recognize. JE reversal ใน step 2
+                //     กลับยอดบัญชี 217xx/21911/21913 แล้ว แต่ field document-
+                //     level เหล่านี้ถ้าไม่เคลียร์ GetDepositsAsync จะยังโชว์
+                //     สถานะ "Partial/Realized" หลัง void → UI/รายงานเพี้ยน.
+                if (doc.IsDeposit)
+                {
+                    doc.DepositRealizedAmount = 0m;
+                    doc.DepositRealizedAt = null;
+                    doc.DepositOutputVatRecognizedAt = null;
+                    doc.DepositRefundedAmount = 0m;
+                    doc.DepositRefundedAt = null;
+                    doc.DepositAppliedToDocumentId = null;
+                }
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
@@ -4505,52 +4528,84 @@ public class DocumentService : IDocumentService
         Guid? CodeToId(string? code) => code == null ? null
             : allPpe.FirstOrDefault(a => a.AccountCode == code)?.Id;
 
-        foreach (var line in doc.Lines)
+        // TFRS for NPAEs บทที่ 10 — ต้นทุนสินทรัพย์ = ราคาซื้อ + ค่าใช้จ่ายที่
+        // ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม) → capitalize เข้า
+        // asset เดียวกัน ไม่แยกเป็นหลาย asset. group บรรทัดที่ลงผัง PPE
+        // ตัวเดียวกัน + เลือก "main line" (description ไม่ใช่ auxiliary)
+        // เป็นชื่อ asset, รวมต้นทุนทุก line ใน group เป็น cost
+        static bool IsAuxiliary(string? desc)
         {
-            if (!line.AccountId.HasValue) continue;
-            if (!accMap.TryGetValue(line.AccountId.Value, out var code)) continue;
-            var cls = Tax.FixedAssetAccountClassifier.Resolve(code);
-            if (cls == null) continue;   // ไม่ใช่ PPE → ข้าม
+            if (string.IsNullOrWhiteSpace(desc)) return false;
+            var d = desc.ToLowerInvariant();
+            return d.Contains("ขนส่ง") || d.Contains("จัดส่ง") || d.Contains("ติดตั้ง")
+                || d.Contains("ฝึกอบรม") || d.Contains("ค่าธรรมเนียม") || d.Contains("ค่าบริการ")
+                || d.Contains("shipping") || d.Contains("delivery") || d.Contains("freight")
+                || d.Contains("install") || d.Contains("training") || d.Contains("setup")
+                || d.Contains("ค่าประกัน");
+        }
 
-            // dedupe — เคยลงทะเบียนจากบรรทัดนี้แล้ว (re-approve)
+        // group บรรทัดที่เป็น PPE ตามผัง (AccountId) — บรรทัดที่ผังไม่ใช่ PPE ข้าม
+        var ppeLines = doc.Lines.Where(l =>
+            l.AccountId.HasValue
+            && accMap.TryGetValue(l.AccountId.Value, out var c)
+            && Tax.FixedAssetAccountClassifier.Resolve(c) != null
+            && l.Amount > 0).ToList();
+        if (ppeLines.Count == 0) return;
+
+        var groups = ppeLines.GroupBy(l => l.AccountId!.Value);
+        foreach (var grp in groups)
+        {
+            var code = accMap[grp.Key];
+            var cls = Tax.FixedAssetAccountClassifier.Resolve(code)!;
+            // main line = บรรทัดแรกที่ description ไม่ใช่ auxiliary (ถ้าทุกบรรทัด
+            // ใน group เป็น auxiliary ก็ใช้ตัวแรก — edge case คือ stand-alone
+            // delivery doc ที่ผังลง PPE)
+            var mainLine = grp.FirstOrDefault(l => !IsAuxiliary(l.Description)) ?? grp.First();
+            var totalCost = grp.Sum(l => l.Amount);
+
+            // dedupe — เคยลง asset จาก mainLine นี้แล้ว (re-approve) ข้าม
             var dup = await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId
-                && a.SourceDocumentLineId == line.Id);
+                && a.SourceDocumentLineId == mainLine.Id);
             if (dup) continue;
 
-            var cost = line.Amount;   // ฐานไม่รวม VAT (VAT claimable แยก, non-claim รวมในต้นทุนแล้วผ่าน expense)
-            if (cost <= 0) continue;
+            // ใส่ aux description ลง Description ของ asset เพื่อ audit trail
+            // (เห็นว่าต้นทุนรวมค่าขนส่ง/ติดตั้งแล้ว)
+            var auxDescs = grp.Where(l => IsAuxiliary(l.Description))
+                .Select(l => $"{l.Description?.Trim()} {l.Amount:N2}").ToList();
+            var assetDesc = $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}"
+                + (auxDescs.Count > 0 ? $" (รวม: {string.Join(", ", auxDescs)})" : "");
 
             var assetCode = await GenerateAssetCodeAsync(companyId);
             try
             {
                 await _fixedAssets.CreateAsync(companyId, new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
                     AssetCode: assetCode,
-                    Name: string.IsNullOrWhiteSpace(line.Description) ? cls.Category : line.Description,
-                    Description: $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}",
+                    Name: string.IsNullOrWhiteSpace(mainLine.Description) ? cls.Category : mainLine.Description,
+                    Description: assetDesc,
                     Category: cls.Category,
                     Location: null, SerialNumber: null,
                     PurchaseDate: doc.DocumentDate,
-                    PurchaseCost: cost,
+                    PurchaseCost: totalCost,
                     SalvageValue: 0m,
                     UsefulLifeMonths: cls.DefaultUsefulLifeMonths,
                     DepreciationMethod: cls.Depreciable
                         ? Models.Enums.DepreciationMethod.StraightLine
                         : Models.Enums.DepreciationMethod.None,
-                    AssetAccountId: line.AccountId,
+                    AssetAccountId: mainLine.AccountId,
                     DepreciationExpenseAccountId: CodeToId(cls.DepExpenseAccountCode),
                     AccumulatedDepreciationAccountId: CodeToId(cls.AccumDepAccountCode),
                     PostAcquisitionJournalEntry: false,   // เอกสารลง Dr asset แล้ว
                     CreditAccountId: null,
-                    ProjectId: line.ProjectId ?? doc.ProjectId,
+                    ProjectId: mainLine.ProjectId ?? doc.ProjectId,
                     SourceDocumentId: doc.Id,
-                    SourceDocumentLineId: line.Id,
+                    SourceDocumentLineId: mainLine.Id,
                     NeedsReview: true), actor);
             }
             catch (Exception ex)
             {
                 // ไม่ให้ asset registration ล้ม ทำ approve พัง — log ไว้
                 _logger.LogWarning(ex, "Auto-register fixed asset failed (doc {Doc} line {Line})",
-                    doc.DocumentNumber, line.Id);
+                    doc.DocumentNumber, mainLine.Id);
             }
         }
     }

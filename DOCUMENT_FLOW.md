@@ -186,9 +186,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      `CreditNote.Discount/Adjustment/Writeoff`
 9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
    บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
-   12310 → สร้าง `FixedAsset` ที่ `Status = Active, NeedsReview = true` พร้อม
-   suggested `UsefulLifeMonths` + depreciation method (`StraightLine` default,
-   ที่ดิน → `None`)
+   12310 → **group ตาม AccountId** → 1 group = 1 `FixedAsset` (TFRS for NPAEs
+   บทที่ 10: ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม/setup ฯลฯ = ต้นทุนที่ทำ
+   ให้พร้อมใช้ — รวมเป็น cost ของ asset หลัก ไม่แยก asset)
+   - main line = บรรทัดแรกใน group ที่ description ไม่ใช่ auxiliary keyword
+   - cost = sum ของทุก line ใน group (รวม aux)
+   - asset Description log auxiliary breakdown ไว้ audit trail
+   - `Status = Active, NeedsReview = true` พร้อม suggested `UsefulLifeMonths`
+     + depreciation method (`StraightLine` default, ที่ดิน → `None`)
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
@@ -221,12 +226,26 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - WHT cert auto-issue (`WithholdingTaxCertService` — ถ้ามี WHT บนใบ)
 
 ### 3.5 Void / Cancel
-- **Method**: `VoidDocumentAsync` (`:1954`)
-- reverse JE (gen JE ใหม่ Cr/Dr กลับ — ไม่ลบ JE เดิม)
-- reverse stock (`ApplyStockMovementsAsync(−1)`)
-- reverse project cost entries
-- ตั้ง `Status = Voided`, `VoidedAt`, `VoidedBy`
+- **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
+  1. Reverse linked **Payments** → `ReversePaymentInternalAsync`
+  2. Reverse posted JEs → `ReverseJournalEntryAsync` (สร้าง JE ใหม่ Dr↔Cr กลับ
+     + link `OriginalEntryId/ReversedByEntryId`, ไม่ลบ JE เดิม)
+  3. Void linked **e-Tax invoices** (soft — ส่ง void ให้ RD)
+  4. Unlink **BankTransactions** (clear matched reference)
+  5. Revert source-doc adjustments (ลูกของ CN/DN กลับ AR/AP ของต้นทาง)
+  6. Reverse stock (`ApplyStockMovementsAsync(−1)`) + project cost entries
+  7. Void linked **WHT certificates** (`_whtService.VoidAsync`)
+  8. ตั้ง `Status = Voided`, `AgingDays = null`
+  9. **Reset stateful posting flags** (เพิ่ม commit ล่าสุด): re-approve
+     ไม่ข้ามขั้นที่ควรรัน:
+     - `InputVatPostedAsUndue = false`, `InputVatBecameClaimableAt = null`
+     - ถ้า `IsDeposit`: reset `DepositRealizedAmount/At`,
+       `DepositOutputVatRecognizedAt`, `DepositRefundedAmount/At`,
+       `DepositAppliedToDocumentId` → list ไม่โชว์ Partial/Realized ค้าง
 - **ห้าม hard delete** (ตาม §86/4 + พ.ร.บ.บัญชี)
+- ⚠️ PDF footer "การลงบัญชี" (`PdfGenerationService.LoadGlPostingAsync`)
+  query `OriginalEntryId == null` เพื่อแสดง **JE forward ต้นทาง** เสมอ
+  ไม่ใช่ reversal — กัน footer ขึ้น Cr แทน Dr ตอน void
 
 ### 3.6 §82/3 Undue VAT Reclassification (auto)
 - เมื่อ approve PI/Expense ที่ใบกำกับยังไม่ครบ §86/4 (ขาดเลข/วันที่/สาขา

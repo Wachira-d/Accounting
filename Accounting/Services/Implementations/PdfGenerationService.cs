@@ -88,7 +88,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // for internal audit. Was previously fetched CLIENT-side only, so the
         // server PDF/HTML never showed it — this wires it into both renderers.
         var gl = settings?.ShowGlEntryOnDocument == true
-            ? await LoadGlPostingAsync(companyId, document.Id) : null;
+            ? await LoadGlPostingAsync(companyId, document) : null;
 
         // e-Tax path: render template-styled (สีส้ม) + PDF/A conformance →
         // inject XML. ผลลัพธ์ = หน้าตาเหมือน preview + ฝัง XML ยื่นภาษีได้.
@@ -162,7 +162,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
         var gl = settings?.ShowGlEntryOnDocument == true
-            ? await LoadGlPostingAsync(companyId, document.Id) : null;
+            ? await LoadGlPostingAsync(companyId, document) : null;
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
     }
 
@@ -359,27 +359,172 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// entry) for the end-of-document Dr/Cr summary. Prefers the Posted entry;
     /// excludes reversed entries. Returns null when the doc has no journal yet
     /// (e.g. still Draft) so the block is simply omitted.</summary>
-    private async Task<GlPostingSummary?> LoadGlPostingAsync(Guid companyId, Guid documentId)
+    private async Task<GlPostingSummary?> LoadGlPostingAsync(Guid companyId, Document document)
     {
+        var documentId = document.Id;
+        // เลือก "การลงบัญชีต้นทาง" ของเอกสารเสมอ — OriginalEntryId == null คือ
+        // JE forward (Dr/Cr ปกติ). กัน bug: ตอน void เอกสารระบบสร้าง reversal JE
+        // (กลับ Dr↔Cr → Cr 12210/Cr 11610) ซึ่ง ReversedByEntryId ก็ == null
+        // เหมือนกัน + ใหม่กว่า → query เดิมหยิบ reversal มาแสดงผิด (footer ขึ้น
+        // Cr 12210 แทน Dr). เพิ่มเงื่อนไข OriginalEntryId == null ตัด reversal ออก.
         var je = await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
-                        && !j.IsDeleted && j.ReversedByEntryId == null)
+                        && !j.IsDeleted && j.OriginalEntryId == null)
             .OrderByDescending(j => j.Status == JournalEntryStatus.Posted)
-            .ThenByDescending(j => j.EntryDate)
+            .ThenBy(j => j.EntryDate)
             .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.TotalCredit })
             .FirstOrDefaultAsync();
-        if (je == null) return null;
+        if (je != null)
+        {
+            var rawLines = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
+                .OrderBy(l => l.LineOrder)
+                .Select(l => new GlPostingLine(
+                    l.Account != null ? l.Account.AccountCode : "",
+                    l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
+                    l.DebitAmount, l.CreditAmount))
+                .ToListAsync();
+            if (rawLines.Count > 0)
+                return new GlPostingSummary(je.EntryNumber, je.EntryDate,
+                    ConsolidateGlLines(rawLines), je.TotalDebit, je.TotalCredit);
+        }
 
-        var lines = await _db.JournalEntryLines.AsNoTracking()
-            .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
-            .OrderBy(l => l.LineOrder)
-            .Select(l => new GlPostingLine(
-                l.Account != null ? l.Account.AccountCode : "",
-                l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
-                l.DebitAmount, l.CreditAmount))
-            .ToListAsync();
+        // ยังไม่มี JE จริง (Draft/ยังไม่อนุมัติ) → "ประมาณการ" จากข้อมูลเอกสาร
+        // ให้ผู้ใช้ตรวจ Dr/Cr ก่อนอนุมัติ (ยอด+ผังจริงเกิดหลังอนุมัติ)
+        return await BuildProjectedGlAsync(companyId, document);
+    }
+
+    /// <summary>รวมบรรทัด GL ที่ลงผังเดียวกัน + ทิศเดียวกัน (Dr/Cr) เป็นบรรทัด
+    /// เดียว — footer ตรวจสอบจะ tie กับยอดบนเอกสารชัด (เช่น ค่าสินค้า+ค่าขนส่ง
+    /// ที่ capitalize เข้า 12210 ทั้งคู่ → รวมเป็น Dr 12210 ยอดเดียว = ยอดรวม
+    /// ก่อน VAT). คง LineOrder แรกของแต่ละกลุ่มเป็นลำดับ.</summary>
+    private static List<GlPostingLine> ConsolidateGlLines(List<GlPostingLine> lines)
+    {
+        var result = new List<GlPostingLine>();
+        var seen = new Dictionary<string, int>();   // key → index ใน result
+        foreach (var l in lines)
+        {
+            var isDr = l.Debit != 0m;
+            var key = $"{l.AccountCode}|{l.AccountName}|{(isDr ? "D" : "C")}";
+            if (seen.TryGetValue(key, out var idx))
+            {
+                var ex = result[idx];
+                result[idx] = ex with { Debit = ex.Debit + l.Debit, Credit = ex.Credit + l.Credit };
+            }
+            else
+            {
+                seen[key] = result.Count;
+                result.Add(l);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>GL ประมาณการสำหรับเอกสารที่ยังไม่อนุมัติ (ยังไม่มี JournalEntry).
+    /// ครอบเคสหลัก sales/purchase. CN/DN/PO/PR ข้าม (side กำกวม/ไม่ลง GL).
+    /// label "(ประมาณการ — ก่อนอนุมัติ)" กันสับสนกับ posting จริง.</summary>
+    private async Task<GlPostingSummary?> BuildProjectedGlAsync(Guid companyId, Document doc)
+    {
+        if (doc.Lines == null || doc.Lines.Count == 0) return null;
+        var salesTypes = new[] { DocumentType.Quotation, DocumentType.Invoice, DocumentType.TaxInvoice,
+            DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.BillingNote };
+        var purchaseTypes = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense,
+            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu, DocumentType.GoodsReceiptNote };
+        bool isSales = salesTypes.Contains(doc.DocumentType);
+        bool isPurchase = purchaseTypes.Contains(doc.DocumentType);
+        if (!isSales && !isPurchase) return null;
+
+        var accIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).ToList();
+        if (doc.ExpenseCategoryId.HasValue) accIds.Add(doc.ExpenseCategoryId.Value);
+        var accById = accIds.Count == 0 ? new Dictionary<Guid, (string Code, string Name)>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && accIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName }).ToListAsync())
+                .ToDictionary(a => a.Id, a => (a.AccountCode, a.AccountName));
+        async Task<(string Code, string Name)> ByCode(string code, string fallbackName)
+        {
+            var a = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.AccountCode == code)
+                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+            return a != null ? (a.AccountCode, a.AccountName) : (code, fallbackName);
+        }
+
+        var lines = new List<GlPostingLine>();
+        decimal lineNet = 0m;
+        foreach (var l in doc.Lines)
+        {
+            var amt = l.Amount;
+            if (amt == 0m) continue;
+            lineNet += amt;
+            (string Code, string Name) acc =
+                (l.AccountId.HasValue && accById.TryGetValue(l.AccountId.Value, out var a1)) ? a1
+                : (doc.ExpenseCategoryId.HasValue && accById.TryGetValue(doc.ExpenseCategoryId.Value, out var a2)) ? a2
+                : ("", l.Description ?? (isSales ? "รายได้" : "ค่าใช้จ่าย"));
+            lines.Add(new GlPostingLine(acc.Code, acc.Name,
+                isPurchase ? amt : 0m, isSales ? amt : 0m));
+        }
         if (lines.Count == 0) return null;
-        return new GlPostingSummary(je.EntryNumber, je.EntryDate, lines, je.TotalDebit, je.TotalCredit);
+
+        if (doc.VatAmount != 0m)
+        {
+            if (isPurchase)
+            {
+                var code = doc.InputVatAccountCodeOverride
+                    ?? (doc.InputVatPostedAsUndue ? "11640" : "11610");
+                var v = await ByCode(code, doc.InputVatPostedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด" : "ภาษีซื้อ");
+                lines.Add(new GlPostingLine(v.Code, v.Name, doc.VatAmount, 0m));
+            }
+            else
+            {
+                var code = doc.DepositOutputVatDeferred ? "21913" : "21911";
+                var v = await ByCode(code, doc.DepositOutputVatDeferred ? "ภาษีขายรอเรียกเก็บ" : "ภาษีขาย");
+                lines.Add(new GlPostingLine(v.Code, v.Name, 0m, doc.VatAmount));
+            }
+        }
+
+        if (doc.WithholdingTaxAmount != 0m)
+        {
+            if (isPurchase)
+            {
+                var w = await ByCode("21510", "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                lines.Add(new GlPostingLine(w.Code, w.Name, 0m, doc.WithholdingTaxAmount));
+            }
+            else
+            {
+                var w = await ByCode("11910", "ภาษีถูกหัก ณ ที่จ่าย");
+                lines.Add(new GlPostingLine(w.Code, w.Name, doc.WithholdingTaxAmount, 0m));
+            }
+        }
+
+        var gross = lineNet + doc.VatAmount;
+        var contraAmt = gross - doc.WithholdingTaxAmount;
+        (string Code, string Name) contra;
+        if (doc.BankAccountId.HasValue)
+        {
+            var b = await _db.BankAccounts.AsNoTracking()
+                .Where(x => x.Id == doc.BankAccountId.Value)
+                .Select(x => new { x.AccountName }).FirstOrDefaultAsync();
+            contra = ("", b?.AccountName ?? "เงินฝากธนาคาร");
+        }
+        else if (doc.PaymentAccountId.HasValue)
+        {
+            var p = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.Id == doc.PaymentAccountId.Value)
+                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+            contra = p != null ? (p.AccountCode, p.AccountName) : ("", "เงินสด");
+        }
+        else if (doc.PaymentType == PaymentType.Credit || (doc.PaymentType == null && isSales))
+            contra = isPurchase ? await ByCode("21210", "เจ้าหนี้การค้า") : await ByCode("11210", "ลูกหนี้การค้า");
+        else
+            contra = await ByCode("11110", "เงินสด");
+        lines.Add(new GlPostingLine(contra.Code, contra.Name,
+            isSales ? contraAmt : 0m, isPurchase ? contraAmt : 0m));
+
+        // รวมบรรทัดผังเดียวกัน (เช่น สินค้า+ค่าขนส่ง → 12210) ให้ tie กับยอดบน
+        var consolidated = ConsolidateGlLines(lines);
+        var totalDr = consolidated.Sum(l => l.Debit);
+        var totalCr = consolidated.Sum(l => l.Credit);
+        return new GlPostingSummary("(ประมาณการ — ก่อนอนุมัติ)", doc.DocumentDate, consolidated, totalDr, totalCr);
     }
 
     /// <summary>Resolve the signers for a document, aligned positionally to the
@@ -791,8 +936,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             var en = (langOverride ?? template.Language) == "en";
             sb.AppendLine("<div style='margin-top:16px;border-top:1px solid #cbd5e1;padding-top:5px;font-size:10.5px;color:#334155'>");
+            // JE EntryNumber ใช้ counter ของ JV/PV/RV ที่ต่างกับ DocumentNumber
+            // (เช่น doc PV-202606-0017 → JE PV-202606-0026 → สับสน). ใช้ doc
+            // number เป็น reference แทน + แสดง JE no เฉพาะ entry ที่ persist จริง
+            var refLabel = gl.EntryNumber.StartsWith("(") ? gl.EntryNumber   // projected — "(ประมาณการ — ก่อนอนุมัติ)"
+                : $"{(en ? "ref" : "อ้างอิง")} {WebUtility.HtmlEncode(doc.DocumentNumber)} · {(en ? "JE" : "เลขที่ JE")} {WebUtility.HtmlEncode(gl.EntryNumber)}";
             sb.AppendLine($"<span style='font-weight:700;color:#64748b'>{(en ? "Posting" : "การบันทึกบัญชี")}</span> " +
-                $"<span style='color:#94a3b8'>{WebUtility.HtmlEncode(gl.EntryNumber)} · {gl.EntryDate:dd/MM/yy}</span>");
+                $"<span style='color:#94a3b8'>{refLabel} · {gl.EntryDate:dd/MM/yy}</span>");
             foreach (var l in gl.Lines)
             {
                 var isDr = l.Debit != 0;
@@ -1257,16 +1407,19 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             .watermark {{ position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 90px; color: rgba(0,0,0,{t.WatermarkOpacity}); z-index: -1; white-space: nowrap; }}
             .watermark-void {{ color: rgba(220,38,38,0.20); font-weight: 800; font-size: 120px; letter-spacing: 10px; z-index: 999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 
-            /* Header: logo left, company details fill remaining width */
-            .header {{ display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:12px;border-radius:6px;" : "")} }}
-            .logo {{ flex: 0 0 auto; object-fit: contain; }}
+            /* Header: logo left, company details fill remaining width.
+               ลดขนาดให้กระชับขึ้น (เดิม header bar ใหญ่กิน 1/4 หน้า). cap
+               logo สูงสุดที่ 22mm กันรูปยักษ์ขยายเต็มซ้าย */
+            .header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 10px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:8px 10px;border-radius:5px;" : "")} }}
+            .logo {{ flex: 0 0 auto; object-fit: contain; max-width: 22mm !important; max-height: 22mm !important; }}
             .company-info {{ flex: 1 1 auto; }}
-            .company-info > div {{ margin: 1px 0; }}
-            .company-name {{ font-size: 20px; font-weight: 700; color: {t.AccentColor}; line-height: 1.2; }}
-            .company-name-en {{ font-size: 15px; color: #666; }}
+            .company-info > div {{ margin: 0; line-height: 1.25; }}
+            .company-name {{ font-size: 16px; font-weight: 700; color: {t.AccentColor}; line-height: 1.15; }}
+            .company-name-en {{ font-size: 12px; color: #666; }}
 
-            /* Title + doc meta */
-            .doc-title {{ text-align: center; font-size: {t.TitleFontSize}px; font-weight: 700; color: {t.AccentColor}; margin: 16px 0 12px; border-bottom: 2px solid {t.AccentColor}; padding-bottom: 6px; }}
+            /* Title + doc meta — cap ที่ 22px เพื่อกันชื่อยักษ์ (template เก่า
+               อาจตั้ง TitleFontSize 30+ ผ่าน wizard) */
+            .doc-title {{ text-align: center; font-size: min({t.TitleFontSize}px, 22px); font-weight: 700; color: {t.AccentColor}; margin: 10px 0 8px; border-bottom: 1.5px solid {t.AccentColor}; padding-bottom: 4px; letter-spacing: 0.5px; }}
             .doc-info {{ display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 14px; }}
             .doc-info > div {{ white-space: nowrap; }}
 
