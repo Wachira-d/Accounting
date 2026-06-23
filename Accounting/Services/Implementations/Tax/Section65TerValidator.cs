@@ -44,7 +44,12 @@ public static class Section65TerValidator
 
     public sealed record Context(
         decimal? AnnualRevenue,
-        decimal? PaidUpCapital);
+        decimal? PaidUpCapital,
+        /// <summary>ยอด "ค่ารับรอง" สะสมตั้งแต่ต้นรอบบัญชี (YTD) ของบริษัท
+        /// — ใช้คำนวณ cap §65 ตรี(4) ที่เป็น per-fiscal-year ไม่ใช่ per-doc.
+        /// ถ้าไม่ส่งมา (null) → fallback คำนวณ cap เฉพาะ entertainment ใน
+        /// เอกสารปัจจุบัน (legacy behavior, อาจ under-report ส่วนเกิน).</summary>
+        decimal? PriorYtdEntertainmentExpense = null);
 
     /// <summary>accountInfo: map AccountId → (code, name) สำหรับตรวจชนิดบัญชี.
     /// payeeName/payeeTaxId: ชื่อ+เลขผู้รับเงิน (จาก Contact ของเอกสารซื้อ).</summary>
@@ -114,16 +119,29 @@ public static class Section65TerValidator
         }
 
         // (4) ค่ารับรอง cap = MAX(0.3% revenue, 0.3% paid-up capital) ไม่เกิน 10M
+        // — cap เป็น "per fiscal year". รวม YTD ที่อนุมัติไปก่อนหน้ากับยอด
+        // entertainment ในเอกสารนี้ → คำนวณ excess รวม แล้วเฉลี่ยส่วนเกินที่
+        // เป็นของเอกสารนี้ (clamp ไม่ให้เกิน entertainmentTotal ของ doc)
         if (entertainmentTotal > 0)
         {
             var cap = Math.Min(
                 Math.Max((ctx.AnnualRevenue ?? 0m) * 0.003m, (ctx.PaidUpCapital ?? 0m) * 0.003m),
                 10_000_000m);
-            var excess = Math.Max(0m, entertainmentTotal - cap);
-            if (excess > 0)
+            var priorYtd = ctx.PriorYtdEntertainmentExpense ?? 0m;
+            var combined = priorYtd + entertainmentTotal;
+            var totalExcess = Math.Max(0m, combined - cap);
+            // ส่วนเกินที่ doc นี้รับผิดชอบ = ส่วนเกินรวม − ส่วนเกินก่อนหน้า
+            var priorExcess = Math.Max(0m, priorYtd - cap);
+            var thisDocExcess = Math.Min(entertainmentTotal, Math.Max(0m, totalExcess - priorExcess));
+            if (thisDocExcess > 0)
+            {
+                var ytdNote = priorYtd > 0
+                    ? $" (YTD ก่อนหน้า {priorYtd:N2} + ใบนี้ {entertainmentTotal:N2} = {combined:N2})"
+                    : "";
                 findings.Add(new("RD-65ter(4)", "ป.รัษฎากร §65 ตรี (4) + กฎกระทรวง 143",
-                    excess, $"ค่ารับรอง {entertainmentTotal:N2} เกินเพดาน {cap:N2} (0.3% รายได้/ทุน, ≤10M) — บวกกลับส่วนเกิน {excess:N2}",
+                    thisDocExcess, $"ค่ารับรอง{ytdNote} เกินเพดาน {cap:N2} (0.3% รายได้/ทุน, ≤10M) — บวกกลับส่วนเกิน {thisDocExcess:N2}",
                     HardBlock: false, NeedsConfirmation: false));
+            }
         }
 
         var total = findings.Sum(f => f.AddBackAmount);

@@ -4537,7 +4537,23 @@ public class DocumentService : IDocumentService
                 && d.DocumentDate >= yearStart && d.DocumentDate < yearEnd)
             .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
 
-        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital);
+        // §65 ตรี(4) cap เป็น "per fiscal year" — รวมยอดค่ารับรอง YTD ของ
+        // เอกสารซื้อ/ค่าใช้จ่ายที่อนุมัติแล้วในรอบเดียวกัน (description มี
+        // "รับรอง"/"entertain") เพื่อให้ excess คำนวณตาม YTD จริง ไม่ใช่
+        // เฉพาะใบนี้. exclude doc ปัจจุบัน (re-approve / ก่อน approve)
+        var priorEntertainment = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.Document.CompanyId == companyId
+                && l.Document.Id != doc.Id
+                && l.Document.Status == DocumentStatus.Approved
+                && l.Document.DocumentDate >= yearStart && l.Document.DocumentDate < yearEnd
+                && (l.Document.DocumentType == DocumentType.PurchaseInvoice
+                    || l.Document.DocumentType == DocumentType.Expense
+                    || l.Document.DocumentType == DocumentType.PaymentVoucher)
+                && (l.Description.Contains("รับรอง") || l.Description.Contains("entertain")
+                    || l.Description.Contains("เลี้ยงรับรอง")))
+            .SumAsync(l => (decimal?)(l.Amount + l.VatAmount)) ?? 0m;
+
+        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital, priorEntertainment);
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
