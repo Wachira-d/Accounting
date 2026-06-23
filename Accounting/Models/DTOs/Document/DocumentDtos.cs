@@ -119,7 +119,11 @@ public record DocumentLineRequest(
     // Default true (เคลมได้). UI ติ๊กออก / AI suggest false สำหรับค่ารับรอง
     // / น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์.
     bool IsVatClaimable = true,
-    string? VatNonClaimableReason = null);
+    string? VatNonClaimableReason = null,
+    // ส่วนลดต่อบรรทัดเป็น "ยอดเงิน" (มาตรฐานสากล: ERP รองรับ discount ทั้ง %
+    // และ amount). เมื่อระบุ > 0 ระบบใช้ค่านี้ตรง ๆ แทนการคิดจาก DiscountPercent
+    // (เคสใบกำกับระบุส่วนลดเป็นบาท เช่น "ส่วนลด 600.28"). null/0 = ใช้ %.
+    decimal? DiscountAmount = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,

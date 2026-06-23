@@ -3621,6 +3621,30 @@ public class OcrService : IOcrService
 
         if (items.Count > 0)
         {
+            // 🔧 Reconcile line amounts กับ header subtotal — เคสที่ OCR แกะ
+            // ราคาต่อหน่วยจาก "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
+            // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72).
+            // วิธีที่ "ตรงกับใบจริง + ซื่อสัตย์": ใส่เป็น "ส่วนลด %" ต่อบรรทัด —
+            // ราคา/หน่วยคงเป็นราคาเต็มตามใบ (9890), ส่วนลด 6.07%, ยอดหลังลด 9289.72.
+            // ดีกว่าการเขียนทับราคาเป็น 9289.72 ลอย ๆ (ซ่อนส่วนลดที่มีจริง).
+            // ยอด header = authoritative. เก็บ % ไว้ใส่ DocumentLine.DiscountPercent.
+            var hdrSubTotal = result.ExtractedSubTotal ?? 0m;
+            var grossSum = items.Sum(x =>
+                (x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m)));
+            decimal docDiscountPercent = 0m;
+            if (hdrSubTotal > 0m && grossSum > hdrSubTotal + 1m)
+            {
+                // เฉพาะ gross > subtotal (มีส่วนลดจริง) — ไม่ใส่ส่วนลดติดลบกรณี
+                // OCR แกะราคาขาด (gross < subtotal)
+                docDiscountPercent = Math.Round((grossSum - hdrSubTotal) / grossSum * 100m, 2);
+                // ปรับ item.Amount เป็นยอดหลังลด → VAT proration คิดบนยอดสุทธิถูกต้อง
+                foreach (var it in items)
+                {
+                    var gross = it.UnitPrice.HasValue ? it.UnitPrice.Value * (it.Quantity ?? 1m) : (it.Amount ?? 0m);
+                    it.Amount = Math.Round(gross * (1m - docDiscountPercent / 100m), 2);
+                }
+            }
+
             // Pro-rate the header VAT across lines by amount share (the
             // paper rarely itemises VAT per line). Remainder lands on the
             // last line so the lines sum exactly to the header VAT.
@@ -3704,6 +3728,12 @@ public class OcrService : IOcrService
                     Quantity = item.Quantity ?? 1,
                     Unit = string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    // ส่วนลด: ราคา/หน่วยคงเป็นราคาเต็ม, ใส่ % ส่วนลด, Amount = ยอดหลังลด
+                    DiscountPercent = docDiscountPercent,
+                    DiscountAmount = docDiscountPercent > 0m
+                        ? Math.Round((item.UnitPrice ?? item.Amount ?? 0) * (item.Quantity ?? 1m)
+                            - amount, 2)
+                        : 0m,
                     Amount = amount,
                     VatRate = headerVat > 0 ? 7 : 0,
                     VatAmount = lineVat,

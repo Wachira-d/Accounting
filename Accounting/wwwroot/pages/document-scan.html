@@ -3336,6 +3336,41 @@
         // Always provide at least one row so the user has somewhere to start.
         if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
 
+        // 🔧 Reconcile lines กับ header subtotal — เคสที่ OCR แกะราคา
+        // ต่อหน่วยจากบรรทัด "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
+        // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72).
+        // วิธีที่ "ตรงกับใบจริง + ซื่อสัตย์": ใส่เป็น "ส่วนลด %" ต่อบรรทัด
+        // (ราคา/หน่วยคงเป็นราคาเต็มตามใบ 9890, ส่วนลด 6.07%, ยอดหลังลด 9289.72)
+        // แทนการ scale ราคาเงียบ ๆ ให้เหลือ 9289.72 ลอย ๆ ที่ผู้ใช้งง.
+        // ยอด header เป็น authoritative (มาจาก total/VAT ของใบ).
+        // เลือกฐานเทียบตาม pricesIncludeVat: ถ้าราคารวม VAT แล้ว ฐาน = ยอดรวม
+        // ทั้งสิ้น (total); ถ้ายังไม่รวม VAT ฐาน = subtotal. กัน mis-detect VAT
+        // เป็นส่วนลด (เคส pricesIncludeVat: gross รวม VAT จะมากกว่า subtotal เสมอ).
+        const discBase = pricesIncludeVat
+          ? (Number(scan.extractedTotalAmount) || 0)
+          : (Number(scan.extractedSubTotal) || 0);
+        if (discBase > 0 && lines.length > 0) {
+          const linesGross = lines.reduce((s, l) =>
+            s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1), 0);
+          // เฉพาะกรณี gross > ฐาน เกิน 1 บาท = มีส่วนลดจริง (ไม่ใช่ rounding).
+          // ถ้า gross < ฐาน (OCR แกะราคาขาด) → ไม่ใส่ส่วนลดติดลบ ปล่อยไว้
+          if (linesGross > discBase + 1) {
+            // ใส่เป็น "ยอดเงินส่วนลด" (มาตรฐานสากล + ตรงกับที่ใบระบุเป็นบาท).
+            // กระจายส่วนลดรวมตามสัดส่วน gross ของแต่ละบรรทัด, บรรทัดสุดท้าย
+            // ดูดเศษให้ผลรวมส่วนลด = (gross − ฐาน) เป๊ะ.
+            const totalDisc = Math.round((linesGross - discBase) * 100) / 100;
+            let assigned = 0;
+            lines.forEach((l, i) => {
+              const g = (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1);
+              const d = i === lines.length - 1
+                ? Math.round((totalDisc - assigned) * 100) / 100
+                : Math.round((totalDisc * g / linesGross) * 100) / 100;
+              l.discountAmount = d;   // unitPrice คงราคาเต็ม; ระบบหักด้วยยอดนี้
+              assigned += d;
+            });
+          }
+        }
+
         // Derive a due date from the credit terms the OCR read ("Net 30" →
         // PaymentTermsDays = 30) so AR/AP documents land with วันครบกำหนด
         // already filled. OCR doesn't read an explicit due date, so this is
