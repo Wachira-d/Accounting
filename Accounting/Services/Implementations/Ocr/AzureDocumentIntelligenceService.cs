@@ -402,7 +402,19 @@ public class AzureDocumentIntelligenceService
             result.VendorName = GetStringField(fields, "VendorName") ?? GetStringField(fields, "MerchantName");
             result.VendorTaxId = GetStringField(fields, "VendorTaxId") ?? GetStringField(fields, "MerchantTaxId");
             result.VendorAddress = GetStringField(fields, "VendorAddress") ?? GetStringField(fields, "MerchantAddress");
-            result.VendorPhone = GetStringField(fields, "VendorAddressRecipient") ?? GetStringField(fields, "MerchantPhoneNumber");
+            // BUG เดิม: VendorPhone = VendorAddressRecipient (ชื่อผู้รับในบล็อก
+            // ที่อยู่ — ไม่ใช่เบอร์โทร!) → ทำให้ contact ที่สร้างจาก OCR ได้
+            // ชื่อ/TaxId/string ใดก็ตามมาเป็น "เบอร์โทร" ผิด (เช่นในเคสจริง
+            // ติด TaxId 13 หลักของผู้รับมาเป็นเบอร์โทร).
+            // แก้: ใช้เฉพาะ MerchantPhoneNumber (field โทรศัพท์จริง) +
+            // sanity check 9-11 digits ก่อนเก็บ. ปล่อยว่างดีกว่าโชว์ค่าผิด
+            var rawPhone = GetStringField(fields, "MerchantPhoneNumber");
+            if (!string.IsNullOrWhiteSpace(rawPhone))
+            {
+                var digitCount = rawPhone.Count(char.IsDigit);
+                if (digitCount >= 9 && digitCount <= 11)
+                    result.VendorPhone = rawPhone.Trim();
+            }
 
             // Customer / Buyer
             result.CustomerName = GetStringField(fields, "CustomerName") ?? GetStringField(fields, "BillingAddressRecipient");

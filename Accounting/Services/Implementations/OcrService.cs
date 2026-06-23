@@ -18,6 +18,17 @@ public class OcrService : IOcrService
     private static readonly Regex VendorPhoneRegex = new(
         @"(?:โทร(?:ศัพท์)?\.?|TEL\.?|TELEPHONE|PHONE|มือถือ)\s*[:：]?\s*([0-9][\d\-\s\.()]{7,18}\d)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Sanitize OCR-extracted phone — คืน null ถ้าไม่ใช่เบอร์โทรไทย
+    /// ที่สมเหตุสมผล (9-11 หลัก, ไม่ใช่ TaxId 13 หลัก / รหัสไปรษณีย์ 5 หลัก).
+    /// ปล่อย Contact.Phone = null ดีกว่าเก็บค่าผิด (TaxId/ชื่อ/string มั่ว ๆ
+    /// ที่ Azure DI อาจดึงมาผิด field).</summary>
+    private static string? SanePhone(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var digitCount = raw.Count(char.IsDigit);
+        return digitCount is >= 9 and <= 11 ? raw.Trim() : null;
+    }
     private static readonly Regex VendorEmailRegex = new(
         @"[\w\.\-]+@[\w\.\-]+\.[a-zA-Z]{2,}",
         RegexOptions.Compiled);
@@ -1423,7 +1434,7 @@ public class OcrService : IOcrService
                     IsSupplier = true,
                     ContactType = ContactType.JuristicPerson,
                     Address = extractedData.DbdAddress,
-                    Phone = extractedData.VendorPhone,
+                    Phone = SanePhone(extractedData.VendorPhone),
                     Email = extractedData.VendorEmail,
                     BuildingNumber = addressParts.BuildingNumber,
                     Moo = addressParts.Moo,
@@ -1554,8 +1565,9 @@ public class OcrService : IOcrService
                             var addr = extractedData.DbdAddress ?? extractedData.VendorAddress;
                             if (!string.IsNullOrEmpty(addr)) { existing.Address = addr; changed = true; }
                         }
-                        if (string.IsNullOrWhiteSpace(existing.Phone) && !string.IsNullOrWhiteSpace(extractedData.VendorPhone))
-                        { existing.Phone = extractedData.VendorPhone; changed = true; }
+                        var sanePhone = SanePhone(extractedData.VendorPhone);
+                        if (string.IsNullOrWhiteSpace(existing.Phone) && !string.IsNullOrWhiteSpace(sanePhone))
+                        { existing.Phone = sanePhone; changed = true; }
                         if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(extractedData.VendorEmail))
                         { existing.Email = extractedData.VendorEmail; changed = true; }
                         if (string.IsNullOrWhiteSpace(existing.BranchCode) && !string.IsNullOrWhiteSpace(extractedData.VendorBranchCode))
