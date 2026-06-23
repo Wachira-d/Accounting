@@ -47,6 +47,17 @@
         </div>
       </div>
 
+      <!-- อธิบายความต่าง int_ vs acc_ ให้ชัด + cross-link (ระบบมี API 2 แบบ) -->
+      <div style="font-size:12.5px;color:#0c4a6e;background:#f0f9ff;border:1px solid #bae6fd;border-left:4px solid #0ea5e9;border-radius:8px;padding:10px 14px;margin-bottom:16px;line-height:1.7">
+        <b>📌 ระบบมี API key 2 แบบ — ใช้คนละงาน:</b><br>
+        • <b>int_ (หน้านี้)</b> = เชื่อม<u>ระบบภายนอก</u> (POS/PMS/ERP/e-commerce) ให้ <u>sync ข้อมูลเข้า</u>ระบบ
+        พร้อม mapping ผังบัญชี + sync log. key ผูกกับ "integration" (ไม่ใช่ user) —
+        <b>ใช้สร้าง/อนุมัติเอกสารแทนผู้ใช้ (เช่น OCR) ไม่ได้</b><br>
+        • <b>acc_</b> = ให้<u>สคริปต์/automation ของคุณเอง</u>เรียก API (เช่น OCR สร้าง-อนุมัติเอกสาร, n8n)
+        ผูกกับ user + กำหนดสิทธิ์ละเอียดได้ → จัดการที่
+        <a href="/pages/settings.html" style="color:#0369a1;font-weight:600">⚙️ ตั้งค่า → การอนุมัติและการเข้าถึง → API Keys</a>
+      </div>
+
       <!-- Dashboard Stats -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">
         <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700" id="statTotal">-</div><div class="text-sm text-gray-500" data-i18n="common.all">ทั้งหมด</div></div>
