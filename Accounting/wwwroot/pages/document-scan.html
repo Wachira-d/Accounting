@@ -3370,7 +3370,7 @@
               // อัตรา VAT จาก header (ส่วนใหญ่ 7 แต่เผื่อใบที่ rate ต่าง)
               const inferredRate = hdrSub > 0 ? Math.round((hdrVat / hdrSub) * 1000) / 10 : 7;
               lines.push({
-                description: '(OCR ไม่อ่านบรรทัดนี้ — น่าจะเป็นค่าขนส่ง/บริการอื่น ตรวจสอบใบจริง)',
+                description: 'ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)',
                 quantity: 1,
                 unitPrice: missing,
                 discountPercent: 0,

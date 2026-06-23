@@ -3658,7 +3658,7 @@ public class OcrService : IOcrService
                         : 7m;
                     items.Add(new OcrExtractedLineItem
                     {
-                        Description = "(OCR ไม่อ่านบรรทัดนี้ — น่าจะเป็นค่าขนส่ง/บริการอื่น ตรวจสอบใบจริง)",
+                        Description = "ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)",
                         Quantity = 1m,
                         UnitPrice = missing,
                         Amount = missing,
@@ -4880,6 +4880,39 @@ public class OcrService : IOcrService
             {
                 data.DiscountAmount = disc;
                 data.ReasoningTrace.Add($"[Enrich] ส่วนลดบนเอกสาร ฿{disc:N2}");
+            }
+        }
+
+        // 2b) Header delivery / shipping / freight charge — เคสจริง OfficeMate
+        // ขึ้น "ค่าขนส่งพิเศษ / Delivery Charge Incl.VAT 50.00" ใต้บรรทัด line
+        // items. OCR ไม่ได้อ่านเป็น line → เคยตกหล่นทำให้ระบบใส่ placeholder
+        // "OCR ไม่อ่านบรรทัดนี้". ดึงมาเป็น OCR line จริง — desc = "ค่าขนส่ง",
+        // amount + unit price = ยอดที่อ่านได้, append เข้า Items เพื่อให้
+        // CreateDocumentFromScanAsync ใส่เป็น line ปกติ (ผู้ใช้ไม่ต้องเดา).
+        var hasDeliveryLine = data.Items.Any(it =>
+            !string.IsNullOrEmpty(it.Description) &&
+            (it.Description.Contains("ขนส่ง") || it.Description.Contains("จัดส่ง")
+             || it.Description.IndexOf("delivery", StringComparison.OrdinalIgnoreCase) >= 0
+             || it.Description.IndexOf("shipping", StringComparison.OrdinalIgnoreCase) >= 0
+             || it.Description.IndexOf("freight", StringComparison.OrdinalIgnoreCase) >= 0));
+        if (!hasDeliveryLine)
+        {
+            var sm = System.Text.RegularExpressions.Regex.Match(text,
+                @"(?:ค่าขนส่ง(?:พิเศษ)?|ค่าจัดส่ง|delivery\s*charge|shipping(?:\s*charge)?|freight)" +
+                @"(?:\s*(?:incl\.?\s*vat|รวม\s*vat|รวมภาษี))?\s*:?\s*(?:฿|บาท)?\s*([\d,]+(?:\.\d{1,2})?)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (sm.Success
+                && decimal.TryParse(sm.Groups[1].Value.Replace(",", ""), out var fee)
+                && fee > 0 && fee < (data.TotalAmount ?? decimal.MaxValue))
+            {
+                data.Items.Add(new OcrExtractedLineItem
+                {
+                    Description = "ค่าขนส่ง",
+                    Quantity = 1m,
+                    UnitPrice = fee,
+                    Amount = fee,
+                });
+                data.ReasoningTrace.Add($"[Enrich] ค่าขนส่งบนเอกสาร ฿{fee:N2} — เพิ่มเป็น line");
             }
         }
 
