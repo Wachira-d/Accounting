@@ -215,6 +215,15 @@ public class ProductService : IProductService
                 $"สต็อกไม่เพียงพอ: คงเหลือ {product.CurrentStock} ต้องการเบิก {Math.Abs(qty)}");
         product.CurrentStock += qty;
 
+        // Multi-warehouse: ถ้าไม่ระบุ → resolve default warehouse ของบริษัท
+        var warehouseId = request.WarehouseId;
+        if (warehouseId == null)
+        {
+            warehouseId = await _db.Set<Warehouse>().AsNoTracking()
+                .Where(w => w.CompanyId == companyId && w.IsDefault && w.IsActive && !w.IsDeleted)
+                .Select(w => (Guid?)w.Id).FirstOrDefaultAsync();
+        }
+
         var movement = new StockMovement
         {
             CompanyId = companyId,
@@ -226,10 +235,29 @@ public class ProductService : IProductService
             BalanceAfter = product.CurrentStock,
             Reference = request.Reference,
             Notes = request.Notes,
+            WarehouseId = warehouseId,
+            LotNumber = request.LotNumber,
             CreatedBy = userId
         };
 
         _db.StockMovements.Add(movement);
+
+        // ปรับ WarehouseStock per location เมื่อระบุ warehouse
+        if (warehouseId.HasValue)
+        {
+            var ws = await _db.Set<WarehouseStock>().FirstOrDefaultAsync(x =>
+                x.WarehouseId == warehouseId.Value && x.ProductId == request.ProductId);
+            if (ws == null)
+            {
+                ws = new WarehouseStock
+                {
+                    CompanyId = companyId, WarehouseId = warehouseId.Value,
+                    ProductId = request.ProductId, Quantity = 0m,
+                };
+                _db.Add(ws);
+            }
+            ws.Quantity += qty;       // qty เป็น signed อยู่แล้ว (OUT = ลบ)
+        }
         await _db.SaveChangesAsync();
         await txn.CommitAsync();
 
