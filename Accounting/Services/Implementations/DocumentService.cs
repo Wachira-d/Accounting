@@ -6112,8 +6112,28 @@ public class DocumentService : IDocumentService
         {
             var (required, ytd) = await CheckWhtThresholdAsync(
                 companyId, doc.ContactId, doc.DocumentDate, doc.SubTotal);
-            if (required && doc.SubTotal < 1000m)
-                warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด");
+            if (required)
+            {
+                if (doc.SubTotal < 1000m)
+                    warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด");
+                else
+                    warnings.Add($"⚠️ ใบนี้ {doc.SubTotal:N2} ≥ 1,000 บาท แต่ไม่ได้กรอกหัก ณ ที่จ่าย — ตรวจประเภทเงินได้ (ค่าบริการ 3% / ค่าเช่า 5% / ค่าโฆษณา 2% / ขนส่ง 1%) §3 เตรส");
+            }
+        }
+
+        // DTA bilateral treaty — เตือนเมื่อจ่ายไปต่างประเทศ + ใช้ default rate
+        // (15% ม.70) แต่ payee country มี DTA ลดเหลือ 5-10% บ่อย → ผู้ใช้
+        // อาจหักเกินไปเสียค่าใช้จ่ายให้ vendor เปล่าๆ
+        if ((doc.DocumentType == DocumentType.PaymentVoucher
+             || doc.DocumentType == DocumentType.Expense
+             || doc.DocumentType == DocumentType.PurchaseInvoice)
+            && doc.WithholdingTaxAmount > 0m
+            && !string.IsNullOrEmpty(doc.Contact?.CountryCode)
+            && !string.Equals(doc.Contact.CountryCode, "TH", StringComparison.OrdinalIgnoreCase))
+        {
+            var maxRate = doc.Lines?.Max(l => l.WithholdingTaxRate) ?? 0m;
+            if (maxRate >= 15m)
+                warnings.Add($"🌐 จ่ายต่างประเทศ ({doc.Contact.CountryCode}): WHT {maxRate}% (ม.70 default). ตรวจ DTA bilateral treaty — ส่วนใหญ่ลดเหลือ 5-10% ถ้ามี Certificate of Residence/Form TH8 ของ payee");
         }
 
         // Sticker-shock guard — flag invoices > 500k THB. Catches a typo
