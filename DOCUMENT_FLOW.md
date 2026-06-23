@@ -163,7 +163,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    ตาม พ.ร.บ.บัญชี ม.10 (ห้ามลบจริงก่อนหมดอายุ)
 6. **§65 ตรี** (`:1773`) — `ApplySection65TerAsync` → `doc.NonDeductibleAmount`
    + breakdown JSON (`NonDeductibleRuleJson`); ไหลเข้า ภ.ง.ด.50 ผ่าน
-   `TaxService.GenerateCitReport` (บวกกลับ)
+   `TaxService.GenerateCitReport` (บวกกลับ).
+   **§65 ตรี(4) ค่ารับรอง cap = per fiscal year** (กฎกระทรวง 143) —
+   `Section65TerValidator.Context.PriorYtdEntertainmentExpense` ส่ง YTD
+   ของเอกสารฝั่งซื้อ/ค่าใช้จ่าย Approved ที่ description มี "รับรอง" →
+   excess clamp ที่ใบปัจจุบันรับผิดชอบ. §82/5(6) vehicle warning bypass
+   เมื่อ `CompanySettings.IsVehicleDealer=true`.
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
@@ -280,6 +285,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   พร้อม `DepositOutputVatRecognizedAt = now`
 - **Refund**: `RefundDepositAsync` → reverse + ออกใบลดหนี้ภาษีขาย
 - **Apply**: `ApplyDepositToInvoiceAsync` (`:1389`) → ใน 1 transaction:
+  0. **FX guard**: ถ้า `invoice.Currency != deposit.Currency` หรือ
+     `|invoice.ExchangeRate − deposit.ExchangeRate| > 0.0001` → throw
+     (กัน FX silent corruption ตาม IAS 21 — ระบบยังไม่รองรับการบันทึก
+     gain/loss FX อัตโนมัติ user ต้องทำ JE manual หรือใช้มัดจำสกุลเดียวกัน)
   1. คำนวณ `vatPortion = deposit.VatAmount / deposit.TotalAmount`
   2. เรียก `RealizeDepositAsync` ด้วยฐานไม่รวม VAT (`amount × (1−vatPortion)`)
      → Dr 217xx ขายรอรับรู้ / Cr รายได้ + (ถ้า deferred) ย้าย 21913→21911
@@ -489,6 +498,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | §86/9–86/10 CN/DN | `CreditNote/DebitNote` flow | required `RelatedDocumentId` + `CreditNoteReason` (CN); cap ≤ original |
 | §78 / §78/1 tax point | `TaxPointResolver` | snapshot ตอน approve |
 | §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 |
+| §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment of Approved docs → excess บวกกลับใบปัจจุบัน |
+| §82/5(6) vehicle dealer override | `CompanySettings.IsVehicleDealer` | bypass warning เมื่อรถเป็น inventory (ประกาศอธิบดี 42) |
+| F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` | cron 7 วัน re-compute SHA-256 → notify ถ้า tamper (พ.ร.บ.บัญชี ม.11 ทวิ) |
+| Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` | fail-fast ตอน Create/Update ก่อนรอ midnight cron — accountId ต้องอยู่ใน CoA, journal balance |
 | §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
 | §87/3 retention 5 ปี | `RetentionUntil` | ห้าม hard delete; soft + legal_hold |
 | §85/1 VAT threshold 1.8M | annual revenue check | warning "ต้องจด VAT ภายใน 30 วัน" |
@@ -544,8 +557,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-22 — รอบ 6 (e-Tax XML ยอดเงิน ex-VAT_
-_ครบ: line ChargeAmount/discount ถอด VAT + แก้ TaxBasis หักส่วนลดซ้ำ + PDF_
-_column ราคา/หน่วย รวม VAT)._
+_Last verified against codebase: 2026-06-23 — รอบ 7 (multi-currency_
+_มัดจำ FX guard, audit hash chain weekly verifier, recurring template_
+_validate, §65 ตรี(4) YTD cap, §82/5(6) vehicle dealer override)._
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
