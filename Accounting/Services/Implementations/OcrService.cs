@@ -3623,29 +3623,25 @@ public class OcrService : IOcrService
         {
             // 🔧 Reconcile line amounts กับ header subtotal — เคสที่ OCR แกะ
             // ราคาต่อหน่วยจาก "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
-            // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal
-            // 9289.72 เพราะมีส่วนลด). ถ้าไม่ปรับ → เอกสารที่สร้างไม่ตรง
-            // header ที่ผู้ใช้เห็นในใบจริง. ปรับ Amount/UnitPrice ของแต่ละ
-            // บรรทัดให้ scale ตามอัตราส่วน + เก็บ remainder ลงบรรทัดสุดท้าย.
-            // ยอดจาก header = authoritative (มาจาก total ของใบ).
+            // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72).
+            // วิธีที่ "ตรงกับใบจริง + ซื่อสัตย์": ใส่เป็น "ส่วนลด %" ต่อบรรทัด —
+            // ราคา/หน่วยคงเป็นราคาเต็มตามใบ (9890), ส่วนลด 6.07%, ยอดหลังลด 9289.72.
+            // ดีกว่าการเขียนทับราคาเป็น 9289.72 ลอย ๆ (ซ่อนส่วนลดที่มีจริง).
+            // ยอด header = authoritative. เก็บ % ไว้ใส่ DocumentLine.DiscountPercent.
             var hdrSubTotal = result.ExtractedSubTotal ?? 0m;
-            var unscaledSum = items.Sum(x => x.Amount ?? 0m);
-            if (hdrSubTotal > 0m && unscaledSum > 0m
-                && Math.Abs(unscaledSum - hdrSubTotal) > 1m)
+            var grossSum = items.Sum(x =>
+                (x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m)));
+            decimal docDiscountPercent = 0m;
+            if (hdrSubTotal > 0m && grossSum > hdrSubTotal + 1m)
             {
-                decimal scaleAssigned = 0m;
-                for (int i = 0; i < items.Count; i++)
+                // เฉพาะ gross > subtotal (มีส่วนลดจริง) — ไม่ใส่ส่วนลดติดลบกรณี
+                // OCR แกะราคาขาด (gross < subtotal)
+                docDiscountPercent = Math.Round((grossSum - hdrSubTotal) / grossSum * 100m, 2);
+                // ปรับ item.Amount เป็นยอดหลังลด → VAT proration คิดบนยอดสุทธิถูกต้อง
+                foreach (var it in items)
                 {
-                    var origAmt = items[i].Amount ?? 0m;
-                    var qty = items[i].Quantity ?? 1m;
-                    decimal newAmt;
-                    if (i == items.Count - 1)
-                        newAmt = Math.Round(hdrSubTotal - scaleAssigned, 2);
-                    else
-                        newAmt = Math.Round(origAmt * hdrSubTotal / unscaledSum, 2);
-                    items[i].Amount = newAmt;
-                    if (qty > 0m) items[i].UnitPrice = Math.Round(newAmt / qty, 2);
-                    scaleAssigned += newAmt;
+                    var gross = it.UnitPrice.HasValue ? it.UnitPrice.Value * (it.Quantity ?? 1m) : (it.Amount ?? 0m);
+                    it.Amount = Math.Round(gross * (1m - docDiscountPercent / 100m), 2);
                 }
             }
 
@@ -3732,6 +3728,12 @@ public class OcrService : IOcrService
                     Quantity = item.Quantity ?? 1,
                     Unit = string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    // ส่วนลด: ราคา/หน่วยคงเป็นราคาเต็ม, ใส่ % ส่วนลด, Amount = ยอดหลังลด
+                    DiscountPercent = docDiscountPercent,
+                    DiscountAmount = docDiscountPercent > 0m
+                        ? Math.Round((item.UnitPrice ?? item.Amount ?? 0) * (item.Quantity ?? 1m)
+                            - amount, 2)
+                        : 0m,
                     Amount = amount,
                     VatRate = headerVat > 0 ? 7 : 0,
                     VatAmount = lineVat,

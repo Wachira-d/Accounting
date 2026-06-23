@@ -3338,29 +3338,27 @@
 
         // 🔧 Reconcile lines กับ header subtotal — เคสที่ OCR แกะราคา
         // ต่อหน่วยจากบรรทัด "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
-        // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72
-        // เพราะมีส่วนลด/discount).  ถ้าไม่ปรับ → ฟอร์มคำนวณ 9890×1.07 = 10,582
-        // ไม่ตรงกับ header total 9940 (ผู้ใช้สับสน เพราะยอดในฟอร์ม ≠ ใบจริง).
-        // วิธีแก้: scale line amounts ตามอัตราส่วน เพื่อให้ sum = header subtotal
-        // ยอดจริงจาก header เป็น authoritative (มาจาก total/VAT ของใบ).
-        const hdrSubTotal = Number(scan.extractedSubTotal) || 0;
-        if (hdrSubTotal > 0 && lines.length > 0) {
-          const linesSubTotal = lines.reduce((s, l) =>
+        // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72).
+        // วิธีที่ "ตรงกับใบจริง + ซื่อสัตย์": ใส่เป็น "ส่วนลด %" ต่อบรรทัด
+        // (ราคา/หน่วยคงเป็นราคาเต็มตามใบ 9890, ส่วนลด 6.07%, ยอดหลังลด 9289.72)
+        // แทนการ scale ราคาเงียบ ๆ ให้เหลือ 9289.72 ลอย ๆ ที่ผู้ใช้งง.
+        // ยอด header เป็น authoritative (มาจาก total/VAT ของใบ).
+        // เลือกฐานเทียบตาม pricesIncludeVat: ถ้าราคารวม VAT แล้ว ฐาน = ยอดรวม
+        // ทั้งสิ้น (total); ถ้ายังไม่รวม VAT ฐาน = subtotal. กัน mis-detect VAT
+        // เป็นส่วนลด (เคส pricesIncludeVat: gross รวม VAT จะมากกว่า subtotal เสมอ).
+        const discBase = pricesIncludeVat
+          ? (Number(scan.extractedTotalAmount) || 0)
+          : (Number(scan.extractedSubTotal) || 0);
+        if (discBase > 0 && lines.length > 0) {
+          const linesGross = lines.reduce((s, l) =>
             s + (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1), 0);
-          // เกิน 1 บาท (ไม่ใช่แค่ rounding) → prorate
-          if (linesSubTotal > 0 && Math.abs(linesSubTotal - hdrSubTotal) > 1) {
-            const scale = hdrSubTotal / linesSubTotal;
-            let assigned = 0;
-            lines.forEach((l, i) => {
-              const isLast = i === lines.length - 1;
-              const qty = Number(l.quantity) || 1;
-              // last line absorbs remainder ให้ sum ตรง exact
-              const newAmount = isLast
-                ? Math.round((hdrSubTotal - assigned) * 100) / 100
-                : Math.round((Number(l.unitPrice) || 0) * qty * scale * 100) / 100;
-              l.unitPrice = qty > 0 ? Math.round((newAmount / qty) * 100) / 100 : newAmount;
-              assigned += newAmount;
-            });
+          // เฉพาะกรณี gross > ฐาน เกิน 1 บาท = มีส่วนลดจริง (ไม่ใช่ rounding).
+          // ถ้า gross < ฐาน (OCR แกะราคาขาด) → ไม่ใส่ส่วนลดติดลบ ปล่อยไว้
+          if (linesGross > discBase + 1) {
+            const discPct = Math.round(((linesGross - discBase) / linesGross) * 10000) / 100;
+            lines.forEach(l => { l.discountPercent = discPct; });
+            // ComputeLineAmounts จะคิด net = gross × (1 − disc%) ต่อบรรทัด
+            // sum net ≈ ฐาน (คลาดได้ ±เศษสตางค์/บรรทัด — ระบบยึด line เป็นจริง)
           }
         }
 
