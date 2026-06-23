@@ -1284,7 +1284,15 @@
           row.querySelector('[data-f="qty"]').value = l.quantity ?? 1;
           const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
           row.querySelector('[data-f="price"]').value = l.unitPrice ?? 0;
-          row.querySelector('[data-f="disc"]').value = l.discountPercent ?? 0;
+          // ส่วนลด: ถ้ามี discountAmount (ยอดเงิน) → โหมด ฿; ไม่งั้นโหมด %
+          const _dm = row.querySelector('[data-f="discMode"]');
+          if (l.discountAmount && l.discountAmount > 0) {
+            if (_dm) _dm.value = 'amt';
+            row.querySelector('[data-f="disc"]').value = l.discountAmount;
+          } else {
+            if (_dm) _dm.value = 'pct';
+            row.querySelector('[data-f="disc"]').value = l.discountPercent ?? 0;
+          }
           const vatSel = row.querySelector('[data-f="vat"]');
           if (vatSel) vatSel.value = String(l.vatRate ?? 7);
           // WHT — ใช้ค่า per-line ก่อน, fallback to header-level จาก OCR
@@ -2033,8 +2041,8 @@
           const desc = row.querySelector('[data-f="desc"]')?.value.trim();
           const qty = parseFloat(row.querySelector('[data-f="qty"]')?.value || '0');
           const price = parseFloat(row.querySelector('[data-f="price"]')?.value || '0');
-          const disc = parseFloat(row.querySelector('[data-f="disc"]')?.value || '0');
-          const amount = qty * price * (1 - disc / 100);
+          const grossLine = qty * price;
+          const amount = grossLine - this._lineDiscountAmt(row, grossLine);
           if (desc && amount > 0) lines.push({ tempId: 'line-' + idx, description: desc, amount });
         });
         if (lines.length === 0) {
@@ -2885,8 +2893,14 @@
               <input type="text" class="form-input" data-f="unit" value="ชิ้น" style="text-align:left"></div>
             <div class="lc-field"><label>ราคา/หน่วย</label>
               <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="price" oninput="Page.calcSum()"></div>
-            <div class="lc-field"><label>ส่วนลด %</label>
-              <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()"></div>
+            <div class="lc-field"><label>ส่วนลด</label>
+              <div style="display:flex;gap:3px">
+                <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="disc" oninput="Page.calcSum()" style="min-width:0">
+                <select class="form-select" data-f="discMode" onchange="Page.calcSum()" style="width:46px;padding:6px 2px;flex:0 0 46px" title="% = คิดเป็นเปอร์เซ็นต์ • ฿ = ระบุยอดเงินส่วนลด (ตามที่ใบกำกับระบุ)">
+                  <option value="pct">%</option>
+                  <option value="amt">฿</option>
+                </select>
+              </div></div>
             <div class="lc-field"><label>VAT %</label>
               <select class="form-select" data-f="vat" onchange="Page.onVatTypeChange(this)"><option value="7">7%</option><option value="0">0%</option><option value="-1">ยกเว้น</option></select></div>
             <div class="lc-field lc-claim"><label title="VAT เคลม ภพ.30 ได้หรือไม่ (§82/5)">เคลม VAT</label>
@@ -2941,6 +2955,14 @@
           console.warn('[ProductLookup] window.ProductLookup is undefined — autocomplete will not work. Check /js/product-lookup.js loaded successfully.');
         }
       },
+      // คืนยอดส่วนลด (บาท) ของบรรทัด — รองรับทั้งโหมด % และ ฿ (มาตรฐานสากล).
+      // gross = qty × price (ก่อนลด). โหมด ฿ ใช้ค่าตรง ๆ (clamp ไม่เกิน gross).
+      _lineDiscountAmt(row, gross) {
+        const disc = parseFloat(row.querySelector('[data-f="disc"]')?.value) || 0;
+        const mode = row.querySelector('[data-f="discMode"]')?.value || 'pct';
+        if (mode === 'amt') return Math.min(Math.max(disc, 0), gross);
+        return gross * (disc / 100);
+      },
       calcSum() {
         // "ราคารวมภาษี" (fPricesIncludeVat): when ticked, the price/unit
         // entered is GROSS (VAT already included), so we strip VAT out to get
@@ -2955,13 +2977,13 @@
           const numEl = row.querySelector('.lc-num'); if (numEl) numEl.textContent = idx + 1;
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
           const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
-          const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
           // VAT sentinel: -1 = ยกเว้น (Exempt) — คำนวณเหมือน 0% แต่ flag
           // isVatClaimable=false (handled ที่ฝั่ง save).
           const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
           const vatR = rawVat === -1 ? 0 : (rawVat || 0);
           const whtR = parseFloat(row.querySelector('[data-f="wht"]').value) || 0;
-          const entered = qty * price * (1 - disc / 100);
+          const grossLine = qty * price;
+          const entered = grossLine - this._lineDiscountAmt(row, grossLine);
           let net, lineVat;
           if (inclVat && vatR > 0) {
             net = r2(entered / (1 + vatR / 100));   // back out the VAT
@@ -3054,9 +3076,9 @@
           if (!claim || claim.dataset.claim === 'true') return;
           const qty = parseFloat(row.querySelector('[data-f="qty"]').value) || 0;
           const price = parseFloat(row.querySelector('[data-f="price"]').value) || 0;
-          const disc = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
           const vatR = parseFloat(row.querySelector('[data-f="vat"]').value) || 0;
-          const entered = qty * price * (1 - disc / 100);
+          const grossLine = qty * price;
+          const entered = grossLine - this._lineDiscountAmt(row, grossLine);
           const lineVat = inclVat && vatR > 0 ? r2(entered - entered / (1 + vatR / 100)) : r2(entered * vatR / 100);
           prohibitedTotal += lineVat;
         });
@@ -3285,7 +3307,15 @@
             row.querySelector('[data-f="qty"]').value = l.quantity || 1;
             const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
             row.querySelector('[data-f="price"]').value = l.unitPrice || 0;
-            row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
+            // ส่วนลด: discountAmount (ยอดเงิน) → โหมด ฿; ไม่งั้นโหมด %
+            const _dm2 = row.querySelector('[data-f="discMode"]');
+            if (l.discountAmount && l.discountAmount > 0) {
+              if (_dm2) _dm2.value = 'amt';
+              row.querySelector('[data-f="disc"]').value = l.discountAmount;
+            } else {
+              if (_dm2) _dm2.value = 'pct';
+              row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
+            }
             row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
             // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
@@ -3462,12 +3492,16 @@
           // (ต่างจาก 0% export ที่ isVatClaimable=true).
           const rawVat = parseFloat(row.querySelector('[data-f="vat"]').value);
           const isVatExempt = rawVat === -1;
+          // ส่วนลด: โหมด ฿ → ส่ง discountAmount (ยอดเงิน), โหมด % → discountPercent
+          const discVal = parseFloat(row.querySelector('[data-f="disc"]').value) || 0;
+          const discMode = row.querySelector('[data-f="discMode"]')?.value || 'pct';
           const line = {
             description: desc,
             quantity: parseFloat(row.querySelector('[data-f="qty"]').value) || 1,
             unit: (row.querySelector('[data-f="unit"]')?.value || '').trim() || 'ชิ้น',
             unitPrice: parseFloat(row.querySelector('[data-f="price"]').value) || 0,
-            discountPercent: parseFloat(row.querySelector('[data-f="disc"]').value) || 0,
+            discountPercent: discMode === 'pct' ? discVal : 0,
+            discountAmount: discMode === 'amt' ? discVal : null,
             vatRate: isVatExempt ? 0 : (rawVat || 0),
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           };
@@ -4119,8 +4153,8 @@
           if (d) lineParts.push(d);
           const q = parseFloat(row.querySelector('[data-f="qty"]')?.value) || 0;
           const p = parseFloat(row.querySelector('[data-f="price"]')?.value) || 0;
-          const dc = parseFloat(row.querySelector('[data-f="disc"]')?.value) || 0;
-          amountFromLines += Math.round(q * p * (1 - dc / 100) * 100) / 100;
+          const grossLine = q * p;
+          amountFromLines += Math.round((grossLine - this._lineDiscountAmt(row, grossLine)) * 100) / 100;
         });
         const lineDesc = lineParts.slice(0, 5).join(' · ')
           || (document.getElementById('fNotes')?.value || '').trim()

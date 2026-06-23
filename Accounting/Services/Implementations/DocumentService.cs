@@ -255,7 +255,11 @@ public class DocumentService : IDocumentService
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
         var gross = Math.Round(line.Quantity * line.UnitPrice, 2, R);
-        var discountAmt = Math.Round(gross * line.DiscountPercent / 100, 2, R);
+        // ส่วนลด: ถ้าระบุเป็นยอดเงิน (DiscountAmount > 0) ใช้ตรง ๆ (มาตรฐานสากล
+        // — ใบกำกับระบุส่วนลดเป็นบาท); ไม่งั้นคิดจาก %. clamp ไม่ให้เกิน gross.
+        var discountAmt = line.DiscountAmount is > 0m
+            ? Math.Min(Math.Round(line.DiscountAmount.Value, 2, R), gross)
+            : Math.Round(gross * line.DiscountPercent / 100, 2, R);
         var afterDiscount = gross - discountAmt;
 
         decimal net, vatAmt;

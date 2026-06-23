@@ -458,6 +458,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 | ต้องการทำอะไร | ไปดูที่ |
 | --- | --- |
+| แก้การคิดส่วนลด/VAT ต่อบรรทัด | `DocumentService.ComputeLineAmounts :254` — รองรับ `DiscountPercent` + `DiscountAmount` (ยอดเงิน, มาตรฐานสากล: ใบระบุส่วนลดเป็นบาท). amount > 0 ชนะ % |
 | เพิ่ม `DocumentType` ใหม่ | `Models/Enums/AllEnums.cs:305` + `DocumentService.cs` หลายจุด (search by enum literal) |
 | แก้ flow Approve | `DocumentService.ApproveDocumentAsync :1512` |
 | แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :4684+` |
@@ -499,7 +500,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-22 — รอบ 4 (เพิ่ม §82/5(1)(2) gate:_
-_OCR ตรวจใบกำกับอย่างย่อ/ใบเสร็จ ที่เคลม VAT ไม่ได้ + เตือนผู้ใช้ใน review/form)._
+_Last verified against codebase: 2026-06-22 — รอบ 5 (per-line discount เป็น_
+_ยอดเงิน/% มาตรฐานสากล + OCR ใส่ส่วนลดจากใบแทน scale ราคา)._
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
