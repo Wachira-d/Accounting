@@ -47,6 +47,9 @@
       <div id="widgetList" style="display:flex;flex-wrap:wrap;gap:8px"></div>
     </div>
 
+    <!-- Action-required alerts (top of dashboard) — แสดงเฉพาะเมื่อมีรายการรอผู้ใช้ -->
+    <div id="actionAlerts" style="margin-bottom:16px;display:none"></div>
+
     <!-- Quick Actions -->
     <div class="dash-widget" data-widget="quickActions" style="margin-bottom:24px;display:flex;gap:10px;flex-wrap:wrap">
       <a href="/pages/getting-started.html" class="btn btn-primary" style="gap:6px">🚀 เริ่มต้นใช้งาน</a>
@@ -322,6 +325,71 @@
         window.print();
       },
 
+      async loadActionAlerts() {
+        const api = Layout.api(); if (!api) return;
+        const cid = Layout.getCompanyId(); const token = localStorage.getItem('token');
+        if (!cid || !token) return;
+        const alerts = [];
+        // Parallel fetch — เร็วและไม่ block dashboard ถ้า endpoint ไหนล้ม
+        const calls = await Promise.allSettled([
+          fetch(`/api/companies/${cid}/fixed-assets/needs-review`, { headers: { Authorization: 'Bearer ' + token } }).then(r => r.ok ? r.json() : null),
+          fetch(`/api/companies/${cid}/etax?status=Failed`, { headers: { Authorization: 'Bearer ' + token } }).then(r => r.ok ? r.json() : null),
+          fetch(`/api/companies/${cid}/document/undue-input-vat`, { headers: { Authorization: 'Bearer ' + token } }).then(r => r.ok ? r.json() : null),
+        ]);
+        const [assets, etax, undue] = calls.map(c => c.status === 'fulfilled' ? c.value : null);
+        const assetList = assets?.data || [];
+        if (assetList.length > 0) {
+          alerts.push({
+            icon: '🏗️', tone: 'warning',
+            title: `สินทรัพย์ ${assetList.length} รายการรอตรวจสอบ`,
+            body: 'OCR/เอกสารตรวจพบรายการที่น่าจะเป็นสินทรัพย์ — ต้องยืนยันอายุใช้งาน + วิธีคิดค่าเสื่อมก่อนเริ่มคำนวณ',
+            href: '/pages/fixed-assets.html?filter=needs-review',
+            cta: 'ตรวจสอบทันที →'
+          });
+        }
+        const etaxFailedList = etax?.data?.items || etax?.data || [];
+        const etaxFailedCount = Array.isArray(etaxFailedList) ? etaxFailedList.length : 0;
+        if (etaxFailedCount > 0) {
+          alerts.push({
+            icon: '🧾', tone: 'danger',
+            title: `e-Tax ${etaxFailedCount} ฉบับส่งสรรพากรล้มเหลว`,
+            body: 'ต้องส่งซ้ำภายในวันที่ 15 ของเดือนถัดไป — กดเปิดเพื่อ retry',
+            href: '/pages/etax.html?status=Failed',
+            cta: 'ดูคิวส่งซ้ำ →'
+          });
+        }
+        const undueList = undue?.data || [];
+        if (Array.isArray(undueList) && undueList.length > 0) {
+          alerts.push({
+            icon: '💸', tone: 'info',
+            title: `ภาษีซื้อยังไม่ถึงกำหนด (11640): ${undueList.length} รายการ`,
+            body: 'เอกสารที่ §86/4 ไม่ครบ — เติมเลขใบกำกับ/วันที่/สาขา แล้วย้ายเข้า ภพ.30',
+            href: '/pages/undue-vat.html',
+            cta: 'กรอกข้อมูล →'
+          });
+        }
+        const el = document.getElementById('actionAlerts');
+        if (!el) return;
+        if (alerts.length === 0) { el.style.display = 'none'; return; }
+        el.style.display = '';
+        const toneMap = {
+          danger:  { bg: '#fef2f2', border: '#fecaca', color: '#991b1b' },
+          warning: { bg: '#fffbeb', border: '#fde68a', color: '#92400e' },
+          info:    { bg: '#eff6ff', border: '#bfdbfe', color: '#1e40af' },
+        };
+        el.innerHTML = alerts.map(a => {
+          const c = toneMap[a.tone] || toneMap.info;
+          return `<div style="background:${c.bg};border:1px solid ${c.border};color:${c.color};padding:12px 16px;border-radius:10px;display:flex;align-items:center;gap:14px;margin-bottom:8px">
+            <div style="font-size:24px">${a.icon}</div>
+            <div style="flex:1">
+              <div style="font-weight:700">${a.title}</div>
+              <div style="font-size:12px;margin-top:2px">${a.body}</div>
+            </div>
+            <a href="${a.href}" class="btn btn-sm" style="background:#fff;color:${c.color};border:1px solid ${c.border};white-space:nowrap">${a.cta}</a>
+          </div>`;
+        }).join('');
+      },
+
       async loadFiscalStatus(api) {
         try {
           const res = await api.getFiscalPeriods();
@@ -413,6 +481,11 @@
             const color = margin >= 0 ? 'var(--success)' : 'var(--danger)';
             marginEl.innerHTML = `<span style="color:${color}">อัตรากำไรสุทธิ ${margin.toFixed(1)}%</span>`;
           }
+
+          // Action alerts — รวม signals ที่ผู้ใช้ต้องดู: NeedsReview assets,
+          // §82/3 ใบช้า ภพ.30 รอยื่น, e-Tax retry queue, undue VAT
+          // กฎเหล็ก #3 + UX: ต้องไม่ noisy — แสดงเฉพาะที่ actionable
+          this.loadActionAlerts().catch(() => {});
 
           // Cash flow
           const cf = d.cashFlow || {};

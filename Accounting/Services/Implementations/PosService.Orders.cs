@@ -1120,6 +1120,119 @@ public partial class PosService
             completed.Sum(o => o.NetAmount), paymentBreakdown);
     }
 
+    /// <summary>Z-Report (สิ้นกะ) — query สรุปยอด session ที่ closed.
+    /// Read-only — ไม่ post JE เพิ่ม (JE เกิดต่อออเดอร์ใน CompleteOrderAsync
+    /// อยู่แล้ว). ใช้เทียบเงินสดในลิ้นชัก + audit ก่อนปิดงาน.</summary>
+    public async Task<PosZReportResponse> GetZReportAsync(Guid companyId, Guid sessionId)
+    {
+        var session = await _db.PosSessions.AsNoTracking()
+            .Include(s => s.Terminal)
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ session");
+
+        var openedBy = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == session.OpenedByUserId)
+            .Select(u => u.FullName).FirstOrDefaultAsync();
+        string? closedBy = null;
+        if (session.ClosedByUserId.HasValue)
+        {
+            closedBy = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == session.ClosedByUserId.Value)
+                .Select(u => u.FullName).FirstOrDefaultAsync();
+        }
+
+        var to = session.ClosedAt ?? DateTime.UtcNow;
+        return await BuildZReportAsync(companyId, sessionId, session.TerminalId,
+            session.Terminal?.Name, openedBy, closedBy,
+            session.OpenedAt, to,
+            session.OpeningBalance, session.ClosingBalance);
+    }
+
+    /// <summary>X-Report (ระหว่างกะ) — ดูยอดวิ่งทันที. ถ้าระบุ sessionId
+    /// = session.OpenedAt..now; ระบุ terminalId + from/to = filter ตรง ๆ.</summary>
+    public async Task<PosZReportResponse> GetXReportAsync(Guid companyId,
+        Guid? terminalId = null, DateTime? from = null, DateTime? to = null)
+    {
+        var f = from ?? DateTime.UtcNow.Date;
+        var t = to ?? DateTime.UtcNow;
+        string? termName = null;
+        if (terminalId.HasValue)
+            termName = await _db.PosTerminals.AsNoTracking()
+                .Where(x => x.Id == terminalId.Value && x.CompanyId == companyId)
+                .Select(x => x.Name).FirstOrDefaultAsync();
+        return await BuildZReportAsync(companyId, null, terminalId, termName,
+            null, null, f, t, 0m, 0m);
+    }
+
+    private async Task<PosZReportResponse> BuildZReportAsync(Guid companyId,
+        Guid? sessionId, Guid? terminalId, string? terminalName,
+        string? openedByName, string? closedByName,
+        DateTime from, DateTime to, decimal openingCash, decimal closingCash)
+    {
+        var q = _db.PosOrders.AsNoTracking()
+            .Include(o => o.Payments)
+            .Include(o => o.Items)
+            .Where(o => o.CompanyId == companyId
+                && o.CreatedAt >= from && o.CreatedAt <= to);
+        if (sessionId.HasValue) q = q.Where(o => o.SessionId == sessionId.Value);
+        if (terminalId.HasValue) q = q.Where(o => o.Session.TerminalId == terminalId.Value);
+        var orders = await q.ToListAsync();
+
+        var completed = orders.Where(o => o.Status == PosOrderStatus.Completed).ToList();
+        var voided = orders.Where(o => o.Status == PosOrderStatus.Voided).ToList();
+        var refunded = orders.Where(o => o.Status == PosOrderStatus.Refunded).ToList();
+
+        var paymentBreakdown = completed.Concat(refunded)
+            .SelectMany(o => o.Payments)
+            .GroupBy(p => p.PaymentMethod)
+            .Select(g => new PaymentMethodSummary(g.Key, g.Key.ToString(),
+                g.Count(), g.Sum(p => p.Amount)))
+            .OrderByDescending(p => p.Amount)
+            .ToList();
+
+        var cashSales = completed.SelectMany(o => o.Payments)
+            .Where(p => p.PaymentMethod == PaymentMethod.Cash)
+            .Sum(p => p.Amount);
+        var cashRefunds = refunded.SelectMany(o => o.Payments)
+            .Where(p => p.PaymentMethod == PaymentMethod.Cash)
+            .Sum(p => p.Amount);
+        var expectedCash = openingCash + cashSales - cashRefunds;
+        var variance = closingCash > 0 ? closingCash - expectedCash : 0m;
+
+        // Top 10 products
+        var top = completed.SelectMany(o => o.Items)
+            .Where(i => i.ProductId.HasValue && i.Status != PosItemStatus.Voided)
+            .GroupBy(i => new { i.ProductId, i.ProductName })
+            .Select(g => new PosTopProductSummary(
+                g.Key.ProductId!.Value, g.Key.ProductName ?? "(ไม่ระบุ)",
+                g.Sum(x => x.Quantity), g.Sum(x => x.TotalAmount)))
+            .OrderByDescending(p => p.Revenue).Take(10).ToList();
+
+        return new PosZReportResponse(
+            from, to, sessionId, terminalId, terminalName, openedByName, closedByName,
+            TotalOrders: orders.Count,
+            CompletedOrders: completed.Count,
+            VoidedOrders: voided.Count,
+            RefundedOrders: refunded.Count,
+            GuestCount: completed.Sum(o => o.GuestCount ?? 0),
+            GrossSales: completed.Sum(o => o.SubTotal),
+            TotalDiscount: completed.Sum(o => o.DiscountAmount),
+            NetSales: completed.Sum(o => o.NetAmount),
+            TotalVat: completed.Sum(o => o.VatAmount),
+            TotalServiceCharge: completed.Sum(o => o.ServiceChargeAmount),
+            TotalTip: completed.Sum(o => o.TipAmount),
+            RefundedAmount: refunded.Sum(o => o.TotalAmount),
+            VoidedAmount: voided.Sum(o => o.TotalAmount),
+            PaymentBreakdown: paymentBreakdown,
+            OpeningCash: openingCash,
+            ClosingCash: closingCash,
+            CashSales: cashSales,
+            CashRefunds: cashRefunds,
+            ExpectedCash: expectedCash,
+            CashVariance: variance,
+            TopProducts: top);
+    }
+
     public async Task<List<CommissionSummaryResponse>> GetCommissionSummariesAsync(Guid companyId, DateTime periodStart, DateTime periodEnd)
     {
         var summaries = await _db.StaffCommissionSummaries

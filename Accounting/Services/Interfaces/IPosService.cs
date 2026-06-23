@@ -75,6 +75,17 @@ public interface IPosService
     Task<PosDailySummaryResponse> GetDailySummaryAsync(Guid companyId, DateTime date);
     Task<List<CommissionSummaryResponse>> GetCommissionSummariesAsync(Guid companyId, DateTime periodStart, DateTime periodEnd);
 
+    /// <summary>Z-Report (รายงานปิดยอดสิ้นกะ/วัน) — aggregate ทุกออเดอร์ Completed
+    /// ของ session แล้วสรุป: ยอดขายแบ่งตาม PaymentMethod, VAT, COGS, tip,
+    /// refund, void, จำนวนออเดอร์, จำนวนแขก. read-only (ไม่ post JE เพิ่ม —
+    /// JE เกิดต่อออเดอร์อยู่แล้ว) ใช้สำหรับเทียบเงินสดในลิ้นชัก + ส่งหัวหน้า
+    /// + งบประจำวันร้านค้าปลีก ตามมาตรฐาน RD ระบบเงินสด.</summary>
+    Task<PosZReportResponse> GetZReportAsync(Guid companyId, Guid sessionId);
+
+    /// <summary>X-Report (รายงานยอดระหว่างกะ — ไม่ปิด session) — สำหรับ
+    /// shift manager ดูยอดวิ่งทันที ไม่ต้องรอ session.Close</summary>
+    Task<PosZReportResponse> GetXReportAsync(Guid companyId, Guid? terminalId = null, DateTime? from = null, DateTime? to = null);
+
     /// <summary>คอมมิชชั่นรายกิจกรรม (per-activity audit trail) — ใช้ตรวจสอบว่ามาจากออเดอร์ใด ขั้นตอนใด คิดยังไง</summary>
     Task<List<CommissionDetailResponse>> GetCommissionDetailsAsync(Guid companyId, Guid staffId, DateTime periodStart, DateTime periodEnd);
 }

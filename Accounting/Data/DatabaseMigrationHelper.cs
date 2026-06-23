@@ -3210,6 +3210,67 @@ public static class DatabaseMigrationHelper
             // so JE auto-post can convert non-THB amounts to THB consistently.
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NOT NULL DEFAULT 1;""",
 
+            // ===== Performance indexes (S5 sprint) — composite covering ที่
+            // ใช้บ่อยในรายงาน/หน้าเอกสาร/AR/AP/audit. WHERE !IsDeleted กรอง
+            // soft-delete รวด (Postgres bitmap-scan ใช้ได้ทันที) =====
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_Status_Date"
+                ON "Documents" ("CompanyId", "Status", "DocumentDate" DESC)
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_ContactId_Date"
+                ON "Documents" ("CompanyId", "ContactId", "DocumentDate" DESC)
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_RelatedDoc"
+                ON "Documents" ("CompanyId", "RelatedDocumentId")
+                WHERE "RelatedDocumentId" IS NOT NULL AND "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_OutstandingAR"
+                ON "Documents" ("CompanyId", "DueDate")
+                WHERE "Status" IN (1,3,8) AND "BalanceDue" > 0 AND "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_DocumentLines_AccountId_Doc"
+                ON "DocumentLines" ("AccountId", "DocumentId")
+                WHERE "AccountId" IS NOT NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Payments_CompanyId_Document"
+                ON "Payments" ("CompanyId", "DocumentId")
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_JournalEntryLines_AccountId_Date"
+                ON "JournalEntryLines" ("AccountId", "JournalEntryId");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CompanyId_EntityType_Time"
+                ON "AuditLogs" ("CompanyId", "EntityType", "Timestamp" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_TaxReportLines_DocumentId_Excluded"
+                ON "TaxReportLines" ("DocumentId", "IsExcluded")
+                WHERE "DocumentId" IS NOT NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_StockMovements_Company_Product_Date"
+                ON "StockMovements" ("CompanyId", "ProductId", "MovementDate" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Contacts_Company_Active"
+                ON "Contacts" ("CompanyId")
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Notifications_User_Unread"
+                ON "Notifications" ("UserId", "CreatedAt" DESC)
+                WHERE "IsRead" = false AND "IsDeleted" = false;
+            """,
+
             // ===== LineBindCodes — LINE bot user-to-account linking =====
             """
             CREATE TABLE IF NOT EXISTS "LineBindCodes" (
