@@ -3791,6 +3791,22 @@
             }
           }
 
+          // ใบสำคัญจ่าย (Cash) — ไม่ต้องให้ผู้ใช้คลิก "อนุมัติ" อีกขั้น.
+          // จ่ายเงินจริงไปแล้ว → BalanceDue=0 → Status=Paid อัตโนมัติ.
+          // เฉพาะ standalone Cash PV (ไม่ใช่ Credit ที่อ้างเอกสารตั้งหนี้)
+          // เพราะ Credit PV ผู้ใช้อาจอยากตรวจก่อน approve เพื่อเคลียร์ AP.
+          // edit ก็ skip — เปลี่ยน PV ที่ approved แล้วต้อง void→สร้างใหม่.
+          if (!this.editingId && savedDocId
+              && document.getElementById('fDocType').value === 'PaymentVoucher'
+              && (document.getElementById('fPaymentType')?.value || 'Cash') === 'Cash') {
+            try {
+              await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
+              Layout.toast('สร้างใบสำคัญจ่าย + อนุมัติ + ลงบัญชี เสร็จในคลิกเดียว', 'success');
+            } catch (e) {
+              Layout.toast('สร้างใบแล้วแต่ auto-approve ไม่สำเร็จ: ' + e.message + ' — กด "✓ อนุมัติ" ในตารางเพื่อทำต่อ', 'warning', 8000);
+            }
+          }
+
           // "ลูกค้าจ่ายเงินแล้ว" chain — only fires on CREATE (not edit) of
           // an Invoice / TaxInvoice where the operator ticked the shortcut.
           // Approves the document, then records a payment for the full
