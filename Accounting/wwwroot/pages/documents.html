@@ -74,28 +74,42 @@
     /* section divider — หัวข้อโซน แบ่งฟอร์มเป็นสัดส่วนชัดเจน (standalone,
        ไม่ wrap div เพื่อไม่กระทบ logic แสดง/ซ่อน field ตามประเภทเอกสาร) */
     .doc-section-head {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 14px; font-weight: 700; color: var(--gray-800);
-      margin: 22px 0 14px; padding-bottom: 9px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 15px; font-weight: 700; color: var(--gray-800);
+      margin: 28px 0 16px; padding-bottom: 10px;
       border-bottom: 2px solid var(--gray-100);
     }
-    .doc-section-head:first-child { margin-top: 2px; }
+    .doc-section-head:first-child { margin-top: 4px; }
     .doc-section-head .dsh-icon {
-      width: 26px; height: 26px; border-radius: 7px; flex: 0 0 26px;
+      width: 30px; height: 30px; border-radius: 8px; flex: 0 0 30px;
       display: inline-flex; align-items: center; justify-content: center;
-      background: var(--primary); color: #fff; font-size: 14px;
+      background: var(--primary); color: #fff; font-size: 15px;
     }
     .doc-section-head .dsh-sub {
-      font-weight: 400; font-size: 11px; color: var(--gray-500); margin-left: auto;
+      font-weight: 400; font-size: 12px; color: var(--gray-500); margin-left: auto;
     }
     /* uniform callout (PV / CN / cert / deposit / tax-point) — คงสีบ่งบอก
        ความหมาย แต่ padding/มุม/ฟอนต์ เท่ากัน ดูเป็นระบบเดียวกัน */
     .doc-callout { border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; }
-    /* form grid spacing พอดี — ไม่อึดอัด ไม่ห่างเกิน */
-    #formModal .form-row { gap: 14px; margin-bottom: 2px; }
-    #formModal .form-group { margin-bottom: 12px; }
+    /* form grid spacing — rhythm สม่ำเสมอ. แทน 2px เดิมที่ทำให้แถวติดกัน
+       ใช้ 14px ทั้ง gap (ระหว่าง field ในแถว) + margin-bottom (ระหว่างแถว) →
+       proportion สมมาตร อ่านง่าย ไม่อัดแน่น */
+    #formModal .form-row,
+    #formModal .form-row-3,
+    #formModal .form-row-2-1,
+    #formModal .form-row-1-2,
+    #formModal .form-row-3-1,
+    #formModal .form-row-auto-1 { gap: 14px; margin-bottom: 14px; }
+    #formModal .form-group { margin-bottom: 0; }   /* row คุม spacing แทน */
+    /* Stack form-row variants ทุกตัวเป็นคอลัมน์เดียวบนมือถือ */
     @media (max-width: 640px) {
-      #formModal .form-row { grid-template-columns: 1fr; }
+      #formModal .form-row,
+      #formModal .form-row-3,
+      #formModal .form-row-2-1,
+      #formModal .form-row-1-2,
+      #formModal .form-row-3-1,
+      #formModal .form-row-auto-1 { grid-template-columns: 1fr; }
+      #formModal .fg-narrow, #formModal .fg-mid { max-width: none; }
       .doc-section { padding: 14px 14px 2px; }
     }
 
@@ -194,8 +208,10 @@
     <div id="pagination"></div>
 
     <!-- Create Modal -->
+    <!-- Modal กว้าง 960px กำหนดใน CSS (#formModal .modal) — เอา inline style ออก
+         เดิม 900px ถูก override ทำให้ค่าตายอยู่ในโค้ดเปล่า ๆ -->
     <div class="modal-overlay" id="formModal">
-      <div class="modal" style="max-width:900px">
+      <div class="modal">
         <div class="modal-header">
           <h3 class="modal-title">สร้างเอกสาร</h3>
           <button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button>
@@ -246,17 +262,23 @@
               </div>
             </div>
           </div>
+          <!-- มัดจำคงค้างของลูกค้านี้ — แสดงเฉพาะฝั่ง sales (Invoice/TaxInvoice)
+               ที่มีมัดจำรอ. ปุ่ม "หักมัดจำ" เปิด picker เลือกใบมัดจำ + ระบุยอด
+               → เรียก applyDeposit (Realize 217xx + ลด BalanceDue + ย้าย VAT
+               21913→21911 ถ้า deferred). -->
+          <div id="contactDepositBanner" style="display:none;background:#ecfdf5;border:1px solid #6ee7b7;border-left:4px solid #10b981;border-radius:10px;padding:12px 14px;margin-bottom:14px"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <div class="form-group"><label class="form-label" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate"></div>
           </div>
           <!-- เลขจอง (Booking) — ผูกเอกสารหลายใบเข้าด้วยกัน (มัดจำ→ใบสุดท้าย→ใบเสร็จ).
                PMS โรงแรม / POS ร้าน / CRM ส่ง booking key มา; ระบบ index ไว้
-               สำหรับ query รวมเอกสาร. -->
+               สำหรับ query รวมเอกสาร. ใช้ .fg-mid จำกัดความกว้าง 360px —
+               booking key ปกติ 10-15 อักษร, ไม่ต้องยืดเต็มแถว -->
           <div class="form-row">
-            <div class="form-group" style="width:100%">
-              <label class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:#6b7280;font-size:11px">— optional</span></label>
-              <input type="text" class="form-input" id="fBookingNumber" placeholder="เช่น BK-2026-001, RSV-12345">
+            <div class="form-group fg-mid">
+              <label class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:var(--gray-500);font-size:11px">— optional</span></label>
+              <input type="text" class="form-input" id="fBookingNumber" placeholder="เช่น BK-2026-001, RSV-12345" onchange="Page.onBookingNumberChange()" onblur="Page.onBookingNumberChange()">
             </div>
           </div>
           <div class="doc-section-head"><span class="dsh-icon">💰</span> การเงิน · บัญชี · ภาษี
@@ -266,7 +288,8 @@
                → ภ.พ.30 เข้าเดือนที่ถูกต้องตามกฎหมาย. ปล่อยว่าง = ใช้วันที่เอกสาร. -->
           <details id="taxPointSection" style="display:none;margin-bottom:12px;background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:8px 12px">
             <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#854d0e">📅 จุดความรับผิด VAT (Tax Point §78) — ปล่อยว่างได้ ระบบใช้วันที่เอกสาร</summary>
-            <div class="form-row" style="margin-top:8px">
+            <!-- 3 date fields → ใช้ .form-row-3 (เดิม form-row=2col ทำให้ field ที่ 3 ตก row) -->
+            <div class="form-row-3" style="margin-top:8px">
               <div class="form-group"><label class="form-label" data-help="วันส่งมอบสินค้า — §78 ขายสินค้า: tax point = วันแรกสุดของ ส่งมอบ/โอนกรรมสิทธิ์/รับเงิน/ออกใบ">วันส่งมอบสินค้า</label><input type="date" class="form-input" id="fDeliveryDate"></div>
               <div class="form-group"><label class="form-label" data-help="วันโอนกรรมสิทธิ์ (ถ้าต่างจากส่งมอบ)">วันโอนกรรมสิทธิ์</label><input type="date" class="form-input" id="fOwnershipTransferDate"></div>
               <div class="form-group"><label class="form-label" data-help="วันที่ใช้บริการ/บริการเสร็จ — §78/1 บริการ: tax point = วันแรกสุดของ รับเงิน/ออกใบ/ใช้บริการ">วันใช้บริการ</label><input type="date" class="form-input" id="fServiceUsedDate"></div>
@@ -316,19 +339,19 @@
                  (2) กรอกเอง (กรณีใบกระดาษไม่มีในระบบ)
                flag HasTaxInvoiceReference ส่งกลับ backend; SupplierBranchCode
                snapshot ตอนออกใบกัน Contact.BranchCode ถูกแก้ภายหลัง. -->
-          <div class="form-row payment-voucher-only" style="display:none">
-            <div class="form-group" style="width:100%">
+          <!-- Master switch — เต็มแถวจริง ๆ (เดิมใช้ form-row 2-col แล้ว
+               เซ็ต width:100% ทำให้ col 2 เปล่าเสียพื้นที่. ใช้ div ตรงๆ) -->
+          <div class="payment-voucher-only form-group" style="display:none;width:100%">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:14px">
                 <input type="checkbox" id="fHasTaxInvoiceRef" onchange="Page.onTaxInvoiceRefToggle()" style="width:18px;height:18px">
                 <span style="font-weight:600;color:#0369a1">📋 มีใบกำกับภาษีซื้อ — ขอเครดิตภาษีซื้อ (ภ.พ.30)</span>
-                <span style="margin-left:auto;font-size:11px;color:#64748b">RD §86/4 + §86/14</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--gray-500)">RD §86/4 + §86/14</span>
               </label>
-              <div style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.5">
+              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.5">
                 เปิด = บันทึกข้อมูลใบกำกับของผู้ขาย + ภาษีซื้อขึ้น ภ.พ.30 ·
                 ทุกบรรทัด <b>เคลม VAT อัตโนมัติ</b> — ติ๊กออกเฉพาะบรรทัดที่กฎหมายห้าม
                 (ค่ารับรอง / น้ำมันรถยนต์นั่ง §82/5) ที่คอลัมน์ "เคลม VAT" ในรายการ
               </div>
-            </div>
           </div>
           <div id="taxInvoiceRefSection" class="payment-voucher-only" style="display:none">
             <div style="background:#fefce8;border:1px solid #fde047;border-left:4px solid #ca8a04;border-radius:10px;padding:14px 16px;margin-bottom:10px">
@@ -361,35 +384,51 @@
               </div>
 
               <!-- ข้อมูลตามกฎสรรพากร — กรอกได้/แก้ได้/auto-fill -->
-              <div class="form-row">
+              <!-- เลขใบ (ยาว) + วันที่ (สั้น) → 2:1 -->
+              <div class="form-row-2-1">
                 <div class="form-group">
-                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span class="req">*</span></label>
                   <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" placeholder="เช่น INV-2026-0042">
                 </div>
                 <div class="form-group">
-                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span style="color:#dc2626">*</span></label>
+                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span class="req">*</span></label>
                   <input type="date" class="form-input" id="fSupplierTaxInvoiceDatePV">
                 </div>
               </div>
-              <div class="form-row">
+              <!-- TaxId (13 digit) + Branch (5 digit) → 2:1 (TaxId ยาวกว่า) -->
+              <div class="form-row-2-1">
                 <div class="form-group">
                   <label class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
-                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:#f1f5f9" placeholder="ดึงจาก contact">
+                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:var(--gray-100)" placeholder="ดึงจาก contact">
                 </div>
                 <div class="form-group">
-                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span style="color:#dc2626">*</span></label>
+                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span class="req">*</span></label>
                   <input type="text" class="form-input" id="fSupplierBranchCode" placeholder="00000" maxlength="5" pattern="\d{5}">
                 </div>
               </div>
-              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:#475569;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
+              <!-- 2-col grid (info ซ้าย + preview ขวา) แทน flex space-between ที่
+                   ทำให้ preview กระเด็นไปไกลบนจอกว้าง + wrap แล้วเว้น gap แปลก -->
+              <div style="background:#fff;border:1px solid var(--gray-200);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:var(--gray-600);display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center">
                 <span>💡 <b>ฐานภาษี + VAT</b> ดึงจากยอดใบ (subtotal + vat) อัตโนมัติ — ตรวจให้ตรงใบกำกับจริง</span>
-                <span id="taxInvVatPreview" style="font-weight:600;color:#0f172a"></span>
+                <span id="taxInvVatPreview" style="font-weight:600;color:var(--gray-800)"></span>
               </div>
               <!-- Live completeness warning — เคลม VAT ต้องมีใบกำกับครบ §86/4 -->
               <div id="taxInvIncompleteWarn" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b">
                 ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
                 ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
               </div>
+              <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่
+                   เคลม VAT — ลงเป็นต้นทุน/ค่าใช้จ่ายแทน ตาม §82/5) -->
+              <details style="margin-top:10px;font-size:12px">
+                <summary style="cursor:pointer;color:#64748b;font-weight:600;user-select:none">⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชีของ VAT (กรณีไม่เคลม)</summary>
+                <div style="margin-top:8px;padding:10px 12px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px">
+                  <label class="form-label" style="font-size:12px">ผังบัญชี VAT ปลายทาง <span style="color:#6b7280;font-weight:400">(เว้นว่าง = ตามระบบ 11610 หรือ 11640 ตามความครบของใบ)</span></label>
+                  <input type="text" class="form-input" id="fInputVatAccountCodeOverride" list="coaList" placeholder="เช่น 51000 (ต้นทุนขาย) หรือ 54xxx (ค่าใช้จ่าย) — ใช้เมื่อไม่ขอเคลม VAT" style="font-size:13px">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.5">
+                    เลือกผัง 5xxxx (ค่าใช้จ่าย/ต้นทุน) เมื่อต้องการ <b>รวม VAT เข้าเป็นต้นทุน</b> (ไม่เคลม ภ.พ.30) — เช่น §82/5(1) ใบไม่ครบ, §82/5(3) ค่ารับรอง
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -406,7 +445,8 @@
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
           </div>
-          <div class="form-row supplier-invoice-only" style="display:none">
+          <!-- วันเครดิต (3 digit) + เทอม (free text) → 1:2 ratio -->
+          <div class="form-row-1-2 supplier-invoice-only" style="display:none">
             <div class="form-group">
               <label class="form-label" data-help="จำนวนวันเครดิตที่ตกลง — ถ้ากรอกแต่ไม่ใส่ 'วันครบกำหนด' ระบบจะคำนวณให้อัตโนมัติ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
               <input type="number" class="form-input" id="fCreditDays" min="0" max="365" placeholder="เช่น 30">
@@ -424,15 +464,14 @@
             <div class="form-group"><label class="form-label" data-help="หมายเลขอ้างอิงภายในหรือเลข PO ของลูกค้า — แสดงบนเอกสารที่พิมพ์" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
+            <div class="form-group"><label class="form-label" data-help="บัญชีเงินสด/ธนาคารที่จะใช้รับ–จ่ายงวดนี้ — เลือกเพื่อให้ระบบลงบัญชีฝั่ง Cr ให้อัตโนมัติ (ไม่เลือก = เงินสด)">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
               <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
             </div>
             <div class="form-group">
-              <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
-                <span>หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span></span>
-                <button type="button" id="fExpenseCategoryAiBtn" onclick="Page.askAiExpenseCategory(event)"
-                        style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit">
-                  🤖 AI
+              <label class="form-label" data-help="ผังบัญชี Dr (เดบิต) เริ่มต้นของเอกสาร — ระบบใช้เป็น fallback หากบรรทัดสินค้าไม่ระบุผังเอง" style="display:flex;justify-content:space-between;align-items:center">
+                <span>ผังบัญชี (หมวดค่าใช้จ่าย)</span>
+                <button type="button" id="fExpenseCategoryAiBtn" class="btn-ai" onclick="Page.askAiExpenseCategory(event)">
+                  🤖 ให้ AI ช่วย
                 </button>
               </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
@@ -477,9 +516,8 @@
               <!-- 🤖 AI ขอความเห็นเลือก CN reason. ปรากฏเฉพาะตอนกำลังแก้
                    CN ที่มีอยู่ (มี id) — สำหรับ CN ใหม่ที่ยังไม่ save ปุ่มจะ
                    no-op เพราะ AI ต้องอ่าน lines + original invoice. -->
-              <button type="button" id="cnReasonAiBtn" onclick="Page.askAiCnReason(event)"
-                      style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">
-                🤖 ขอความเห็น AI
+              <button type="button" id="cnReasonAiBtn" class="btn-ai" onclick="Page.askAiCnReason(event)">
+                🤖 ให้ AI ช่วย
               </button>
             </div>
             <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
@@ -505,8 +543,9 @@
           <!-- CertificateInLieu-specific fields -->
           <div id="certInLieuSection" style="display:none;margin-bottom:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:12px">
             <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
-            <div class="form-row">
-              <div class="form-group" style="flex:2"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ *</label>
+            <!-- เหตุผล (ยาว) + วันที่ (สั้น) → 2-1 ratio แทน flex:2 inline -->
+            <div class="form-row-2-1">
+              <div class="form-group"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ <span class="req">*</span></label>
                 <input type="text" class="form-input" id="fCertReason" placeholder="เช่น ผู้ขายไม่สามารถออกใบเสร็จได้ / จ่ายค่าเดินทางให้บุคคลภายนอก">
               </div>
               <div class="form-group"><label class="form-label">วันที่จ่ายเงิน</label>
@@ -514,7 +553,7 @@
               </div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง *</label>
+              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง <span class="req">*</span></label>
                 <input type="text" class="form-input" id="fCertifierName" placeholder="ชื่อ-นามสกุล">
               </div>
               <div class="form-group"><label class="form-label">ตำแหน่งผู้รับรอง</label>
@@ -574,9 +613,9 @@
                 <button class="btn btn-sm btn-secondary" id="btnOcrRepopulate" style="display:none"
                   title="ดึงรายการสินค้า/บริการจากไฟล์ที่สแกนไว้เดิม มาเติมในเอกสารนี้"
                   onclick="Page.repopulateFromOcr()">⟲ ดึงรายการจาก OCR</button>
-                <button class="btn btn-sm btn-secondary" id="btnAiSuggestAcc" style="display:none"
+                <button class="btn btn-ai" id="btnAiSuggestAcc" style="display:none"
                   title="ให้ AI ช่วยเลือกผังบัญชี GL ตามรายการที่กรอก — local model เรียนรู้ต่อทุกครั้งที่ user ยืนยัน/แก้"
-                  onclick="Page.aiSuggestAccounting()">🤖 AI แนะนำผังบัญชี</button>
+                  onclick="Page.aiSuggestAccounting()">🤖 ให้ AI ช่วยเลือกผังบัญชี</button>
                 <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่มรายการ</button>
               </div>
             </div>
@@ -599,7 +638,7 @@
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                 <div>
-                  <label class="text-sm font-medium">หมายเลขอ้างอิง / เลขจอง</label>
+                  <label class="text-sm font-medium" data-help="หมายเลขอ้างอิงงาน/จองจากระบบภายนอก — ถ้าเป็นเลขจองเดียวกับ 'เลขจอง' โซนข้อมูลเอกสารด้านบน ไม่ต้องกรอกซ้ำ (ระบบ sync ให้)">หมายเลขอ้างอิง / เลขจอง</label>
                   <input type="text" class="form-input" id="fDepositRef" placeholder="เช่น เลขที่จอง BK-2026-001">
                 </div>
                 <div>
@@ -614,19 +653,26 @@
             <datalist id="coaList"></datalist>
             <div class="table-container" id="linesTable" data-doc-side="revenue" style="border:none;padding:0;overflow:visible">
               <div id="linesBody"></div>
-              <div id="linesHint" style="font-size:11px;color:#94a3b8;margin-top:8px">
+              <div id="linesHint" style="font-size:11px;color:var(--gray-500);margin-top:8px">
                 💡 พิมพ์ในช่อง "รายละเอียด" อย่างน้อย 2 ตัวอักษรเพื่อค้นหาสินค้า/บริการ — ราคาและ VAT จะถูกเติมให้อัตโนมัติ
               </div>
             </div>
           </div>
 
+          <!-- ยอดสรุป — ฝั่งขวา, 320px (ขึ้นจาก 280px) ให้พื้นที่ตัวเลขยาวพอ.
+               แต่ละแถวใช้ grid 2-col แทน space-between ทำให้ label/value
+               aligned ตรงกันเป๊ะทุกแถว ไม่ปริ้นออกไปทางขวาแบบไม่สมดุล -->
           <div style="margin-top:16px;display:flex;justify-content:flex-end">
-            <div style="min-width:280px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px;text-align:right">
-              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal">0.00</strong></div>
-              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">VAT</span><strong id="sumVat">0.00</strong></div>
-              <div class="text-sm" style="display:flex;justify-content:space-between;gap:24px"><span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht">0.00</strong></div>
-              <div class="font-bold" style="display:flex;justify-content:space-between;gap:24px;margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-200);font-size:18px;color:var(--primary)"><span>ยอดสุทธิ</span><span id="sumTotal">0.00</span></div>
-              <div id="sumTotalWords" style="font-size:11px;color:#6b7280;margin-top:4px;font-style:italic"></div>
+            <div style="width:320px;max-width:100%;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px">
+              <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:14px">
+                <span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal" style="text-align:right">0.00</strong>
+                <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
+                <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr auto;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-200);font-size:18px;font-weight:700;color:var(--primary)">
+                <span>ยอดสุทธิ</span><span id="sumTotal" style="text-align:right">0.00</span>
+              </div>
+              <div id="sumTotalWords" style="font-size:11px;color:var(--gray-500);margin-top:4px;font-style:italic;text-align:right"></div>
             </div>
           </div>
 
@@ -634,24 +680,22 @@
                หลังยอดรวม เพื่อ flow: ข้อมูล → การเงิน → รายการ → ยอด → เพิ่มเติม ── -->
           <div class="doc-section-head"><span class="dsh-icon">📝</span> รายละเอียดเพิ่มเติม
             <span class="dsh-sub">หมายเหตุ · ไฟล์แนบ (ไม่บังคับ)</span></div>
-          <div class="form-row">
-            <div class="form-group" style="flex:1">
-              <label class="form-label" data-i18n="common.note">หมายเหตุ
-                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
-              </label>
-              <input type="text" class="form-input" id="fNotes">
-            </div>
+          <!-- ฟิลด์เดี่ยวเต็มแถว — เอา wrapper form-row ที่ unnecessary ออก,
+               ไม่ใช้ flex:1 inline (ปล่อย .form-input width:100% เป็น default) -->
+          <div class="form-group">
+            <label class="form-label" data-i18n="common.note">หมายเหตุ
+              <button type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
+            </label>
+            <input type="text" class="form-input" id="fNotes">
           </div>
-          <div class="form-row">
-            <div class="form-group" style="flex:1">
-              <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
-              <input type="file" class="form-input" id="fAttachments" multiple
-                     accept="image/*,application/pdf"
-                     onchange="Page.onAttachmentsPicked(this)"
-                     style="padding:6px">
-              <div id="fAttachmentsPreview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
-              <div style="font-size:11px;color:#64748b;margin-top:4px">เลือกได้หลายไฟล์ — อัปโหลดจะทำตอนกดบันทึก (สูงสุด 25 MB/ไฟล์)</div>
-            </div>
+          <div class="form-group">
+            <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
+            <input type="file" class="form-input" id="fAttachments" multiple
+                   accept="image/*,application/pdf"
+                   onchange="Page.onAttachmentsPicked(this)"
+                   style="padding:6px">
+            <div id="fAttachmentsPreview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
+            <div class="form-help">เลือกได้หลายไฟล์ — อัปโหลดจะทำตอนกดบันทึก (สูงสุด 25 MB/ไฟล์)</div>
           </div>
 
           <!-- Send via email (visible only if email configured) -->
@@ -662,8 +706,8 @@
             </div>
             <div id="sendEmailFields" style="display:none">
               <div class="form-row">
-                <div class="form-group" style="flex:1"><label class="form-label">ถึง <span style="color:red">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
-                <div class="form-group" style="flex:1"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
+                <div class="form-group"><label class="form-label">ถึง <span class="req">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
+                <div class="form-group"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
               </div>
               <div class="form-group">
                 <label class="form-label">หัวข้อ <span id="fEmailSubjLockBadge" style="display:none;background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">RD บังคับ</span></label>
@@ -1282,8 +1326,178 @@
           if (isSales) {
             this.checkBadDebtRisk(contactId);
             this.suggestDiscount(contactId);
+            // เช็คมัดจำคงค้างของลูกค้านี้ — TaxInvoice/Invoice ดึงมาหักได้
+            // (ApplyDepositToInvoiceAsync ใน backend) ก่อนหน้านี้มี endpoint
+            // พร้อมแต่ UI ไม่เคยใช้ ผู้ใช้ต้องไปหน้า deposits manually
+            this.checkContactDeposits(contactId);
+          } else {
+            // เปลี่ยน contact ออกจาก sales → ซ่อน banner มัดจำ (กันค้าง)
+            const dep = document.getElementById('contactDepositBanner');
+            if (dep) dep.style.display = 'none';
           }
         }
+      },
+
+      /** เมื่อผู้ใช้กรอก/แก้ "เลขจอง (Booking)" → re-evaluate deposit banner
+       *  เพื่อให้ badge "✓ booking ตรงกัน" ขึ้น/หายแบบ live. กฎเหล็ก #3:
+       *  ระบบเสนอข้อมูลที่ตรงให้เลย ผู้ใช้ไม่ต้องคุ้ยหาเองในมัดจำหลายใบ. */
+      onBookingNumberChange() {
+        const cid = document.getElementById('fContactId')?.value;
+        if (cid && this._contactDepositSummary) {
+          // ใช้ cache ที่โหลดแล้ว — ไม่ต้อง refetch (booking match ทำที่ frontend)
+          // เรียก checkContactDeposits ที่ใช้ cache (ผ่าน summary ที่ pin ไว้
+          // ใน this._contactDepositSummary) จะ rerender banner พร้อม badge
+          this.checkContactDeposits(cid);
+        }
+      },
+
+      /** เช็คมัดจำคงค้างของลูกค้า (`GetContactDepositSummaryAsync`) —
+       *  ถ้ามียอดคงค้าง → โชว์ banner ในฟอร์ม Invoice/TaxInvoice ให้ผู้ใช้กด
+       *  "หักมัดจำ" เปิด picker เลือกใบมัดจำ + ยอด แล้วเรียก applyDeposit
+       *  (Realize + ลด BalanceDue ใน 1 ขั้น). กลับรายการครบ §78 + §86/10
+       *  (VAT 21913 → 21911 ถ้า deferred) */
+      async checkContactDeposits(contactId) {
+        const banner = document.getElementById('contactDepositBanner');
+        if (!banner) return;
+        try {
+          const api = Layout.api(); if (!api) return;
+          const r = await api.getContactDepositSummary(contactId);
+          const summary = r?.data;
+          // แสดงเฉพาะตอน "สร้างใหม่" (this.editingId == null) เพราะ
+          // editor เปิดเอกสารเดิม → applyDeposit ใช้กับ docId นั้น (ดีกว่าทำ
+          // ตอนสร้าง) แต่ถ้าใบยัง draft ยังมีโอกาส apply หลังบันทึก
+          if (!summary || !summary.totalOutstanding || summary.totalOutstanding < 0.005) {
+            banner.style.display = 'none';
+            return;
+          }
+          this._contactDepositSummary = summary;
+          // ค้นมัดจำที่ booking ตรงกับ booking ของใบนี้ (เป็นไปได้ถ้าผู้ใช้
+          // กรอก เลขจอง เดียวกันใน "โซน 1 ข้อมูลเอกสาร") — เคสจอง→มัดจำ→
+          // ใบกำกับ ที่ booking ผูกร้อยใบเข้าด้วยกัน. แสดง badge "✓ booking
+          // ตรงกัน" + auto-select ในตัวเลือกใบมัดจำเพื่อให้ผู้ใช้กดยืนยันได้
+          // ในคลิกเดียว (ตามกฎเหล็ก #3 spirit: ระบบเติม ผู้ใช้แค่ยืนยัน).
+          const myBooking = (document.getElementById('fBookingNumber')?.value || '').trim();
+          const matchedDeposits = myBooking
+            ? (summary.deposits || []).filter(d => (d.bookingNumber || '').trim() === myBooking)
+            : [];
+          this._bookingMatchedDeposits = matchedDeposits;
+          banner.style.display = '';
+          const matchedTotal = matchedDeposits.reduce((s, d) => s + (d.outstandingAmount || 0), 0);
+          banner.innerHTML = `
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <span style="font-size:24px">💰</span>
+              <div style="flex:1;min-width:200px">
+                <div style="font-weight:700;color:#065f46">ลูกค้านี้มีมัดจำคงค้าง <span style="font-size:18px">${Layout.money(summary.totalOutstanding)}</span></div>
+                <div style="font-size:12px;color:#047857">${summary.deposits?.length || 0} ใบ — สามารถหักออกจากใบนี้ได้หลังบันทึก</div>
+                ${matchedDeposits.length ? `<div style="margin-top:6px;font-size:13px;color:#047857;background:#a7f3d0;padding:4px 10px;border-radius:6px;display:inline-block">✓ ${matchedDeposits.length} ใบ booking ตรงกัน (${Layout.money(matchedTotal)})</div>` : ''}
+              </div>
+              ${this.editingId ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">${matchedDeposits.length ? 'หักมัดจำที่ booking ตรงกัน' : 'หักมัดจำจากใบนี้'}</button>` : `<span style="font-size:11px;color:#047857;font-style:italic">บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ</span>`}
+            </div>`;
+        } catch { /* best-effort */ }
+      },
+
+      /** เปิด picker modal เลือกใบมัดจำ + ระบุยอดที่หัก แล้วเรียก applyDeposit
+       *  (1 deposit ต่อครั้ง — ผู้ใช้ apply หลายใบทีละครั้ง). */
+      openApplyDeposit() {
+        const s = this._contactDepositSummary;
+        if (!s || !s.deposits?.length) { Layout.toast('ไม่มีมัดจำคงค้าง', 'error'); return; }
+        if (!this.editingId) { Layout.toast('กรุณาบันทึกใบนี้ก่อน', 'error'); return; }
+        let modal = document.getElementById('applyDepositModal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'applyDepositModal';
+          modal.className = 'modal-overlay';
+          modal.innerHTML = `
+            <div class="modal" style="max-width:560px">
+              <div class="modal-header">
+                <h3 class="modal-title">💰 หักเงินมัดจำเข้าใบแจ้งหนี้</h3>
+                <button class="modal-close" onclick="Layout.closeModal('applyDepositModal')">&times;</button>
+              </div>
+              <div class="modal-body">
+                <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#065f46">
+                  ระบบจะ <strong>รับรู้รายได้</strong>จากมัดจำ (Dr 217xx ขายรอรับรู้ / Cr รายได้) + <strong>ลดยอดคงค้าง</strong>ของใบนี้ทันที — ถ้ามัดจำเป็น VAT deferred จะย้าย 21913→21911 ให้ครบ
+                </div>
+                <div class="form-group">
+                  <label class="form-label">เลือกใบมัดจำ <span class="req">*</span></label>
+                  <select class="form-select" id="adDepositId">
+                    <option value="">— เลือก —</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">ยอดที่หัก (รวม VAT) <span class="req">*</span></label>
+                  <input type="number" step="0.01" min="0" class="form-input" id="adAmount">
+                  <div class="form-help" id="adAmountHint" style="color:#64748b"></div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">วันที่หัก</label>
+                  <input type="date" class="form-input" id="adDate">
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="Layout.closeModal('applyDepositModal')">ยกเลิก</button>
+                <button class="btn btn-primary" onclick="Page.submitApplyDeposit()">หักมัดจำ</button>
+              </div>
+            </div>`;
+          document.body.appendChild(modal);
+        }
+        const sel = document.getElementById('adDepositId');
+        // Sort: booking-match บนสุด → ใบเก่าก่อน (FIFO). ตามกฎเหล็ก #3:
+        // ระบบจัดให้ ผู้ใช้แค่ยืนยัน — ไม่ใช่ให้ผู้ใช้คุ้ยหาเอง.
+        const myBooking = (document.getElementById('fBookingNumber')?.value || '').trim();
+        const sortedDeposits = [...s.deposits].sort((a, b) => {
+          const am = (a.bookingNumber || '').trim() === myBooking && myBooking ? 0 : 1;
+          const bm = (b.bookingNumber || '').trim() === myBooking && myBooking ? 0 : 1;
+          if (am !== bm) return am - bm;
+          return new Date(a.documentDate) - new Date(b.documentDate);
+        });
+        sel.innerHTML = '<option value="">— เลือก —</option>' + sortedDeposits.map(d => {
+          const isMatch = myBooking && (d.bookingNumber || '').trim() === myBooking;
+          const prefix = isMatch ? '✓ ' : '';
+          const bookingTxt = d.bookingNumber ? ` · booking ${Layout.esc(d.bookingNumber)}` : '';
+          return `<option value="${d.depositDocumentId}" data-outstanding="${d.outstandingAmount}" data-match="${isMatch ? '1' : '0'}">${prefix}${Layout.esc(d.documentNumber)} · ${Layout.date(d.documentDate)}${bookingTxt} · คงเหลือ ${Layout.money(d.outstandingAmount)}</option>`;
+        }).join('');
+        sel.onchange = () => {
+          const opt = sel.options[sel.selectedIndex];
+          const out = parseFloat(opt?.dataset?.outstanding || '0') || 0;
+          const matched = opt?.dataset?.match === '1';
+          document.getElementById('adAmount').value = out.toFixed(2);
+          document.getElementById('adAmount').max = out;
+          document.getElementById('adAmountHint').textContent = matched
+            ? `✓ booking ตรงกัน — สูงสุด ${Layout.money(out)}`
+            : (out > 0 ? `สูงสุด ${Layout.money(out)}` : '');
+          document.getElementById('adAmountHint').style.color = matched ? '#047857' : '#64748b';
+        };
+        // Auto-select: ถ้ามีใบเดียวที่ booking ตรง → preselect + คำนวณยอด
+        // ให้พร้อม (ผู้ใช้แค่กด "หักมัดจำ" ไม่ต้องเลือก)
+        const autoMatches = sortedDeposits.filter(d => myBooking && (d.bookingNumber || '').trim() === myBooking);
+        if (autoMatches.length === 1) {
+          sel.value = autoMatches[0].depositDocumentId;
+          sel.onchange();
+        } else {
+          document.getElementById('adAmount').value = '';
+        }
+        document.getElementById('adDate').value = Layout.toDateInput(new Date());
+        Layout.openModal('applyDepositModal');
+      },
+
+      async submitApplyDeposit() {
+        const api = Layout.api(); if (!api || !this.editingId) return;
+        const depositId = document.getElementById('adDepositId').value;
+        const amount = parseFloat(document.getElementById('adAmount').value);
+        const dateRaw = document.getElementById('adDate').value;
+        if (!depositId) { Layout.toast('กรุณาเลือกใบมัดจำ', 'error'); return; }
+        if (!amount || amount <= 0) { Layout.toast('กรุณาระบุยอดที่หัก', 'error'); return; }
+        try {
+          await api.applyDeposit(this.editingId, {
+            depositDocumentId: depositId, amount,
+            applyDate: dateRaw ? new Date(dateRaw).toISOString() : null
+          });
+          Layout.closeModal('applyDepositModal');
+          Layout.toast('หักมัดจำสำเร็จ — ระบบรับรู้รายได้ + ลดยอดคงค้างแล้ว');
+          // refresh deposit summary + reload doc detail
+          await this.checkContactDeposits(document.getElementById('fContactId').value);
+          if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+        } catch (e) { Layout.toast(e.message || 'หักมัดจำไม่สำเร็จ', 'error'); }
       },
 
       async checkBadDebtRisk(contactId) {
@@ -1325,6 +1539,18 @@
       },
 
       // FX rate auto-fill เมื่อสกุลเงิน ≠ THB หรือ date เปลี่ยน
+      // ป้ายความซื่อสัตย์ AI (กฎเหล็ก #1) — โชว์ 🤖 เฉพาะตอน "เรียก AI ภายนอกจริง"
+      // (usedAi=true) มิฉะนั้นเป็น ⚙️ "ระบบ (local model)" เพื่อไม่หลอกผู้ใช้ว่า
+      // ทุกคำแนะนำมาจาก AI ทั้งที่ส่วนใหญ่ student/local ตอบเอง.
+      _aiLabel(d) { return (d && d.usedAi) ? '🤖 AI' : '⚙️ ระบบ'; },
+      _aiHint(d, withConf = true) {
+        const lbl = this._aiLabel(d);
+        const reason = (d && d.reasoning) ? d.reasoning : '';
+        const conf = withConf && d && d.confidence != null
+          ? ` (${Math.round((d.confidence || 0) * 100)}%)` : '';
+        return `${lbl} ${reason}${conf}`.trim();
+      },
+
       async onCurrencyOrDateChange() {
         const ccyEl = document.getElementById('fCurrency');
         const grp = document.getElementById('fxRateGroup');
@@ -1352,7 +1578,7 @@
           if (j.data.rate > 0) {
             rateEl.value = j.data.rate;
             rateEl.dataset.aiFeedbackId = j.data.feedbackId || '';
-            if (hintEl) hintEl.textContent = `🤖 ${j.data.reasoning} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            if (hintEl) hintEl.textContent = this._aiHint(j.data);
             rateEl.title = j.data.reasoning;
             rateEl.addEventListener('change', () => {
               rateEl.dataset.userTouched = '1';
@@ -1393,7 +1619,7 @@
             if (optionExists) {
               sel.value = pid;
               sel.dataset.aiFeedbackId = fbId;
-              sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+              sel.title = this._aiHint(j.data);
               sel.addEventListener('change', () => {
                 sel.dataset.userTouched = '1';
                 if (!sel.dataset.aiFeedbackId) return;
@@ -1431,7 +1657,7 @@
           if (!sel.value && optionExists) {
             sel.value = suggested;
             sel.dataset.aiFeedbackId = j.data.feedbackId || '';
-            sel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            sel.title = this._aiHint(j.data);
             // mirror the change downstream — derives PaymentMethod for save
             try { this._deriveMethodFromChannel?.(); } catch {}
           }
@@ -1468,7 +1694,7 @@
           if (j.data.creditDays && !cdEl.value) {
             cdEl.value = j.data.creditDays;
             cdEl.dataset.aiFeedbackId = j.data.feedbackId || '';
-            cdEl.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            cdEl.title = this._aiHint(j.data);
             // อัปเดต fDueDate ถ้ามี + ยังว่าง
             const dateEl = document.getElementById('fDate');
             const dueEl = document.getElementById('fDueDate');
@@ -1522,8 +1748,9 @@
           if (notesEl) {
             notesEl.value = j.data.memo;
             notesEl.dataset.aiFeedbackId = j.data.feedbackId || '';
-            notesEl.title = `🤖 (${Math.round((j.data.confidence || 0) * 100)}%)`;
-            if (typeof Layout.toast === 'function') Layout.toast('AI สร้างหมายเหตุแล้ว — แก้ไขได้ตามต้องการ');
+            notesEl.title = this._aiHint(j.data, true);
+            if (typeof Layout.toast === 'function')
+              Layout.toast((j.data.usedAi ? 'AI' : 'ระบบ') + 'สร้างหมายเหตุแล้ว — แก้ไขได้ตามต้องการ');
           }
         } catch (e) {
           if (typeof Layout.toast === 'function') Layout.toast('AI memo generation failed', 'error');
@@ -1603,7 +1830,7 @@
           if (vatSel.value !== suggested) {
             vatSel.value = suggested;
             vatSel.dataset.aiFeedbackId = j.data.feedbackId || '';
-            vatSel.title = `🤖 ${j.data.reasoning || ''} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+            vatSel.title = this._aiHint(j.data);
             this.calcSum();
           }
         } catch { /* best-effort */ }
@@ -1650,7 +1877,7 @@
             this._lastPaymentTypeFeedbackId = j.data.feedbackId || null;
             const hint = document.querySelector('#paymentTypeHint span');
             if (hint && j.data.reasoning)
-              hint.textContent = '🤖 ' + j.data.reasoning + ' (' + Math.round((j.data.confidence || 0) * 100) + '%)';
+              hint.textContent = this._aiHint(j.data);
           }
         } catch (e) { /* suggestion is best-effort */ }
       },
@@ -1944,7 +2171,7 @@
           const sizeKb = Math.round(f.size / 1024);
           const isImage = f.type.startsWith('image/');
           return `<span style="display:inline-flex;align-items:center;gap:6px;background:#eef2ff;color:#3730a3;padding:4px 10px;border-radius:14px;font-size:12px">
-            ${isImage ? '🖼️' : '📄'} ${(f.name || '').slice(0, 40)} <span style="color:#94a3b8;font-size:11px">(${sizeKb} KB)</span>
+            ${isImage ? '🖼️' : '📄'} ${(f.name || '').slice(0, 40)} <span style="color:var(--gray-500);font-size:11px">(${sizeKb} KB)</span>
             <button type="button" onclick="Page._removeQueuedAttachment(${i})" style="background:none;border:none;cursor:pointer;color:#6366f1;padding:0 2px">×</button>
           </span>`;
         }).join('');
@@ -2025,6 +2252,13 @@
         const tbl = document.getElementById('linesTable');
         if (!tbl) return;
         const docType = document.getElementById('fDocType')?.value;
+        // อัปเดต data-doc-side ตาม docType ปัจจุบัน (ไม่ใช่แค่ตอนเปิด modal) —
+        // ก่อนหน้านี้ผูกกับปุ่ม +รายรับ/+รายจ่าย ทำให้ผู้ใช้ที่สลับประเภทเอกสาร
+        // ในฟอร์มเดียว (เช่นเปิดรายรับแล้วเปลี่ยนเป็น PurchaseInvoice) คอลัมน์
+        // "เคลม VAT" §82/5 หายไป → ติ๊กภาษีซื้อต้องห้ามรายบรรทัดไม่ได้ (ลงบัญชีผิด)
+        const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice',
+          'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
+        if (docType) tbl.dataset.docSide = expenseTypes.includes(docType) ? 'expense' : 'revenue';
         let off = false;
         if (docType === 'PaymentVoucher') {
           off = !document.getElementById('fHasTaxInvoiceRef')?.checked;
@@ -2157,8 +2391,24 @@
         const cid = document.getElementById('fContactId')?.value;
         const inp = document.getElementById('fSupplierTaxIdReadonly');
         if (!inp) return;
-        const c = (this._contacts || []).find(x => x.id === cid);
-        inp.value = c?.taxId || '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)';
+        // หา contact จาก autocomplete cache (this._selectedContact ถ้าเพิ่ง
+        // เลือก) → fallback list (this.contacts) → fallback fetch ตรง
+        // (กรณี contact เพิ่งสร้างจาก OCR ยังไม่อยู่ในแคชหน้า)
+        let c = this._selectedContact && this._selectedContact.id === cid
+          ? this._selectedContact
+          : (this.contacts || []).find(x => x.id === cid);
+        if (c?.taxId) { inp.value = c.taxId; return; }
+        // ไม่พบในแคช — fetch ตรงจาก server (เคส OCR สร้าง contact ใหม่)
+        inp.value = '(กำลังโหลด...)';
+        if (!cid) { inp.value = '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)'; return; }
+        Layout.api()?.getContact(cid)
+          .then(r => {
+            const taxId = r?.data?.taxId;
+            inp.value = taxId || '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)';
+            // cache ลง this._selectedContact ใช้รอบหน้า
+            if (taxId) this._selectedContact = { id: cid, name: r.data.name, taxId };
+          })
+          .catch(() => { inp.value = '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)'; });
       },
 
       _updateTaxInvVatPreview(srcDoc) {
@@ -2830,7 +3080,8 @@
         document.getElementById('fDate').value = Layout.toDateInput(new Date());
         document.getElementById('fDueDate').value = '';
         ['fSupplierInvoiceNumber','fSupplierTaxInvoiceDate','fCreditDays','fPaymentTerms',
-         'fDeliveryDate','fOwnershipTransferDate','fServiceUsedDate','fBookingNumber']
+         'fDeliveryDate','fOwnershipTransferDate','fServiceUsedDate','fBookingNumber',
+         'fInputVatAccountCodeOverride']
           .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
@@ -2907,6 +3158,8 @@
           _setDate('fOwnershipTransferDate', d.ownershipTransferDate);
           _setDate('fServiceUsedDate', d.serviceUsedDate);
           const fBn = document.getElementById('fBookingNumber'); if (fBn) fBn.value = d.bookingNumber || '';
+          const fIvao = document.getElementById('fInputVatAccountCodeOverride');
+          if (fIvao) fIvao.value = d.inputVatAccountCodeOverride || '';
           const fSin = document.getElementById('fSupplierInvoiceNumber');
           if (fSin) fSin.value = d.supplierInvoiceNumber || '';
           const fStd = document.getElementById('fSupplierTaxInvoiceDate');
@@ -3029,6 +3282,27 @@
           // the select is disabled in edit mode — useful context for
           // the operator.
           this.onDocTypeChange();
+          // ซื้อบริการต่างประเทศ + เงินมัดจำ + เหตุผลใบลดหนี้ — hydrate fields ที่
+          // เพิ่งทำให้แก้ได้ตอน Draft (เดิมเปิดมาแก้แล้วค่าเหล่านี้เงียบหาย).
+          // ทำหลัง onDocTypeChange เพราะมันคุมการแสดง/reset checkbox มัดจำ.
+          const fFs = document.getElementById('fIsForeignService');
+          if (fFs) fFs.checked = !!d.isForeignService;
+          const fDep = document.getElementById('fIsDeposit');
+          if (fDep) {
+            fDep.checked = !!d.isDeposit;
+            const vatVal = d.depositOutputVatDeferred ? 'deferred' : 'immediate';
+            const vatRadio = document.querySelector(`input[name="fDepositVat"][value="${vatVal}"]`);
+            if (vatRadio) vatRadio.checked = true;
+            const fdAcc = document.getElementById('fDepositDeferredAcc');
+            if (fdAcc) fdAcc.value = d.depositDeferredAccountCode || '';
+            const fdRef = document.getElementById('fDepositRef');
+            if (fdRef && d.isDeposit) fdRef.value = d.reference || '';
+            this.onDepositToggle();
+          }
+          if (d.creditNoteReason) {
+            const cnRadio = document.querySelector(`input[name="fCreditNoteReason"][value="${d.creditNoteReason}"]`);
+            if (cnRadio) cnRadio.checked = true;
+          }
           // Re-apply แหล่งเงิน + หมวดค่าใช้จ่าย หลัง onDocTypeChange + หลัง
           // async suggest (setValue→onContactChange) settle — ค่าที่บันทึก
           // ต้องชนะ suggestion เสมอ
@@ -3169,6 +3443,30 @@
         if (!contactId) { Layout.toast('กรุณาเลือกผู้ติดต่อ', 'error'); return; }
         if (!document.getElementById('fDate').value) { Layout.toast('กรุณาระบุวันที่เอกสาร', 'error'); return; }
         if (!lines.length) { Layout.toast('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'error'); return; }
+        // Required-field validation ที่เดิม "ติด * แต่ไม่เตือน" (audit พบ
+        // user เห็นดอกจันแล้วบันทึกผ่านได้ทำให้สับสน) — เพิ่มเช็คให้ครบ:
+        // • PV ที่ติ๊ก "ใช้งานใบกำกับภาษี" → เลขใบ+วันที่+สาขา ต้องมี (§86/4)
+        // • CertificateInLieu → เหตุผล + ชื่อ-ตำแหน่งผู้ออก ต้องมี
+        const _docType = document.getElementById('fDocType').value;
+        if (_docType === 'PaymentVoucher' && document.getElementById('fHasTaxInvoiceRef')?.checked) {
+          if (!document.getElementById('fSupplierInvoiceNumberPV')?.value.trim()) {
+            Layout.toast('กรุณาระบุเลขที่ใบกำกับภาษีของผู้ขาย', 'error'); return;
+          }
+          if (!document.getElementById('fSupplierTaxInvoiceDatePV')?.value) {
+            Layout.toast('กรุณาระบุวันที่ใบกำกับภาษีของผู้ขาย', 'error'); return;
+          }
+          if (!document.getElementById('fSupplierBranchCode')?.value.trim()) {
+            Layout.toast('กรุณาระบุรหัสสาขาผู้ขาย (00000 = สำนักงานใหญ่)', 'error'); return;
+          }
+        }
+        if (_docType === 'CertificateInLieu') {
+          if (!document.getElementById('fCertReason')?.value.trim()) {
+            Layout.toast('กรุณาระบุเหตุผลที่ออกใบรับรองแทนใบเสร็จ', 'error'); return;
+          }
+          if (!document.getElementById('fCertifierName')?.value.trim()) {
+            Layout.toast('กรุณาระบุชื่อผู้ออกใบรับรอง', 'error'); return;
+          }
+        }
         const projectId = document.getElementById('fProject')?.value || null;
         const pcVal = document.getElementById('fPaymentChannel')?.value || '';
         let bankAccountId = null, paymentAccountId = null;
@@ -3221,6 +3519,9 @@
             && document.getElementById('fHasTaxInvoiceRef')?.checked || false,
           supplierBranchCode: document.getElementById('fHasTaxInvoiceRef')?.checked
             ? (document.getElementById('fSupplierBranchCode')?.value.trim() || '00000') : null,
+          // ผัง VAT override (ไม่เคลม → ลงเป็นต้นทุน/ค่าใช้จ่าย) — เว้นว่าง = default
+          inputVatAccountCodeOverride:
+            document.getElementById('fInputVatAccountCodeOverride')?.value.trim() || null,
           creditDays: parseInt(document.getElementById('fCreditDays')?.value, 10) || null,
           paymentTerms: document.getElementById('fPaymentTerms')?.value.trim() || null,
           // Only send paymentType for Payment Voucher (the only type whose
@@ -3242,7 +3543,12 @@
         // หมายเลขอ้างอิง/เลขจอง ของมัดจำ → เก็บใน Reference (ใช้กลับรายการ)
         if (payload.isDeposit) {
           const depRef = document.getElementById('fDepositRef')?.value.trim();
-          if (depRef) payload.reference = depRef;
+          if (depRef) {
+            payload.reference = depRef;
+            // sync เลขจองมัดจำ → bookingNumber ถ้าโซน 1 ยังว่าง — กัน user
+            // กรอก 2 ช่องซ้ำ (audit พบ "เลขจอง" 2 ช่องในฟอร์มเดียวสับสน)
+            if (!payload.bookingNumber) payload.bookingNumber = depRef;
+          }
         }
         try {
           let savedDocId = this.editingId;
@@ -3700,6 +4006,12 @@
             await api.approveDocument(id, { acknowledgeWarnings: !!acknowledge });
             Layout.closeModal('detailModal');
             Layout.toast('อนุมัติเอกสารสำเร็จ');
+            // ถ้าเอกสารฝั่งซื้อ (PV/PI/Expense) ที่มีบรรทัดลงผัง PPE → ระบบ
+            // auto-register สินทรัพย์ NeedsReview=true. เด้ง modal ถามผู้ใช้
+            // ให้เปิดไปเติมรายละเอียดทันที (กฎเหล็ก #2 + TFRS for NPAEs บทที่ 10).
+            // ไม่ block — ผู้ใช้กดข้ามได้ แต่จะมี badge เตือนในหน้าทะเบียน
+            // สินทรัพย์จนกว่าจะยืนยัน
+            await this._maybePromptFixedAssetReview();
             await this.load();
           } catch (e) {
             if (e.status === 422 && e.body && e.body.data && Array.isArray(e.body.data.warnings)) {
@@ -3812,6 +4124,38 @@
         });
       },
 
+      /** หลังอนุมัติเอกสารฝั่งซื้อ (PV/PI/Expense) ที่มีบรรทัดลงผัง PPE →
+       *  ระบบ auto-register สินทรัพย์ตั้ง NeedsReview=true. ดึง list มา check:
+       *  ถ้ามีรายการใหม่ค้างอยู่ → toast เด่น + ปุ่มลัดไปทะเบียนสินทรัพย์.
+       *  ไม่ block flow แต่ทำให้ผู้ใช้รู้ตัวและตามไปยืนยันได้ (Litmus test
+       *  TFRS for NPAEs บทที่ 10: UsefulLifeYears ต้องผ่านการพิจารณา) */
+      async _maybePromptFixedAssetReview() {
+        try {
+          const api = Layout.api(); if (!api) return;
+          const r = await api.getAssetsNeedsReview();
+          const list = r?.data || [];
+          if (!list.length) return;
+          // โชว์ toast เด่นพร้อมปุ่ม "ไปยืนยัน" (custom — ไม่ block ที่ Layout.toast)
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:1000;background:#fef3c7;border:2px solid #f59e0b;border-radius:12px;padding:16px 20px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-width:420px;animation:fadeIn .2s';
+          wrap.innerHTML = `
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-size:28px">⚠️</span>
+              <div style="flex:1">
+                <div style="font-weight:700;color:#78350f;margin-bottom:4px">มีสินทรัพย์ ${list.length} รายการ รอยืนยัน</div>
+                <div style="font-size:12px;color:#92400e;margin-bottom:10px">ระบบสร้างให้อัตโนมัติจากเอกสารที่อนุมัติ — กรุณาตรวจสอบอายุการใช้งาน + วิธีคิดค่าเสื่อมก่อนเริ่มลงตารางจริง</div>
+                <div style="display:flex;gap:8px">
+                  <a href="/pages/fixed-assets.html" class="btn btn-sm btn-warning">ไปยืนยันสินทรัพย์ →</a>
+                  <button class="btn btn-sm btn-ghost" onclick="this.closest('div[style*=\\'position:fixed\\']').remove()">ภายหลัง</button>
+                </div>
+              </div>
+            </div>`;
+          document.body.appendChild(wrap);
+          // auto-dismiss 12 วินาที (เผื่อ user เห็นแล้วไม่กด แต่ไม่อยากให้ค้าง)
+          setTimeout(() => wrap.remove(), 12000);
+        } catch { /* best-effort */ }
+      },
+
       _showApprovalWarnings(docId, warnings, aiHints, onConfirm) {
         let wrap = document.getElementById('approvalWarningsModal');
         if (!wrap) {
@@ -3845,7 +4189,7 @@
           if (!hint || !hint.usedAi) {
             return `<li style="background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:13px;color:#713f12;line-height:1.6">
               <div>⚠️ ${Layout.esc(w)}</div>
-              ${hint ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px">🤖 AI ไม่พร้อม — ดูข้อมูลข้างต้นเท่านั้น</div>' : ''}
+              ${hint ? '<div style="font-size:11px;color:var(--gray-500);margin-top:4px">🤖 AI ไม่พร้อม — ดูข้อมูลข้างต้นเท่านั้น</div>' : ''}
             </li>`;
           }
           const badgeColor = hint.primary === 'Block' ? '#dc2626' : (hint.primary === 'Edit' ? '#d97706' : '#16a34a');
@@ -4067,19 +4411,17 @@
                   ระบบจะออกใบเสร็จ / ใบสำคัญรับ-จ่ายและล้างยอดคงค้างให้อัตโนมัติ
                 </div>
                 <div style="font-size:13px"><strong>ยอดคงค้าง:</strong> <span id="rpBalanceDisplay">-</span></div>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
-                  <span>จำนวนเงินที่รับ-จ่าย *</span>
-                  <input id="rpAmount" type="number" step="0.01" min="0"
-                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
-                </label>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
-                  <span>วันที่ชำระ *</span>
-                  <input id="rpDate" type="date"
-                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
-                </label>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
-                  <span>วิธีชำระ *</span>
-                  <select id="rpMethod" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff">
+                <div class="form-group">
+                  <label class="form-label">จำนวนเงินที่รับ-จ่าย <span class="req">*</span></label>
+                  <input id="rpAmount" class="form-input" type="number" step="0.01" min="0">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">วันที่ชำระ <span class="req">*</span></label>
+                  <input id="rpDate" class="form-input" type="date">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">วิธีชำระ <span class="req">*</span></label>
+                  <select id="rpMethod" class="form-select">
                     <option value="BankTransfer">โอนเงิน (Bank Transfer)</option>
                     <option value="Cash">เงินสด</option>
                     <option value="PromptPay">PromptPay</option>
@@ -4089,38 +4431,35 @@
                     <option value="EWallet">e-Wallet</option>
                     <option value="Other">อื่นๆ</option>
                   </select>
-                </label>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
-                  <span>บัญชีรับ-จ่ายเงิน <span style="color:#64748b;font-weight:normal;font-size:11px">(override — เผื่อเช็ค/โอน เข้าบัญชีที่ไม่ตรงกับเอกสาร)</span></span>
-                  <select id="rpBankOverride" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">บัญชีรับ-จ่ายเงิน <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(override — เผื่อเช็ค/โอน เข้าบัญชีที่ไม่ตรงกับเอกสาร)</span></label>
+                  <select id="rpBankOverride" class="form-select">
                     <option value="">— ใช้บัญชีตามที่ผูกในเอกสาร (default) —</option>
                   </select>
-                </label>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
-                  <span>หรือจ่าย/รับ จากบัญชีอื่น <span style="color:#64748b;font-weight:normal;font-size:11px">(เช่น เงินทดรองกรรมการ, เงินสดย่อย, บัญชีพัก)</span></span>
-                  <select id="rpFundAccount" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">หรือจ่าย/รับ จากบัญชีอื่น <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เช่น เงินทดรองกรรมการ, เงินสดย่อย, บัญชีพัก)</span></label>
+                  <select id="rpFundAccount" class="form-select">
                     <option value="">— ไม่ใช้ (ใช้เงินสด/ธนาคารปกติ) —</option>
                   </select>
-                  <span style="font-size:11px;color:#64748b">เลือกได้เมื่อไม่ได้จ่ายผ่านเงินสด/ธนาคารโดยตรง — รายการบัญชีจะลงบัญชีนี้แทน</span>
-                </label>
-                <div id="rpWhtRow" style="display:none;flex-direction:column;gap:4px;font-size:13px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:8px 10px">
-                  <label style="display:flex;flex-direction:column;gap:4px">
-                    <span>WHT ที่ลูกค้าหักงวดนี้ <span style="color:#854d0e;font-weight:normal;font-size:11px">(บังคับเฉพาะ Cash basis — เริ่มต้นจาก proportional auto)</span></span>
-                    <input id="rpWht" type="number" step="0.01" min="0"
-                      style="padding:8px 10px;border:1px solid #fbbf24;border-radius:6px;font-size:14px;background:#fff">
-                  </label>
-                  <div id="rpWhtHint" style="font-size:11px;color:#854d0e;line-height:1.5"></div>
+                  <div class="form-help">เลือกได้เมื่อไม่ได้จ่ายผ่านเงินสด/ธนาคารโดยตรง — รายการบัญชีจะลงบัญชีนี้แทน</div>
                 </div>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
-                  <span style="color:#64748b">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</span>
-                  <input id="rpRef" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ"
-                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
-                </label>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
-                  <span style="color:#64748b">หมายเหตุ</span>
-                  <input id="rpNotes" type="text"
-                    style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">
-                </label>
+                <div id="rpWhtRow" style="display:none;background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:10px 12px">
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label" style="color:#854d0e">หัก ณ ที่จ่าย ที่ลูกค้าหักงวดนี้ <span style="color:#854d0e;font-weight:normal;font-size:11px">(บังคับเฉพาะ Cash basis — เริ่มต้นจาก proportional auto)</span></label>
+                    <input id="rpWht" class="form-input" type="number" step="0.01" min="0" style="border-color:#fbbf24">
+                    <div id="rpWhtHint" class="form-help" style="color:#854d0e"></div>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</label>
+                  <input id="rpRef" class="form-input" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">หมายเหตุ</label>
+                  <input id="rpNotes" class="form-input" type="text">
+                </div>
               </div>
               <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="document.getElementById('rpModal').classList.remove('active')">ยกเลิก</button>
@@ -4183,7 +4522,9 @@
         const rpWht = document.getElementById('rpWht');
         const rpWhtHint = document.getElementById('rpWhtHint');
         const hasWht = sourceWht > 0 && sourceTotal > 0;
-        rpWhtRow.style.display = hasWht ? 'flex' : 'none';
+        // rpWhtRow ใช้ block layout แล้ว (เดิม flex) — ปรับให้สอดคล้องกับ
+        // โครงสร้าง form-group ที่ใช้ class กลาง
+        rpWhtRow.style.display = hasWht ? 'block' : 'none';
         const recalcWht = () => {
           if (!hasWht) return;
           const amt = parseFloat(amountEl.value || '0');
@@ -4489,11 +4830,11 @@
               <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">🔗 ลำดับเอกสารที่เกี่ยวข้อง</div>
               <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">
                 ${parentInfo ? renderDoc(parentInfo, '⬅ ต้นทาง') : ''}
-                ${parentInfo ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                ${parentInfo ? '<span style="color:var(--gray-500);margin:0 4px">→</span>' : ''}
                 <span style="padding:6px 12px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;font-size:12px;font-weight:600;color:#1e40af;margin:2px">
                   📄 (เอกสารนี้)
                 </span>
-                ${children.length > 0 ? '<span style="color:#94a3b8;margin:0 4px">→</span>' : ''}
+                ${children.length > 0 ? '<span style="color:var(--gray-500);margin:0 4px">→</span>' : ''}
                 ${children.map(c => renderDoc(c, '➡ ปลายทาง')).join('')}
               </div>
             </div>`;

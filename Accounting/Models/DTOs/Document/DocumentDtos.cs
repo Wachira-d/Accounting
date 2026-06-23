@@ -82,7 +82,10 @@ public record CreateDocumentRequest(
     DateTime? OwnershipTransferDate = null,
     DateTime? ServiceUsedDate = null,
     // เลขจอง (PMS/POS/CRM external key) — ผูกเอกสารหลายใบเข้า booking เดียว
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    // ผัง VAT ปลายทาง override — กรณีไม่เคลม VAT ลงเป็นต้นทุน/ค่าใช้จ่าย
+    // (§82/5) เว้นว่าง = default ตาม completeness §86/4 (11610 / 11640)
+    string? InputVatAccountCodeOverride = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -145,6 +148,7 @@ public record UpdateDocumentRequest(
     // PV: ใช้งานใบกำกับภาษี (nullable → omit ไม่แตะค่าเดิม).
     bool? HasTaxInvoiceReference = null,
     string? SupplierBranchCode = null,
+    string? InputVatAccountCodeOverride = null,
     int? CreditDays = null,
     string? PaymentTerms = null,
     PaymentType? PaymentType = null,
@@ -154,7 +158,16 @@ public record UpdateDocumentRequest(
     DateTime? DeliveryDate = null,
     DateTime? OwnershipTransferDate = null,
     DateTime? ServiceUsedDate = null,
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    // ===== Fields ที่เดิมแก้ไม่ได้ตอน update (เคยมีเฉพาะ Create) =====
+    // ทั้งหมด nullable → omit = คงค่าเดิม. แก้ได้เฉพาะตอน Draft (service guard).
+    // CreditNoteReason: เหตุผลใบลดหนี้ (§86/10). IsForeignService: ภ.พ.36/ภ.ง.ด.54.
+    // IsDeposit + DepositDeferredAccountCode + DepositOutputVatDeferred: เงินมัดจำ.
+    CreditNoteReason? CreditNoteReason = null,
+    bool? IsForeignService = null,
+    bool? IsDeposit = null,
+    string? DepositDeferredAccountCode = null,
+    bool? DepositOutputVatDeferred = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -255,7 +268,10 @@ public record DepositSummary(
     // ภาษีขาย: false = ถึงกำหนดแล้ว (21911/ภ.พ.30); true = รอเรียกเก็บ (21913)
     bool OutputVatDeferred,
     // วันที่ภาษีขาย deferred ถูกรับรู้เข้า ภ.พ.30 (null = ยังไม่รับรู้)
-    DateTime? OutputVatRecognizedAt);
+    DateTime? OutputVatRecognizedAt,
+    // เลขจอง (BookingNumber) — ผูกกับใบปลายทางที่ booking เดียวกัน;
+    // UI ใช้ highlight + auto-suggest มัดจำเมื่อ user กรอก booking ตรงกัน
+    string? BookingNumber = null);
 
 /// <summary>สรุปเอกสารที่ภาษีซื้อค้างอยู่ที่ 11640 "ยังไม่ถึงกำหนด" รอใบกำกับ
 /// ครบ §86/4. MonthsLeft = เดือนเหลือก่อนหมดสิทธิเคลม (§82/3 6 เดือนนับจาก
@@ -355,6 +371,8 @@ public record DocumentResponse(
     // the UI shows a due date / outstanding balance for a Payment Voucher.
     PaymentType? PaymentType = null,
     bool PricesIncludeVat = false,
+    // ภ.พ.36 / ภ.ง.ด.54 — ซื้อบริการจากต่างประเทศ. Echo กลับมาเพื่อ form hydration.
+    bool IsForeignService = false,
     // ===== Conversion lineage =====
     // Source-side view (this doc was converted from another): RelatedDocumentId
     // already carries the upstream id; the populated brief lets the UI render

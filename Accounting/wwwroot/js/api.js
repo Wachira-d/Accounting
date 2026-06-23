@@ -480,6 +480,9 @@ const API = {
       // Fixed Assets
       getAssets: (q = '') => API.get(`${base}/fixedasset${q}`),
       getAsset: (id) => API.get(`${base}/fixedasset/${id}`),
+      // สินทรัพย์ที่ระบบสร้างอัตโนมัติจาก PV/PI และยังไม่ผ่านการ "ยืนยัน"
+      // (NeedsReview=true) — UI ใช้เป็น badge เตือนผู้ใช้
+      getAssetsNeedsReview: () => API.get(`${base}/fixedasset/needs-review`),
       createAsset: (d) => API.post(`${base}/fixedasset`, d),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
       disposeAsset: (id, d) => API.post(`${base}/fixedasset/${id}/dispose`, d),

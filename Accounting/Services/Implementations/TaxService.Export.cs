@@ -266,7 +266,7 @@ public partial class TaxService
 
     /// <summary>VAT side of a report line — matches the server-side recalc
     /// grouping (INPUT = ภาษีซื้อ, EXEMPT/carry-forward = summary, else output).</summary>
-    private static string LineSide(TaxReportLine l) => l.IncomeTypeCode switch
+    internal static string LineSide(TaxReportLine l) => l.IncomeTypeCode switch
     {
         "INPUT" or "JE_INPUT" => "input",
         "EXEMPT" or "VAT_CREDIT_CF" => "summary",

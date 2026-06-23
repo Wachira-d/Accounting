@@ -429,6 +429,7 @@ public class DocumentService : IDocumentService
                 OwnershipTransferDate = request.OwnershipTransferDate,
                 ServiceUsedDate = request.ServiceUsedDate,
                 BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim(),
+                InputVatAccountCodeOverride = string.IsNullOrWhiteSpace(request.InputVatAccountCodeOverride) ? null : request.InputVatAccountCodeOverride.Trim(),
                 CreatedBy = createdBy
             };
 
@@ -931,6 +932,16 @@ public class DocumentService : IDocumentService
         if (request.OwnershipTransferDate.HasValue) doc.OwnershipTransferDate = request.OwnershipTransferDate.Value;
         if (request.ServiceUsedDate.HasValue) doc.ServiceUsedDate = request.ServiceUsedDate.Value;
         if (request.BookingNumber != null) doc.BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim();
+        if (request.InputVatAccountCodeOverride != null) doc.InputVatAccountCodeOverride = string.IsNullOrWhiteSpace(request.InputVatAccountCodeOverride) ? null : request.InputVatAccountCodeOverride.Trim();
+
+        // ===== Fields ที่เดิม "เงียบหาย" ตอนแก้ Draft (เคยมีเฉพาะตอน Create) =====
+        // CreditNoteReason (§86/10), IsForeignService (ภ.พ.36/ภ.ง.ด.54), และชุดเงินมัดจำ.
+        // ทุก field ใช้ HasValue / != null → omit = คงค่าเดิม.
+        if (request.CreditNoteReason.HasValue) doc.CreditNoteReason = request.CreditNoteReason.Value;
+        if (request.IsForeignService.HasValue) doc.IsForeignService = request.IsForeignService.Value;
+        if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
+        if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
+        if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -1264,7 +1275,8 @@ public class DocumentService : IDocumentService
                 d.DepositRealizedAt,
                 (int)(now.Date - d.DocumentDate.Date).TotalDays,
                 st, d.DepositDeferredAccountCode,
-                d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt);
+                d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt,
+                d.BookingNumber);
         });
         if (!string.IsNullOrWhiteSpace(status))
             list = list.Where(x => string.Equals(x.Status, status, StringComparison.OrdinalIgnoreCase));
@@ -5681,6 +5693,7 @@ public class DocumentService : IDocumentService
         PaymentTerms: d.PaymentTerms,
         PaymentType: d.PaymentType,
         PricesIncludeVat: d.PricesIncludeVat,
+        IsForeignService: d.IsForeignService,
         RelatedDocument: upstream,
         ConvertedToDocuments: downstream,
         ConversionCompletionPercent: conversionPercent,

@@ -442,15 +442,21 @@
         <div class="modal-body" id="reviewBody">
           <!-- Populated dynamically -->
         </div>
-        <div class="modal-footer" id="reviewFooter">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('reviewModal')">ปิด</button>
-          <!-- 🤖 AI Tier-4 review: re-asks AI with full context (raw text + company + vendor history) and applies corrections + Thai compliance flags inline. -->
-          <button class="btn btn-outline" id="reviewAiBtn" onclick="Page.aiReviewScan()" style="background:#fef3c7;color:#92400e;border-color:#fde047" title="ส่งข้อมูลทั้งหมดให้ AI ตรวจสอบอีกครั้ง + ใส่ค่าให้ถูกต้อง + เลือกประเภทเอกสารที่จะสร้าง">🤖 AI ตรวจสอบ + เสนอเอกสาร</button>
-          <button class="btn btn-outline" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 บันทึก &amp; สอนระบบ</button>
-          <button class="btn btn-outline" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก">📝 เปิดในฟอร์มเอกสาร</button>
-          <button class="btn btn-outline" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว ระบบเดาปลายทางและสร้างให้อัตโนมัติ">📦 นำเข้าสินค้า / สินทรัพย์</button>
-          <button class="btn btn-outline" id="reviewCreateJeBtn" onclick="Page.createJeFromReview()" title="บันทึกเฉพาะ Journal Entry (เดบิต/เครดิต) โดยไม่สร้างเอกสารในระบบ — ใช้เมื่อออกเอกสารจริงจากระบบภายนอกแล้ว ต้องการแค่ลง GL">🧾 บันทึก JE เท่านั้น</button>
-          <button class="btn btn-primary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสารทันทีตามข้อมูลที่แกะได้ (สถานะ Draft)">สร้างเอกสารทันที</button>
+        <div class="modal-footer" id="reviewFooter" style="flex-wrap:wrap;gap:8px;align-items:center">
+          <!-- ปิด = ghost ซ้ายสุด -->
+          <button class="btn btn-ghost btn-sm" onclick="Layout.closeModal('reviewModal')">ยกเลิก</button>
+          <!-- กลุ่ม "ตรวจสอบ/เรียนรู้" — secondary actions ปุ่มเล็ก ลด noise -->
+          <button class="btn btn-sm btn-ai" id="reviewAiBtn" onclick="Page.aiReviewScan()" title="ส่งข้อมูลทั้งหมดให้ AI ตรวจสอบอีกครั้ง + ใส่ค่าให้ถูกต้อง + เลือกประเภทเอกสารที่จะสร้าง">🤖 ขอ AI ตรวจอีกครั้ง</button>
+          <button class="btn btn-sm btn-ghost" id="reviewSaveBtn" onclick="Page.saveCorrection()" title="ระบบจะเรียนรู้จากการแก้ไขเพื่อให้ครั้งต่อไปแกะข้อมูลแม่นยำขึ้น">💾 สอนระบบ</button>
+          <!-- spacer ดัน primary group ไปขวา — กั้นกลุ่ม "ทางหลัก" จาก "ทางเลือก" -->
+          <div style="flex:1 1 auto"></div>
+          <!-- กลุ่ม "นำเข้า/JE" — ทางเลือกเฉพาะกรณี ปุ่มเล็ก/secondary -->
+          <button class="btn btn-sm btn-secondary" id="reviewImportStockBtn" onclick="Page.openStockImport()" title="จับคู่รายการ OCR กับสินค้าในระบบ → เพิ่มสต็อก/วัสดุสิ้นเปลือง/สินทรัพย์ในคลิกเดียว">📦 นำเข้าสินค้า</button>
+          <button class="btn btn-sm btn-secondary" id="reviewCreateJeBtn" onclick="Page.createJeFromReview()" title="บันทึกเฉพาะ Journal Entry (เดบิต/เครดิต) ไม่สร้างเอกสาร — ใช้เมื่อออกเอกสารจากระบบภายนอกแล้ว">🧾 JE เท่านั้น</button>
+          <!-- กลุ่ม "สร้างเอกสาร" — ทางหลัก (primary) — เน้น "เปิดในฟอร์ม" เป็น default
+               เพราะกฎเหล็ก #3 OCR ต้องเติมครบ ผู้ใช้แค่ "ยืนยัน" ในฟอร์ม -->
+          <button class="btn btn-secondary" id="reviewCreateBtn" onclick="Page.createDocFromReview()" title="สร้างเอกสาร Draft ทันทีโดยไม่เปิดฟอร์ม — ระบบเรียนรู้จากการแก้ไขในฟอร์มได้น้อยกว่า">สร้างทันที</button>
+          <button class="btn btn-primary" id="reviewOpenFormBtn" onclick="Page.openInDocumentForm()" title="เปิดแบบฟอร์มสร้างเอกสารพร้อมข้อมูลที่แกะได้ — แก้ไขก่อนบันทึก (แนะนำ)">📝 ยืนยันในฟอร์ม</button>
         </div>
       </div>
     </div>
@@ -1266,8 +1272,8 @@
         }
         if (scan.scanStatus === 'Completed' || scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-secondary" onclick="Page.openReview('${scan.id}')">ตรวจสอบ &amp; สอนระบบ</button>`;
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; Debug</button>`;
-          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${scan.id}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; Retry</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.openReview('${scan.id}', { debug: true })" title="ดูข้อมูลดิบที่ OCR แกะมา + zone analysis">&#x1F50D; ข้อมูลดิบ</button>`;
+          actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.retryScan('${scan.id}')" title="แกะข้อมูลใหม่โดยไม่ใช้โควต้า">&#x21BA; แกะใหม่</button>`;
         }
         if (scan.scanStatus === 'Failed') {
           actionsHtml += `<button class="btn btn-sm btn-outline" onclick="Page.rescan('${scan.id}')">สแกนใหม่</button>`;
@@ -1778,7 +1784,7 @@
               if (!lines.length) return '';
               return `
               <div class="review-section" style="border:2px solid #f59e0b;background:#fffbeb">
-                <div class="review-section-title" style="color:#92400e">⚠️ Needs Review — Potential Fixed Asset (${lines.length} รายการ)</div>
+                <div class="review-section-title" style="color:#92400e">⚠️ ต้องตรวจสอบ — น่าจะเป็นสินทรัพย์ถาวร (${lines.length} รายการ)</div>
                 <p style="font-size:12px;color:#92400e;margin:0 0 12px;line-height:1.5">
                   รายการต่อไปนี้เข้าเกณฑ์สินทรัพย์ถาวร (ราคา ≥ 5,000 บาท + keyword match) —
                   <b>ระงับ auto-create</b> จนกว่าจะกดลงทะเบียนสินทรัพย์ หรือยืนยันว่าเป็นค่าใช้จ่ายปกติ
@@ -1830,7 +1836,7 @@
                 </select>
               </div>
               <div class="review-field" style="background:#fef3c7;border:1px solid #fcd34d;padding:8px 10px;border-radius:6px">
-                <label style="color:#78350f;font-weight:600">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">🤖 AI แนะนำ</span></label>
+                <label style="color:#78350f;font-weight:600">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">⚙️ ระบบแนะนำ (จากชนิดเอกสาร)</span></label>
                 <select class="form-input" id="revTargetDocType" style="flex:1;background:white">
                   <option value="">— เลือก —</option>
                   <option value="PurchaseInvoice" ${scan.targetDocumentType === 'PurchaseInvoice' ? 'selected' : ''}>ใบแจ้งหนี้ซื้อ (AP)</option>
@@ -1894,10 +1900,12 @@
               <div class="review-field">
                 <label>ยอดก่อน VAT</label>
                 <input type="number" class="form-input" id="revSubTotal" step="0.01" value="${scan.extractedSubTotal != null ? scan.extractedSubTotal : ''}">
+                ${fc('SubTotal')}
               </div>
               <div class="review-field">
                 <label>VAT</label>
                 <input type="number" class="form-input" id="revVatAmount" step="0.01" value="${scan.extractedVatAmount != null ? scan.extractedVatAmount : ''}">
+                ${fc('VatAmount')}
               </div>
               <div class="review-field">
                 <label>ยอดรวมทั้งสิ้น</label>
@@ -2846,7 +2854,7 @@
         const best = line.bestMatch;
         const willCreate = line.willCreateNew || !best;
         const conf = best ? Math.round(best.confidence * 100) : 0;
-        const confColor = conf >= 85 ? '#059669' : conf >= 65 ? '#d97706' : '#dc2626';
+        const confColor = conf >= 85 ? '#059669' : conf >= 60 ? '#d97706' : '#dc2626';
 
         // Default to converted qty/unit when the server proposed a
         // UnitConversion (e.g. "1 ลัง" → "12 ชิ้น"). Otherwise fall back

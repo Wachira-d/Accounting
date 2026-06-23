@@ -8,6 +8,9 @@ public interface IFixedAssetService
     Task<FixedAssetResponse> CreateAsync(Guid companyId, CreateFixedAssetRequest request, string createdBy);
     Task<FixedAssetResponse> GetByIdAsync(Guid companyId, Guid assetId);
     Task<PagedResponse<FixedAssetResponse>> GetAllAsync(Guid companyId, PagedRequest request);
+    /// <summary>สินทรัพย์ที่ระบบสร้างอัตโนมัติจาก PV/PI ที่ผู้ใช้ยังไม่ "ยืนยัน"
+    /// (NeedsReview=true) — บังคับให้ผู้ใช้เติมรายละเอียดก่อนใช้งานจริง.</summary>
+    Task<List<FixedAssetResponse>> GetNeedsReviewAsync(Guid companyId);
     Task<FixedAssetResponse> UpdateAsync(Guid companyId, Guid assetId, UpdateFixedAssetRequest request);
     Task<FixedAssetResponse> DisposeAsync(Guid companyId, Guid assetId, DisposeAssetRequest request, string performedBy);
     Task<FixedAssetResponse> WriteOffAsync(Guid companyId, Guid assetId, WriteOffAssetRequest request, string performedBy);

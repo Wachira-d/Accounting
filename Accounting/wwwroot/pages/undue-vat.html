@@ -27,33 +27,37 @@
     </div>
   </div>
 
-  <!-- Complete tax invoice modal -->
-  <div id="completeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
-    <div class="card" style="width:520px;max-width:94vw">
-      <div class="card-header"><h3 class="card-title">เติมข้อมูลใบกำกับภาษีซื้อ</h3></div>
-      <div style="padding:16px">
+  <!-- Complete tax invoice modal — ใช้ .modal-overlay กลาง (ให้พฤติกรรม
+       ตรงกับ modal อื่นในระบบ: มี ×, animation, sticky footer) -->
+  <div class="modal-overlay" id="completeModal">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <h3 class="modal-title">เติมข้อมูลใบกำกับภาษีซื้อ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('completeModal')">&times;</button>
+      </div>
+      <div class="modal-body">
         <div id="completeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-          <div>
-            <label class="text-sm font-medium">เลขที่ใบกำกับผู้ขาย</label>
+        <div class="form-row">
+          <div class="form-group" style="flex:1">
+            <label class="form-label">เลขที่ใบกำกับผู้ขาย</label>
             <input type="text" class="form-input" id="cInvNo" placeholder="เช่น INV-2026-0042">
           </div>
-          <div>
-            <label class="text-sm font-medium">วันที่ใบกำกับ</label>
+          <div class="form-group" style="flex:1">
+            <label class="form-label">วันที่ใบกำกับ</label>
             <input type="date" class="form-input" id="cInvDate">
           </div>
         </div>
-        <div style="margin-bottom:14px">
-          <label class="text-sm font-medium">รหัสสาขาผู้ขาย (00000 = สำนักงานใหญ่)</label>
+        <div class="form-group">
+          <label class="form-label">รหัสสาขาผู้ขาย (00000 = สำนักงานใหญ่)</label>
           <input type="text" class="form-input" id="cBranch" placeholder="00000" maxlength="5">
         </div>
-        <div style="font-size:12px;color:#6b7280;margin-bottom:14px">
+        <div style="font-size:12px;color:#6b7280">
           หมายเหตุ: ชื่อ/เลขผู้เสียภาษี/ที่อยู่ผู้ขาย ดึงจากข้อมูลผู้ติดต่อ — หากยังขาด กรุณาแก้ที่หน้าผู้ติดต่อก่อน
         </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn btn-secondary" onclick="Page.closeComplete()">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.submitComplete()">บันทึก + ย้ายเข้า ภ.พ.30</button>
-        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('completeModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.submitComplete()">บันทึก + ย้ายเข้า ภ.พ.30</button>
       </div>
     </div>
   </div>
@@ -140,10 +144,10 @@
         document.getElementById('cInvNo').value = '';
         document.getElementById('cInvDate').value = Layout.toDateInput(new Date(r.documentDate));
         document.getElementById('cBranch').value = '00000';
-        document.getElementById('completeModal').style.display = 'flex';
+        Layout.openModal('completeModal');
       },
       closeComplete() {
-        document.getElementById('completeModal').style.display = 'none';
+        Layout.closeModal('completeModal');
         this._completeId = null;
       },
       async submitComplete() {

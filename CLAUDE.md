@@ -461,3 +461,58 @@ return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
 - **commit message** เขียนเป็นไทยได้ อธิบาย *ทำไม* มากกว่า *ทำอะไร*
 - **ห้าม push** main/master โดยไม่มี explicit approval
 - งานพัฒนาทั้งหมดอยู่บน branch ที่ระบุใน prompt ต้น session
+
+## 📘 DOCUMENT_FLOW.md — เอกสารอ้างอิง flow ล่าสุด
+
+`DOCUMENT_FLOW.md` (root ของ repo) คือ **single source of truth** ของ flow
+เอกสารทุกประเภทในระบบ — ตั้งแต่ทางเข้า (สร้าง/OCR/integration/convert/recurring)
+→ lifecycle (Draft → Approved → Sent → Paid/Voided) → ทางออก (PDF, e-Tax XML,
+รายงานภาษี). ใช้เป็น reference เวลาแก้/เพิ่ม feature ที่เกี่ยวกับเอกสาร
+
+### กฎการดูแล (hard requirement)
+
+> **ทุก PR/commit ที่เปลี่ยน flow ต้องอัปเดต `DOCUMENT_FLOW.md` ในคอมมิตเดียวกัน**
+> — ห้ามแยก commit, ห้ามขึ้น TODO ไว้ทำทีหลัง. ถ้าไฟล์นี้ drift จากโค้ดจริง
+> = ทุกคน (รวม AI agent) จะตัดสินใจผิดจาก doc ที่ไม่ตรงความจริง
+
+**ต้องอัปเดตเมื่อแก้สิ่งต่อไปนี้** (ไม่ครบก็ใส่เพิ่มได้):
+1. เพิ่ม/ลด `DocumentType` enum value
+2. เปลี่ยน `DocumentStatus` หรือ transition (เพิ่ม state ใหม่, เปลี่ยน guard)
+3. แก้ `ApproveDocumentAsync` (ลำดับขั้น, เพิ่ม/ลด validation, JE/stock/asset)
+4. แก้ JE posting per type (`AutoPostToJournalAsync`)
+5. แก้ `ApplyStockMovementsAsync` (เปลี่ยน DocumentType ที่กระทบ stock)
+6. แก้ tax point logic (`TaxPointResolver`)
+7. แก้ §86/4 / §82/3 / §82/5 / §65 ตรี gate
+8. แก้ undue VAT reclassification (11640 ↔ 11610)
+9. แก้ deposit lifecycle (Realize/Refund/Apply)
+10. เพิ่ม/แก้ entry point ใหม่ (OCR, integration, convert pair, recurring)
+11. เพิ่ม/แก้ออก channel (PDF template, e-Tax type, รายงานภาษีใหม่)
+12. เพิ่ม/แก้ AI feature (`AiFeatureKey`) — ต้องเพิ่มในตาราง distillation
+13. แก้ retention period / PDPA gate
+
+### Workflow ที่ AI agent ต้องทำ
+
+ก่อน commit ที่กระทบ flow:
+- [ ] อ่าน `DOCUMENT_FLOW.md` ก่อน — ให้รู้ behavior ปัจจุบัน
+- [ ] แก้โค้ด + อัปเดต section ที่เกี่ยวข้องใน `DOCUMENT_FLOW.md`
+  (แก้ file:line, แก้ตาราง, แก้ลำดับขั้นถ้าจำเป็น)
+- [ ] อัปเดตบรรทัดท้ายไฟล์: `Last verified against codebase: YYYY-MM-DD —
+  commit <new-sha>` (รอใส่ sha จริงหลัง commit ก็ได้)
+- [ ] ใส่ทั้ง 2 ไฟล์ใน commit เดียวกัน
+
+### Anti-pattern — ห้ามทำ
+
+```
+❌ "เดี๋ยวค่อยอัปเดต doc ทีหลัง" → doc drift → คนถัดมา (รวม AI) อ่าน doc
+   แล้วทำผิดเพราะ doc ไม่ตรงโค้ด
+❌ commit แยกระหว่างโค้ดกับ doc → ระหว่าง 2 commit นี้ branch อยู่ใน
+   inconsistent state
+❌ อัปเดตแค่ตาราง ไม่อัปเดต file:line → ลิงก์ใน "Quick reference" จะตาย
+   หลัง refactor
+```
+
+### ถ้าพบ doc กับโค้ดไม่ตรง
+
+แปลว่า **doc ผิด** (โค้ดเป็น ground truth). ให้แก้ doc ทันทีในคอมมิต
+เดียวกับงานที่กำลังทำ — ห้ามรอ
+
