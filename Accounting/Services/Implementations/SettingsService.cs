@@ -49,6 +49,7 @@ public class SettingsService : ISettingsService
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
         if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
+        if (request.IsVehicleDealer.HasValue) settings.IsVehicleDealer = request.IsVehicleDealer.Value;
         if (request.EmailFromName != null) settings.EmailFromName = request.EmailFromName;
         if (request.EmailReplyTo != null) settings.EmailReplyTo = request.EmailReplyTo;
         if (request.InvoiceEmailSubject != null) settings.InvoiceEmailSubject = request.InvoiceEmailSubject;
@@ -422,7 +423,8 @@ public class SettingsService : ISettingsService
         s.ShowGlEntryOnDocument,
         // HR
         s.LeaveQuotasJson,
-        s.EnforceManagerApproval);
+        s.EnforceManagerApproval,
+        s.IsVehicleDealer);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

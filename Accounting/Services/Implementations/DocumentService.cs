@@ -6185,8 +6185,14 @@ public class DocumentService : IDocumentService
 
         // §82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง: VAT ค่าน้ำมัน/ซ่อม/เช่าซื้อ
         // เคลมไม่ได้ (ยกเว้นบริษัทเป็น vehicle dealer). detect จาก keyword
-        // ใน description ไม่ใช่แค่ผัง — vendor อาจไม่ตั้งผังแยก
-        if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+        // ใน description ไม่ใช่แค่ผัง — vendor อาจไม่ตั้งผังแยก.
+        // override: ถ้า CompanySettings.IsVehicleDealer=true → ข้าม warning
+        // (บริษัทขายรถ/อู่ — รถเป็น inventory เคลมได้ตามปกติ)
+        var isVehicleDealer = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (bool?)s.IsVehicleDealer)
+            .FirstOrDefaultAsync() ?? false;
+        if (!isVehicleDealer && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
             or DocumentType.PaymentVoucher)
         {
             var vehicleKw = new[] { "น้ำมัน", "เบนซิน", "ดีเซล", "ค่าซ่อม", "อะไหล่",

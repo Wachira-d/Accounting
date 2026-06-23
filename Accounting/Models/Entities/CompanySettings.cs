@@ -54,6 +54,13 @@ public class CompanySettings : TenantEntity
     public bool VatRegistered { get; set; } = true;
     public string? VatRegistrationDate { get; set; }
 
+    /// <summary>§82/5(6) override — ระบบ default จะเตือนว่า VAT ของ
+    /// ค่าน้ำมัน/ซ่อม/เช่ารถยนต์นั่ง ≤10 ที่นั่ง เคลมไม่ได้ (ประกาศอธิบดีฯ
+    /// ฉบับที่ 42). เปิด flag นี้ = บริษัทเป็น vehicle dealer / รถยนต์เป็น
+    /// inventory → ยกเว้นการเตือน (claimable ตามปกติ). เปิดเฉพาะตอนได้รับ
+    /// ใบทะเบียนพาณิชย์ระบุประเภทกิจการจริง.</summary>
+    public bool IsVehicleDealer { get; set; } = false;
+
     /// <summary>Cash (default) = recognize WHT-Asset / WHT-Payable at the
     /// Receipt / PaymentVoucher (strict ประมวลรัษฎากร §50/§52). Accrual =
     /// recognize at Invoice / PurchaseInvoice approval (common SMB practice,

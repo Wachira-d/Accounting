@@ -300,6 +300,16 @@
       <div class="form-row" style="margin-top:12px">
         <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
       </div>
+      <div class="form-group form-checkbox" style="margin-top:12px">
+        <input type="checkbox" id="sIsVehicleDealer">
+        <label for="sIsVehicleDealer" style="line-height:1.4">
+          บริษัทเป็นผู้ค้ารถยนต์ / อู่ซ่อม (Vehicle dealer)
+          <div style="font-size:12px;color:#64748b;margin-top:2px">
+            ปกติระบบเตือนว่า VAT ค่าน้ำมัน/ซ่อม/เช่ารถยนต์นั่ง ≤10 ที่นั่ง เคลมไม่ได้ (§82/5(6) + ประกาศอธิบดี 42).
+            เปิด flag นี้ = รถเป็น inventory ของบริษัท → เคลม VAT ได้ตามปกติ ระบบจะไม่เตือน
+          </div>
+        </label>
+      </div>
 
       <h3 class="card-title" style="margin:24px 0 12px">การตั้งค่า OCR สแกนเอกสาร</h3>
       <div class="form-group">
@@ -1572,6 +1582,7 @@
           document.getElementById('sVatRate').value = s.defaultVatRate || 7;
           document.getElementById('sVatRegistered').checked = s.vatRegistered !== false;
           document.getElementById('sVatRegistrationDate').value = s.vatRegistrationDate || '';
+          document.getElementById('sIsVehicleDealer').checked = !!s.isVehicleDealer;
           // OCR preference — default 13 (PaymentVoucher)
           document.getElementById('sOcrBuyerTarget').value = String(s.ocrBuyerInvoiceDefaultTarget ?? 13);
           // e-Tax
@@ -1667,6 +1678,7 @@
             defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
             vatRegistered: document.getElementById('sVatRegistered').checked,
             vatRegistrationDate: document.getElementById('sVatRegistrationDate').value || null,
+            isVehicleDealer: document.getElementById('sIsVehicleDealer').checked,
             // OCR preference (DocumentType enum int — 13=PaymentVoucher, 11=PurchaseInvoice, 14=Expense)
             ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
             // e-Tax

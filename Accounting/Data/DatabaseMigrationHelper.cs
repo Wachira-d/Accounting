@@ -208,6 +208,11 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxXmlOutputPath" varchar(500) NULL;
             """,
 
+            // ===== CompanySettings: §82/5(6) vehicle dealer override =====
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "IsVehicleDealer" boolean NOT NULL DEFAULT false;
+            """,
+
             // ===== Companies: IndustryType =====
             """
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "IndustryType" integer NOT NULL DEFAULT 0;
