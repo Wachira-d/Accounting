@@ -3336,6 +3336,16 @@
         // Always provide at least one row so the user has somewhere to start.
         if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
 
+        // pricesIncludeVat: ใบเสร็จไทยส่วนมากราคารวม VAT แล้ว — heuristic
+        // จาก extractedTotalAmount ≈ extractedSubTotal (subtotal เป็นยอดรวม).
+        // ประกาศก่อน reconcile block เพราะใช้เลือกฐานเทียบส่วนลด (กัน TDZ).
+        let pricesIncludeVat = false;
+        if (scan.extractedTotalAmount && scan.extractedSubTotal && scan.extractedVatAmount) {
+          const sumNet = scan.extractedSubTotal + scan.extractedVatAmount;
+          pricesIncludeVat = Math.abs(scan.extractedTotalAmount - scan.extractedSubTotal) < 1
+            && Math.abs(scan.extractedSubTotal - sumNet) > 1;
+        }
+
         // 🔧 Reconcile lines กับ header subtotal — เคสที่ OCR แกะราคา
         // ต่อหน่วยจากบรรทัด "ราคาตามแคตตาล็อก" แต่ใบมีส่วนลด/โปรโมชั่นทำให้
         // ยอดจริงต่ำกว่า (เช่น OCR ได้ unitPrice 9890 แต่ใบมี subtotal 9289.72).
@@ -3420,14 +3430,7 @@
         const headerVatRate = (scan.extractedVatAmount && scan.extractedSubTotal) ? 7 : 0;
         // currency จาก OCR (ถ้ามี) — default THB
         const currency = scan.currency || scan.detectedCurrency || 'THB';
-        // pricesIncludeVat: ใบเสร็จไทยส่วนมากราคารวม VAT แล้ว — heuristic
-        // จาก extractedTotalAmount ≈ extractedSubTotal (subtotal เป็นยอดรวม)
-        let pricesIncludeVat = false;
-        if (scan.extractedTotalAmount && scan.extractedSubTotal && scan.extractedVatAmount) {
-          const sumNet = scan.extractedSubTotal + scan.extractedVatAmount;
-          pricesIncludeVat = Math.abs(scan.extractedTotalAmount - scan.extractedSubTotal) < 1
-            && Math.abs(scan.extractedSubTotal - sumNet) > 1;
-        }
+        // (pricesIncludeVat คำนวณไว้ด้านบนแล้ว ก่อน reconcile block)
 
         const handoff = {
           source: 'ocr-scan',
