@@ -1320,7 +1320,47 @@
         if (!document.querySelector('#linesBody .line-card')) this.addLine();
         this.calcSum();
 
+        // กฎเหล็ก #3: ฟอร์ม OCR ต้อง pre-fill ครบ + highlight field ที่
+        // confidence < 0.85 ด้วยกรอบเหลือง + tooltip ให้ผู้ใช้ตรวจสอบ
+        try { this._applyOcrConfidenceHints(payload.fieldConfidence || {}); }
+        catch (e) { console.warn('confidence hint failed', e); }
+
         Layout.toast('นำเข้าข้อมูลจาก OCR แล้ว — กรุณาตรวจสอบก่อนบันทึก', 'info');
+      },
+
+      /** กฎเหล็ก #3 — highlight field ที่ OCR confidence ต่ำกว่า 0.85 ด้วย
+       * กรอบเหลือง + tooltip "🤖 ตรวจสอบอีกครั้ง". field ที่ ≥0.85 ปล่อย
+       * normal. ลบ highlight เมื่อ user แตะ (input event) — แปลว่ายืนยันแล้ว */
+      _applyOcrConfidenceHints(conf) {
+        const fieldMap = {
+          'SupplierName': 'fContact',
+          'SupplierTaxId': 'fSupplierTaxIdReadonly',
+          'DocumentNumber': 'fSupplierInvoiceNumberPV',
+          'DocumentDate': 'fSupplierTaxInvoiceDatePV',
+          'TotalAmount': null,                // computed from lines
+          'VatAmount': null,
+          'ExpenseCategory': 'fExpenseCategory',
+          'PaymentChannel': 'fPaymentChannel',
+        };
+        Object.entries(conf || {}).forEach(([key, val]) => {
+          const v = Number(val) || 0;
+          const elId = fieldMap[key];
+          if (!elId || v >= 0.85) return;
+          const el = document.getElementById(elId);
+          if (!el) return;
+          el.style.borderColor = '#facc15';
+          el.style.background = '#fefce8';
+          el.title = `🤖 OCR confidence ${Math.round(v * 100)}% — กรุณาตรวจสอบค่าให้ตรงกับเอกสารจริงก่อนบันทึก`;
+          const clear = () => {
+            el.style.borderColor = '';
+            el.style.background = '';
+            el.title = '';
+            el.removeEventListener('input', clear);
+            el.removeEventListener('change', clear);
+          };
+          el.addEventListener('input', clear, { once: true });
+          el.addEventListener('change', clear, { once: true });
+        });
       },
       toggleSendEmail() {
         const on = document.getElementById('fSendEmail').checked;
