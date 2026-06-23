@@ -426,6 +426,7 @@ const API = {
       cmsGetOrder: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/commerce/orders/${id}`),
       cmsUpdateOrderStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/orders/${id}/status`, d),
       cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
+      cmsConfirmOrderPayment: (siteId, id, paymentId = null) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${paymentId ? `?paymentId=${paymentId}` : ''}`, {}),
       // Booking (per site)
       cmsListBookingServices: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/services`),
       cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),
