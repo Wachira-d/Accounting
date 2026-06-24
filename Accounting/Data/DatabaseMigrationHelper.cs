@@ -208,6 +208,10 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxXmlOutputPath" varchar(500) NULL;
             """,
 
+            // ===== POS deposit support — IsDeposit + DepositRealizedAt =====
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;""",
+
             // ===== PDPA ม.26 — widen Employee PII columns เพื่อรองรับ ciphertext =====
             // (Base64 of nonce 12 + ciphertext 13 + tag 16 = ~56 chars + prefix)
             """ALTER TABLE "Employees" ALTER COLUMN "CitizenId" TYPE varchar(200);""",
