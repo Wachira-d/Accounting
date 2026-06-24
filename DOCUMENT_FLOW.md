@@ -601,10 +601,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-23 — รอบ 11 (PDPA encrypt-at-rest_
-_+ PiiMask integration + Subscription notification migrate + DSR endpoints_
-_access/portability/rectify/erase + Multi-warehouse callable + ProductLot_
-_verified + JournalEntryBuilder fluent abstraction)._
+_Last verified against codebase: 2026-06-23 — รอบ 12 (JE Builder phase 2_
+_migrate ReclassifyLine + FxRevaluation + UnifiedPaymentQueryService_
+_cross-domain aggregate + POS deposit field + Tip §50 ทวิ payout +_
+_RecurringLateFeeAccrualJob + LINE invoice delivery flex message +_
+_Budget scenario best/base/worst modeling)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 
@@ -616,5 +617,6 @@ _verified + JournalEntryBuilder fluent abstraction)._
 | 9 | CMS gap close + perf | payment-gateway webhook, POS Z/X-Report, Stock unify, OverdueDunningJob, Dashboard alerts, e-Tax retry, §82/3 LateReason, dup-doc detect, 11 indexes |
 | 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
 | 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
+| 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._
