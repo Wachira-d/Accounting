@@ -488,10 +488,13 @@ builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBac
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayoutService,
     Accounting.Services.Implementations.Payroll.TipPayoutService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.IDocumentLineDeliveryService,
+    Accounting.Services.Implementations.DocumentLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();

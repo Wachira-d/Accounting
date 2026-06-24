@@ -208,6 +208,12 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxXmlOutputPath" varchar(500) NULL;
             """,
 
+            // ===== Recurring late-fee accrual policy =====
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeRatePerDay" numeric(8,4) NOT NULL DEFAULT 0.05;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeGraceDays" int NOT NULL DEFAULT 7;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeMaxPercent" numeric(5,2) NULL DEFAULT 20.0;""",
+
             // ===== POS deposit support — IsDeposit + DepositRealizedAt =====
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;""",
