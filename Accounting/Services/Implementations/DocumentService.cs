@@ -2486,6 +2486,17 @@ public class DocumentService : IDocumentService
 
     public async Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId)
     {
+        await PurgeDocumentAsync(companyId, documentId, userId, forceOverrideRetention: false, overrideReason: null);
+    }
+
+    /// <summary>ลบเอกสารถาวร. ปกติ block เอกสารที่อยู่ในช่วงเก็บรักษา §87/3
+    /// (5 ปี) — ต้องใช้ Void แทน. แต่ Owner/SystemAdmin override ได้ด้วย
+    /// forceOverrideRetention=true + เหตุผล (เช่น ข้อมูลทดสอบ / สร้างผิดซ้ำ)
+    /// → ระบบ log การ override ลง ErrorLog (audit) ว่าใคร/เมื่อไหร่/ทำไม
+    /// เพื่อความรับผิดชอบ. ความเสี่ยงทางกฎหมายเป็นของผู้ override.</summary>
+    public async Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
+        bool forceOverrideRetention, string? overrideReason)
+    {
         var doc = await _db.Documents
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -2493,11 +2504,29 @@ public class DocumentService : IDocumentService
 
         // Legal hold §87/3 + พ.ร.บ.บัญชี ม.10 — ห้ามลบจริงก่อนครบอายุเก็บ 5 ปี
         // (เอกสารที่ approve แล้วเท่านั้นที่มี RetentionUntil; Draft ลบได้).
-        if (doc.RetentionUntil.HasValue && DateTime.UtcNow.Date < doc.RetentionUntil.Value.Date
-            && doc.Status != DocumentStatus.Draft)
+        var inRetention = doc.RetentionUntil.HasValue
+            && DateTime.UtcNow.Date < doc.RetentionUntil.Value.Date
+            && doc.Status != DocumentStatus.Draft;
+        if (inRetention && !forceOverrideRetention)
             throw new InvalidOperationException(
                 $"ห้ามลบถาวร — เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3) ถึง {doc.RetentionUntil:dd/MM/yyyy}. " +
                 "ใช้ 'ยกเลิกเอกสาร' (Void) แทนเพื่อคงหลักฐานการตรวจสอบ");
+
+        // Override path — บันทึก audit ว่าใคร force-delete เอกสารในช่วง retention
+        // ทำไม. ทำให้สรรพากร/ผู้ตรวจเห็น trail ว่าการลบเป็นการตัดสินใจที่ระบุ
+        // ตัวตน + เหตุผล ไม่ใช่ลบลับ ๆ. ถ้าไม่ระบุเหตุผล → block (กันลบมั่ว).
+        if (inRetention && forceOverrideRetention)
+        {
+            if (string.IsNullOrWhiteSpace(overrideReason))
+                throw new InvalidOperationException(
+                    "การลบเอกสารในช่วงเก็บรักษาตามกฎหมายต้องระบุเหตุผล (เช่น ข้อมูลทดสอบ / สร้างผิดซ้ำ)");
+            // audit ผ่าน logger (forensic) — บันทึกว่าใคร force-delete เอกสารใน
+            // ช่วง retention ทำไม. AuditLog hash-chain ก็จับ Delete นี้อีกชั้น
+            // ผ่าน ChangeTracker (append-only).
+            _logger.LogWarning(
+                "RETENTION-OVERRIDE: user {UserId} force-deleted {DocNum} ({DocType}, retain until {Until:yyyy-MM-dd}). Reason: {Reason}",
+                userId, doc.DocumentNumber, doc.DocumentType, doc.RetentionUntil, overrideReason);
+        }
 
         var auditSnapshot = System.Text.Json.JsonSerializer.Serialize(new
         {

@@ -4689,7 +4689,44 @@
           Layout.closeModal('detailModal');
           Layout.toast('ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ');
           await this.load();
-        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+        } catch (e) {
+          const msg = e.message || 'ลบไม่สำเร็จ';
+          // §87/3 legal hold — เสนอ override (Owner) ด้วยเหตุผล + audit
+          if (msg.includes('§87/3') || msg.includes('เก็บรักษาตามกฎหมาย')) {
+            await this._purgeWithRetentionOverride(id, docNumber, msg);
+            return;
+          }
+          Layout.toast(msg, 'error');
+        }
+      },
+
+      /** เอกสารติด legal hold §87/3 (เก็บรักษา 5 ปี) — ปกติต้อง Void.
+       * แต่ Owner ลบถาวรได้ถ้ามีเหตุผล (ข้อมูลทดสอบ/สร้างผิดซ้ำ) → re-call
+       * ด้วย force=true + reason. ระบบ log audit ว่าใคร/ทำไม. */
+      async _purgeWithRetentionOverride(id, docNumber, blockMsg) {
+        const proceed = await Layout.confirmDanger({
+          title: '⚖️ เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3)',
+          message: `${Layout.esc(blockMsg)}<br><br>` +
+            '<strong style="color:#dc2626">การลบถาวรอาจทำให้ผิด พ.ร.บ.บัญชี ม.10 / ประมวลรัษฎากร §87/3</strong> ' +
+            '(ต้องเก็บเอกสารบัญชี 5 ปี). แนะนำให้ใช้ <b>"ยกเลิกเอกสาร (Void)"</b> ซึ่งคงหลักฐานไว้.<br><br>' +
+            '<span style="font-size:12px;color:#666">ถ้ายืนยันลบถาวร (เช่น เป็นข้อมูลทดสอบ/สร้างผิดซ้ำที่ไม่มีผลทางภาษีจริง) ' +
+            'ระบบจะบันทึก audit ว่าคุณเป็นผู้ลบ + เหตุผล — ความรับผิดชอบทางกฎหมายเป็นของผู้ลบ</span>',
+          mode: 'doubleCheck',
+          confirmText: docNumber || 'DELETE'
+        });
+        if (!proceed) return;
+        const reason = prompt('ระบุเหตุผลที่ต้องลบถาวร (บังคับ — จะถูกบันทึกใน audit):\nเช่น "ข้อมูลทดสอบ", "สร้างซ้ำจาก integration ผิด"');
+        if (!reason || !reason.trim()) {
+          Layout.toast('ต้องระบุเหตุผลจึงจะลบถาวรได้', 'warning');
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.purgeDocument(id, true, reason.trim());
+          Layout.closeModal('detailModal');
+          Layout.toast('ลบเอกสารถาวรแล้ว (override การเก็บรักษา — บันทึก audit แล้ว)', 'success');
+          await this.load();
+        } catch (e2) { Layout.toast(e2.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       async recordPayment(docId, balanceDue, sourceWht = 0, sourceTotal = 0) {
         // Inline payment-recording modal. The previous prompt-based flow

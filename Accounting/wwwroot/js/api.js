@@ -204,7 +204,8 @@ const API = {
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
-      purgeDocument: (id) => API.del(`${base}/document/${id}/purge`),
+      purgeDocument: (id, force = false, reason = null) =>
+        API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
       convertDocumentPartial: (id, t, body) => API.post(`${base}/document/${id}/convert-partial/${t}`, body),

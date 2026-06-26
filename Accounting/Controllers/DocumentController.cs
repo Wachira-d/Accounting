@@ -373,8 +373,12 @@ public class DocumentController : ControllerBase
     /// ลบถาวร ไม่สามารถกู้คืนได้ — เหมือนไม่เคยสร้างมาเลย
     /// เฉพาะ Owner / SystemAdmin เท่านั้น + บันทึก Audit Log
     /// </summary>
+    /// <summary>ลบเอกสารถาวร — เฉพาะ Owner/SystemAdmin. เอกสารในช่วงเก็บรักษา
+    /// §87/3 ปกติ block (ใช้ Void แทน) แต่ override ได้ด้วย ?force=true&reason=...
+    /// (audit log ว่าใคร/ทำไม — ความเสี่ยงทางกฎหมายเป็นของผู้ override).</summary>
     [HttpDelete("{documentId:guid}/purge")]
-    public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId)
+    public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId,
+        [FromQuery] bool force = false, [FromQuery] string? reason = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var isSystemAdmin = User.IsInRole("SystemAdmin");
@@ -388,8 +392,10 @@ public class DocumentController : ControllerBase
                 return StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
         }
 
-        await _documentService.PurgeDocumentAsync(companyId, documentId, userId);
-        return Ok(new ApiResponse<string>(true, null, "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
+        await _documentService.PurgeDocumentAsync(companyId, documentId, userId, force, reason);
+        return Ok(new ApiResponse<string>(true, null,
+            force ? "ลบเอกสารถาวรสำเร็จ (override การเก็บรักษาตามกฎหมาย — บันทึก audit แล้ว)"
+                  : "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
     }
 
     [HttpPost("{documentId:guid}/convert/{targetType}")]
