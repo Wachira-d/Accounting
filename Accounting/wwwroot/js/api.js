@@ -204,7 +204,8 @@ const API = {
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
-      purgeDocument: (id) => API.del(`${base}/document/${id}/purge`),
+      purgeDocument: (id, force = false, reason = null) =>
+        API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
       convertDocumentPartial: (id, t, body) => API.post(`${base}/document/${id}/convert-partial/${t}`, body),
@@ -763,6 +764,8 @@ const API = {
       getOcrResult: (id) => API.get(`${base}/ocr/${id}`),
       getOcrResults: () => API.get(`${base}/ocr`),
       ocrCreateDocument: (id, targetType) => API.post(`${base}/ocr/${id}/create-document${targetType ? `?targetType=${encodeURIComponent(targetType)}` : ''}`),
+      // ผูกไฟล์ scan เข้ากับเอกสารที่สร้างผ่าน UI handoff (documents.html save)
+      ocrLinkScanToDocument: (scanId, documentId) => API.post(`${base}/ocr/${scanId}/link-document/${documentId}`, {}),
       ocrStockPreview: (id) => API.get(`${base}/ocr/${id}/stock-preview`),
       ocrImportStock: (id, data) => API.post(`${base}/ocr/${id}/import-stock`, data),
       ocrRejectMatch: (id, data) => API.post(`${base}/ocr/${id}/reject-match`, data),

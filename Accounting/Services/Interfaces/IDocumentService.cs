@@ -74,6 +74,10 @@ public interface IDocumentService
     /// <summary>ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด (journal, payment, WHT, eTax) — เหมือนไม่เคยสร้าง</summary>
     Task PurgeDocumentAsync(Guid companyId, Guid documentId);
     Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId);
+    /// <summary>ลบถาวร + override legal hold §87/3 ได้ (forceOverrideRetention=true
+    /// + เหตุผล) — เฉพาะ Owner/SystemAdmin. log audit ว่าใคร/ทำไม.</summary>
+    Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
+        bool forceOverrideRetention, string? overrideReason);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
     /// <summary>แปลงเอกสารบางส่วน — เลือกเฉพาะบางรายการ/บางจำนวน (เช่น แยก PO เดียวเป็นหลายใบส่งของ/หลาย Invoice)</summary>
     Task<DocumentResponse> ConvertDocumentPartialAsync(Guid companyId, Guid documentId, DocumentType targetType, PartialConvertRequest request, string createdBy);

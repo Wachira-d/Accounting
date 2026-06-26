@@ -228,6 +228,11 @@ public class OcrScanResult : TenantEntity
     // signal that the nightly job distils into the local model.
     public bool GlAccountUsedAi { get; set; }
     public Guid? GlAccountAiFeedbackId { get; set; }
+    /// <summary>ผัง GL ที่ AI เสนอ (primary) — เก็บแม้ถูกปฏิเสธโดย confidence
+    /// guard เพื่อความโปร่งใส: review UI โชว์ให้ผู้ใช้เห็นว่า AI เสนออะไร
+    /// แม้ระบบใช้ของ local model แทน. ให้ผู้ใช้กดเลือกของ AI ได้เอง.</summary>
+    public string? GlAccountAiSuggestedCode { get; set; }
+    public decimal? GlAccountAiConfidence { get; set; }
 
     public string? RawTextContent { get; set; }
     public string? ProcessingNotes { get; set; }

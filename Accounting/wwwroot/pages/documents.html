@@ -342,90 +342,9 @@
                  (2) กรอกเอง (กรณีใบกระดาษไม่มีในระบบ)
                flag HasTaxInvoiceReference ส่งกลับ backend; SupplierBranchCode
                snapshot ตอนออกใบกัน Contact.BranchCode ถูกแก้ภายหลัง. -->
-          <!-- Master switch — เต็มแถวจริง ๆ (เดิมใช้ form-row 2-col แล้ว
-               เซ็ต width:100% ทำให้ col 2 เปล่าเสียพื้นที่. ใช้ div ตรงๆ) -->
-          <div class="payment-voucher-only form-group" style="display:none;width:100%">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:14px">
-                <input type="checkbox" id="fHasTaxInvoiceRef" onchange="Page.onTaxInvoiceRefToggle()" style="width:18px;height:18px">
-                <span style="font-weight:600;color:#0369a1">📋 มีใบกำกับภาษีซื้อ — ขอเครดิตภาษีซื้อ (ภ.พ.30)</span>
-                <span style="margin-left:auto;font-size:11px;color:var(--gray-500)">RD §86/4 + §86/14</span>
-              </label>
-              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.5">
-                เปิด = บันทึกข้อมูลใบกำกับของผู้ขาย + ภาษีซื้อขึ้น ภ.พ.30 ·
-                ทุกบรรทัด <b>เคลม VAT อัตโนมัติ</b> — ติ๊กออกเฉพาะบรรทัดที่กฎหมายห้าม
-                (ค่ารับรอง / น้ำมันรถยนต์นั่ง §82/5) ที่คอลัมน์ "เคลม VAT" ในรายการ
-                <br>⚠️ <b>ต้องเป็น "ใบกำกับภาษีเต็มรูป" (§86/4)</b> เท่านั้น — มีคำว่า
-                "ใบกำกับภาษี" + ชื่อ/ที่อยู่/เลขผู้เสียภาษีของ<u>บริษัทเรา (ผู้ซื้อ)</u> ครบ.
-                <b>ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ (ไม่มีชื่อผู้ซื้อ) เคลมไม่ได้</b>
-                (§82/5(1)(2)) — ต้องขอใบกำกับเต็มรูปจากผู้ขาย
-              </div>
-          </div>
-          <div id="taxInvoiceRefSection" class="payment-voucher-only" style="display:none">
-            <div style="background:#fefce8;border:1px solid #fde047;border-left:4px solid #ca8a04;border-radius:10px;padding:14px 16px;margin-bottom:10px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <strong style="color:#854d0e;font-size:14px">📋 ข้อมูลใบกำกับภาษีของผู้ขาย</strong>
-                <span style="font-size:11px;color:#92400e">ข้อมูลนี้จะลงรายงานภาษีซื้อ ภพ.30 อัตโนมัติ</span>
-              </div>
-
-              <!-- Mode picker: เลือกจากระบบ vs กรอกเอง -->
-              <div style="display:flex;gap:14px;margin-bottom:10px;font-size:13px">
-                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
-                  <input type="radio" name="taxInvSource" id="taxInvSrcSystem" value="system" checked onchange="Page.onTaxInvoiceSourceChange()">
-                  <span>เลือกจากใบในระบบ <span style="font-size:11px;color:#64748b">(ใบแจ้งหนี้ซื้อของ contact)</span></span>
-                </label>
-                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
-                  <input type="radio" name="taxInvSource" id="taxInvSrcManual" value="manual" onchange="Page.onTaxInvoiceSourceChange()">
-                  <span>กรอกข้อมูลเอง <span style="font-size:11px;color:#64748b">(ใบกระดาษไม่มีในระบบ)</span></span>
-                </label>
-              </div>
-
-              <!-- Mode 1: เลือก PurchaseInvoice → auto-fill -->
-              <div class="form-row" id="taxInvSystemPicker" style="margin-bottom:6px">
-                <div class="form-group" style="width:100%">
-                  <label class="form-label">เลือกใบแจ้งหนี้ซื้อ/ใบกำกับภาษี</label>
-                  <select class="form-select" id="fTaxInvSourceDoc" onchange="Page.onTaxInvoiceSourceDocSelect()">
-                    <option value="">-- เลือก contact ก่อน เพื่อโหลดรายการ --</option>
-                  </select>
-                  <small style="color:#64748b;font-size:11px">กรองเฉพาะใบของ contact นี้ที่ Approved/ค้างชำระ</small>
-                </div>
-              </div>
-
-              <!-- ข้อมูลตามกฎสรรพากร — กรอกได้/แก้ได้/auto-fill -->
-              <!-- เลขใบ (ยาว) + วันที่ (สั้น) → 2:1 -->
-              <div class="form-row-2-1">
-                <div class="form-group">
-                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span class="req">*</span></label>
-                  <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" placeholder="เช่น INV-2026-0042">
-                </div>
-                <div class="form-group">
-                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span class="req">*</span></label>
-                  <input type="date" class="form-input" id="fSupplierTaxInvoiceDatePV">
-                </div>
-              </div>
-              <!-- TaxId (13 digit) + Branch (5 digit) → 2:1 (TaxId ยาวกว่า) -->
-              <div class="form-row-2-1">
-                <div class="form-group">
-                  <label class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
-                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:var(--gray-100)" placeholder="ดึงจาก contact">
-                </div>
-                <div class="form-group">
-                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span class="req">*</span></label>
-                  <input type="text" class="form-input" id="fSupplierBranchCode" placeholder="00000" maxlength="5" pattern="\d{5}">
-                </div>
-              </div>
-              <!-- 2-col grid (info ซ้าย + preview ขวา) แทน flex space-between ที่
-                   ทำให้ preview กระเด็นไปไกลบนจอกว้าง + wrap แล้วเว้น gap แปลก -->
-              <div style="background:#fff;border:1px solid var(--gray-200);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:var(--gray-600);display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center">
-                <span>💡 <b>ฐานภาษี + VAT</b> ดึงจากยอดใบ (subtotal + vat) อัตโนมัติ — ตรวจให้ตรงใบกำกับจริง</span>
-                <span id="taxInvVatPreview" style="font-weight:600;color:var(--gray-800)"></span>
-              </div>
-              <!-- Live completeness warning — เคลม VAT ต้องมีใบกำกับครบ §86/4 -->
-              <div id="taxInvIncompleteWarn" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b">
-                ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
-                ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
-              </div>
-            </div>
-          </div>
+          <!-- [MOVED] master switch + ข้อมูลใบกำกับ — ย้ายไปท้ายฟอร์มหลัง
+               หมายเหตุ (UX: ผู้ใช้กรอกรายการ → ยอด → ถ้าจะเคลม VAT ค่อยติ๊ก
+               + กรอกใบกำกับ ตามลำดับการตัดสินใจจริง) -->
 
           <!-- Supplier-side tax-invoice metadata — only relevant on PI/CertInLieu/PV
                where the partner issues the source invoice. JS toggles `.supplier-invoice-only`
@@ -698,6 +617,89 @@
             </label>
             <input type="text" class="form-input" id="fNotes">
           </div>
+
+          <!-- ===== PV เคลม VAT (master switch + ใบกำกับผู้ขาย) — ย้ายมาท้ายฟอร์ม
+               เพราะเป็น "ตัดสินใจสุดท้าย" (กรอกรายการ → ดูยอด → ถ้าจะเคลมค่อยติ๊ก).
+               เดิมอยู่บนสุดทำให้ผู้ใช้เห็น Section รายละเอียดใบกำกับขึ้นมาทั้งที่
+               ยังไม่ติ๊ก → สับสน + กรอกข้อมูลใบกำกับเสียก่อน + ลืมว่าต้องติ๊กก่อน -->
+          <div class="payment-voucher-only form-group" style="display:none;width:100%;margin-top:8px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:14px">
+                <input type="checkbox" id="fHasTaxInvoiceRef" onchange="Page.onTaxInvoiceRefToggle()" style="width:18px;height:18px">
+                <span style="font-weight:600;color:#0369a1">📋 มีใบกำกับภาษีซื้อ — ขอเครดิตภาษีซื้อ (ภ.พ.30)</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--gray-500)">RD §86/4 + §86/14</span>
+              </label>
+              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.5">
+                เปิด = บันทึกข้อมูลใบกำกับของผู้ขาย + ภาษีซื้อขึ้น ภ.พ.30 ·
+                ทุกบรรทัด <b>เคลม VAT อัตโนมัติ</b> — ติ๊กออกเฉพาะบรรทัดที่กฎหมายห้าม
+                (ค่ารับรอง / น้ำมันรถยนต์นั่ง §82/5) ที่คอลัมน์ "เคลม VAT" ในรายการ
+                <br>⚠️ <b>ต้องเป็น "ใบกำกับภาษีเต็มรูป" (§86/4)</b> เท่านั้น — มีคำว่า
+                "ใบกำกับภาษี" + ชื่อ/ที่อยู่/เลขผู้เสียภาษีของ<u>บริษัทเรา (ผู้ซื้อ)</u> ครบ.
+                <b>ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ (ไม่มีชื่อผู้ซื้อ) เคลมไม่ได้</b>
+                (§82/5(1)(2)) — ต้องขอใบกำกับเต็มรูปจากผู้ขาย
+              </div>
+          </div>
+          <div id="taxInvoiceRefSection" class="payment-voucher-only" style="display:none">
+            <div style="background:#fefce8;border:1px solid #fde047;border-left:4px solid #ca8a04;border-radius:10px;padding:14px 16px;margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <strong style="color:#854d0e;font-size:14px">📋 ข้อมูลใบกำกับภาษีของผู้ขาย</strong>
+                <span style="font-size:11px;color:#92400e">ข้อมูลนี้จะลงรายงานภาษีซื้อ ภพ.30 อัตโนมัติ</span>
+              </div>
+
+              <!-- Mode picker: เลือกจากระบบ vs กรอกเอง -->
+              <div style="display:flex;gap:14px;margin-bottom:10px;font-size:13px">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="taxInvSource" id="taxInvSrcSystem" value="system" checked onchange="Page.onTaxInvoiceSourceChange()">
+                  <span>เลือกจากใบในระบบ <span style="font-size:11px;color:#64748b">(ใบแจ้งหนี้ซื้อของ contact)</span></span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="taxInvSource" id="taxInvSrcManual" value="manual" onchange="Page.onTaxInvoiceSourceChange()">
+                  <span>กรอกข้อมูลเอง <span style="font-size:11px;color:#64748b">(ใบกระดาษไม่มีในระบบ)</span></span>
+                </label>
+              </div>
+
+              <!-- Mode 1: เลือก PurchaseInvoice → auto-fill -->
+              <div class="form-row" id="taxInvSystemPicker" style="margin-bottom:6px">
+                <div class="form-group" style="width:100%">
+                  <label class="form-label">เลือกใบแจ้งหนี้ซื้อ/ใบกำกับภาษี</label>
+                  <select class="form-select" id="fTaxInvSourceDoc" onchange="Page.onTaxInvoiceSourceDocSelect()">
+                    <option value="">-- เลือก contact ก่อน เพื่อโหลดรายการ --</option>
+                  </select>
+                  <small style="color:#64748b;font-size:11px">กรองเฉพาะใบของ contact นี้ที่ Approved/ค้างชำระ</small>
+                </div>
+              </div>
+
+              <!-- ข้อมูลตามกฎสรรพากร — กรอกได้/แก้ได้/auto-fill -->
+              <div class="form-row-2-1">
+                <div class="form-group">
+                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span class="req">*</span></label>
+                  <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" placeholder="เช่น INV-2026-0042">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span class="req">*</span></label>
+                  <input type="date" class="form-input" id="fSupplierTaxInvoiceDatePV">
+                </div>
+              </div>
+              <div class="form-row-2-1">
+                <div class="form-group">
+                  <label class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
+                  <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:var(--gray-100)" placeholder="ดึงจาก contact">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span class="req">*</span></label>
+                  <input type="text" class="form-input" id="fSupplierBranchCode" placeholder="00000" maxlength="5" pattern="\d{5}">
+                </div>
+              </div>
+              <div style="background:#fff;border:1px solid var(--gray-200);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;color:var(--gray-600);display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center">
+                <span>💡 <b>ฐานภาษี + VAT</b> ดึงจากยอดใบ (subtotal + vat) อัตโนมัติ — ตรวจให้ตรงใบกำกับจริง</span>
+                <span id="taxInvVatPreview" style="font-weight:600;color:var(--gray-800)"></span>
+              </div>
+              <div id="taxInvIncompleteWarn" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b">
+                ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
+                ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
+              </div>
+            </div>
+          </div>
+
           <div class="form-group">
             <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
             <input type="file" class="form-input" id="fAttachments" multiple
@@ -1121,6 +1123,12 @@
         sessionStorage.removeItem('ocr_handoff_payload');
         // Stale payload guard (>10 min old).
         if (!payload.createdAt || (Date.now() - payload.createdAt) > 600_000) return;
+
+        // Remember source scan id — used after Page.save() to relink the
+        // OCR-uploaded file as a Document attachment. Without this, the
+        // scan PDF/image stays orphaned under EntityType="OcrScan" and the
+        // operator opens the new EXP/PV และไม่เห็นไฟล์ต้นฉบับ.
+        this._ocrSourceScanId = payload.scanId || null;
 
         const side = payload.side === 'expense' ? 'expense' : 'revenue';
         this.openCreate(side);
@@ -2311,7 +2319,18 @@
         // effect on the due-date field.
         const isPV = docType === 'PaymentVoucher';
         document.querySelectorAll('.payment-voucher-only').forEach(el => {
-          el.style.display = isPV ? '' : 'none';
+          // taxInvoiceRefSection: แสดงได้เฉพาะเมื่อ "ติ๊กกล่อง" + PV
+          // (เดิม show ทุก el พร้อมกัน → section รายละเอียดใบกำกับขึ้นมาทั้งที่
+          // ยังไม่ติ๊ก — ผู้ใช้สับสน กดบันทึกเลยทั้งที่ field ว่าง)
+          if (el.id === 'taxInvoiceRefSection')
+          {
+            const checked = document.getElementById('fHasTaxInvoiceRef')?.checked;
+            el.style.display = (isPV && checked) ? '' : 'none';
+          }
+          else
+          {
+            el.style.display = isPV ? '' : 'none';
+          }
         });
         if (isPV) this.onPaymentTypeChange();
         // (onPaymentTypeChange defined on Page — see below)
@@ -3830,6 +3849,15 @@
               Layout.toast('สร้าง + อนุมัติเอกสารแล้ว', 'success');
             else
               Layout.toast('สร้างเอกสารสำเร็จ');
+
+            // OCR handoff path — relink ไฟล์ scan ต้นฉบับเข้าเอกสารใหม่
+            // กัน file ค้างที่ EntityType="OcrScan" จนเปิดเอกสารไม่เห็นไฟล์.
+            // Best-effort: ล้มเหลวก็ไม่ block flow create (เอกสารสร้างแล้ว)
+            if (savedDocId && this._ocrSourceScanId) {
+              try { await api.ocrLinkScanToDocument(this._ocrSourceScanId, savedDocId); }
+              catch (e) { Layout.toast('แนบไฟล์ต้นฉบับ OCR ไม่สำเร็จ: ' + e.message, 'warning', 6000); }
+              this._ocrSourceScanId = null;
+            }
             // Teach the local model: record the operator's actual payment-type
             // choice against the suggestion it was shown (trains per-supplier).
             if (payload.paymentType && this._lastPaymentTypeFeedbackId) {
@@ -4661,7 +4689,44 @@
           Layout.closeModal('detailModal');
           Layout.toast('ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ');
           await this.load();
-        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+        } catch (e) {
+          const msg = e.message || 'ลบไม่สำเร็จ';
+          // §87/3 legal hold — เสนอ override (Owner) ด้วยเหตุผล + audit
+          if (msg.includes('§87/3') || msg.includes('เก็บรักษาตามกฎหมาย')) {
+            await this._purgeWithRetentionOverride(id, docNumber, msg);
+            return;
+          }
+          Layout.toast(msg, 'error');
+        }
+      },
+
+      /** เอกสารติด legal hold §87/3 (เก็บรักษา 5 ปี) — ปกติต้อง Void.
+       * แต่ Owner ลบถาวรได้ถ้ามีเหตุผล (ข้อมูลทดสอบ/สร้างผิดซ้ำ) → re-call
+       * ด้วย force=true + reason. ระบบ log audit ว่าใคร/ทำไม. */
+      async _purgeWithRetentionOverride(id, docNumber, blockMsg) {
+        const proceed = await Layout.confirmDanger({
+          title: '⚖️ เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3)',
+          message: `${Layout.esc(blockMsg)}<br><br>` +
+            '<strong style="color:#dc2626">การลบถาวรอาจทำให้ผิด พ.ร.บ.บัญชี ม.10 / ประมวลรัษฎากร §87/3</strong> ' +
+            '(ต้องเก็บเอกสารบัญชี 5 ปี). แนะนำให้ใช้ <b>"ยกเลิกเอกสาร (Void)"</b> ซึ่งคงหลักฐานไว้.<br><br>' +
+            '<span style="font-size:12px;color:#666">ถ้ายืนยันลบถาวร (เช่น เป็นข้อมูลทดสอบ/สร้างผิดซ้ำที่ไม่มีผลทางภาษีจริง) ' +
+            'ระบบจะบันทึก audit ว่าคุณเป็นผู้ลบ + เหตุผล — ความรับผิดชอบทางกฎหมายเป็นของผู้ลบ</span>',
+          mode: 'doubleCheck',
+          confirmText: docNumber || 'DELETE'
+        });
+        if (!proceed) return;
+        const reason = prompt('ระบุเหตุผลที่ต้องลบถาวร (บังคับ — จะถูกบันทึกใน audit):\nเช่น "ข้อมูลทดสอบ", "สร้างซ้ำจาก integration ผิด"');
+        if (!reason || !reason.trim()) {
+          Layout.toast('ต้องระบุเหตุผลจึงจะลบถาวรได้', 'warning');
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.purgeDocument(id, true, reason.trim());
+          Layout.closeModal('detailModal');
+          Layout.toast('ลบเอกสารถาวรแล้ว (override การเก็บรักษา — บันทึก audit แล้ว)', 'success');
+          await this.load();
+        } catch (e2) { Layout.toast(e2.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       async recordPayment(docId, balanceDue, sourceWht = 0, sourceTotal = 0) {
         // Inline payment-recording modal. The previous prompt-based flow

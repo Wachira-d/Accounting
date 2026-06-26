@@ -1004,22 +1004,36 @@ public class OcrService : IOcrService
                     {
                         var localConf = (decimal)extractedData.FieldConfidence.GetValueOrDefault("DebitAccount", 0);
                         using var glCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                        // vendorIndustry = ประเภทธุรกิจของ "ผู้ขาย" (ไม่ใช่บริษัทเรา!)
+                        // เดิมส่ง companyContext.IndustryType ผิด — ทำให้ AI คิดว่า
+                        // ผู้ขายเป็นธุรกิจเดียวกับเรา (เช่นใบปั๊มน้ำมัน → AI เห็น
+                        // "vendor.industry=Hotel" เลยเดาว่าเป็นของใช้โรงแรม). company
+                        // industry ส่งแยกผ่าน businessContext ใน augmenter อยู่แล้ว.
+                        // DBD ยังไม่มี vendor TSIC ชัด → ส่ง null ให้ AI อนุมานจาก
+                        // ชื่อผู้ขาย + รหัสสินค้า/หน่วย ตาม decode rules ใน prompt.
                         var glResult = await _aiAugmenter.SuggestGlAccountAsync(
                             companyId, scanResult.Id,
                             extractedData.VendorName, extractedData.VendorTaxId,
-                            companyContext?.IndustryType.ToString(),
+                            extractedData.DbdJuristicType,   // ประเภทนิติบุคคลผู้ขาย (ถ้า DBD เจอ) มิฉะนั้น null
                             aiLineDesc, extractedData.TotalAmount ?? 0m, "THB",
                             extractedData.DebitAccountCode, localConf,
                             glCts.Token);
 
-                        // Record the trail regardless of whether we applied it, so
-                        // the review UI shows an honest badge and the user's final
-                        // pick can be posted back as a training signal.
-                        scanResult.GlAccountUsedAi = glResult.UsedAi;
+                        // Record the trail. FeedbackId เก็บเสมอ (training signal).
+                        // เก็บ AI primary + confidence แม้ถูกปฏิเสธ → review UI
+                        // โชว์ "AI เสนอ X (conf Y%)" ให้ผู้ใช้เห็น + เลือกเองได้.
                         scanResult.GlAccountAiFeedbackId = glResult.FeedbackId;
+                        if (glResult.UsedAi && !string.IsNullOrEmpty(glResult.Answer))
+                        {
+                            scanResult.GlAccountAiSuggestedCode = glResult.Answer;
+                            scanResult.GlAccountAiConfidence = glResult.Confidence;
+                        }
 
                         // Apply only when AI actually ran, was confident, and named
                         // a real account in THIS company's CoA (anti-hallucination).
+                        // GlAccountUsedAi = "AI's answer was APPLIED" — ป้ายซื่อสัตย์:
+                        // true เฉพาะตอนค่าที่แสดงมาจาก AI จริง ไม่ใช่แค่ AI ถูกเรียก.
+                        scanResult.GlAccountUsedAi = false;
                         if (glResult.UsedAi && !string.IsNullOrEmpty(glResult.Answer)
                             && (glResult.Confidence ?? 0m) >= 0.70m)
                         {
@@ -1032,6 +1046,7 @@ public class OcrService : IOcrService
                                 extractedData.DebitAccountCode = aiAcct.AccountCode;
                                 extractedData.DebitAccountName = aiAcct.AccountName;
                                 extractedData.FieldConfidence["DebitAccount"] = (double)(glResult.Confidence ?? 0.7m);
+                                scanResult.GlAccountUsedAi = true;   // ใช้ AI จริง → ป้าย AI ถูกต้อง
                                 extractedData.ReasoningTrace.Add(
                                     $"[AI/DeepSeek] จัดหมวดบัญชี → {aiAcct.AccountCode} {aiAcct.AccountName} "
                                     + $"(confidence {(glResult.Confidence ?? 0):P0})"
@@ -1039,6 +1054,14 @@ public class OcrService : IOcrService
                                 foreach (var risk in glResult.Risks)
                                     extractedData.ReasoningTrace.Add("[AI risk] " + risk);
                             }
+                        }
+                        // AI ถูกเรียกแต่ confidence ต่ำ/ไม่อยู่ในผัง → log เหตุผล
+                        if (!scanResult.GlAccountUsedAi && glResult.UsedAi
+                            && !string.IsNullOrEmpty(glResult.Answer))
+                        {
+                            extractedData.ReasoningTrace.Add(
+                                $"[AI/DeepSeek] เสนอ {glResult.Answer} (confidence {(glResult.Confidence ?? 0):P0}) "
+                                + "— ต่ำกว่าเกณฑ์ 70% หรือไม่อยู่ในผังบัญชี → ใช้ผลของ local model แทน");
                         }
                     }
                 }
@@ -4350,6 +4373,29 @@ public class OcrService : IOcrService
         _logger.LogInformation("Re-linked scan file {FileId} to Document {DocId}", attachment.Id, documentId);
     }
 
+    /// <summary>Public entry point — link an OCR scan's source file to a
+    /// Document ที่สร้างผ่าน path อื่น (เช่น UI handoff: OCR review →
+    /// "เปิดในฟอร์มเอกสาร" → documents.html → POST /documents) ที่ไม่ได้ผ่าน
+    /// CreateDocumentFromScanAsync ทำให้ FileAttachment ค้างอยู่ที่
+    /// EntityType="OcrScan" → เอกสารเปิดดูแล้วไม่เห็นไฟล์แนบ.
+    /// Idempotent: เรียกซ้ำได้ — relink ซ้ำเป็น no-op.</summary>
+    public async Task<bool> LinkScanToExistingDocumentAsync(Guid companyId, Guid scanId, Guid documentId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(s => s.Id == scanId && s.CompanyId == companyId);
+        if (scan == null) return false;
+        var docExists = await _db.Documents
+            .AnyAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
+        if (!docExists) return false;
+        await RelinkScanFileToDocumentAsync(companyId, scan.FileAttachmentId, documentId);
+        if (scan.CreatedDocumentId != documentId)
+        {
+            scan.CreatedDocumentId = documentId;
+            await _db.SaveChangesAsync();
+        }
+        return true;
+    }
+
     /// <summary>
     /// Register one OCR'd line item as a FixedAsset, delegating to the
     /// existing FixedAssetService.CreateAsync (no duplication of asset
@@ -4773,7 +4819,12 @@ public class OcrService : IOcrService
             LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
             LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber,
             ExtractedDiscountAmount: data?.DiscountAmount ?? r.ExtractedDiscountAmount,
-            GlAccountUsedAi: r.GlAccountUsedAi);
+            GlAccountUsedAi: r.GlAccountUsedAi,
+            // ชื่อบัญชี — UI resolve เองจาก CoA ที่โหลดไว้ (MapToResponse sync,
+            // หลีกเลี่ยง DB call ต่อ scan)
+            GlAccountAiSuggestedCode: r.GlAccountAiSuggestedCode,
+            GlAccountAiSuggestedName: null,
+            GlAccountAiConfidence: r.GlAccountAiConfidence);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)

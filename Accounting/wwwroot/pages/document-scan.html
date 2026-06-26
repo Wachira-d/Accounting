@@ -1007,6 +1007,22 @@
       // bigger payload (vendor canonicalization, corrections, line items,
       // confidence flags). Falls back to the latest scan-scoped row if no
       // explicit feedbackId was wired through.
+      /** ผู้ใช้กดเลือกผังที่ AI เสนอ (แต่ confidence ต่ำกว่าเกณฑ์ระบบเลยไม่
+       * auto-apply). set dropdown revDebitAccount ไปที่ account code นั้น.
+       * ถ้า option ไม่มีในรายการ (AI เสนอผังที่ไม่อยู่ในตัวกรอง) → แจ้งเตือน */
+      applyAiDebitAccount(code) {
+        const sel = document.getElementById('revDebitAccount');
+        if (!sel || !code) return;
+        const opt = [...sel.options].find(o => o.value === code || o.value.startsWith(code + ' ') || o.textContent.startsWith(code));
+        if (opt) {
+          sel.value = opt.value;
+          sel.dispatchEvent(new Event('change'));
+          Layout.toast(`เลือกผัง ${code} (ของ AI) แล้ว`, 'success');
+        } else {
+          Layout.toast(`ผัง ${code} ที่ AI เสนอ ไม่อยู่ในรายการ — เลือกด้วยตนเองจาก dropdown`, 'warning', 6000);
+        }
+      },
+
       async viewOcrAiRaw(scanId) {
         const cid = Layout.getCompanyId();
         if (!cid || !scanId) return;
@@ -1938,9 +1954,20 @@
             <div class="review-section">
               <div class="review-section-title">📊 ผังบัญชีที่แนะนำ
                 <span style="float:right;display:inline-flex;gap:6px;align-items:center">
-                  ${scan.suggestedAccounts ? (scan.glAccountUsedAi
-                      ? '<span style="font-size:11px;color:#059669;font-weight:400" title="DeepSeek จัดหมวดบัญชีให้ — คำตอบถูกนำไปสอน local model">🤖 AI (DeepSeek) แนะนำ</span>'
-                      : '<span style="font-size:11px;color:#64748b;font-weight:400" title="มาจาก keyword/สถิติ (ยังไม่ได้เรียก AI หรือ local model มั่นใจแล้ว)">⚙️ ระบบแนะนำ (rule-based)</span>') : ''}
+                  ${(() => {
+                    if (!scan.suggestedAccounts) return '';
+                    // ป้ายซื่อสัตย์: 🤖 AI เฉพาะตอน AI's answer ถูกนำมาใช้จริง
+                    // (glAccountUsedAi=true). ถ้า AI ถูกเรียกแต่ confidence ต่ำ →
+                    // ใช้ local model → ป้าย ⚙️ + บอกว่า AI เสนออะไร
+                    if (scan.glAccountUsedAi)
+                      return '<span style="font-size:11px;color:#059669;font-weight:400" title="DeepSeek จัดหมวดบัญชีให้ — คำตอบถูกนำมาใช้ + สอน local model">🤖 AI (DeepSeek) แนะนำ</span>';
+                    const aiCode = scan.glAccountAiSuggestedCode;
+                    if (aiCode) {
+                      const conf = scan.glAccountAiConfidence != null ? Math.round(scan.glAccountAiConfidence * 100) + '%' : '—';
+                      return `<span style="font-size:11px;color:#b45309;font-weight:400" title="AI ถูกเรียกแต่ confidence ต่ำกว่าเกณฑ์ 70% → ระบบใช้ผลของ local model แทน">⚙️ local model (AI เสนอ ${Layout.esc(aiCode)} · มั่นใจ ${conf})</span>`;
+                    }
+                    return '<span style="font-size:11px;color:#64748b;font-weight:400" title="มาจาก keyword/สถิติ หรือ local model มั่นใจแล้ว (ไม่เรียก AI)">⚙️ ระบบแนะนำ (rule-based/local)</span>';
+                  })()}
                   <button type="button" class="btn btn-sm"
                     style="background:#fff;border:1px solid #bae6fd;color:#0369a1;padding:2px 8px;font-size:11px;font-weight:500"
                     onclick="Page.viewOcrAiRaw('${scan.id}')">🔍 ดู AI response เต็ม</button>
@@ -1970,7 +1997,10 @@
                 <select class="form-input" id="revDebitAccount" style="flex:1">
                   <option value="">กำลังโหลด...</option>
                 </select>
-                ${scan.suggestedAccounts?.debitAccountCode ? `<span style="font-size:11px;color:var(--primary);white-space:nowrap">แนะนำ: ${Layout.esc(scan.suggestedAccounts.debitAccountCode)} ${Layout.esc(scan.suggestedAccounts.debitAccountName || '')}</span>` : ''}
+                <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end">
+                  ${scan.suggestedAccounts?.debitAccountCode ? `<span style="font-size:11px;color:var(--primary);white-space:nowrap">แนะนำ: ${Layout.esc(scan.suggestedAccounts.debitAccountCode)} ${Layout.esc(scan.suggestedAccounts.debitAccountName || '')}</span>` : ''}
+                  ${(scan.glAccountAiSuggestedCode && scan.glAccountAiSuggestedCode !== scan.suggestedAccounts?.debitAccountCode) ? `<button type="button" onclick="Page.applyAiDebitAccount('${Layout.esc(scan.glAccountAiSuggestedCode)}')" style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:5px;padding:1px 8px;white-space:nowrap;cursor:pointer" title="AI เสนอผังนี้ (confidence ต่ำกว่าเกณฑ์ระบบเลยไม่เลือกให้อัตโนมัติ) — กดเพื่อใช้ของ AI">🤖 ใช้ของ AI: ${Layout.esc(scan.glAccountAiSuggestedCode)}</button>` : ''}
+                </div>
               </div>
               <div class="review-field">
                 <label>บัญชีเครดิต</label>
