@@ -444,6 +444,97 @@ public class PdpaDataSubjectRequest : TenantEntity
     public string? RejectionReason { get; set; }
 }
 
+// ===== PDPA Wave 3: RoPA, Consent, PiiAccessLog, Breach =====
+
+/// <summary>RoPA (Record of Processing Activity) ตาม PDPA ม.39 — บันทึก
+/// กิจกรรมการประมวลผลข้อมูลส่วนบุคคลของบริษัท. ต้องมีไว้แสดงเมื่อ PDPC
+/// ขอตรวจ. แต่ละ row = 1 กิจกรรม (เช่น "จัดเก็บข้อมูลพนักงานเพื่อจ่ายเงินเดือน",
+/// "เก็บลูกค้าเพื่อออกใบเสร็จ"). ต้องระบุ: วัตถุประสงค์, ฐานทางกฎหมาย,
+/// ประเภทข้อมูล, ผู้รับ, ระยะเวลาเก็บ.</summary>
+public class PdpaProcessingActivity : TenantEntity
+{
+    /// <summary>วัตถุประสงค์ของการประมวลผล (เช่น "จ่ายเงินเดือนพนักงาน")</summary>
+    public string Purpose { get; set; } = null!;
+    /// <summary>ฐานทางกฎหมาย — Contract / LegalObligation / LegitimateInterest /
+    /// Consent / VitalInterest / PublicInterest (ม.24)</summary>
+    public string LegalBasis { get; set; } = null!;
+    /// <summary>ประเภทข้อมูล (comma-separated): Name, CitizenId, Email, Phone, BankAccount, Salary</summary>
+    public string DataCategories { get; set; } = null!;
+    /// <summary>ระยะเก็บ (เช่น "5 ปีหลังจากออกจากงาน")</summary>
+    public string RetentionPeriod { get; set; } = null!;
+    /// <summary>ผู้รับ/แชร์ข้อมูล (comma-separated): สรรพากร, ประกันสังคม, ธนาคาร, บริษัทแม่</summary>
+    public string? Recipients { get; set; }
+    public bool TransfersOutsideThailand { get; set; }
+    public string? TransferSafeguards { get; set; }
+    public string? Notes { get; set; }
+    public DateTime LastReviewedAt { get; set; } = DateTime.UtcNow;
+    public string? LastReviewedBy { get; set; }
+}
+
+/// <summary>Consent record (ม.19, 22) — เก็บความยินยอมการใช้ข้อมูล. ต้อง
+/// บันทึก purpose + version + evidence (hash ของหลักฐาน) เพื่อพิสูจน์ตอน
+/// PDPC ตรวจ. ถอนความยินยอม → WithdrawnAt มีค่า → หยุดใช้ข้อมูลทันที.</summary>
+public class PdpaConsentRecord : TenantEntity
+{
+    /// <summary>เจ้าของข้อมูล (User หรือ Contact); ระบบ link อย่างใดอย่างหนึ่ง</summary>
+    public Guid? SubjectUserId { get; set; }
+    public Guid? SubjectContactId { get; set; }
+    public string? SubjectContact { get; set; }        // email/phone fallback
+    public string Purpose { get; set; } = null!;       // ส่งโฆษณา / รับข่าวสาร / แชร์ไปบริษัทแม่
+    public string PolicyVersion { get; set; } = "1.0";
+    public DateTime GrantedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? WithdrawnAt { get; set; }
+    public string? WithdrawnReason { get; set; }
+    /// <summary>SHA-256 hash ของหลักฐาน (HTML ฟอร์ม / SMS confirmation / email)</summary>
+    public string? EvidenceHash { get; set; }
+    public string? Channel { get; set; }               // web-form / email / sms / paper
+    public string? IpAddress { get; set; }
+}
+
+/// <summary>PiiAccessLog (ม.37(4)) — บันทึก who-accessed-what PII event-style.
+/// AuditLog เก็บแค่ "การเปลี่ยนแปลง" (write); PiiAccessLog เก็บการ "อ่าน"
+/// PII (เช่น HR เปิดดูเลขบัตรประชาชนพนักงาน). เก็บ ≥ 1 ปี.</summary>
+public class PdpaPiiAccessLog : TenantEntity
+{
+    public Guid ActorUserId { get; set; }
+    public string ActorEmail { get; set; } = null!;
+    /// <summary>Subject entity: "Employee", "Contact", "User"</summary>
+    public string SubjectType { get; set; } = null!;
+    public Guid SubjectId { get; set; }
+    /// <summary>Field name ที่อ่าน (เช่น "CitizenId", "BankAccountNumber") —
+    /// comma-separated ถ้าหลาย field ในการเปิดเดียวกัน</summary>
+    public string FieldName { get; set; } = null!;
+    public string Operation { get; set; } = "Read";    // Read | Export | View-Masked
+    public string Purpose { get; set; } = null!;       // เหตุผลการเข้าถึง
+    public DateTime At { get; set; } = DateTime.UtcNow;
+    public string? IpAddress { get; set; }
+    public string? UserAgent { get; set; }
+}
+
+/// <summary>PDPA breach incident (ม.37(4)) — บันทึกเหตุการณ์ข้อมูลรั่ว/
+/// ถูกเข้าถึงโดยมิชอบ. ต้องแจ้ง PDPC ภายใน 72 ชม. นับจากตรวจพบ; ระบบ
+/// คำนวณ NotifyPdpcDueBy = DetectedAt + 72h + alert ถ้าใกล้/เกินกำหนด.</summary>
+public class PdpaBreachIncident : TenantEntity
+{
+    public string IncidentNumber { get; set; } = null!;
+    public DateTime DetectedAt { get; set; } = DateTime.UtcNow;
+    public DateTime NotifyPdpcDueBy { get; set; }      // = DetectedAt + 72h
+    public string Severity { get; set; } = "Medium";   // Low / Medium / High / Critical
+    public string Description { get; set; } = null!;
+    /// <summary>ประเภทข้อมูลที่รั่ว (comma): Name, CitizenId, BankAccount, Salary</summary>
+    public string AffectedDataCategories { get; set; } = null!;
+    public int? AffectedSubjectsCount { get; set; }
+    /// <summary>"Detected" → "Investigating" → "NotifiedPdpc" → "NotifiedSubjects" → "Closed"</summary>
+    public string Status { get; set; } = "Detected";
+    public DateTime? PdpcNotifiedAt { get; set; }
+    public string? PdpcReferenceNumber { get; set; }
+    public DateTime? SubjectsNotifiedAt { get; set; }
+    public string? Mitigation { get; set; }
+    public string? RootCause { get; set; }
+    public Guid? ReportedByUserId { get; set; }
+    public DateTime? ClosedAt { get; set; }
+}
+
 /// <summary>
 /// Bill of Materials (BOM) — for SMEs that manufacture or assemble.
 /// One parent Product (the finished good) maps to N component products

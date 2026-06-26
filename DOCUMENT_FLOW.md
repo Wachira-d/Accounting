@@ -651,11 +651,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API = web UI:_
-_SanitizeVatSplitArtifacts; AutoCreate delegate; DRAFT- placeholder; แหล่งเงิน_
-_3-layer + ReclassifyPaymentSourceAsync. รอบ 14: ประกันสังคมครบวงจร —_
-_SettleSocialSecurityAsync (Dr 21815/Cr Bank + late fee §49), floor 1,650,_
-_กองทุนเงินทดแทน กท.20ก, สปส.1-03/6-09 export + ComplianceFiling deadline tracker)._
+_Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
+_DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
+_floor 1,650, กท.20ก, สปส.1-03/6-09._
+_รอบ 15 (compliance + audit-grade): §82/3 block+reclassify, §82/5(6) keyword_
+_car/fuel, §81/1 VAT-reg warning, PII encrypt+ (Bank/SSN), audit-log DB trigger,_
+_§86/4 hard-block opt-in, ภ.ง.ด.51 half-year CIT (SME bracket),_
+_PDPA Wave 3: RoPA + Consent + PiiAccessLog + Breach (72h alert)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 
