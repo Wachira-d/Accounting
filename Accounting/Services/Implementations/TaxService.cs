@@ -121,11 +121,18 @@ public partial class TaxService : ITaxService
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
         var companyVatRate = company?.VatRate ?? 7m;
 
+        // ✅ Filter by TaxPointDate (สอดคล้องกับ §78/§78/1/§82/3) ไม่ใช่
+        // DocumentDate — ใบสำคัญจ่ายที่จ่าย มิ.ย. แต่อ้างใบกำกับซื้อ พ.ค.
+        // ต้องลง ภพ.30 งวด พ.ค. (= วันที่ใบกำกับของผู้ขาย) ไม่ใช่ มิ.ย.
+        // (= วันจ่าย). TaxPointDate snapshot ตอน approve ผ่าน TaxPointResolver
+        // = MIN(SupplierTaxInvoiceDate, PaymentDate, DocumentDate, ...).
+        // Fallback DocumentDate สำหรับเอกสารเก่าที่ approve ก่อนเพิ่ม snapshot.
         var docs = await _db.Documents
             .Include(d => d.Lines)
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
+                && (d.TaxPointDate ?? d.DocumentDate) >= startDate
+                && (d.TaxPointDate ?? d.DocumentDate) <= endDate
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.VatAmount != 0)
             .ToListAsync();
@@ -156,7 +163,7 @@ public partial class TaxService : ITaxService
                 && d.IsDeposit && d.DepositOutputVatDeferred
                 && d.DepositOutputVatRecognizedAt != null
                 && d.DepositOutputVatRecognizedAt >= startDate && d.DepositOutputVatRecognizedAt <= endDate
-                && (d.DocumentDate < startDate || d.DocumentDate > endDate)
+                && ((d.TaxPointDate ?? d.DocumentDate) < startDate || (d.TaxPointDate ?? d.DocumentDate) > endDate)
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.VatAmount != 0)
             .ToListAsync();
@@ -217,7 +224,7 @@ public partial class TaxService : ITaxService
                     LineOrder = lineOrder++,
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
-                    TransactionDate = doc.DocumentDate,
+                    TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                     Description = doc.DocumentNumber,
                     IncomeAmount = doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
@@ -249,7 +256,7 @@ public partial class TaxService : ITaxService
                 }
                 var taxPoint = (doc.IsDeposit && doc.DepositOutputVatDeferred)
                     ? doc.DepositOutputVatRecognizedAt!.Value
-                    : doc.DocumentDate;
+                    : (doc.TaxPointDate ?? doc.DocumentDate);
                 outputVat += doc.VatAmount;
                 report.Lines.Add(new TaxReportLine
                 {
@@ -295,7 +302,7 @@ public partial class TaxService : ITaxService
                     LineOrder = lineOrder++,
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
-                    TransactionDate = doc.DocumentDate,
+                    TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                     Description = $"{label} {doc.DocumentNumber}",
                     IncomeAmount = -doc.SubTotal,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
@@ -322,7 +329,7 @@ public partial class TaxService : ITaxService
                     {
                         TaxReportId = report.Id, LineOrder = lineOrder++,
                         TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
-                        TransactionDate = doc.DocumentDate,
+                        TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"[ใบเพิ่มหนี้-ภาษีซื้อ] {doc.DocumentNumber}",
                         IncomeAmount = doc.SubTotal, TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = doc.VatAmount, DocumentId = doc.Id, IncomeTypeCode = "INPUT"
@@ -335,7 +342,7 @@ public partial class TaxService : ITaxService
                     {
                         TaxReportId = report.Id, LineOrder = lineOrder++,
                         TaxPayerId = doc.Contact?.TaxId, TaxPayerName = doc.Contact?.Name ?? "",
-                        TransactionDate = doc.DocumentDate,
+                        TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"[ใบเพิ่มหนี้-ภาษีขาย] {doc.DocumentNumber}",
                         IncomeAmount = doc.SubTotal, TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = doc.VatAmount, DocumentId = doc.Id
@@ -402,7 +409,7 @@ public partial class TaxService : ITaxService
                         LineOrder = lineOrder++,
                         TaxPayerId = doc.Contact?.TaxId,
                         TaxPayerName = doc.Contact?.Name ?? "",
-                        TransactionDate = doc.DocumentDate,
+                        TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = desc,
                         IncomeAmount = doc.SubTotal,
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
@@ -423,7 +430,7 @@ public partial class TaxService : ITaxService
                         LineOrder = lineOrder++,
                         TaxPayerId = doc.Contact?.TaxId,
                         TaxPayerName = doc.Contact?.Name ?? "",
-                        TransactionDate = doc.DocumentDate,
+                        TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"🚫 [ภาษีซื้อต้องห้าม §82/5] {doc.DocumentNumber} — ไม่นำมาคำนวณ ภพ.30",
                         IncomeAmount = 0,
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
@@ -634,7 +641,7 @@ public partial class TaxService : ITaxService
                     LineOrder = lineOrder++,
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
-                    TransactionDate = doc.DocumentDate,
+                    TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                     Description = line.Description,
                     IncomeAmount = line.Amount,
                     TaxRate = whtRate,
@@ -1376,7 +1383,7 @@ public partial class TaxService : ITaxService
             LineOrder = nextOrder,
             TaxPayerId = doc.Contact?.TaxId,
             TaxPayerName = doc.Contact?.Name ?? "",
-            TransactionDate = doc.DocumentDate,
+            TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
             Description = desc,
             IncomeAmount = doc.SubTotal,
             TaxRate = taxRate,
