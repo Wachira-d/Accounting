@@ -103,6 +103,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   เว็บ (ขาด WHT base reconstruct, supplier-invoice ref ภพ.30, bank/payment
   account, sales-side contact, PO linkage, CertInLieu fields, line reconcile,
   GL feedback, RD-compliance). ตอนนี้ data point ทุกตัวตรงกัน.
+- **DRAFT- placeholder (กฎ §86/4)**: `CreateDocumentFromScanAsync` ตั้งเลข
+  เริ่มต้นเป็น `DRAFT-{guid14}` เหมือน `DocumentService.CreateDocumentAsync`
+  → เลขจริงออกตอน Approve เท่านั้น (`ApproveDocumentAsync` line 1828 regen
+  จาก `doc.DocumentDate` ที่ตอนนั้น). กัน:
+  - **DocumentNumber↔DocumentDate desync** เคสที่ user แก้วันที่ตอน review
+    แล้วเลขที่ออกไปคาวันเก่า (artifact ก่อน TZ fix หรือก่อนแก้ DocumentDate)
+  - **Sequence gap** ตอนลบ Draft (เลขจริงไม่เคยออก → ลบได้ปลอดภัย)
 - **Line reconcile (Case A/B/C/D)** ใน `CreateDocumentFromScanAsync` (ใช้ร่วม
   ทั้ง 2 path) — reconcile line amounts กับ header subtotal/total ก่อนสร้าง
   `DocumentLine`:
@@ -624,10 +631,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ---
 
 _Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API = web UI:_
-_SanitizeVatSplitArtifacts ตัด "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)" + ยุบบรรทัดซ้ำ +_
-_drop phantom remainder; AutoCreateDocumentAsync delegate ไป_
-_CreateDocumentFromScanAsync ทั้งหมด — ลบ path คู่ขนาน, ทุก data point ตรงกัน:_
-_WHT base, supplier-invoice ภพ.30, bank/payment account, line reconcile, GL feedback)._
+_SanitizeVatSplitArtifacts ตัด "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)"; AutoCreate_
+_delegate ไป CreateDocumentFromScanAsync — ลบ path คู่ขนาน;_
+_CreateDocumentFromScanAsync ใช้ DRAFT- placeholder ตามกฎ §86/4 → เลขออก_
+_ตอน Approve เท่านั้น กัน DocumentNumber↔DocumentDate desync + sequence gap)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 
