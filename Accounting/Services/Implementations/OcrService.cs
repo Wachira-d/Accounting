@@ -2390,12 +2390,39 @@ public class OcrService : IOcrService
             return emptyDesc && isPhantom;
         });
 
-        // 3) ยุบบรรทัดที่ description ตรงกัน (เคสปกติของ VAT split: 2 บรรทัด
-        //    เป็นสินค้าเดียวกันถูกแยกตาม VATable/Non-VATable). Merge:
-        //       qty   = sum
-        //       amount = sum
-        //       unit_price = amount / qty (ถ้า qty > 0)
-        //    เก็บลำดับเดิมไว้ (LINQ GroupBy ไม่ stable → ทำเองด้วย dictionary).
+        // 3) ⭐ FOLD phantom remainder (≤ ฿1) เข้าบรรทัดใหญ่สุด — รักษายอดรวม
+        //    เป๊ะ (description-INDEPENDENT). นี่คือต้นเหตุหลักของ "ส่วนต่าง 0.02":
+        //    external OCR คำนวณฐาน VAT ย้อนกลับ (VAT/0.07) ได้ 4,691.57 แล้ว
+        //    โยนเศษ 4,691.59−4,691.57 = 0.02 เป็น line "ส่วนไม่มีภาษี". เศษนี้
+        //    ไม่ใช่สินค้าจริง (ขายของ 2 สตางค์ไม่มีจริง) → fold เข้าบรรทัดหลัก.
+        //    ทำ "ก่อน" merge by description เพื่อไม่ให้ qty เพิ่มหลอก (1+1=2).
+        //    เงื่อนไข fold: มี ≥ 2 บรรทัด + บรรทัดนี้ amount > 0 และ ≤ ฿1 +
+        //    unit_price ≤ ฿1 + มีบรรทัดอื่นที่ใหญ่กว่าให้ fold เข้า.
+        if (data.Items.Count >= 2)
+        {
+            var phantoms = data.Items.Where(it =>
+                (it.Amount ?? 0m) > 0m
+                && (it.Amount ?? 0m) <= PHANTOM_THRESHOLD
+                && (it.UnitPrice ?? 0m) <= PHANTOM_THRESHOLD).ToList();
+            var reals = data.Items.Where(it => !phantoms.Contains(it)).ToList();
+            if (phantoms.Count > 0 && reals.Count > 0)
+            {
+                // fold ยอด phantom เข้าบรรทัด "amount ใหญ่สุด" (บรรทัดสินค้าจริง)
+                var main = reals.OrderByDescending(it => it.Amount ?? 0m).First();
+                var foldAmt = phantoms.Sum(p => p.Amount ?? 0m);
+                main.Amount = (main.Amount ?? 0m) + foldAmt;
+                // unit_price ปรับตาม qty เดิม (ไม่เพิ่ม qty) — ยอด/หน่วยจะ
+                // = amount ใหม่ / qty เดิม. qty 1 → unit_price = amount.
+                if (main.Quantity is decimal mq && mq > 0m && main.Amount is decimal ma)
+                    main.UnitPrice = Math.Round(ma / mq, 2);
+                foreach (var p in phantoms) data.Items.Remove(p);
+            }
+        }
+
+        // 4) ยุบบรรทัดที่ description ตรงกันจริง ๆ (สินค้าซ้ำ — เคส VAT split
+        //    ที่ external แตกสินค้าเดียวเป็น 2 บรรทัดเท่า ๆ กัน). หลัง fold
+        //    phantom แล้ว ที่เหลือคือบรรทัดสินค้าจริง — merge ตาม description.
+        //    เก็บลำดับเดิม (LINQ GroupBy ไม่ stable → dictionary).
         var seen = new Dictionary<string, OcrExtractedLineItem>(StringComparer.OrdinalIgnoreCase);
         var merged = new List<OcrExtractedLineItem>();
         foreach (var item in data.Items)
@@ -2403,18 +2430,15 @@ public class OcrService : IOcrService
             var key = (item.Description ?? "").Trim();
             if (string.IsNullOrEmpty(key))
             {
-                merged.Add(item); // ปล่อยผ่าน — จะไม่ถูก merge
+                merged.Add(item);
                 continue;
             }
             if (seen.TryGetValue(key, out var existing))
             {
-                var addQty = item.Quantity ?? 0m;
-                var addAmt = item.Amount ?? 0m;
-                existing.Quantity = (existing.Quantity ?? 0m) + addQty;
-                existing.Amount = (existing.Amount ?? 0m) + addAmt;
+                existing.Quantity = (existing.Quantity ?? 0m) + (item.Quantity ?? 0m);
+                existing.Amount = (existing.Amount ?? 0m) + (item.Amount ?? 0m);
                 if (existing.Quantity is decimal q && q > 0m && existing.Amount is decimal a)
                     existing.UnitPrice = Math.Round(a / q, 2);
-                // SuggestedAccountCode/ProjectId — เก็บของ existing ไว้
                 if (string.IsNullOrEmpty(existing.SuggestedAccountCode)
                     && !string.IsNullOrEmpty(item.SuggestedAccountCode))
                     existing.SuggestedAccountCode = item.SuggestedAccountCode;
@@ -2424,18 +2448,6 @@ public class OcrService : IOcrService
                 seen[key] = item;
                 merged.Add(item);
             }
-        }
-
-        // 4) Final phantom-remainder drop — หลัง merge แล้วยังเหลือบรรทัดที่
-        //    เป็น noise (amount ≤ ฿1 + qty 0/1) จะหลุดมาเพราะ description
-        //    ไม่ตรงกับใครให้ merge ได้. ทิ้งเฉพาะกรณีมีหลายบรรทัด — ใบบรรทัด
-        //    เดียวต่อให้ ฿0 ก็ปล่อยไว้ (อาจเป็นใบบริการที่ผู้ใช้แก้ตอน review).
-        if (merged.Count > 1)
-        {
-            merged.RemoveAll(it =>
-                (it.Amount ?? 0m) <= PHANTOM_THRESHOLD
-                && (it.UnitPrice ?? 0m) <= PHANTOM_THRESHOLD
-                && (it.Quantity ?? 1m) <= 1m);
         }
 
         data.Items.Clear();
@@ -3827,6 +3839,18 @@ public class OcrService : IOcrService
             }
         }
 
+        // ⭐ Re-sanitize ตอน create-document ด้วย (ไม่ใช่แค่ตอน scan) — กันเคส
+        // scan เก่าที่ทำก่อนมี sanitizer: ExtractedItemsJson ฝัง split
+        // "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)" + เศษ 0.02 ไว้แล้ว → fold/merge ที่นี่
+        // ทำให้ document ที่สร้างจาก scan เก่าก็ได้บรรทัดสะอาด. Idempotent.
+        if (items.Count > 0)
+        {
+            var tmpSan = new OcrExtractedData();
+            foreach (var it in items) tmpSan.Items.Add(it);
+            SanitizeVatSplitArtifacts(tmpSan);
+            items = tmpSan.Items.ToList();
+        }
+
         if (items.Count > 0)
         {
             // 🔧 Reconcile line amounts — แยก 4 case (เลิกใส่ "ส่วนลด" มั่วๆ
@@ -4090,6 +4114,18 @@ public class OcrService : IOcrService
             {
                 _logger.LogWarning(ex, "OCR ExtractedItemsJson parse failed for scan {ScanId}", result.Id);
             }
+        }
+
+        // ⭐ Re-sanitize ตอน create-document ด้วย (ไม่ใช่แค่ตอน scan) — กันเคส
+        // scan เก่าที่ทำก่อนมี sanitizer: ExtractedItemsJson ฝัง split
+        // "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)" + เศษ 0.02 ไว้แล้ว → fold/merge ที่นี่
+        // ทำให้ document ที่สร้างจาก scan เก่าก็ได้บรรทัดสะอาด. Idempotent.
+        if (items.Count > 0)
+        {
+            var tmpSan = new OcrExtractedData();
+            foreach (var it in items) tmpSan.Items.Add(it);
+            SanitizeVatSplitArtifacts(tmpSan);
+            items = tmpSan.Items.ToList();
         }
 
         if (items.Count > 0)
