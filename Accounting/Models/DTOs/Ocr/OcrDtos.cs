@@ -63,12 +63,17 @@ public record OcrResultResponse(
     string? LinkedPurchaseOrderNumber = null,
     /// <summary>Header discount (ส่วนลด) read off the paper.</summary>
     decimal? ExtractedDiscountAmount = null,
-    /// <summary>True when DeepSeek (the connected AI provider) actually
-    /// classified the expense/GL account on this scan — drives the honest
-    /// "🤖 AI แนะนำ" vs "ระบบแนะนำ (rule-based)" badge in the review UI.
-    /// False means the suggestion came purely from the keyword/statistical
-    /// learners (no paid AI call, or the local model short-circuited).</summary>
-    bool GlAccountUsedAi = false);
+    /// <summary>True เมื่อ AI's GL answer ถูก "นำมาใช้จริง" บน suggestedAccounts
+    /// (ผ่าน confidence guard ≥0.70 + อยู่ใน CoA) — ขับป้ายซื่อสัตย์
+    /// "🤖 AI แนะนำ". False = ค่าที่แสดงมาจาก local/rule (แม้ AI ถูกเรียกแต่ถูก
+    /// ปฏิเสธเพราะ confidence ต่ำ/ไม่อยู่ในผัง).</summary>
+    bool GlAccountUsedAi = false,
+    /// <summary>ผัง GL ที่ AI เสนอ (primary) — เก็บไว้แม้ถูกปฏิเสธ เพื่อให้ UI
+    /// โชว์ "AI เสนอ X (มั่นใจ Y%) แต่ระบบใช้ Z แทน" + ให้ผู้ใช้กดเลือกของ AI
+    /// ได้เอง. null = AI ไม่ถูกเรียก หรือไม่เสนอผัง.</summary>
+    string? GlAccountAiSuggestedCode = null,
+    string? GlAccountAiSuggestedName = null,
+    decimal? GlAccountAiConfidence = null);
 
 /// <summary>One open PO of the matched vendor — what the picker modal
 /// renders. Lines come back inline so the operator can map OCR ↔ PO line

@@ -1012,14 +1012,21 @@ public class OcrService : IOcrService
                             extractedData.DebitAccountCode, localConf,
                             glCts.Token);
 
-                        // Record the trail regardless of whether we applied it, so
-                        // the review UI shows an honest badge and the user's final
-                        // pick can be posted back as a training signal.
-                        scanResult.GlAccountUsedAi = glResult.UsedAi;
+                        // Record the trail. FeedbackId เก็บเสมอ (training signal).
+                        // เก็บ AI primary + confidence แม้ถูกปฏิเสธ → review UI
+                        // โชว์ "AI เสนอ X (conf Y%)" ให้ผู้ใช้เห็น + เลือกเองได้.
                         scanResult.GlAccountAiFeedbackId = glResult.FeedbackId;
+                        if (glResult.UsedAi && !string.IsNullOrEmpty(glResult.Answer))
+                        {
+                            scanResult.GlAccountAiSuggestedCode = glResult.Answer;
+                            scanResult.GlAccountAiConfidence = glResult.Confidence;
+                        }
 
                         // Apply only when AI actually ran, was confident, and named
                         // a real account in THIS company's CoA (anti-hallucination).
+                        // GlAccountUsedAi = "AI's answer was APPLIED" — ป้ายซื่อสัตย์:
+                        // true เฉพาะตอนค่าที่แสดงมาจาก AI จริง ไม่ใช่แค่ AI ถูกเรียก.
+                        scanResult.GlAccountUsedAi = false;
                         if (glResult.UsedAi && !string.IsNullOrEmpty(glResult.Answer)
                             && (glResult.Confidence ?? 0m) >= 0.70m)
                         {
@@ -1032,6 +1039,7 @@ public class OcrService : IOcrService
                                 extractedData.DebitAccountCode = aiAcct.AccountCode;
                                 extractedData.DebitAccountName = aiAcct.AccountName;
                                 extractedData.FieldConfidence["DebitAccount"] = (double)(glResult.Confidence ?? 0.7m);
+                                scanResult.GlAccountUsedAi = true;   // ใช้ AI จริง → ป้าย AI ถูกต้อง
                                 extractedData.ReasoningTrace.Add(
                                     $"[AI/DeepSeek] จัดหมวดบัญชี → {aiAcct.AccountCode} {aiAcct.AccountName} "
                                     + $"(confidence {(glResult.Confidence ?? 0):P0})"
@@ -1039,6 +1047,14 @@ public class OcrService : IOcrService
                                 foreach (var risk in glResult.Risks)
                                     extractedData.ReasoningTrace.Add("[AI risk] " + risk);
                             }
+                        }
+                        // AI ถูกเรียกแต่ confidence ต่ำ/ไม่อยู่ในผัง → log เหตุผล
+                        if (!scanResult.GlAccountUsedAi && glResult.UsedAi
+                            && !string.IsNullOrEmpty(glResult.Answer))
+                        {
+                            extractedData.ReasoningTrace.Add(
+                                $"[AI/DeepSeek] เสนอ {glResult.Answer} (confidence {(glResult.Confidence ?? 0):P0}) "
+                                + "— ต่ำกว่าเกณฑ์ 70% หรือไม่อยู่ในผังบัญชี → ใช้ผลของ local model แทน");
                         }
                     }
                 }
@@ -4796,7 +4812,12 @@ public class OcrService : IOcrService
             LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
             LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber,
             ExtractedDiscountAmount: data?.DiscountAmount ?? r.ExtractedDiscountAmount,
-            GlAccountUsedAi: r.GlAccountUsedAi);
+            GlAccountUsedAi: r.GlAccountUsedAi,
+            // ชื่อบัญชี — UI resolve เองจาก CoA ที่โหลดไว้ (MapToResponse sync,
+            // หลีกเลี่ยง DB call ต่อ scan)
+            GlAccountAiSuggestedCode: r.GlAccountAiSuggestedCode,
+            GlAccountAiSuggestedName: null,
+            GlAccountAiConfidence: r.GlAccountAiConfidence);
     }
 
     private static OcrQualityGradeDto? BuildQualityDto(OcrScanResult r)
