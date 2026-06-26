@@ -7,8 +7,11 @@ public interface IPayrollService
 {
     // Employees
     Task<EmployeeResponse> CreateEmployeeAsync(Guid companyId, CreateEmployeeRequest request);
-    Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId);
-    Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request);
+    /// <summary>includePii=true เปิด field PII (CitizenId/Phone/Email) แบบ raw
+    /// — ตั้งเฉพาะเมื่อ caller มี permission "pii:view". Default mask ทุก field
+    /// ตาม PDPA ม.26 (deny by default).</summary>
+    Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId, bool includePii = false);
+    Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false);
     Task<EmployeeResponse> UpdateEmployeeAsync(Guid companyId, Guid employeeId, UpdateEmployeeRequest request);
     Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate);
 

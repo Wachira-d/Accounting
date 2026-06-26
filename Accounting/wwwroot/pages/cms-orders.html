@@ -379,16 +379,16 @@
             <h4 style="margin-top:16px;margin-bottom:6px;font-size:13px">💳 การชำระเงิน (${o.payments.length} รายการ)</h4>
             <div style="display:grid;gap:10px">
               ${o.payments.map(p => {
-                const cls = p.status === 'Paid' ? 'pill-paid' : p.status === 'Pending' ? 'pill-due' : 'pill-overdue';
+                const cls = (p.status === 'Completed' || p.status === 'Paid') ? 'pill-paid' : p.status === 'Pending' ? 'pill-due' : 'pill-overdue';
                 return `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px 12px;font-size:12px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center">
                   <div>
                     <div style="font-weight:600">${Layout.esc(p.paymentMethod || '-')} · <span class="status-pill ${cls}">${Layout.esc(p.status||'Pending')}</span></div>
                     <div style="color:var(--gray-600);margin-top:2px">฿${Number(p.amount||0).toLocaleString('th-TH',{minimumFractionDigits:2})} ${p.reference?'· '+Layout.esc(p.reference):''}</div>
                     ${p.paidAt?`<div style="color:#059669;font-size:11px">ยืนยันเมื่อ ${Layout.date(p.paidAt)}</div>`:''}
                   </div>
-                  <div style="display:flex;gap:6px;align-items:center">
+                  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                     ${p.slipUrl ? `<a href="${Layout.esc(p.slipUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูสลิป">🧾 ดูสลิป</a>` : ''}
-                    ${p.status === 'Pending' ? `<span style="font-size:11px;color:var(--gray-500)">ตรวจสลิปแล้ว → กดยืนยันคำสั่งซื้อด้านล่าง</span>` : ''}
+                    ${p.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirmPayment('${o.id}', '${p.id}')" title="ยืนยันรับเงินจริง → ระบบจะ sync ERP + post JE + ตัด stock + ออก e-Tax ในคลิกเดียว">✓ ยืนยันรับเงิน + ลงบัญชี</button>` : ''}
                   </div>
                 </div>`;
               }).join('')}
@@ -402,6 +402,17 @@
             </div>` : ''}`;
           Layout.openModal('orderModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async confirmPayment(orderId, paymentId) {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm('ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะ:\n• ผูกออเดอร์เข้ากับเอกสารบัญชี (ใบกำกับ/ใบแจ้งหนี้)\n• อนุมัติเอกสาร + ลง JE (Dr ธนาคาร / Cr ขาย + Cr VAT)\n• บันทึกรายการรับเงิน (เคลียร์ลูกหนี้)\n• ตัด stock จริง\n• ออก e-Tax XML (ถ้าเปิดใน Settings)')) return;
+        try {
+          await api.cmsConfirmOrderPayment(this.siteId, orderId, paymentId);
+          Layout.toast('ยืนยันรับเงิน + ลงบัญชีสำเร็จ', 'success');
+          Layout.closeModal('orderModal');
+          await this.load();
+          await this.loadStats();
+        } catch (e) { Layout.toast('ยืนยันไม่สำเร็จ: ' + e.message, 'error', 8000); }
       },
       async advance(orderId, nextStatus) {
         const api = Layout.api(); if (!api) return;

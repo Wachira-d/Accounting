@@ -208,6 +208,27 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxXmlOutputPath" varchar(500) NULL;
             """,
 
+            // ===== Recurring late-fee accrual policy =====
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeRatePerDay" numeric(8,4) NOT NULL DEFAULT 0.05;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeGraceDays" int NOT NULL DEFAULT 7;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeMaxPercent" numeric(5,2) NULL DEFAULT 20.0;""",
+
+            // ===== POS deposit support — IsDeposit + DepositRealizedAt =====
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "IsDeposit" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "DepositRealizedAt" timestamp with time zone NULL;""",
+
+            // ===== PDPA ม.26 — widen Employee PII columns เพื่อรองรับ ciphertext =====
+            // (Base64 of nonce 12 + ciphertext 13 + tag 16 = ~56 chars + prefix)
+            """ALTER TABLE "Employees" ALTER COLUMN "CitizenId" TYPE varchar(200);""",
+            """ALTER TABLE "Employees" ALTER COLUMN "TaxId" TYPE varchar(200);""",
+            """ALTER TABLE "Employees" ALTER COLUMN "PassportNumber" TYPE varchar(200);""",
+
+            // ===== CompanySettings: §82/5(6) vehicle dealer override =====
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "IsVehicleDealer" boolean NOT NULL DEFAULT false;
+            """,
+
             // ===== Companies: IndustryType =====
             """
             ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "IndustryType" integer NOT NULL DEFAULT 0;
@@ -1120,6 +1141,13 @@ public static class DatabaseMigrationHelper
             """,
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "AgingLastEvaluatedAt" timestamp with time zone NULL;
+            """,
+            // OverdueDunningJob — track last dunning send + level (1/2/3)
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "LastDunningSentAt" timestamp with time zone NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "LastDunningLevel" int NULL;
             """,
             // Undue Input VAT (§82/3) — PV/PurchaseInvoice ที่ใบกำกับยังไม่ครบ §86/4
             // → VAT post เข้า 11640 ก่อน, รอ user มาแก้ครบแล้ว gen adjusting JE
@@ -3204,6 +3232,67 @@ public static class DatabaseMigrationHelper
             // Document.ExchangeRate — multi-currency FX rate persisted per doc
             // so JE auto-post can convert non-THB amounts to THB consistently.
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NOT NULL DEFAULT 1;""",
+
+            // ===== Performance indexes (S5 sprint) — composite covering ที่
+            // ใช้บ่อยในรายงาน/หน้าเอกสาร/AR/AP/audit. WHERE !IsDeleted กรอง
+            // soft-delete รวด (Postgres bitmap-scan ใช้ได้ทันที) =====
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_Status_Date"
+                ON "Documents" ("CompanyId", "Status", "DocumentDate" DESC)
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_ContactId_Date"
+                ON "Documents" ("CompanyId", "ContactId", "DocumentDate" DESC)
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_RelatedDoc"
+                ON "Documents" ("CompanyId", "RelatedDocumentId")
+                WHERE "RelatedDocumentId" IS NOT NULL AND "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Documents_OutstandingAR"
+                ON "Documents" ("CompanyId", "DueDate")
+                WHERE "Status" IN (1,3,8) AND "BalanceDue" > 0 AND "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_DocumentLines_AccountId_Doc"
+                ON "DocumentLines" ("AccountId", "DocumentId")
+                WHERE "AccountId" IS NOT NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Payments_CompanyId_Document"
+                ON "Payments" ("CompanyId", "DocumentId")
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_JournalEntryLines_AccountId_Date"
+                ON "JournalEntryLines" ("AccountId", "JournalEntryId");
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CompanyId_EntityType_Time"
+                ON "AuditLogs" ("CompanyId", "EntityType", "Timestamp" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_TaxReportLines_DocumentId_Excluded"
+                ON "TaxReportLines" ("DocumentId", "IsExcluded")
+                WHERE "DocumentId" IS NOT NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_StockMovements_Company_Product_Date"
+                ON "StockMovements" ("CompanyId", "ProductId", "MovementDate" DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Contacts_Company_Active"
+                ON "Contacts" ("CompanyId")
+                WHERE "IsDeleted" = false;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Notifications_User_Unread"
+                ON "Notifications" ("UserId", "CreatedAt" DESC)
+                WHERE "IsRead" = false AND "IsDeleted" = false;
+            """,
 
             // ===== LineBindCodes — LINE bot user-to-account linking =====
             """

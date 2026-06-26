@@ -3483,6 +3483,11 @@
           whtRate: scan.whtRate || null,
           // OCR confidence + AI feedback IDs → frontend แสดง badge "🤖 AI"
           glAccountAiFeedbackId: scan.glAccountAiFeedbackId || null,
+          // Per-field confidence map (0..1) — documents form ใช้ highlight
+          // field ที่ confidence < 0.85 ด้วยกรอบเหลือง + tooltip "ตรวจสอบ
+          // อีกครั้ง" ตาม กฎเหล็ก #3 (OCR auto-fill ไม่ใช่ blank form)
+          fieldConfidence: scan.fieldConfidence || {},
+          overallConfidence: scan.confidence || null,
           // §82/5 — คำเตือนเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/ใบเสร็จ) → ฟอร์ม
           // แสดง banner + ไม่เปิดเคลมให้อัตโนมัติ
           inputVatClaimWarning: (() => {

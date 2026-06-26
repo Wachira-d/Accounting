@@ -71,7 +71,11 @@ public record UpdateCompanySettingsRequest(
 
     // Restrict HR approvals to the requester's direct manager (or
     // Owner / SystemAdmin override).
-    bool? EnforceManagerApproval = null);
+    bool? EnforceManagerApproval = null,
+
+    // §82/5(6) vehicle dealer override — บริษัทค้ารถ/อู่ซ่อม → ยกเว้น
+    // warning เมื่อ VAT ค่าน้ำมัน/ซ่อม/เช่ารถยนต์นั่ง (รถเป็น inventory).
+    bool? IsVehicleDealer = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -127,7 +131,11 @@ public record CompanySettingsResponse(
     // Per-company annual leave quota override (JSON by LeaveType).
     string? LeaveQuotasJson = null,
 
-    bool EnforceManagerApproval = false);
+    bool EnforceManagerApproval = false,
+
+    // §82/5(6) vehicle dealer override (default false → ระบบเตือนตาม
+    // ประกาศอธิบดี 42)
+    bool IsVehicleDealer = false);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

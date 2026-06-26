@@ -129,7 +129,50 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
   FileAttachment` (`CascadeAttachmentsAsync :3077`)
 
-### 2.5 Recurring
+### 2.5 CMS (เว็บไซต์ของฉัน) — Storefront commerce + booking
+- **Order flow** (`CmsCommerceService.cs`):
+  - Customer checkout → `SiteOrder` + upload สลิป → `RecordPaymentSlipAsync`
+    สร้าง `SiteOrderPayment` Status=`Pending`
+  - Admin/webhook ยืนยันรับเงิน → `ConfirmPaymentAsync` (`POST /orders/{id}/confirm-payment`)
+    ทำงาน 6 ขั้นรวด (idempotent):
+    1. `SiteOrderPayment.Status = Confirmed` + `Order.PaidAmount/PaidAt`
+    2. `SyncOrderToErpAsync` ถ้ายังไม่ sync — ใช้ `IDocumentService.CreateDocumentAsync`
+       (เลข gap-free §86/4, tax point, VAT validation ครบ)
+    3. `IDocumentService.ApproveDocumentAsync` → auto-post JE
+       (Dr AR / Cr Revenue + Cr Output VAT 21911)
+    4. `IDocumentService.CreatePaymentAsync` → Dr Cash/Bank / Cr AR (เคลียร์ลูกหนี้)
+    5. `DeductStockAsync` — idempotent ตาม `line.StockDeducted` flag
+    6. `IEtaxInvoiceService.GenerateAsync` ถ้า `RequestTaxInvoice + EtaxEnabled`
+  - ทุก step fault-tolerant: ล้มเหลว → log + ไม่ rollback step ก่อนหน้า
+- **Booking flow** (`CmsBookingService.SyncBookingToErpAsync`):
+  - Map `BookingType` → DocumentType:
+    - `Lead/Appointment` → `Quotation` (Draft, รอ admin confirm)
+    - `Guaranteed` → `TaxInvoice` (Approved + JE auto)
+    - `PrePayment` → `Receipt` ที่ `IsDeposit=true` → Cr 217xx ขายรอรับรู้
+      + Cr 21911 VAT (§78/1 รับชำระแล้ว → เข้า ภพ.30 ทันที)
+      ต่อมา realize ด้วย `RealizeDepositAsync` ตัด 217xx → 41000
+- **Gap (ยัง TODO)**:
+  - Payment reconciliation (match `SiteOrderPayment.Reference` กับ bank statement)
+  - Webhook gateway (Stripe/PromptPay) → ตอนนี้ admin กดยืนยันสลิปเอง
+
+### 2.6 POS (Point of Sale)
+- **Method**: `PosService.CompleteOrderAsync` (`Services/Implementations/PosService.Orders.cs:908`)
+- **Auto JE ทันที** ตอน complete order (ไม่ผ่าน Draft):
+  - Dr Cash 1011 / Bank 1012 / Credit Card 1131 (ตาม PaymentMethod)
+  - Cr Sales Revenue 41000 (net of VAT)
+  - Cr Output VAT 21911 (7%)
+  - Cr Tip Liability 2160 (ถ้ามี)
+  - Dr COGS / Cr Inventory (สินค้าที่ track stock)
+- **Tax Invoice** (deferred): `IssueTaxInvoiceAsync` → สร้าง Document ใน
+  Status=Approved (กัน JE ซ้อน) + เรียก `EtaxInvoiceService`
+- **Refund/Void**: reverse JE + return stock
+- **Offline sync**: `SyncOfflineOrderAsync(ClientOrderId)` dedup
+- **Gap (ยัง TODO)**:
+  - Z-report consolidation (ปัจจุบัน 1 JE/order, ไม่มี shift-end batch)
+  - มัดจำ/booking (217xx flow ยังไม่ enabled ฝั่ง POS)
+  - WHT tip §50 ทวิ (เกิน 1,000/รอบ — niche)
+
+### 2.7 Recurring
 - **Service**: `RecurringTransactionService.cs:41`
 - ความถี่: `Daily / Weekly / BiWeekly / Monthly / Quarterly / SemiAnnual / Annual`
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
@@ -163,7 +206,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    ตาม พ.ร.บ.บัญชี ม.10 (ห้ามลบจริงก่อนหมดอายุ)
 6. **§65 ตรี** (`:1773`) — `ApplySection65TerAsync` → `doc.NonDeductibleAmount`
    + breakdown JSON (`NonDeductibleRuleJson`); ไหลเข้า ภ.ง.ด.50 ผ่าน
-   `TaxService.GenerateCitReport` (บวกกลับ)
+   `TaxService.GenerateCitReport` (บวกกลับ).
+   **§65 ตรี(4) ค่ารับรอง cap = per fiscal year** (กฎกระทรวง 143) —
+   `Section65TerValidator.Context.PriorYtdEntertainmentExpense` ส่ง YTD
+   ของเอกสารฝั่งซื้อ/ค่าใช้จ่าย Approved ที่ description มี "รับรอง" →
+   excess clamp ที่ใบปัจจุบันรับผิดชอบ. §82/5(6) vehicle warning bypass
+   เมื่อ `CompanySettings.IsVehicleDealer=true`.
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
@@ -192,8 +240,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - main line = บรรทัดแรกใน group ที่ description ไม่ใช่ auxiliary keyword
    - cost = sum ของทุก line ใน group (รวม aux)
    - asset Description log auxiliary breakdown ไว้ audit trail
+   - **AssetCode = "DRAFT-{guid:14}"** placeholder (ไม่กิน counter)
+     → user กดยืนยันใน `FixedAssetService.UpdateAsync` → generate
+     `FA-yyyyMM-####` จริง (gap-free, ลำดับตามเวลายืนยัน)
    - `Status = Active, NeedsReview = true` พร้อม suggested `UsefulLifeMonths`
      + depreciation method (`StraightLine` default, ที่ดิน → `None`)
+   - **Delete guard** (`FixedAssetService.DeleteAsync`):
+     • block ถ้า AccumulatedDepreciation > 0 หรือมี posted depreciation
+       → ต้อง Dispose/WriteOff
+     • block ถ้า `SourceDocumentId.Status` ไม่ใช่ Voided/Rejected → ต้อง
+       ยกเลิกเอกสารต้นทางก่อน (กัน orphan GL — Dr 12210 ใน JE ของใบยังอยู่
+       แต่ asset register หาย)
+   - **Void cascade** (`VoidDocumentAsync` step 7-asset): asset ของ doc ที่
+     `NeedsReview=true` + ไม่มี posted dep → ลบ inline (ไม่เรียก DeleteAsync
+     เพราะ source.Status ยังไม่ save), asset ที่ยืนยันแล้ว → log warning
+     ไม่ลบ ผู้ใช้ต้อง dispose/write-off เอง
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
@@ -267,6 +328,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   พร้อม `DepositOutputVatRecognizedAt = now`
 - **Refund**: `RefundDepositAsync` → reverse + ออกใบลดหนี้ภาษีขาย
 - **Apply**: `ApplyDepositToInvoiceAsync` (`:1389`) → ใน 1 transaction:
+  0. **FX guard**: ถ้า `invoice.Currency != deposit.Currency` หรือ
+     `|invoice.ExchangeRate − deposit.ExchangeRate| > 0.0001` → throw
+     (กัน FX silent corruption ตาม IAS 21 — ระบบยังไม่รองรับการบันทึก
+     gain/loss FX อัตโนมัติ user ต้องทำ JE manual หรือใช้มัดจำสกุลเดียวกัน)
   1. คำนวณ `vatPortion = deposit.VatAmount / deposit.TotalAmount`
   2. เรียก `RealizeDepositAsync` ด้วยฐานไม่รวม VAT (`amount × (1−vatPortion)`)
      → Dr 217xx ขายรอรับรู้ / Cr รายได้ + (ถ้า deferred) ย้าย 21913→21911
@@ -476,6 +541,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | §86/9–86/10 CN/DN | `CreditNote/DebitNote` flow | required `RelatedDocumentId` + `CreditNoteReason` (CN); cap ≤ original |
 | §78 / §78/1 tax point | `TaxPointResolver` | snapshot ตอน approve |
 | §65 ตรี รายจ่ายต้องห้าม | `Section65TerValidator` | `NonDeductibleAmount + RuleJson` → ภ.ง.ด.50 |
+| §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment of Approved docs → excess บวกกลับใบปัจจุบัน |
+| §82/5(6) vehicle dealer override | `CompanySettings.IsVehicleDealer` | bypass warning เมื่อรถเป็น inventory (ประกาศอธิบดี 42) |
+| F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` | cron 7 วัน re-compute SHA-256 → notify ถ้า tamper (พ.ร.บ.บัญชี ม.11 ทวิ) |
+| Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` | fail-fast ตอน Create/Update ก่อนรอ midnight cron — accountId ต้องอยู่ใน CoA, journal balance |
+| Reclassify line GL (post-approve) | `DocumentService.ReclassifyLineAccountAsync` | Expense/PI/PV เท่านั้น (TaxInvoice/Receipt/CN/DN ห้าม §86/4); post JE คู่ใหม่ Dr ผังใหม่/Cr ผังเก่า ลงงวดเดิม + update line.AccountId. gate: period Open + no downstream + no payment + no submitted ภพ.30 + no e-Tax submitted |
 | §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
 | §87/3 retention 5 ปี | `RetentionUntil` | ห้าม hard delete; soft + legal_hold |
 | §85/1 VAT threshold 1.8M | annual revenue check | warning "ต้องจด VAT ภายใน 30 วัน" |
@@ -531,8 +601,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-22 — รอบ 6 (e-Tax XML ยอดเงิน ex-VAT_
-_ครบ: line ChargeAmount/discount ถอด VAT + แก้ TaxBasis หักส่วนลดซ้ำ + PDF_
-_column ราคา/หน่วย รวม VAT)._
+_Last verified against codebase: 2026-06-23 — รอบ 12 (JE Builder phase 2_
+_migrate ReclassifyLine + FxRevaluation + UnifiedPaymentQueryService_
+_cross-domain aggregate + POS deposit field + Tip §50 ทวิ payout +_
+_RecurringLateFeeAccrualJob + LINE invoice delivery flex message +_
+_Budget scenario best/base/worst modeling)._
+
+## รายการที่ผ่านมาเรียงตามรอบ
+
+| รอบ | Theme | Key items |
+| --- | --- | --- |
+| 6 | e-Tax XML ครบสุด | line ChargeAmount ถอด VAT, TaxBasis แก้, PDF format |
+| 7 | Multi-currency มัดจำ + audit | FX guard, hash chain weekly verifier, recurring template validate, §65 ตรี(4) YTD, §82/5(6) override |
+| 8 | Option-1 reclassify + CMS sync | line GL reclassify-JE, PV Cash auto-approve all channels, CMS ConfirmPaymentAsync 6-step, PrePayment booking IsDeposit 217xx |
+| 9 | CMS gap close + perf | payment-gateway webhook, POS Z/X-Report, Stock unify, OverdueDunningJob, Dashboard alerts, e-Tax retry, §82/3 LateReason, dup-doc detect, 11 indexes |
+| 10 | Notification consolidate | NotificationContext.RecipientUserId, ApprovalService migrate, PiiMask helper, FX bank scope note |
+| 11 | PDPA + DSR + builder ครบสุด | EncryptedColumnConverter (AES-256-GCM Employee CitizenId/TaxId/Passport), PiiMask + permission Pii.View ใน PayrollController, SubscriptionService migrate 4/5 → NotificationEngine, DSR endpoints /access /portability /rectify /erase (legal_hold), Multi-warehouse StockAdjustmentRequest WarehouseId/LotNumber, ProductLot verified, JournalEntryBuilder fluent abstraction |
+| 12 | JE migrate + business gaps ปิด | JE Builder phase 2 (ReclassifyLine + FxRevaluation refactor), UnifiedPaymentQueryService cross-domain (AR+AP+POS+CMS), POS deposit IsDeposit+DepositRealizedAt, TipPayoutService §50 ทวิ (3% WHT >1000), RecurringLateFeeAccrualJob (rate/grace/cap config), DocumentLineDeliveryService LINE flex, Budget scenarios best/base/worst |
 _Files referenced are accurate; if behavior diverges, this doc is wrong —_
 _update it in the same PR (CLAUDE.md §"DOCUMENT_FLOW.md" hard requirement)._

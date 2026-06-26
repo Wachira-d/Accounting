@@ -1267,8 +1267,17 @@ public class AccountingDbContext : DbContext
             e.Property(emp => emp.LastNameTh).HasMaxLength(200);
             e.Property(emp => emp.FirstNameEn).HasMaxLength(200);
             e.Property(emp => emp.LastNameEn).HasMaxLength(200);
-            e.Property(emp => emp.CitizenId).HasMaxLength(13);
-            e.Property(emp => emp.TaxId).HasMaxLength(13);
+            // PDPA ม.26 — PII field encrypt-at-rest via EncryptedColumnConverter.
+            // Storage size = Base64(nonce 12 + ciphertext + tag 16) ~80 chars
+            // สำหรับ input 13 หลัก → ตั้ง max length 200 เผื่อ encryption header.
+            // Legacy plaintext rows อ่านได้ปกติ (ConvertToProvider pass-through);
+            // re-save จะ migrate เป็น ciphertext อัตโนมัติ.
+            e.Property(emp => emp.CitizenId).HasMaxLength(200)
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(emp => emp.TaxId).HasMaxLength(200)
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(emp => emp.PassportNumber).HasMaxLength(200)
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
             e.Property(emp => emp.BaseSalary).HasPrecision(18, 2);
             e.Property(emp => emp.ProvidentFundEmployeePercent).HasPrecision(5, 2);
             e.Property(emp => emp.ProvidentFundEmployerPercent).HasPrecision(5, 2);

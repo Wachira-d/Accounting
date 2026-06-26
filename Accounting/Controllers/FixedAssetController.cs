@@ -64,6 +64,15 @@ public class FixedAssetController : ControllerBase
         return Ok(new ApiResponse<FixedAssetResponse>(true, result));
     }
 
+    /// <summary>ลบสินทรัพย์ที่ลงทะเบียนผิด (เฉพาะที่ยังไม่คิดค่าเสื่อมจริง).
+    /// asset ที่ใช้งาน/คิดค่าเสื่อมแล้วต้องใช้ dispose/write-off แทน.</summary>
+    [HttpDelete("{assetId:guid}")]
+    public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid assetId)
+    {
+        await _assetService.DeleteAsync(companyId, assetId);
+        return Ok(new ApiResponse<string>(true, "ลบสินทรัพย์สำเร็จ"));
+    }
+
     [HttpPost("{assetId:guid}/dispose")]
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Dispose(
         Guid companyId, Guid assetId, [FromBody] DisposeAssetRequest request)

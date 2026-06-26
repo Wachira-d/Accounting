@@ -15,10 +15,22 @@ public class PayrollController : ControllerBase
 {
     private readonly IPayrollService _service;
     private readonly ISensitivityService _sensitivity;
-    public PayrollController(IPayrollService service, ISensitivityService sensitivity)
+    private readonly IPermissionService _permissions;
+    public PayrollController(IPayrollService service, ISensitivityService sensitivity,
+        IPermissionService permissions)
     {
         _service = service;
         _sensitivity = sensitivity;
+        _permissions = permissions;
+    }
+
+    /// <summary>PDPA ม.26 — เปิดดู PII (CitizenId/Phone/Email) แบบ raw เฉพาะ
+    /// user ที่มี permission Pii.View. คนอื่น ๆ ได้ค่า mask ตาม PiiMask helper.</summary>
+    private async Task<bool> CanViewPiiAsync(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        return await _permissions.HasPermissionAsync(companyId, userId,
+            Models.Constants.PermissionKeys.PiiView);
     }
 
     /// <summary>Gate every payroll endpoint behind the Payroll sensitivity rule.
@@ -44,13 +56,16 @@ public class PayrollController : ControllerBase
 
     [HttpGet("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> GetEmployee(Guid companyId, Guid employeeId)
-        => Ok(new ApiResponse<EmployeeResponse>(true, await _service.GetEmployeeAsync(companyId, employeeId)));
+        => Ok(new ApiResponse<EmployeeResponse>(true,
+            await _service.GetEmployeeAsync(companyId, employeeId, await CanViewPiiAsync(companyId))));
 
     [HttpGet("employees")]
     public async Task<ActionResult<ApiResponse<PagedResponse<EmployeeResponse>>>> GetEmployees(
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
         [FromQuery] string? search = null)
-        => Ok(new ApiResponse<PagedResponse<EmployeeResponse>>(true, await _service.GetEmployeesAsync(companyId, new PagedRequest(page, pageSize, search))));
+        => Ok(new ApiResponse<PagedResponse<EmployeeResponse>>(true,
+            await _service.GetEmployeesAsync(companyId, new PagedRequest(page, pageSize, search),
+                await CanViewPiiAsync(companyId))));
 
     /// <summary>Lookup-by-external for partner ERPs/HRIS — caller passes
     /// its own (ExternalSystem, ExternalId) and gets back our employee

@@ -320,6 +320,15 @@ public class Document : TenantEntity
     public int? AgingDays { get; set; }
     public DateTime? AgingLastEvaluatedAt { get; set; }
 
+    /// <summary>วันที่ส่งหนังสือทวงหนี้ครั้งล่าสุด — กัน OverdueDunningJob
+    /// ส่งซ้ำในรอบเดียวกัน. NULL = ไม่เคยส่ง. job ส่ง 3 ระดับตาม aging:
+    /// 30d (Reminder) → 60d (First Notice) → 90d (Final Notice).</summary>
+    public DateTime? LastDunningSentAt { get; set; }
+
+    /// <summary>ระดับ dunning ล่าสุด (1/2/3). เมื่อ AgingDays ข้ามขั้นถัดไป
+    /// และ ≥ 7 วัน นับจาก LastDunningSentAt → ส่งใหม่</summary>
+    public int? LastDunningLevel { get; set; }
+
     /// <summary>True = an opening-balance subledger document imported during
     /// migration (open AR/AP carried over from a previous system). It is
     /// created already-Approved and is deliberately NEVER auto-posted to the

@@ -284,6 +284,19 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<PosDailySummaryResponse>>> GetDailySummary(Guid companyId, [FromQuery] DateTime? date = null)
         => Ok(new ApiResponse<PosDailySummaryResponse>(true, await _pos.GetDailySummaryAsync(companyId, date ?? DateTime.UtcNow)));
 
+    /// <summary>Z-Report สิ้นกะ — สรุปยอดทั้ง session (cash variance,
+    /// payment breakdown, top products). เทียบเงินในลิ้นชักก่อนปิดงาน.</summary>
+    [HttpGet("sessions/{sessionId:guid}/z-report")]
+    public async Task<ActionResult<ApiResponse<PosZReportResponse>>> GetZReport(Guid companyId, Guid sessionId)
+        => Ok(new ApiResponse<PosZReportResponse>(true, await _pos.GetZReportAsync(companyId, sessionId)));
+
+    /// <summary>X-Report ระหว่างกะ — ยอดวิ่งทันที ไม่ปิด session.
+    /// filter ได้ตาม terminalId/from/to</summary>
+    [HttpGet("x-report")]
+    public async Task<ActionResult<ApiResponse<PosZReportResponse>>> GetXReport(Guid companyId,
+        [FromQuery] Guid? terminalId = null, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+        => Ok(new ApiResponse<PosZReportResponse>(true, await _pos.GetXReportAsync(companyId, terminalId, from, to)));
+
     [HttpGet("commission-summary")]
     public async Task<ActionResult<ApiResponse<List<CommissionSummaryResponse>>>> GetCommissionSummary(
         Guid companyId, [FromQuery] DateTime periodStart, [FromQuery] DateTime periodEnd)

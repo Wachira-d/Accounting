@@ -220,6 +220,60 @@ public class FixedAssetService : IFixedAssetService
         return items.Select(MapToResponse).ToList();
     }
 
+    /// <summary>ลบสินทรัพย์ที่ลงทะเบียนผิด (เช่น auto-register แยกผิด/ซ้ำ).
+    /// guard: ห้ามลบถ้าคิดค่าเสื่อมจริงไปแล้ว (มี posted depreciation หรือ
+    /// AccumulatedDepreciation > 0 หรือ disposed/written-off) — ต้อง Dispose/
+    /// WriteOff แทน. ต้นทุน asset มาจากเอกสารต้นทาง (PostAcquisitionJournalEntry
+    /// =false ตอน auto-register) → ลบ record ไม่กระทบ GL. ลบ projected
+    /// depreciation rows (unposted) ที่ผูกอยู่ด้วย.</summary>
+    public async Task DeleteAsync(Guid companyId, Guid assetId)
+    {
+        var asset = await _db.FixedAssets
+            .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
+
+        if (asset.AccumulatedDepreciation > 0m)
+            throw new InvalidOperationException(
+                "ลบไม่ได้ — สินทรัพย์นี้คิดค่าเสื่อมไปแล้ว กรุณาใช้ 'จำหน่าย' หรือ 'ตัดจำหน่าย' แทน");
+        if (asset.Status is not AssetStatus.Active)
+            throw new InvalidOperationException(
+                "ลบไม่ได้ — สินทรัพย์นี้ถูกจำหน่าย/ตัดจำหน่ายแล้ว");
+
+        // กันลบ asset ที่มี depreciation ลง JE จริงแล้ว (posted)
+        var hasPosted = await _db.AssetDepreciations
+            .AnyAsync(d => d.FixedAssetId == assetId && d.IsPosted && !d.IsDeleted);
+        if (hasPosted)
+            throw new InvalidOperationException(
+                "ลบไม่ได้ — มีค่าเสื่อมที่ลงบัญชีแล้ว กรุณาใช้ 'จำหน่าย' หรือ 'ตัดจำหน่าย' แทน");
+
+        // กันลบ asset ที่ source PV/PI ยังใช้งานอยู่ — ใบต้นทางลง Dr 12210 ใน JE
+        // ถ้าลบ asset ออกขณะใบยังอยู่ จะเกิด orphan (12210 บนงบดุล vs ทะเบียน
+        // สินทรัพย์ไม่ตรง). อนุญาตเฉพาะ:
+        //   • asset ที่ user สร้างเอง (ไม่มี SourceDocumentId)
+        //   • asset ที่ source doc ถูก void/rejected แล้ว
+        if (asset.SourceDocumentId.HasValue)
+        {
+            var sourceDoc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == asset.SourceDocumentId.Value)
+                .Select(d => new { d.DocumentNumber, d.Status })
+                .FirstOrDefaultAsync();
+            if (sourceDoc != null
+                && sourceDoc.Status != DocumentStatus.Voided
+                && sourceDoc.Status != DocumentStatus.Rejected)
+                throw new InvalidOperationException(
+                    $"ลบไม่ได้ — สินทรัพย์นี้สร้างจากเอกสาร {sourceDoc.DocumentNumber} ที่ยังใช้งานอยู่ "
+                    + "(สถานะ: " + sourceDoc.Status + "). กรุณายกเลิกเอกสารต้นทางก่อน หรือใช้ 'จำหน่าย/ตัดจำหน่าย' แทน");
+        }
+
+        // ลบ projected depreciation rows (unposted) แล้วลบ asset
+        var projectedDeps = await _db.AssetDepreciations
+            .Where(d => d.FixedAssetId == assetId)
+            .ToListAsync();
+        _db.AssetDepreciations.RemoveRange(projectedDeps);
+        _db.FixedAssets.Remove(asset);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<FixedAssetResponse> UpdateAsync(Guid companyId, Guid assetId, UpdateFixedAssetRequest request)
     {
         var asset = await _db.FixedAssets
@@ -240,10 +294,34 @@ public class FixedAssetService : IFixedAssetService
         // → ปลดธง NeedsReview เพื่อออกจาก "รอตรวจสอบ" queue. ไม่ใช่ field ใน DTO
         // เพื่อกัน client เผลอเซ็ตกลับเป็น true; ใช้ implicit semantics ที่ว่า
         // "การเปิดมาแก้แล้วบันทึก = การตรวจสอบสินทรัพย์ตัวนี้แล้ว".
-        if (asset.NeedsReview) asset.NeedsReview = false;
+        if (asset.NeedsReview)
+        {
+            asset.NeedsReview = false;
+            // ออก AssetCode จริงตอนยืนยัน (auto-register ใส่ "DRAFT-xxxxxxxx"
+            // ไว้ไม่กิน counter) → gap-free + ลำดับเรียงตามเวลายืนยัน ไม่ใช่
+            // เวลา auto-register ที่อาจถูกลบทิ้ง
+            if (asset.AssetCode.StartsWith("DRAFT-"))
+                asset.AssetCode = await GenerateAssetCodeAsync(companyId);
+        }
 
         await _db.SaveChangesAsync();
         return MapToResponse(asset);
+    }
+
+    /// <summary>สร้างรหัสสินทรัพย์ FA-yyyyMM-#### (gap-tolerant — MAX+1, ยกเว้น
+    /// DRAFT-* placeholder). ใช้ตอนผู้ใช้ยืนยัน asset ที่ auto-register —
+    /// ทำให้เลขจริงออกตามลำดับการยืนยัน ไม่ใช่ลำดับ scan/approve.</summary>
+    private async Task<string> GenerateAssetCodeAsync(Guid companyId)
+    {
+        var prefix = $"FA-{DateTime.UtcNow:yyyyMM}-";
+        var last = await _db.FixedAssets.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AssetCode.StartsWith(prefix))
+            .OrderByDescending(a => a.AssetCode)
+            .Select(a => a.AssetCode)
+            .FirstOrDefaultAsync();
+        var next = 1;
+        if (last != null && int.TryParse(last.Substring(prefix.Length), out var n)) next = n + 1;
+        return $"{prefix}{next:D4}";
     }
 
     public async Task<FixedAssetResponse> DisposeAsync(Guid companyId, Guid assetId, DisposeAssetRequest request, string performedBy)

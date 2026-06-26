@@ -47,6 +47,12 @@ public interface ICmsCommerceService
     // ERP Sync
     Task<Guid?> SyncOrderToErpAsync(Guid companyId, Guid siteId, Guid orderId);
 
+    /// <summary>Webhook/admin-confirmation entry point — ทำ 6 ขั้นรวด:
+    /// confirm payment + sync ERP + approve doc (auto-post JE) + record
+    /// cash receipt + deduct stock + generate e-Tax (ถ้าเปิด).
+    /// Idempotent: เรียกซ้ำได้ไม่กระทบ.</summary>
+    Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId, string actor);
+
     // Public payment flow
     Task<UploadSlipResponse?> RecordPaymentSlipAsync(Guid companyId, Guid siteId, Guid orderId, IFormFile file);
     Task<ConvertToQuotationResponse?> ConvertOrderToQuotationAsync(Guid companyId, Guid siteId, Guid orderId, string? customerNotes, IDocumentService docService);

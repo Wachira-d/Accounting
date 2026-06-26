@@ -40,6 +40,8 @@ public class RecurringTransactionService : IRecurringTransactionService
 
     public async Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy)
     {
+        await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId);
+
         var recurring = new RecurringTransaction
         {
             CompanyId = companyId,
@@ -113,7 +115,12 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (request.MaxRuns.HasValue) recurring.MaxRuns = request.MaxRuns.Value;
         if (request.DocumentType.HasValue) recurring.DocumentType = request.DocumentType.Value;
         if (request.ContactId.HasValue) recurring.ContactId = request.ContactId.Value;
-        if (request.TemplateData != null) recurring.TemplateData = request.TemplateData;
+        if (request.TemplateData != null)
+        {
+            await ValidateTemplateAsync(companyId, recurring.TemplateType, request.TemplateData,
+                request.ContactId ?? recurring.ContactId);
+            recurring.TemplateData = request.TemplateData;
+        }
         if (request.NotifyBeforeRun.HasValue) recurring.NotifyBeforeRun = request.NotifyBeforeRun.Value;
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
         if (request.AutoApprove.HasValue) recurring.AutoApprove = request.AutoApprove.Value;
@@ -502,6 +509,101 @@ public class RecurringTransactionService : IRecurringTransactionService
             r.ContactId, r.Contact?.Name,
             r.TemplateData, ExtractAmount(r.TemplateData), r.NotifyBeforeRun,
             r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt);
+
+    /// <summary>ตรวจ template ตอน Create/Update — fail fast ก่อนรอ
+    /// midnight cron แล้วเจอ Guid.Empty / GL ผิด tenant. ตรวจ:
+    /// (1) JSON parse ได้, (2) journal template → debit = credit + ทุก
+    /// accountId อยู่ใน company + GL active, (3) document template →
+    /// ContactId required + ทุก line.accountId (ถ้ามี) อยู่ใน company,
+    /// (4) bankAccountId/paymentAccountId อยู่ใน company.</summary>
+    private async Task ValidateTemplateAsync(Guid companyId, string? templateType, string? templateData, Guid? contactId)
+    {
+        if (string.IsNullOrWhiteSpace(templateData)) return;
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(templateData); }
+        catch (JsonException ex)
+        { throw new InvalidOperationException($"TemplateData ไม่ใช่ JSON ที่ถูกต้อง: {ex.Message}"); }
+
+        using var _ = doc;
+        var root = doc.RootElement;
+        var type = templateType?.ToLowerInvariant() ?? "document";
+        var accountIds = new HashSet<Guid>();
+
+        if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
+        {
+            decimal totalDebit = 0, totalCredit = 0;
+            int idx = 0;
+            foreach (var line in linesEl.EnumerateArray())
+            {
+                idx++;
+                if (line.TryGetProperty("accountId", out var aid)
+                    && aid.ValueKind == JsonValueKind.String
+                    && Guid.TryParse(aid.GetString(), out var gid)
+                    && gid != Guid.Empty)
+                {
+                    accountIds.Add(gid);
+                }
+                if (type == "journal")
+                {
+                    totalDebit  += line.TryGetProperty("debitAmount", out var da) ? da.GetDecimal() : 0m;
+                    totalCredit += line.TryGetProperty("creditAmount", out var ca) ? ca.GetDecimal() : 0m;
+                }
+            }
+
+            if (type == "journal")
+            {
+                if (idx < 2)
+                    throw new InvalidOperationException("Template ประเภท journal ต้องมีอย่างน้อย 2 บรรทัด (debit + credit)");
+                if (Math.Round(totalDebit, 2) != Math.Round(totalCredit, 2))
+                    throw new InvalidOperationException(
+                        $"Template journal ไม่สมดุล: Dr {totalDebit:N2} ≠ Cr {totalCredit:N2} — debit ต้องเท่า credit");
+            }
+        }
+        else if (type == "journal")
+        {
+            throw new InvalidOperationException("Template ประเภท journal ต้องมี field 'lines' เป็น array");
+        }
+
+        if (type == "document" && contactId == null)
+            throw new InvalidOperationException("Template ประเภท document ต้องมี ContactId (ลูกค้า/ผู้ขาย)");
+
+        // Collect bank/payment/expense category refs
+        Guid? bankId = ParseGuidProperty(root, "bankAccountId");
+        Guid? paymentId = ParseGuidProperty(root, "paymentAccountId");
+        if (bankId.HasValue) accountIds.Add(bankId.Value);
+        if (paymentId.HasValue) accountIds.Add(paymentId.Value);
+
+        if (accountIds.Count > 0)
+        {
+            var validIds = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.IsActive && accountIds.Contains(a.Id))
+                .Select(a => a.Id)
+                .ToListAsync();
+            var missing = accountIds.Except(validIds).ToList();
+            if (missing.Count > 0)
+                throw new InvalidOperationException(
+                    $"Template มี accountId ที่ไม่พบในผังบัญชี (อาจถูกลบหรือคนละบริษัท): {string.Join(", ", missing.Take(3))}{(missing.Count > 3 ? $" ... +{missing.Count - 3}" : "")}");
+        }
+
+        if (contactId.HasValue)
+        {
+            var contactExists = await _db.Contacts.AsNoTracking()
+                .AnyAsync(c => c.Id == contactId.Value && c.CompanyId == companyId && !c.IsDeleted);
+            if (!contactExists)
+                throw new InvalidOperationException("ContactId ที่ระบุไม่พบในบริษัทนี้ (หรือถูกลบไปแล้ว)");
+        }
+    }
+
+    private static Guid? ParseGuidProperty(JsonElement root, string name)
+    {
+        if (root.TryGetProperty(name, out var el)
+            && el.ValueKind == JsonValueKind.String
+            && Guid.TryParse(el.GetString(), out var g)
+            && g != Guid.Empty)
+            return g;
+        return null;
+    }
 
     private static decimal ExtractAmount(string? templateData)
     {

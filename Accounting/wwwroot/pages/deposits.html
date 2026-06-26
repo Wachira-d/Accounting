@@ -45,15 +45,15 @@
       <div class="modal-body">
         <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
         <div class="form-group">
-          <label class="form-label">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
+          <label class="form-label" data-help="ยอดที่ส่งของ/บริการแล้ว — Dr ขายรอรับรู้ (24650) / Cr รายได้ (41000/42000) • ใส่ 'ฐานก่อน VAT' — ถ้ามัดจำมี VAT, ระบบจะคำนวณ VAT ที่จะถอนจาก 24655 อัตโนมัติ">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
           <input type="number" step="0.01" min="0" class="form-input" id="realizeAmount">
         </div>
         <div class="form-group">
-          <label class="form-label">วันที่รับรู้</label>
+          <label class="form-label" data-help="วัน tax point ที่ผลิตภัณฑ์/บริการส่งมอบ — ใช้กำหนดงวด ภพ.30 (ฝั่งขาย) ของ VAT มัดจำ">วันที่รับรู้</label>
           <input type="date" class="form-input" id="realizeDate">
         </div>
         <div class="form-group">
-          <label class="form-label">ผังบัญชีรายได้ (เว้นว่าง = ค่าเริ่มต้น 41000/42000)</label>
+          <label class="form-label" data-help="บัญชีรายได้ที่จะ Cr — เว้นว่างจะ default 41000 (รายได้ขาย) สำหรับสินค้า, 42000 (รายได้บริการ) สำหรับบริการ. ระบุ code ถ้าต้องการบัญชีอื่น เช่น 41100 รายได้-โครงการ X">ผังบัญชีรายได้ (เว้นว่าง = ค่าเริ่มต้น 41000/42000)</label>
           <input type="text" class="form-input" id="realizeRevenueCode" placeholder="เช่น 41000">
         </div>
       </div>
@@ -74,15 +74,15 @@
       <div class="modal-body">
         <div id="refundInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
         <div class="form-group">
-          <label class="form-label">จำนวนเงินที่คืน (รวม VAT)</label>
+          <label class="form-label" data-help="ยอดคืนรวม VAT (Cr เงินสด/ธนาคาร) — ระบบจะถอน VAT ที่ตามสัดส่วน แล้วออก 'ใบลดหนี้ภาษีขาย' (§86/10) ไปลดยอดในงวดที่คืน">จำนวนเงินที่คืน (รวม VAT)</label>
           <input type="number" step="0.01" min="0" class="form-input" id="refundAmount">
         </div>
         <div class="form-group">
-          <label class="form-label">วันที่คืน</label>
+          <label class="form-label" data-help="วันที่จ่ายเงินคืนจริง — ใช้เป็นวันออกใบลดหนี้ + งวด ภพ.30 ที่จะ Cr VAT ขาย">วันที่คืน</label>
           <input type="date" class="form-input" id="refundDate">
         </div>
         <div class="form-group">
-          <label class="form-label">เหตุผล (เช่น ยกเลิกงาน, เลื่อนวัน)</label>
+          <label class="form-label" data-help="ใช้บันทึกที่มาของการคืน เพื่อ audit trail (ภพ.30 ใบลดหนี้ต้องระบุเหตุผลตาม §86/10) — เช่น 'ลูกค้ายกเลิกงานก่อนเริ่มผลิต'">เหตุผล (เช่น ยกเลิกงาน, เลื่อนวัน)</label>
           <input type="text" class="form-input" id="refundReason" placeholder="เหตุผลการคืนมัดจำ">
         </div>
         <div style="font-size:12px;color:#92400e">⚠️ ระบบจะกลับรายการขายรอรับรู้ + ออกใบลดหนี้ภาษีขายอัตโนมัติ</div>

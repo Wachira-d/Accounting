@@ -65,4 +65,19 @@ public class BudgetController : ControllerBase
         var result = await _budgetService.GetBudgetVsActualAsync(companyId, budgetId);
         return Ok(new ApiResponse<BudgetVsActualResponse>(true, result));
     }
+
+    /// <summary>Scenario modeling — best/base/worst case projection.
+    /// upliftPercent (default 15%) → best case. downsidePercent (default 20%)
+    /// → worst case. ใช้สำหรับ CFO planning + investor pitch</summary>
+    [HttpGet("{budgetId:guid}/scenarios")]
+    public async Task<ActionResult<ApiResponse<BudgetScenarioResponse>>> GetScenarios(
+        Guid companyId, Guid budgetId,
+        [FromQuery] decimal upliftPercent = 15m,
+        [FromQuery] decimal downsidePercent = 20m)
+    {
+        var result = await _budgetService.GetScenariosAsync(companyId, budgetId,
+            upliftPercent, downsidePercent);
+        return Ok(new ApiResponse<BudgetScenarioResponse>(true, result,
+            $"Scenarios: best ฿{result.BestCase:N0} / base ฿{result.BaseCase:N0} / worst ฿{result.WorstCase:N0}"));
+    }
 }

@@ -86,6 +86,16 @@ public class PosOrder : TenantEntity
     public string? CouponCode { get; set; }
     public decimal CouponDiscountAmount { get; set; }
 
+    /// <summary>POS deposit/มัดจำ — order ที่รับเงินมัดจำก่อนส่งสินค้า/บริการ.
+    /// True → JE Cr "ขายรอรับรู้" (217xx) แทน Revenue + Cr "ภาษีขาย" (21911)
+    /// ถ้า tax point เกิดแล้ว. ใช้กับร้านอาหารรับจอง / spa จองล่วงหน้า /
+    /// คาเฟ่ pre-order. เมื่อใช้บริการจริง → realize via POS-Realize endpoint.</summary>
+    public bool IsDeposit { get; set; } = false;
+
+    /// <summary>วันที่ realize มัดจำ (= ลูกค้ามาใช้บริการ/รับสินค้า) →
+    /// trigger ตัด 217xx → Revenue. Null = ยังไม่ realize.</summary>
+    public DateTime? DepositRealizedAt { get; set; }
+
     public string? Notes { get; set; }
     public string? Reference { get; set; }                       // เลขอ้างอิง (delivery order#, etc.)
 

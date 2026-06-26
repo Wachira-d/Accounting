@@ -97,6 +97,33 @@ public class AuditTrailService : IAuditTrailService
         return logs.Select(MapToResponse).ToList();
     }
 
+    /// <summary>Re-compute RowHash ของแต่ละ row เรียงตาม Timestamp + เทียบกับ
+    /// stored hash. ถ้ามี mismatch = chain ถูก tamper (แก้/แทรก/ลบหลัง insert).
+    /// algorithm ตรงกับ AccountingDbContext.HashChain insert path: SHA-256 ของ
+    /// "Timestamp|UserId|UserEmail|Action|EntityType|EntityId|NewValues|PrevHash"</summary>
+    public async Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId)
+    {
+        var rows = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.RowHash != null)
+            .OrderBy(a => a.Timestamp).ThenBy(a => a.Id)
+            .ToListAsync();
+        string? prev = null;
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var r = rows[i];
+            if (r.PrevHash != prev)
+                return new AuditChainVerifyResult(rows.Count, i, r.Id.ToString(), r.Timestamp, false);
+            var payload = $"{r.Timestamp:O}|{r.UserId}|{r.UserEmail}|{r.Action}|{r.EntityType}|{r.EntityId}|{r.NewValues}|{r.PrevHash}";
+            var expected = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(payload)));
+            if (!string.Equals(expected, r.RowHash, StringComparison.OrdinalIgnoreCase))
+                return new AuditChainVerifyResult(rows.Count, i, r.Id.ToString(), r.Timestamp, false);
+            prev = r.RowHash;
+        }
+        return new AuditChainVerifyResult(rows.Count, -1, null, null, true);
+    }
+
     // ===== Static helper for SaveChanges audit logging =====
 
     /// <summary>

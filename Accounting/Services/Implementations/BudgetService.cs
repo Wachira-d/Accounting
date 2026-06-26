@@ -226,6 +226,41 @@ public class BudgetService : IBudgetService
         return new BudgetVsActualResponse(budget.Id, budget.Name, budget.FiscalYear, lines, alerts, totalBudget, totalActual);
     }
 
+    public async Task<BudgetScenarioResponse> GetScenariosAsync(Guid companyId, Guid budgetId,
+        decimal upliftPercent = 15m, decimal downsidePercent = 20m)
+    {
+        var bva = await GetBudgetVsActualAsync(companyId, budgetId);
+        var upFactor = 1m + upliftPercent / 100m;
+        var downFactor = 1m - downsidePercent / 100m;
+
+        var lines = bva.Lines.Select(l => new BudgetScenarioLine(
+            AccountCode: l.AccountCode,
+            AccountName: l.AccountName,
+            Budgeted: l.BudgetAmount,
+            Actual: l.ActualAmount,
+            Variance: l.Variance,
+            VariancePercent: l.BudgetAmount > 0
+                ? Math.Round(l.Variance / l.BudgetAmount * 100m, 2)
+                : 0m,
+            BestCase: Math.Round(l.BudgetAmount * upFactor, 2),
+            BaseCase: l.BudgetAmount,
+            WorstCase: Math.Round(l.BudgetAmount * downFactor, 2)
+        )).ToList();
+
+        return new BudgetScenarioResponse(
+            BudgetId: bva.BudgetId,
+            BudgetName: bva.BudgetName,
+            FiscalYear: bva.FiscalYear,
+            TotalBudgeted: bva.TotalBudget,
+            TotalActual: bva.TotalActual,
+            BestCase: Math.Round(bva.TotalBudget * upFactor, 2),
+            BaseCase: bva.TotalBudget,
+            WorstCase: Math.Round(bva.TotalBudget * downFactor, 2),
+            UpliftPercent: upliftPercent,
+            DownsidePercent: downsidePercent,
+            Lines: lines);
+    }
+
     private static BudgetResponse MapToResponse(Budget b) =>
         new(b.Id, b.Name, b.FiscalYear, b.IsActive,
             b.Lines.Sum(l => l.TotalBudget),

@@ -35,4 +35,22 @@ public class RecurringTransaction : TenantEntity
     public bool NotifyBeforeRun { get; set; } = true;
     public int NotifyDaysBefore { get; set; } = 1;
     public bool AutoApprove { get; set; } = false;
+
+    /// <summary>Late-fee accrual policy — เปิดเมื่อสร้าง invoice แล้วเกิน due
+    /// date จะ accrue ค่าปรับ. Off (default) = recurring เก่าไม่กระทบ.</summary>
+    public bool LateFeeEnabled { get; set; } = false;
+
+    /// <summary>อัตราค่าปรับต่อวัน (% ต่อวัน). default 0.05% (= 18.25%/ปี
+    /// = อัตราเพดานตามประมวลรัษฎากร §103 + §103 ทวิ ไม่เกิน 15%/ปี เท่านั้น
+    /// — แต่ภาคเอกชนใช้ %/วัน ตามสัญญา). 0 = no fee แม้ flag เปิด.</summary>
+    public decimal LateFeeRatePerDay { get; set; } = 0.05m;
+
+    /// <summary>Grace period วันก่อนเริ่มคิดค่าปรับ — default 7 วัน หลัง due
+    /// date. คำนวณ daysOverdue = (today - dueDate - GraceDays). negative =
+    /// ยังไม่ถึงเวลาคิด.</summary>
+    public int LateFeeGraceDays { get; set; } = 7;
+
+    /// <summary>เพดานค่าปรับ (% ของ totalAmount). default 20% = stop accrue
+    /// เมื่อ accumulated late fee ถึง 20% ของยอดต้นทุน. null = no cap.</summary>
+    public decimal? LateFeeMaxPercent { get; set; } = 20m;
 }

@@ -183,9 +183,9 @@
       <div class="modal" style="max-width:580px">
         <div class="modal-header"><h3 id="intModalTitle">เพิ่มระบบภายนอก</h3><button class="modal-close" onclick="Page.closeModal('intModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">ชื่อระบบ <span style="color:red">*</span></label><input type="text" id="fName" class="form-input" placeholder="เช่น ระบบ POS ร้าน, TakeTime, Shopee"></div>
+          <div class="form-group"><label class="form-label">ชื่อระบบ <span class="req">*</span></label><input type="text" id="fName" class="form-input" placeholder="เช่น ระบบ POS ร้าน, TakeTime, Shopee"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภท <span style="color:red">*</span></label>
+            <div class="form-group"><label class="form-label">ประเภท <span class="req">*</span></label>
               <select id="fType" class="form-input">
                 <option value="POS">POS (หน้าร้าน)</option><option value="PMS">PMS (โรงแรม)</option>
                 <option value="ERP">ERP</option><option value="CRM">CRM</option>
@@ -227,7 +227,7 @@
       <div class="modal" style="max-width:560px">
         <div class="modal-header"><h3 id="mappingModalTitle">เพิ่ม Account Mapping</h3><button class="modal-close" onclick="Page.closeModal('mappingModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">External Category <span style="color:red">*</span></label><input type="text" id="mCategory" class="form-input" placeholder="เช่น ROOM_REVENUE, PRODUCT_SALES"></div>
+          <div class="form-group"><label class="form-label">External Category <span class="req">*</span></label><input type="text" id="mCategory" class="form-input" placeholder="เช่น ROOM_REVENUE, PRODUCT_SALES"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">External Code</label><input type="text" id="mCode" class="form-input" placeholder="รหัสจากระบบภายนอก"></div>
             <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" id="mDesc" class="form-input" placeholder="คำอธิบาย"></div>

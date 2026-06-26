@@ -12,11 +12,14 @@ public class CmsBookingService : ICmsBookingService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsBookingService> _logger;
+    private readonly IDocumentService? _docService;
 
-    public CmsBookingService(AccountingDbContext db, ILogger<CmsBookingService> logger)
+    public CmsBookingService(AccountingDbContext db, ILogger<CmsBookingService> logger,
+        IDocumentService? docService = null)
     {
         _db = db;
         _logger = logger;
+        _docService = docService;
     }
 
     // ===== Services =====
@@ -432,40 +435,69 @@ public class CmsBookingService : ICmsBookingService
             }
         }
 
-        var doc = new Document
-        {
-            CompanyId = companyId,
-            DocumentType = docType,
-            Status = svc.BookingType == BookingType.Lead ? DocumentStatus.Draft : DocumentStatus.Approved,
-            DocumentDate = DateTime.UtcNow,
-            ContactId = contactId!.Value,
-            Currency = svc.Currency,
-            SubTotal = booking.TotalAmount,
-            TotalAmount = booking.TotalAmount,
-            Notes = $"Booking #{booking.BookingNumber} - {svc.Name}",
-            Reference = booking.BookingNumber
-        };
+        // Route ผ่าน IDocumentService.CreateDocumentAsync = ได้ DocumentNumberGenerator
+        // (gap-free §86/4) + tax point + JE auto-post tooling + completeness check
+        if (_docService == null)
+            throw new InvalidOperationException(
+                "Booking → ERP sync ต้องการ IDocumentService — register service ใน DI ก่อน");
 
-        _db.Documents.Add(doc);
+        var lineDesc = $"{svc.Name} ({booking.BookingDate:yyyy-MM-dd} {booking.StartTime:HH:mm}-{booking.EndTime:HH:mm})";
 
-        _db.DocumentLines.Add(new DocumentLine
-        {
-            DocumentId = doc.Id,
-            LineOrder = 1,
-            ProductCode = svc.Product?.Code ?? "",
-            Description = $"{svc.Name} ({booking.BookingDate:yyyy-MM-dd} {booking.StartTime:HH:mm}-{booking.EndTime:HH:mm})",
-            Quantity = booking.GuestCount,
-            Unit = "ครั้ง",
-            UnitPrice = svc.Price,
-            Amount = booking.TotalAmount
-        });
+        // PrePayment booking = ลูกค้าจ่ายมัดจำ → IsDeposit=true → Cr 217xx
+        // (ขายรอรับรู้). tax point §78/1 รับชำระแล้ว = เกิดทันที (default
+        // DepositOutputVatDeferred=false) → ภาษีขายเข้า ภพ.30 เดือนนี้.
+        // เมื่อลูกค้าใช้บริการจริง → ใช้ RealizeDepositAsync ตัด 217xx → 41000
+        var isDeposit = svc.BookingType == BookingType.PrePayment;
 
-        booking.ErpDocumentId = doc.Id;
+        var request = new Models.DTOs.Document.CreateDocumentRequest(
+            DocumentType: docType,
+            DocumentDate: DateTime.UtcNow,
+            DueDate: null,
+            ContactId: contactId!.Value,
+            Reference: booking.BookingNumber,
+            Notes: $"Booking #{booking.BookingNumber} - {svc.Name}",
+            Lines: new List<Models.DTOs.Document.DocumentLineRequest>
+            {
+                new(
+                    Description: lineDesc,
+                    Quantity: booking.GuestCount,
+                    Unit: "ครั้ง",
+                    UnitPrice: svc.Price,
+                    DiscountPercent: 0m,
+                    VatRate: 7m,
+                    WithholdingTaxRate: 0m,
+                    AccountId: null,
+                    ProductCode: svc.Product?.Code)
+            },
+            Currency: svc.Currency,
+            PricesIncludeVat: true,           // ราคา CMS เป็น gross
+            BookingNumber: booking.BookingNumber,
+            IsDeposit: isDeposit
+        );
+
+        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-booking");
+        booking.ErpDocumentId = created.Id;
         booking.ErpDocumentType = erpDocType;
-        await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Booking {BookingNumber} synced to ERP as {DocType} (Doc {DocId})", booking.BookingNumber, erpDocType, doc.Id);
-        return doc.Id;
+        // Auto-approve เฉพาะ booking ที่ไม่ใช่ Lead (lead = quotation รออนุมัติ
+        // — admin ต้อง confirm slot ก่อน). Guaranteed/PrePayment/Appointment →
+        // commit ทันที (slot จองแล้ว, prepayment มีเงินจริง)
+        if (svc.BookingType != BookingType.Lead)
+        {
+            try
+            {
+                await _docService.ApproveDocumentAsync(companyId, created.Id,
+                    "storefront-booking", acknowledgeWarnings: true);
+            }
+            catch (Exception ex)
+            { _logger.LogWarning(ex, "Booking auto-approve failed for {BookingNumber}", booking.BookingNumber); }
+        }
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation(
+            "Booking {BookingNumber} synced as {DocType} (Doc {DocId} {DocNumber}, IsDeposit={IsDeposit})",
+            booking.BookingNumber, erpDocType, created.Id, created.DocumentNumber, isDeposit);
+        return created.Id;
     }
 
     // ===== Helpers =====

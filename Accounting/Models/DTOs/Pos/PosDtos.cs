@@ -418,6 +418,51 @@ public record PaymentMethodSummary(
     int Count,
     decimal Amount);
 
+/// <summary>Z/X-Report — รายงานสิ้นกะ (Z = ปิด session, X = ระหว่างกะ).
+/// Aggregate ของ JE/Order ที่เกิดในช่วง (จาก session.OpenedAt..ClosedAt
+/// หรือช่วงเวลาที่ caller ระบุ). ใช้เทียบเงินสดในลิ้นชัก + audit ก่อนปิดงาน.</summary>
+public record PosZReportResponse(
+    DateTime PeriodFrom,
+    DateTime PeriodTo,
+    Guid? SessionId,
+    Guid? TerminalId,
+    string? TerminalName,
+    string? OpenedByName,
+    string? ClosedByName,
+    // Order counts
+    int TotalOrders,
+    int CompletedOrders,
+    int VoidedOrders,
+    int RefundedOrders,
+    int GuestCount,
+    // Sales aggregate (excl VAT)
+    decimal GrossSales,
+    decimal TotalDiscount,
+    decimal NetSales,
+    decimal TotalVat,
+    decimal TotalServiceCharge,
+    decimal TotalTip,
+    // Refunds/voids
+    decimal RefundedAmount,
+    decimal VoidedAmount,
+    // Payment breakdown by method
+    List<PaymentMethodSummary> PaymentBreakdown,
+    // Cash drawer reconcile
+    decimal OpeningCash,
+    decimal ClosingCash,
+    decimal CashSales,
+    decimal CashRefunds,
+    decimal ExpectedCash,
+    decimal CashVariance,
+    // Top sellers
+    List<PosTopProductSummary> TopProducts);
+
+public record PosTopProductSummary(
+    Guid ProductId,
+    string ProductName,
+    decimal Quantity,
+    decimal Revenue);
+
 // ===== Order Status Update =====
 public record UpdateOrderStatusRequest(PosOrderStatus Status);
 public record UpdateItemStatusRequest(PosItemStatus Status);

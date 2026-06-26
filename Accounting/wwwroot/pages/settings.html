@@ -85,11 +85,11 @@
       </div>
 
       <div class="form-row">
-        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span style="color:red">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
+        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span class="req">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
         <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span style="color:red">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
+        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span class="req">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
         <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
         <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
       </div>
@@ -300,6 +300,16 @@
       <div class="form-row" style="margin-top:12px">
         <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
       </div>
+      <div class="form-group form-checkbox" style="margin-top:12px">
+        <input type="checkbox" id="sIsVehicleDealer">
+        <label for="sIsVehicleDealer" style="line-height:1.4">
+          บริษัทเป็นผู้ค้ารถยนต์ / อู่ซ่อม (Vehicle dealer)
+          <div style="font-size:12px;color:#64748b;margin-top:2px">
+            ปกติระบบเตือนว่า VAT ค่าน้ำมัน/ซ่อม/เช่ารถยนต์นั่ง ≤10 ที่นั่ง เคลมไม่ได้ (§82/5(6) + ประกาศอธิบดี 42).
+            เปิด flag นี้ = รถเป็น inventory ของบริษัท → เคลม VAT ได้ตามปกติ ระบบจะไม่เตือน
+          </div>
+        </label>
+      </div>
 
       <h3 class="card-title" style="margin:24px 0 12px">การตั้งค่า OCR สแกนเอกสาร</h3>
       <div class="form-group">
@@ -363,7 +373,7 @@
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="form-group"><label class="form-label">วันที่ได้รับอนุมัติ</label><input type="date" class="form-input" id="sEtaxByEmailRegDate"></div>
             <div class="form-group"><label class="form-label">เลขรหัสรับรอง (ถ้ามี)</label><input type="text" class="form-input" id="sEtaxByEmailRegNumber"></div>
-            <div class="form-group"><label class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span style="color:red">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
+            <div class="form-group"><label class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span class="req">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
             <div class="form-group">
               <label class="form-label">CC สรรพากร (Time Stamp) <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">ETDA กำหนด</span></label>
               <input type="email" class="form-input" id="sEtaxByEmailRdCc" value="csemail@etax.teda.th" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
@@ -468,7 +478,7 @@
           <div class="form-group"><label class="form-label">Tenant ID</label><input type="text" class="form-input" id="msTenantId" placeholder="GUID หรือ contoso.onmicrosoft.com"></div>
           <div class="form-group"><label class="form-label">Client ID (App ID)</label><input type="text" class="form-input" id="msClientId"></div>
           <div class="form-group"><label class="form-label">Client Secret</label><input type="password" class="form-input" id="msClientSecret"></div>
-          <div class="form-group"><label class="form-label">Sender Mailbox (UPN) <span style="color:red">*</span></label><input type="email" class="form-input" id="msSenderUpn" placeholder="invoice@yourtenant.com"></div>
+          <div class="form-group"><label class="form-label">Sender Mailbox (UPN) <span class="req">*</span></label><input type="email" class="form-input" id="msSenderUpn" placeholder="invoice@yourtenant.com"></div>
         </div>
       </div>
 
@@ -1572,6 +1582,7 @@
           document.getElementById('sVatRate').value = s.defaultVatRate || 7;
           document.getElementById('sVatRegistered').checked = s.vatRegistered !== false;
           document.getElementById('sVatRegistrationDate').value = s.vatRegistrationDate || '';
+          document.getElementById('sIsVehicleDealer').checked = !!s.isVehicleDealer;
           // OCR preference — default 13 (PaymentVoucher)
           document.getElementById('sOcrBuyerTarget').value = String(s.ocrBuyerInvoiceDefaultTarget ?? 13);
           // e-Tax
@@ -1667,6 +1678,7 @@
             defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
             vatRegistered: document.getElementById('sVatRegistered').checked,
             vatRegistrationDate: document.getElementById('sVatRegistrationDate').value || null,
+            isVehicleDealer: document.getElementById('sIsVehicleDealer').checked,
             // OCR preference (DocumentType enum int — 13=PaymentVoucher, 11=PurchaseInvoice, 14=Expense)
             ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
             // e-Tax

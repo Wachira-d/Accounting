@@ -273,7 +273,7 @@ public class PayrollService : IPayrollService
         return await GetEmployeeAsync(companyId, employee.Id);
     }
 
-    public async Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId)
+    public async Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId, bool includePii = false)
     {
         var employee = await _db.Set<Employee>()
             .Include(e => e.DepartmentRef)
@@ -282,10 +282,10 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
 
-        return MapToEmployeeResponse(employee);
+        return MapToEmployeeResponse(employee, includePii);
     }
 
-    public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request)
+    public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false)
     {
         var query = _db.Set<Employee>()
             .Include(e => e.DepartmentRef)
@@ -310,7 +310,7 @@ public class PayrollService : IPayrollService
             .ToListAsync();
 
         return new PagedResponse<EmployeeResponse>(
-            items.Select(MapToEmployeeResponse).ToList(),
+            items.Select(e => MapToEmployeeResponse(e, includePii)).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -2719,9 +2719,16 @@ public class PayrollService : IPayrollService
 
     // ===== Mapping Helpers =====
 
-    private static EmployeeResponse MapToEmployeeResponse(Employee e) =>
-        new(e.Id, e.EmployeeCode, e.TitleTh, e.FirstNameTh, e.LastNameTh,
-            e.FirstNameEn, e.LastNameEn, e.CitizenId, e.Department, e.Position,
+    /// <summary>PDPA ม.26 mask flag: เมื่อ caller ไม่มี permission "pii:view"
+    /// → CitizenId, Phone, Email mask ด้วย PiiMask helper. Default คือ
+    /// masked (deny by default). controller ต้อง opt-in.</summary>
+    private static EmployeeResponse MapToEmployeeResponse(Employee e, bool includePii = false)
+    {
+        var citizenId = includePii ? e.CitizenId : Accounting.Helpers.PiiMask.CitizenId(e.CitizenId);
+        var phone = includePii ? e.Phone : Accounting.Helpers.PiiMask.Phone(e.Phone);
+        var email = includePii ? e.Email : Accounting.Helpers.PiiMask.Email(e.Email);
+        return new(e.Id, e.EmployeeCode, e.TitleTh, e.FirstNameTh, e.LastNameTh,
+            e.FirstNameEn, e.LastNameEn, citizenId, e.Department, e.Position,
             e.EmploymentType, e.StartDate, e.EndDate, e.BaseSalary,
             e.SalaryType, e.IsActive, e.CreatedAt,
             e.DepartmentId, e.DepartmentRef?.Name,
@@ -2733,7 +2740,8 @@ public class PayrollService : IPayrollService
             e.ContactId,
             e.CostBehavior,
             e.ExternalId, e.ExternalSystem, e.LastSyncedAt,
-            e.Phone, e.Email, e.LineId);
+            phone, email, e.LineId);
+    }
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
         new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,

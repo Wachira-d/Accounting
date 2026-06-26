@@ -202,6 +202,7 @@ const API = {
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
       suggestPvAccounting: (body) => API.post(`${base}/document/ai-suggest-pv-accounting`, body),
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
+      reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
       purgeDocument: (id) => API.del(`${base}/document/${id}/purge`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
@@ -425,6 +426,7 @@ const API = {
       cmsGetOrder: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/commerce/orders/${id}`),
       cmsUpdateOrderStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/orders/${id}/status`, d),
       cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
+      cmsConfirmOrderPayment: (siteId, id, paymentId = null) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${paymentId ? `?paymentId=${paymentId}` : ''}`, {}),
       // Booking (per site)
       cmsListBookingServices: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/services`),
       cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),
@@ -491,6 +493,7 @@ const API = {
       getAssetsNeedsReview: () => API.get(`${base}/fixedasset/needs-review`),
       createAsset: (d) => API.post(`${base}/fixedasset`, d),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
+      deleteAsset: (id) => API.del(`${base}/fixedasset/${id}`),
       disposeAsset: (id, d) => API.post(`${base}/fixedasset/${id}/dispose`, d),
       writeOffAsset: (id, d) => API.post(`${base}/fixedasset/${id}/writeoff`, d),
       adjustAssetLife: (id, d) => API.put(`${base}/fixedasset/${id}/adjust-life`, d),

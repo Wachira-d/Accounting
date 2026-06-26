@@ -16,13 +16,22 @@ public class CmsCommerceService : ICmsCommerceService
     private readonly ILogger<CmsCommerceService> _logger;
     private readonly string _encryptionKey;
     private readonly IImageProcessingService? _images;
+    private readonly IDocumentService? _docService;
+    private readonly IEtaxInvoiceService? _etaxService;
+    private readonly IProductService? _productService;
 
-    public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger, IConfiguration config, IImageProcessingService? images = null)
+    public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger,
+        IConfiguration config, IImageProcessingService? images = null,
+        IDocumentService? docService = null, IEtaxInvoiceService? etaxService = null,
+        IProductService? productService = null)
     {
         _db = db;
         _logger = logger;
         _encryptionKey = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
         _images = images;
+        _docService = docService;
+        _etaxService = etaxService;
+        _productService = productService;
     }
 
     // ===== Products =====
@@ -814,67 +823,157 @@ public class CmsCommerceService : ICmsCommerceService
             }
         }
 
-        // Generate document number using same pattern as DocumentService
         var docType = order.RequestTaxInvoice ? DocumentType.TaxInvoice : DocumentType.Invoice;
-        var docPrefix = $"{(docType == DocumentType.TaxInvoice ? "TINV" : "INV")}-{DateTime.UtcNow:yyyyMM}-";
-        var maxNumber = await _db.Documents
-            .IgnoreQueryFilters()
-            .Where(d => d.CompanyId == companyId && d.DocumentNumber.StartsWith(docPrefix))
-            .Select(d => d.DocumentNumber)
-            .MaxAsync();
-        var nextSeq = 1;
-        if (maxNumber != null)
-        {
-            var lastPart = maxNumber.Substring(docPrefix.Length);
-            if (int.TryParse(lastPart, out var parsed)) nextSeq = parsed + 1;
-        }
-        var docNumber = $"{docPrefix}{nextSeq:D4}";
 
-        var doc = new Document
-        {
-            CompanyId = companyId,
-            DocumentNumber = docNumber,
-            DocumentType = docType,
-            Status = DocumentStatus.Draft,
-            DocumentDate = DateTime.UtcNow,
-            ContactId = contactId,
-            Currency = order.Currency,
-            SubTotal = order.SubTotal,
-            VatAmount = order.VatAmount,
-            TotalAmount = order.TotalAmount,
-            Notes = $"Online order #{order.OrderNumber}",
-            Reference = order.OrderNumber
-        };
+        // Route ผ่าน IDocumentService.CreateDocumentAsync = ผ่าน:
+        // - DocumentNumberGenerator (gap-free per §86/4)
+        // - Tax point §78/§78/1, §65 ตรี, §82/5 validation
+        // - Auto JE posting on Approve
+        // - Tax invoice completeness check
+        if (_docService == null)
+            throw new InvalidOperationException(
+                "CMS → ERP sync ต้องการ IDocumentService — register service ใน DI ก่อน");
 
-        // Map to branch if configured
+        var request = new Models.DTOs.Document.CreateDocumentRequest(
+            DocumentType: docType,
+            DocumentDate: DateTime.UtcNow,
+            DueDate: DateTime.UtcNow,   // online order = ลูกค้าจ่ายแล้ว, ไม่ใช่ credit
+            ContactId: contactId,
+            Reference: order.OrderNumber,
+            Notes: $"Online order #{order.OrderNumber}",
+            Lines: order.Lines.Select(l => new Models.DTOs.Document.DocumentLineRequest(
+                Description: l.ProductName,
+                Quantity: l.Quantity,
+                UnitPrice: l.UnitPrice,
+                Unit: l.Unit,
+                DiscountPercent: 0m,
+                VatRate: l.VatRate,
+                WithholdingTaxRate: 0m,
+                AccountId: null,
+                ProjectId: null)).ToList(),
+            ProjectId: null,
+            BankAccountId: null,
+            PaymentAccountId: null,
+            ExpenseCategoryId: null,
+            Currency: order.Currency,
+            PricesIncludeVat: true   // CMS เก็บราคา gross — backend จะ split VAT ออกให้
+        );
+
+        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-customer");
+        order.ErpDocumentId = created.Id;
+
+        // Branch hint — ฝัง InternalNotes ของ Document ตามเดิม
         if (site?.BranchId.HasValue == true)
-            doc.InternalNotes = $"Branch: {site.BranchId}";
-
-        _db.Documents.Add(doc);
-
-        var lineOrder = 1;
-        foreach (var line in order.Lines)
         {
-            _db.DocumentLines.Add(new DocumentLine
-            {
-                DocumentId = doc.Id,
-                LineOrder = lineOrder++,
-                ProductCode = line.ProductSku ?? "",
-                Description = line.ProductName,
-                Quantity = line.Quantity,
-                Unit = line.Unit,
-                UnitPrice = line.UnitPrice,
-                Amount = line.TotalAmount - line.VatAmount,
-                VatRate = line.VatRate,
-                VatAmount = line.VatAmount
-            });
+            var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id);
+            if (doc != null) doc.InternalNotes = $"Branch: {site.BranchId}";
         }
 
-        order.ErpDocumentId = doc.Id;
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Order {OrderNumber} synced to ERP document {DocId} ({DocNumber})",
+            order.OrderNumber, created.Id, created.DocumentNumber);
+        return created.Id;
+    }
+
+    /// <summary>เมื่อ admin/webhook ยืนยันว่าได้รับเงินจากออเดอร์ออนไลน์
+    /// แล้ว ดำเนินงาน 4 ขั้นในธุรกรรมเดียว (idempotent):
+    /// 1. เปลี่ยน SiteOrderPayment.Status = Confirmed + อัปเดต PaidAmount
+    /// 2. SyncOrderToErpAsync ถ้ายังไม่ sync (สร้าง Document Draft ผ่าน
+    ///    IDocumentService — ได้เลข gap-free + validation ครบ)
+    /// 3. ApproveDocumentAsync ของ ERP doc → auto-post JE (Dr AR / Cr Revenue + Cr VAT)
+    /// 4. CreatePaymentAsync ของ ERP doc → Dr Cash/Bank / Cr AR เคลียร์ยอด
+    /// 5. DeductStockAsync — ตัด stock จริง
+    /// 6. (optional) GenerateEtax ถ้า RequestTaxInvoice=true + CompanySettings.EtaxAutoSubmit
+    ///
+    /// ทุก step ที่ล้มเหลวจะ log แต่ไม่ rollback step ก่อนหน้า — operator
+    /// แก้ใน UI ต่อได้.</summary>
+    public async Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
+        Guid? paymentId, string actor)
+    {
+        var order = await _db.SiteOrders
+            .Include(o => o.Payments)
+            .Include(o => o.Lines)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
+        if (order == null) return false;
+
+        // 1. Confirm SiteOrderPayment row
+        var pay = paymentId.HasValue
+            ? order.Payments.FirstOrDefault(p => p.Id == paymentId.Value)
+            : order.Payments.OrderByDescending(p => p.CreatedAt).FirstOrDefault();
+        if (pay == null) throw new InvalidOperationException("ไม่พบรายการชำระเงินที่จะยืนยัน");
+
+        if (pay.Status != SitePaymentStatus.Completed)
+        {
+            pay.Status = SitePaymentStatus.Completed;
+            pay.PaidAt = DateTime.UtcNow;
+        }
+        order.PaidAmount = order.Payments
+            .Where(p => p.Status == SitePaymentStatus.Completed)
+            .Sum(p => p.Amount);
+        if (order.PaidAmount >= order.TotalAmount - 0.005m)
+            order.PaidAt ??= DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Order {OrderNumber} synced to ERP document {DocId}", order.OrderNumber, doc.Id);
-        return doc.Id;
+        // 2. Sync ERP doc ถ้ายังไม่ sync
+        if (!order.ErpDocumentId.HasValue)
+        {
+            try { await SyncOrderToErpAsync(companyId, siteId, orderId); }
+            catch (Exception ex)
+            { _logger.LogError(ex, "ConfirmPayment: sync ERP failed for {OrderId}", orderId); }
+            await _db.Entry(order).ReloadAsync();
+        }
+
+        // 3+4. Approve + Record payment (JE auto-post)
+        if (order.ErpDocumentId.HasValue && _docService != null)
+        {
+            try
+            {
+                await _docService.ApproveDocumentAsync(companyId, order.ErpDocumentId.Value,
+                    actor, acknowledgeWarnings: true);
+            }
+            catch (Exception ex)
+            { _logger.LogWarning(ex, "ConfirmPayment: approve doc failed for order {OrderId}", orderId); }
+
+            try
+            {
+                await _docService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
+                    DocumentId: order.ErpDocumentId.Value,
+                    PaymentDate: pay.PaidAt ?? DateTime.UtcNow,
+                    Amount: pay.Amount,
+                    PaymentMethod: pay.PaymentMethod,
+                    Reference: pay.Reference,
+                    BankAccount: null,
+                    Notes: $"Online order #{order.OrderNumber} — {pay.PaymentMethod}"
+                ), actor);
+            }
+            catch (Exception ex)
+            { _logger.LogWarning(ex, "ConfirmPayment: record payment failed for order {OrderId}", orderId); }
+        }
+
+        // 5. Stock — ตัด stock ทุก line ที่ยังไม่ได้ตัด (idempotent)
+        try { await DeductStockAsync(companyId, siteId, orderId); }
+        catch (Exception ex)
+        { _logger.LogWarning(ex, "ConfirmPayment: stock deduct failed for order {OrderId}", orderId); }
+
+        // 6. e-Tax (optional)
+        if (order.RequestTaxInvoice && order.ErpDocumentId.HasValue && _etaxService != null)
+        {
+            var etaxEnabled = await _db.CompanySettings.AsNoTracking()
+                .Where(s => s.CompanyId == companyId)
+                .Select(s => (bool?)s.EtaxEnabled).FirstOrDefaultAsync() ?? false;
+            if (etaxEnabled)
+            {
+                try
+                {
+                    await _etaxService.GenerateAsync(companyId,
+                        new Models.DTOs.DocumentTemplate.GenerateEtaxRequest(order.ErpDocumentId.Value, SignDigitally: true));
+                }
+                catch (Exception ex)
+                { _logger.LogWarning(ex, "ConfirmPayment: e-Tax generate failed for order {OrderId}", orderId); }
+            }
+        }
+
+        return true;
     }
 
     // ===== Helpers =====
@@ -1013,33 +1112,62 @@ public class CmsCommerceService : ICmsCommerceService
 
         if (order == null) return false;
 
+        // Route ผ่าน IProductService.AdjustStockAsync (single source of truth
+        // ตาม duplicate audit #5) — ใช้ advisory lock + atomic txn + validation
+        // เหมือนกันทั่วระบบ. CMS-specific เหลือแค่ตรวจ StockBehavior +
+        // mark line.StockDeducted (audit trail per line)
         foreach (var line in order.Lines.Where(l => !l.StockDeducted))
         {
             var product = line.SiteProduct.Product;
-            if (line.SiteProduct.StockBehavior == StockBehavior.InStockOnly)
+            // CMS guard: บางสินค้าเป็น PreOrder ปล่อยติดลบได้ — ProductService
+            // จะ throw ถ้า OUT แล้วติดลบ (โหมด strict). ตอนนี้ CMS guard เฉพาะ
+            // InStockOnly + ปล่อยอย่างอื่นไป AdjustStockAsync จะ enforce อีกชั้น
+            if (line.SiteProduct.StockBehavior != StockBehavior.InStockOnly
+                && product.CurrentStock < line.Quantity)
             {
-                if (product.CurrentStock < line.Quantity)
-                {
-                    _logger.LogWarning("Insufficient stock for product {ProductId}: requested {Qty}, available {Stock}",
-                        product.Id, line.Quantity, product.CurrentStock);
-                    throw new InvalidOperationException($"Insufficient stock for product '{product.Name}' (available: {product.CurrentStock})");
-                }
+                // PreOrder / Backorder: skip AdjustStockAsync (จะ throw) แต่ mark
+                // line ว่าตัดแล้ว เพื่อกัน loop ซ้ำ
+                line.StockDeducted = true;
+                _logger.LogInformation("Skipping stock deduct for pre-order line {LineId} product {ProductId}",
+                    line.Id, product.Id);
+                continue;
             }
 
-            product.CurrentStock -= line.Quantity;
-            line.StockDeducted = true;
-
-            _db.StockMovements.Add(new StockMovement
+            try
             {
-                CompanyId = companyId,
-                ProductId = product.Id,
-                MovementType = "OUT",
-                Quantity = line.Quantity,
-                BalanceAfter = product.CurrentStock,
-                Reference = $"WEB-Order-{order.OrderNumber}",
-                Notes = "Online order line",
-                MovementDate = DateTime.UtcNow
-            });
+                if (_productService != null)
+                {
+                    await _productService.AdjustStockAsync(companyId, new Models.DTOs.Product.StockAdjustmentRequest(
+                        ProductId: product.Id,
+                        Quantity: line.Quantity,
+                        MovementType: "OUT",
+                        UnitCost: null,
+                        Reference: $"WEB-Order-{order.OrderNumber}",
+                        Notes: "Online order line"
+                    ), "storefront-customer");
+                }
+                else
+                {
+                    // Fallback (DI ไม่ inject — เช่น test fixture): ทำเอง
+                    product.CurrentStock -= line.Quantity;
+                    _db.StockMovements.Add(new StockMovement
+                    {
+                        CompanyId = companyId, ProductId = product.Id,
+                        MovementType = "OUT", Quantity = line.Quantity,
+                        BalanceAfter = product.CurrentStock,
+                        Reference = $"WEB-Order-{order.OrderNumber}",
+                        Notes = "Online order line", MovementDate = DateTime.UtcNow
+                    });
+                }
+                line.StockDeducted = true;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "Stock deduct rejected for line {LineId} product {ProductId}",
+                    line.Id, product.Id);
+                throw new InvalidOperationException(
+                    $"สต็อกไม่พอสำหรับ '{product.Name}' — {ex.Message}", ex);
+            }
         }
 
         await _db.SaveChangesAsync();

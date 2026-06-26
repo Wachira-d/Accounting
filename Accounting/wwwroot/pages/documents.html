@@ -750,6 +750,37 @@
       </div>
     </div>
 
+    <!-- Reclassify line account modal — แก้ผังบัญชีหลังอนุมัติ (Option 1: Minimal) -->
+    <div class="modal-overlay" id="reclassifyLineModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">เปลี่ยนผังบัญชี</h3>
+          <button class="modal-close" onclick="Layout.closeModal('reclassifyLineModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="rclInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px"></div>
+          <div class="form-group">
+            <label class="form-label" data-help="พิมพ์รหัสหรือชื่อบัญชีจากผังบัญชี (CoA) — ระบบจะ Dr ผังนี้ใน JE คู่ใหม่">ผังบัญชีใหม่ <span class="req">*</span></label>
+            <input type="text" class="form-input" id="rclNewAccount" list="rclAccountList" placeholder="พิมพ์รหัส/ชื่อ เช่น 5401 ค่าน้ำมัน" autocomplete="off">
+            <datalist id="rclAccountList"></datalist>
+            <div id="rclResolved" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-help="บันทึกเหตุผลลง JE description เพื่อ audit trail">เหตุผล (optional)</label>
+            <input type="text" class="form-input" id="rclReason" placeholder="เช่น ลงผังผิด ควรเป็นค่าน้ำมัน ไม่ใช่ค่าซ่อม">
+          </div>
+          <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
+            ⚠️ ระบบจะสร้าง JE คู่ใหม่ <b>Dr ผังใหม่ / Cr ผังเก่า</b> ลงงวดเดียวกับเอกสาร — ไม่แก้ตัวเอกสารต้นฉบับ.
+            ใช้ได้เฉพาะเมื่อ: งวดบัญชียังไม่ปิด, ภพ.30 ยังไม่ยื่น, ไม่มีเอกสารปลายทาง, ไม่มี Payment.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reclassifyLineModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitReclassifyLine()">บันทึก + Post JE</button>
+        </div>
+      </div>
+    </div>
+
     <!-- PDF Preview Modal -->
     <div class="modal-overlay" id="pdfModal">
       <div class="modal" style="max-width:800px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
@@ -1320,7 +1351,106 @@
         if (!document.querySelector('#linesBody .line-card')) this.addLine();
         this.calcSum();
 
+        // กฎเหล็ก #3: ฟอร์ม OCR ต้อง pre-fill ครบ + highlight field ที่
+        // confidence < 0.85 ด้วยกรอบเหลือง + tooltip ให้ผู้ใช้ตรวจสอบ
+        try { this._applyOcrConfidenceHints(payload.fieldConfidence || {}); }
+        catch (e) { console.warn('confidence hint failed', e); }
+
         Layout.toast('นำเข้าข้อมูลจาก OCR แล้ว — กรุณาตรวจสอบก่อนบันทึก', 'info');
+      },
+
+      /** กฎเหล็ก #3 — highlight field ที่ OCR confidence ต่ำกว่า 0.85 ด้วย
+       * กรอบเหลือง + tooltip "🤖 ตรวจสอบอีกครั้ง". field ที่ ≥0.85 ปล่อย
+       * normal. ลบ highlight เมื่อ user แตะ (input event) — แปลว่ายืนยันแล้ว */
+      /** Option 1 reclassify: เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่
+       * approved แล้ว — Expense/PI/PV เท่านั้น. ระบบจะ post reclassify-JE
+       * คู่ใหม่ (Dr ผังใหม่ / Cr ผังเก่า) ใต้ฉาก. ไม่แก้เอกสารต้นฉบับ */
+      openReclassifyLine(docId, lineId, oldAccountCode, description, amount) {
+        this._reclassifyCtx = { docId, lineId, oldAccountCode };
+        document.getElementById('rclInfo').innerHTML =
+          `<div>เอกสาร: <b>${this.escapeHtml(this.docs?.find(d => d.id === docId)?.documentNumber || docId.slice(0,8))}</b></div>` +
+          `<div>บรรทัด: ${this.escapeHtml(description || '(ไม่มีรายละเอียด)')}</div>` +
+          `<div>ยอดที่จะย้าย: <b>${Layout.money(amount)}</b> (ฐานก่อน VAT — VAT คงในผังเดิม)</div>` +
+          `<div>ผังเดิม: <b>${this.escapeHtml(oldAccountCode)}</b></div>`;
+        document.getElementById('rclNewAccount').value = '';
+        document.getElementById('rclReason').value = '';
+        document.getElementById('rclResolved').textContent = '';
+        // เติม datalist จาก coaByCode ที่โหลดไว้แล้ว
+        const dl = document.getElementById('rclAccountList');
+        if (dl && this.coaByCode) {
+          dl.innerHTML = Object.values(this.coaByCode)
+            .filter(a => a.accountCode !== oldAccountCode)
+            .slice(0, 200)
+            .map(a => `<option value="${this.escapeHtml(a.accountCode)} ${this.escapeHtml(a.accountName)}">`).join('');
+        }
+        Layout.openModal('reclassifyLineModal');
+        setTimeout(() => document.getElementById('rclNewAccount')?.focus(), 100);
+      },
+
+      async submitReclassifyLine() {
+        const ctx = this._reclassifyCtx;
+        if (!ctx) return;
+        const raw = document.getElementById('rclNewAccount').value.trim();
+        if (!raw) { Layout.toast('กรุณาเลือกผังบัญชีใหม่', 'error'); return; }
+        // raw รูปแบบ "5401 ค่าน้ำมัน" — ตัด accountCode ตัวแรก
+        const code = raw.split(/\s+/)[0];
+        const newAcc = this.coaByCode?.[code];
+        if (!newAcc) {
+          Layout.toast(`ไม่พบผังบัญชี ${code} ในระบบ`, 'error');
+          return;
+        }
+        if (newAcc.accountCode === ctx.oldAccountCode) {
+          Layout.toast('ผังใหม่ตรงกับผังเดิม — ไม่ต้องเปลี่ยน', 'warning');
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.reclassifyLine(ctx.docId, {
+            lineId: ctx.lineId,
+            newAccountId: newAcc.id,
+            reason: document.getElementById('rclReason').value.trim() || null,
+          });
+          Layout.toast(`เปลี่ยนผัง ${ctx.oldAccountCode} → ${newAcc.accountCode} สำเร็จ (JE คู่ใหม่ลงงวดเดิม)`, 'success');
+          Layout.closeModal('reclassifyLineModal');
+          this._reclassifyCtx = null;
+          await this.load();
+          // เปิด detail ใหม่ให้เห็นผัง+JE ใหม่
+          this.openDetail?.(ctx.docId);
+        } catch (e) {
+          Layout.toast('เปลี่ยนผังไม่สำเร็จ: ' + e.message, 'error', 8000);
+        }
+      },
+
+      _applyOcrConfidenceHints(conf) {
+        const fieldMap = {
+          'SupplierName': 'fContact',
+          'SupplierTaxId': 'fSupplierTaxIdReadonly',
+          'DocumentNumber': 'fSupplierInvoiceNumberPV',
+          'DocumentDate': 'fSupplierTaxInvoiceDatePV',
+          'TotalAmount': null,                // computed from lines
+          'VatAmount': null,
+          'ExpenseCategory': 'fExpenseCategory',
+          'PaymentChannel': 'fPaymentChannel',
+        };
+        Object.entries(conf || {}).forEach(([key, val]) => {
+          const v = Number(val) || 0;
+          const elId = fieldMap[key];
+          if (!elId || v >= 0.85) return;
+          const el = document.getElementById(elId);
+          if (!el) return;
+          el.style.borderColor = '#facc15';
+          el.style.background = '#fefce8';
+          el.title = `🤖 OCR confidence ${Math.round(v * 100)}% — กรุณาตรวจสอบค่าให้ตรงกับเอกสารจริงก่อนบันทึก`;
+          const clear = () => {
+            el.style.borderColor = '';
+            el.style.background = '';
+            el.title = '';
+            el.removeEventListener('input', clear);
+            el.removeEventListener('change', clear);
+          };
+          el.addEventListener('input', clear, { once: true });
+          el.addEventListener('change', clear, { once: true });
+        });
       },
       toggleSendEmail() {
         const on = document.getElementById('fSendEmail').checked;
@@ -1453,9 +1583,32 @@
                 <div style="font-size:12px;color:#047857">${summary.deposits?.length || 0} ใบ — สามารถหักออกจากใบนี้ได้หลังบันทึก</div>
                 ${matchedDeposits.length ? `<div style="margin-top:6px;font-size:13px;color:#047857;background:#a7f3d0;padding:4px 10px;border-radius:6px;display:inline-block">✓ ${matchedDeposits.length} ใบ booking ตรงกัน (${Layout.money(matchedTotal)})</div>` : ''}
               </div>
-              ${this.editingId ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">${matchedDeposits.length ? 'หักมัดจำที่ booking ตรงกัน' : 'หักมัดจำจากใบนี้'}</button>` : `<span style="font-size:11px;color:#047857;font-style:italic">บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ</span>`}
+              ${this.editingId
+                ? (matchedDeposits.length === 1
+                    // 1-click apply: booking ตรงเป๊ะ 1 ใบ → กดปุ่มเดียวจบ ไม่ต้อง
+                    // เปิด picker (กฎเหล็ก #3: ระบบเติมให้ ผู้ใช้แค่ยืนยัน)
+                    ? `<button type="button" class="btn btn-sm btn-success" onclick="Page.quickApplyDeposit('${matchedDeposits[0].depositDocumentId}', ${matchedDeposits[0].outstandingAmount})" title="หักมัดจำใบที่ booking ตรงกัน ${matchedDeposits[0].outstandingAmount.toFixed(2)} บาท ทันที — กดอีกครั้งใน picker ถ้าอยากปรับยอด"><b>✓ หักมัดจำทันที</b> ${Layout.money(matchedDeposits[0].outstandingAmount)}</button>
+                       <button type="button" class="btn btn-sm btn-ghost" onclick="Page.openApplyDeposit()" title="ปรับยอด/เลือกใบอื่น">ปรับ…</button>`
+                    : `<button type="button" class="btn btn-sm btn-success" onclick="Page.openApplyDeposit()">${matchedDeposits.length ? 'หักมัดจำที่ booking ตรงกัน' : 'หักมัดจำจากใบนี้'}</button>`)
+                : `<span style="font-size:11px;color:#047857;font-style:italic">บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ</span>`}
             </div>`;
         } catch { /* best-effort */ }
+      },
+
+      /** 1-click apply เมื่อมัดจำ booking match เป๊ะ 1 ใบ — ข้าม picker
+       *  (กฎเหล็ก #3 spirit). ใช้ outstandingAmount ของใบนั้นทันที. */
+      async quickApplyDeposit(depositId, outstanding) {
+        const api = Layout.api(); if (!api || !this.editingId) return;
+        if (!confirm(`ยืนยันหักมัดจำ ${Layout.money(outstanding)} จากใบนี้?`)) return;
+        try {
+          await api.applyDeposit(this.editingId, {
+            depositDocumentId: depositId, amount: outstanding,
+            applyDate: new Date().toISOString()
+          });
+          Layout.toast('หักมัดจำสำเร็จ — รับรู้รายได้ + ลดยอดคงค้างแล้ว');
+          await this.checkContactDeposits(document.getElementById('fContactId').value);
+          if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+        } catch (e) { Layout.toast(e.message || 'หักมัดจำไม่สำเร็จ', 'error'); }
       },
 
       /** เปิด picker modal เลือกใบมัดจำ + ระบุยอดที่หัก แล้วเรียก applyDeposit
@@ -3668,7 +3821,15 @@
           } else {
             const cr = await api.createDocument(payload);
             savedDocId = cr.data?.id;
-            Layout.toast('สร้างเอกสารสำเร็จ');
+            // Backend อาจ auto-approve Cash PV → ดู status จริงในผลตอบกลับ
+            // แล้ว toast ให้สื่อสารถูก (Paid / Approved / Draft)
+            const createdStatus = cr.data?.status;
+            if (createdStatus === 'Paid')
+              Layout.toast('สร้าง + อนุมัติ + ลงบัญชี = ชำระแล้ว ครบในคลิกเดียว', 'success');
+            else if (createdStatus === 'Approved')
+              Layout.toast('สร้าง + อนุมัติเอกสารแล้ว', 'success');
+            else
+              Layout.toast('สร้างเอกสารสำเร็จ');
             // Teach the local model: record the operator's actual payment-type
             // choice against the suggestion it was shown (trains per-supplier).
             if (payload.paymentType && this._lastPaymentTypeFeedbackId) {
@@ -3957,12 +4118,19 @@
               </div>` : ''}
             <div id="docChain_${d.id}" style="margin-bottom:12px"></div>
             <div class="table-container">
-              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th>โครงการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
+              <table class="table"><thead><tr><th>#</th><th data-i18n="common.detail">รายละเอียด</th><th>ผังบัญชี</th><th>โครงการ</th><th class="text-right">จำนวน</th><th class="text-right">ราคา/หน่วย</th><th class="text-right">ส่วนลด%</th><th class="text-right">VAT</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th></tr></thead>
               <tbody>${(d.lines||[]).map(l => {
                 const projectCell = l.projectId
                   ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px"><b>${this.escapeHtml(l.projectCode || '')}</b> ${this.escapeHtml(l.projectName || '')}${l.hasProjectCostEntry ? ' <span title="auto-posted to ProjectCostEntry" style="color:#15803d;font-weight:600">🏗️</span>' : ''}</span>`
                   : '<span style="color:#cbd5e1">—</span>';
-                return `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td>${projectCell}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`;
+                // เปลี่ยนผังบัญชีหลัง approved: เฉพาะ Expense/PI/PV ใน status ที่ JE ลงแล้ว
+                const canReclassify = ['Expense','PurchaseInvoice','PaymentVoucher'].includes(d.documentType)
+                  && ['Approved','Sent','PartiallyPaid','Paid'].includes(d.status)
+                  && l.accountCode;
+                const acctCell = l.accountCode
+                  ? `<span style="font-family:ui-monospace,monospace;font-size:11px"><b>${this.escapeHtml(l.accountCode)}</b>${l.accountName ? ' ' + this.escapeHtml(l.accountName.substring(0,20)) : ''}</span>${canReclassify ? ` <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:10px" onclick="Page.openReclassifyLine('${d.id}', '${l.id}', '${this.escapeHtml(l.accountCode)}', '${this.escapeHtml((l.description||'').replace(/'/g, '&#39;'))}', ${l.amount})" title="เปลี่ยนผังบัญชี (ระบบจะสร้าง JE คู่ใหม่ Dr ผังใหม่/Cr ผังเก่า — ไม่แก้เอกสารต้นฉบับ)">✏️</button>` : ''}`
+                  : '<span style="color:#cbd5e1">—</span>';
+                return `<tr><td>${l.lineOrder}</td><td>${l.description}</td><td>${acctCell}</td><td>${projectCell}</td><td class="text-right">${l.quantity}</td><td class="text-right">${Layout.money(l.unitPrice)}</td><td class="text-right">${l.discountPercent||0}%</td><td class="text-right">${Layout.money(l.vatAmount||0)}</td><td class="text-right">${Layout.money(l.amount)}</td></tr>`;
               }).join('')}</tbody></table>
             </div>
             <div id="docFulfillment_${d.id}" style="margin-top:14px"></div>

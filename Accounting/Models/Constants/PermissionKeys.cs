@@ -42,6 +42,12 @@ public static class PermissionKeys
     // Owner-configurable per company — default allow list = Owner + Accountant.
     public const string SensitiveDocsView = P + "SensitiveDocs.View";
 
+    /// <summary>PDPA ม.26 / ม.37 — เปิดดู PII (CitizenId, Passport, Phone, Email)
+    /// แบบ raw (ไม่ mask). default ทุก field mask ตาม PiiMask helper.
+    /// allow list = HR_Admin + Owner เท่านั้น. ทุกครั้งที่ field ถูกอ่านแบบ raw
+    /// ต้อง log ลง PiiAccessLog (audit retention 1 ปี ตาม ม.37(4)).</summary>
+    public const string PiiView         = P + "Pii.View";
+
     // Expense claims
     public const string ExpenseApprove  = P + "Expense.Approve";
     public const string ExpenseReject   = P + "Expense.Reject";

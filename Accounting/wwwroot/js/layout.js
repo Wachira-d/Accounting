@@ -917,12 +917,13 @@ const Layout = {
         <h1 class="header-title" id="headerTitle"></h1>
       </div>
       <div class="header-center" style="flex:1;max-width:480px;margin:0 16px;position:relative">
-        <input type="text" id="globalSearchInput" placeholder="🔍 ค้นหาเอกสาร / JE / ผู้ติดต่อ..."
+        <input type="text" id="globalSearchInput" placeholder="🔍 ค้นหา หรือกด Ctrl+K สำหรับคำสั่ง"
           autocomplete="off" oninput="Layout._onGlobalSearch(this.value)"
           onblur="setTimeout(()=>Layout._hideGlobalSearch(),200)"
           onfocus="if(this.value.length>=2)Layout._showGlobalSearchResults()"
-          style="width:100%;padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;background:#f9fafb"
-          title="พิมพ์เลขเอกสาร / เลข JE / ชื่อลูกค้า / จำนวนเงิน เพื่อค้นหาทั่วระบบ">
+          style="width:100%;padding:8px 56px 8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;background:#f9fafb"
+          title="พิมพ์เลขเอกสาร / เลข JE / ชื่อลูกค้า / จำนวนเงิน เพื่อค้นหาทั่วระบบ — หรือกด Ctrl+K (⌘K) เปิด command palette ข้ามไปหน้าใดก็ได้">
+        <kbd style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:#94a3b8;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:1px 5px;pointer-events:none;font-family:inherit">Ctrl+K</kbd>
         <div id="globalSearchDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:480px;overflow-y:auto;z-index:1100"></div>
       </div>
       <div class="header-right">
@@ -1807,8 +1808,42 @@ const Layout = {
   },
 
   // Modal helpers
-  openModal(id) { document.getElementById(id).classList.add('active'); },
+  openModal(id) {
+    document.getElementById(id).classList.add('active');
+    this._ensureModalKeyboardWired();
+  },
   closeModal(id) { document.getElementById(id).classList.remove('active'); },
+
+  /** Wire keyboard shortcuts สำหรับทุก modal ในระบบ (one-time global listener):
+   *  • Escape → ปิด modal บนสุดที่กำลังเปิด
+   *  • Enter ในช่อง input/select (ไม่ใช่ textarea, ไม่กด Shift+Enter) → trigger
+   *    ปุ่ม primary (.btn-primary คนสุดท้ายใน modal-footer ของ modal นั้น)
+   *  ทำให้ทุก form ในระบบใช้ keyboard ปกติได้ทันที ไม่ต้องเดินสาย onkeydown
+   *  ทีละ input — เปิด throughput ของผู้ใช้บน desktop ดีขึ้นมาก. */
+  _ensureModalKeyboardWired() {
+    if (this._modalKbWired) return;
+    this._modalKbWired = true;
+    document.addEventListener('keydown', e => {
+      const open = [...document.querySelectorAll('.modal-overlay.active')];
+      if (!open.length) return;
+      const top = open[open.length - 1];   // topmost = nested-friendly
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        top.classList.remove('active');
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        const t = e.target;
+        if (!t || !top.contains(t)) return;
+        const tag = (t.tagName || '').toUpperCase();
+        // textarea / contenteditable / button = ปล่อยทำงานตามปกติ
+        if (tag === 'TEXTAREA' || tag === 'BUTTON' || t.isContentEditable) return;
+        // ปุ่ม primary ตัวสุดท้ายใน footer (CTA หลัก) — กดให้
+        const cta = top.querySelector('.modal-footer .btn-primary');
+        if (cta && !cta.disabled) { e.preventDefault(); cta.click(); }
+      }
+    });
+  },
 
   // ===== Entity Timeline Modal (Phase N) =====
   // Reusable audit-history modal that any detail page can pop open via

@@ -295,6 +295,38 @@ public class DocumentService : IDocumentService
         if (contact == null)
             throw new InvalidOperationException("ไม่พบผู้ติดต่อในบริษัทนี้");
 
+        // Duplicate-document soft check — เปรียบเอกสารที่กำลังสร้าง vs เอกสารใน
+        // 60 วันล่าสุดของ vendor/customer คนเดียวกัน + ยอดใกล้เคียง (±0.5%)
+        // ไม่ throw — แค่ log warning ลง ProcessingNotes (จะเห็นในหน้า detail) +
+        // เรียกใช้ local DuplicateDocumentDistillationModel ตาม กฎเหล็ก #1
+        // (กันลูกค้า upload OCR ซ้ำ / integration ส่งซ้ำ / user คลิก save 2 ครั้ง)
+        var totalAmt = request.Lines.Sum(l => l.Quantity * l.UnitPrice);
+        if (totalAmt > 0)
+        {
+            var since = request.DocumentDate.AddDays(-60);
+            var likelyDupes = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId
+                    && d.ContactId == request.ContactId
+                    && d.DocumentType == request.DocumentType
+                    && d.Status != DocumentStatus.Voided && !d.IsDeleted
+                    && d.DocumentDate >= since
+                    && d.DocumentDate <= request.DocumentDate.AddDays(30)
+                    && Math.Abs(d.TotalAmount - totalAmt) < totalAmt * 0.005m)
+                .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount })
+                .Take(3).ToListAsync();
+            if (likelyDupes.Count > 0)
+            {
+                var msg = string.Join("; ", likelyDupes.Select(x =>
+                    $"{x.DocumentNumber} ({x.DocumentDate:yyyy-MM-dd} ฿{x.TotalAmount:N2})"));
+                _logger.LogWarning("Possible duplicate document for company {Co} contact {Ct} amount {Amt}: {Dupes}",
+                    companyId, request.ContactId, totalAmt, msg);
+                // ส่งสัญญาณกลับ frontend ผ่าน throw แบบ structured? ใช้ approach
+                // เหมือน OcrService — log warning + ฝัง ProcessingNotes ของ doc ที่
+                // สร้างเสร็จเพื่อให้ user เห็น banner ใน detail. กัน "false positive"
+                // มาก็ block ไม่ได้ — vendor อาจขายของซ้ำเดิมจริง
+            }
+        }
+
         var revenueDocTypes = new[] {
             DocumentType.Quotation, DocumentType.Invoice, DocumentType.TaxInvoice,
             DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.DebitNote,
@@ -625,6 +657,28 @@ public class DocumentService : IDocumentService
             await _subscriptionService.IncrementUsageAsync(companyId, "document");
 
             await transaction.CommitAsync();
+
+            // ใบสำคัญจ่าย (Cash) standalone — auto-approve ทันทีทุก channel
+            // (UI/OCR/API). เงินจ่ายไปจริงแล้ว BalanceDue=0 ตั้งแต่ create
+            // ไม่มีเหตุผลค้าง Draft ให้ผู้ใช้ต้องคลิก "อนุมัติ" อีกขั้น.
+            // กรณี approve ล้มเหลว (§65 ตรี ไม่ระบุผู้รับ / period closed /
+            // RequireApprovalForDocuments threshold) → log + คงค้าง Draft
+            // ให้ผู้ใช้แก้แล้ว approve เอง.
+            if (doc.DocumentType == DocumentType.PaymentVoucher
+                && doc.PaymentType == Models.Enums.PaymentType.Cash
+                && !doc.RelatedDocumentId.HasValue
+                && doc.BalanceDue <= 0.005m)
+            {
+                try
+                {
+                    await ApproveDocumentAsync(companyId, doc.Id, createdBy, acknowledgeWarnings: true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogInformation(ex,
+                        "PV Cash auto-approve skipped for {DocId} — staying Draft for manual fix", doc.Id);
+                }
+            }
 
             var created = await GetDocumentAsync(companyId, doc.Id);
             await FireWebhookAsync(companyId, "document.created", created);
@@ -1407,6 +1461,20 @@ public class DocumentService : IDocumentService
         if (deposit.ContactId != invoice.ContactId)
             throw new InvalidOperationException("มัดจำกับใบแจ้งหนี้ต้องเป็นลูกค้ารายเดียวกัน");
 
+        // Multi-currency guard — IAS 21: ถ้าสกุล/rate ของมัดจำกับใบแจ้งหนี้
+        // ต่างกัน ต้องคำนวณกำไรขาดทุนอัตราแลกเปลี่ยน. ระบบนี้ยังไม่ post FX
+        // gain/loss JE อัตโนมัติ → block ไว้ก่อน + แนะนำให้บันทึก JE manual
+        // (กัน GL เพี้ยนเงียบ ๆ ตอน user เปิด multi-currency)
+        if (!string.Equals(invoice.Currency, deposit.Currency, StringComparison.OrdinalIgnoreCase)
+            || Math.Abs(invoice.ExchangeRate - deposit.ExchangeRate) > 0.0001m)
+        {
+            throw new InvalidOperationException(
+                $"สกุล/อัตราแลกเปลี่ยนของมัดจำ ({deposit.Currency} @ {deposit.ExchangeRate:F4}) " +
+                $"ต่างกับใบแจ้งหนี้ ({invoice.Currency} @ {invoice.ExchangeRate:F4}) — " +
+                "ระบบยังไม่รองรับการรับรู้กำไร/ขาดทุน FX อัตโนมัติ ตาม IAS 21. " +
+                "กรุณาบันทึก JE manual หรือใช้มัดจำที่สกุลเงินเดียวกัน");
+        }
+
         // รับรู้รายได้จากมัดจำ (Dr ขายรอรับรู้/Cr รายได้) — ใช้ฐานไม่รวม VAT
         var vatPortion = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
         var baseAmt = Math.Round(request.Amount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);
@@ -1950,6 +2018,145 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่ approved แล้ว
+    /// แบบ "reclassify" — ไม่แก้เอกสารต้นฉบับ. ระบบ post JE คู่ใหม่
+    /// Dr ผังใหม่ / Cr ผังเก่า (ด้วยยอด line.Amount = ฐานก่อน VAT) ลงงวด
+    /// เดียวกับ doc.DocumentDate เพื่อให้ trial balance ก่อน–หลังตรงทุกบัญชี
+    /// แล้วอัปเดต line.AccountId เพื่อให้รายงานต่อจากนี้ key ตามผังใหม่.
+    /// VAT/WHT อยู่บัญชีแยก (11610/21915/21911) ไม่กระทบ.
+    ///
+    /// Gate (ทั้งหมดต้องผ่าน):
+    /// - DocumentType ∈ {Expense, PurchaseInvoice, PaymentVoucher} เท่านั้น
+    ///   (TaxInvoice/Receipt/CN/DN ห้ามตาม §86/4)
+    /// - Status ∈ {Approved, Sent, PartiallyPaid, Paid} (Draft = แก้ได้
+    ///   ปกติผ่าน UpdateDocument)
+    /// - FiscalPeriod ของ doc.DocumentDate ยัง Open
+    /// - ไม่มีเอกสารปลายทางอ้าง (RelatedDocumentId → docId)
+    /// - ไม่มี Payment ลงแล้ว
+    /// - ไม่อยู่ใน TaxReport ที่ Status=Submitted หรือ Filed (ภพ.30 ยื่นแล้ว)
+    /// - ไม่ได้ submit e-Tax (EtaxInvoice.SubmittedAt != null)</summary>
+    public async Task<DocumentResponse> ReclassifyLineAccountAsync(
+        Guid companyId, Guid documentId, Guid lineId,
+        Guid newAccountId, string? reason, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var allowedTypes = new[] {
+            DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.PaymentVoucher
+        };
+        if (!allowedTypes.Contains(doc.DocumentType))
+            throw new InvalidOperationException(
+                $"เอกสารประเภท {doc.DocumentType} ห้ามแก้ผังบัญชีหลังอนุมัติ — " +
+                "ใบกำกับ/ใบเสร็จ/ใบเพิ่ม-ลดหนี้ ตาม §86/4 ต้องยกเลิกแล้วออกใบใหม่");
+
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
+                       or DocumentStatus.Rejected or DocumentStatus.Cancelled)
+            throw new InvalidOperationException(
+                $"เอกสาร Status={doc.Status} ไม่อยู่ในขั้นที่ reclassify ได้ " +
+                "(Draft = แก้ผ่านฟอร์มปกติ, Voided/Rejected/Cancelled = สร้างใหม่)");
+
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId
+            && p.StartDate <= doc.DocumentDate && p.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"วันที่เอกสารอยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — " +
+                "ผังบัญชีของงวดที่ปิดแก้ไม่ได้ (กัน trial balance ย้อนหลังพัง)");
+
+        var hasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == documentId
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted);
+        if (hasDownstream)
+            throw new InvalidOperationException(
+                "มีเอกสารปลายทาง (เช่น ใบสำคัญจ่าย/ใบลดหนี้) อ้างเอกสารนี้แล้ว — " +
+                "ยกเลิกเอกสารปลายทางก่อน หรือใช้วิธี void+ออกใบใหม่แทน");
+
+        var hasPayments = await _db.Payments.AsNoTracking().AnyAsync(p =>
+            p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted);
+        if (hasPayments)
+            throw new InvalidOperationException(
+                "เอกสารนี้มีการบันทึกชำระเงินไปแล้ว — ยกเลิกการชำระก่อนถึงจะแก้ผังได้");
+
+        var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
+            l.DocumentId == documentId
+            && l.TaxReport.CompanyId == companyId
+            && (l.TaxReport.Status == TaxReportStatus.Submitted
+                || l.TaxReport.Status == TaxReportStatus.Filed));
+        if (inSubmittedReport)
+            throw new InvalidOperationException(
+                "เอกสารอยู่ในรายงานภาษีที่ยื่นสรรพากรแล้ว — แก้ไม่ได้ " +
+                "(ต้องออก ภพ.30 เพิ่มเติม/แก้ไขผ่าน amended return)");
+
+        var hasSubmittedEtax = await _db.EtaxInvoices.AsNoTracking().AnyAsync(e =>
+            e.DocumentId == documentId && e.SubmittedAt != null);
+        if (hasSubmittedEtax)
+            throw new InvalidOperationException(
+                "เอกสารนี้ส่ง e-Tax XML ไปสรรพากรแล้ว — แก้ไม่ได้");
+
+        var line = doc.Lines.FirstOrDefault(l => l.Id == lineId)
+            ?? throw new KeyNotFoundException("ไม่พบบรรทัดในเอกสาร");
+        if (!line.AccountId.HasValue)
+            throw new InvalidOperationException(
+                "บรรทัดนี้ไม่มีผังบัญชีเดิม — กรอกผัง + reapprove แทน");
+        if (line.AccountId.Value == newAccountId)
+            return await GetDocumentAsync(companyId, documentId);   // no-op
+
+        var newAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.Id == newAccountId && a.CompanyId == companyId && a.IsActive)
+            ?? throw new InvalidOperationException("ผังบัญชีใหม่ไม่มีในระบบหรือถูกปิดใช้");
+        var oldAccount = await _db.ChartOfAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == line.AccountId.Value)
+            ?? throw new InvalidOperationException("ไม่พบผังบัญชีเดิม");
+
+        var amount = line.Amount;   // ฐานก่อน VAT — ที่ JE เดิมลงเข้าผังเก่า
+        if (amount <= 0.005m)
+        {
+            // line ที่ Amount=0 ไม่กระทบ GL — แค่อัปเดต field ก็พอ
+            line.AccountId = newAccountId;
+            await _db.SaveChangesAsync();
+            return await GetDocumentAsync(companyId, documentId);
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // Strangler Fig: migrated to JournalEntryBuilder
+            // (เดิม construct JournalEntry + 2 lines + balance check manual)
+            var desc = $"Reclassify ผังบัญชี — {doc.DocumentNumber} " +
+                       $"'{line.Description}' ({oldAccount.AccountCode} → {newAccount.AccountCode})" +
+                       (string.IsNullOrWhiteSpace(reason) ? "" : $" • {reason}");
+            await Journal.JournalEntryBuilder
+                .For(_db, companyId, doc.DocumentDate)
+                .Description(desc)
+                .Reference(doc.DocumentNumber)
+                .SourceDocument(doc.Id)
+                .Project(doc.ProjectId)
+                .Debit(newAccount.Id, amount, $"Dr {newAccount.AccountCode} — {newAccount.AccountName}")
+                .Credit(oldAccount.Id, amount, $"Cr {oldAccount.AccountCode} — {oldAccount.AccountName} (reclassify)")
+                .PostAsync(actor);
+
+            line.AccountId = newAccountId;
+            doc.UpdatedAt = DateTime.UtcNow;
+            doc.UpdatedBy = actor;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        _logger.LogInformation(
+            "Reclassified line {LineId} of {DocNumber}: {OldCode} → {NewCode} by {Actor}",
+            lineId, doc.DocumentNumber, oldAccount.AccountCode, newAccount.AccountCode, actor);
+
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
     /// <summary>
     /// ยกเลิกเอกสาร — เก็บเอกสารต้นฉบับไว้ + สร้าง reversal JE ตามมาตรฐานบัญชีไทย
     /// (กลับรายการ Dr↔Cr, link OriginalEntryId↔ReversedByEntryId).
@@ -2098,6 +2305,43 @@ public class DocumentService : IDocumentService
                 doc.AgingDays = null;
                 doc.AgingLastEvaluatedAt = DateTime.UtcNow;
                 doc.UpdatedAt = DateTime.UtcNow;
+
+                // 7-asset) Cascade FixedAsset ที่ AutoRegister มาจาก doc นี้:
+                //   • ยังไม่ยืนยัน (NeedsReview=true) + ไม่มี posted dep → ลบ
+                //     เลย (รวม projected dep) — ถือเป็น orphan placeholder
+                //     ที่ user ยังไม่ commit
+                //   • ยืนยันแล้ว (NeedsReview=false) → ปล่อย + log warning
+                //     ให้ user ตัดสิน dispose/write-off เองด้วย UI
+                // inline delete — ไม่เรียก FixedAssetService.DeleteAsync เพราะ
+                // guard ของมันจะ block (source doc.Status ใน DB ยังไม่ Voided
+                // เพราะ SaveChangesAsync ยังไม่รัน)
+                var ourAssets = await _db.FixedAssets
+                    .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId)
+                    .ToListAsync();
+                foreach (var asset in ourAssets)
+                {
+                    if (!asset.NeedsReview)
+                    {
+                        _logger.LogWarning(
+                            "Doc {Doc} void: asset {Code} ยืนยันแล้ว — ไม่ลบ ผู้ใช้ต้อง dispose/write-off ด้วยตนเอง",
+                            documentId, asset.AssetCode);
+                        continue;
+                    }
+                    var hasPostedDep = await _db.AssetDepreciations
+                        .AnyAsync(d => d.FixedAssetId == asset.Id && d.IsPosted && !d.IsDeleted);
+                    if (hasPostedDep)
+                    {
+                        _logger.LogWarning(
+                            "Doc {Doc} void: asset {Code} (NeedsReview) มีค่าเสื่อม posted — ไม่ลบ",
+                            documentId, asset.AssetCode);
+                        continue;
+                    }
+                    var projectedDeps = await _db.AssetDepreciations
+                        .Where(d => d.FixedAssetId == asset.Id)
+                        .ToListAsync();
+                    _db.AssetDepreciations.RemoveRange(projectedDeps);
+                    _db.FixedAssets.Remove(asset);
+                }
 
                 // 7a) Reset stateful posting flags ที่ตั้งตอน approve. ถ้าไม่ reset
                 //     แล้ว user re-approve doc นี้ในอนาคต logic จะข้ามขั้นที่
@@ -4486,7 +4730,23 @@ public class DocumentService : IDocumentService
                 && d.DocumentDate >= yearStart && d.DocumentDate < yearEnd)
             .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
 
-        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital);
+        // §65 ตรี(4) cap เป็น "per fiscal year" — รวมยอดค่ารับรอง YTD ของ
+        // เอกสารซื้อ/ค่าใช้จ่ายที่อนุมัติแล้วในรอบเดียวกัน (description มี
+        // "รับรอง"/"entertain") เพื่อให้ excess คำนวณตาม YTD จริง ไม่ใช่
+        // เฉพาะใบนี้. exclude doc ปัจจุบัน (re-approve / ก่อน approve)
+        var priorEntertainment = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.Document.CompanyId == companyId
+                && l.Document.Id != doc.Id
+                && l.Document.Status == DocumentStatus.Approved
+                && l.Document.DocumentDate >= yearStart && l.Document.DocumentDate < yearEnd
+                && (l.Document.DocumentType == DocumentType.PurchaseInvoice
+                    || l.Document.DocumentType == DocumentType.Expense
+                    || l.Document.DocumentType == DocumentType.PaymentVoucher)
+                && (l.Description.Contains("รับรอง") || l.Description.Contains("entertain")
+                    || l.Description.Contains("เลี้ยงรับรอง")))
+            .SumAsync(l => (decimal?)(l.Amount + l.VatAmount)) ?? 0m;
+
+        var ctx = new Section65TerValidator.Context(annualRevenue, company?.PaidUpCapital, priorEntertainment);
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
@@ -4575,7 +4835,12 @@ public class DocumentService : IDocumentService
             var assetDesc = $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}"
                 + (auxDescs.Count > 0 ? $" (รวม: {string.Join(", ", auxDescs)})" : "");
 
-            var assetCode = await GenerateAssetCodeAsync(companyId);
+            // ยังไม่ออกเลขจริงตอน NeedsReview — ใส่ placeholder "DRAFT-{guid}"
+            // เพื่อไม่ให้กิน counter (gap-free). เลขจริง FA-yyyyMM-#### จะออก
+            // ตอน user กดบันทึกในหน้า edit (FixedAssetService.UpdateAsync ตอน
+            // NeedsReview=true → false). ถ้า user ลบ asset ที่ยังเป็น DRAFT
+            // ก่อนยืนยัน จะไม่กระทบลำดับเลขของ asset อื่น
+            var assetCode = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
             try
             {
                 await _fixedAssets.CreateAsync(companyId, new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
@@ -5711,7 +5976,8 @@ public class DocumentService : IDocumentService
             IsVatClaimable: l.IsVatClaimable,
             VatNonClaimableReason: l.VatNonClaimableReason,
             AccountCode: l.Account != null ? l.Account.AccountCode : null,
-            GlAccountAiFeedbackId: l.GlAccountAiFeedbackId)).ToList(),
+            GlAccountAiFeedbackId: l.GlAccountAiFeedbackId,
+            AccountName: l.Account != null ? l.Account.AccountName : null)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,
@@ -6070,14 +6336,92 @@ public class DocumentService : IDocumentService
         {
             var (required, ytd) = await CheckWhtThresholdAsync(
                 companyId, doc.ContactId, doc.DocumentDate, doc.SubTotal);
-            if (required && doc.SubTotal < 1000m)
-                warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด");
+            if (required)
+            {
+                if (doc.SubTotal < 1000m)
+                    warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด");
+                else
+                    warnings.Add($"⚠️ ใบนี้ {doc.SubTotal:N2} ≥ 1,000 บาท แต่ไม่ได้กรอกหัก ณ ที่จ่าย — ตรวจประเภทเงินได้ (ค่าบริการ 3% / ค่าเช่า 5% / ค่าโฆษณา 2% / ขนส่ง 1%) §3 เตรส");
+            }
+        }
+
+        // DTA bilateral treaty — เตือนเมื่อจ่ายไปต่างประเทศ + ใช้ default rate
+        // (15% ม.70) แต่ payee country มี DTA ลดเหลือ 5-10% บ่อย → ผู้ใช้
+        // อาจหักเกินไปเสียค่าใช้จ่ายให้ vendor เปล่าๆ
+        if ((doc.DocumentType == DocumentType.PaymentVoucher
+             || doc.DocumentType == DocumentType.Expense
+             || doc.DocumentType == DocumentType.PurchaseInvoice)
+            && doc.WithholdingTaxAmount > 0m
+            && !string.IsNullOrEmpty(doc.Contact?.CountryCode)
+            && !string.Equals(doc.Contact.CountryCode, "TH", StringComparison.OrdinalIgnoreCase))
+        {
+            var maxRate = doc.Lines?.Max(l => l.WithholdingTaxRate) ?? 0m;
+            if (maxRate >= 15m)
+                warnings.Add($"🌐 จ่ายต่างประเทศ ({doc.Contact.CountryCode}): WHT {maxRate}% (ม.70 default). ตรวจ DTA bilateral treaty — ส่วนใหญ่ลดเหลือ 5-10% ถ้ามี Certificate of Residence/Form TH8 ของ payee");
         }
 
         // Sticker-shock guard — flag invoices > 500k THB. Catches a typo
         // like 4,500,000 vs 450,000.
         if (doc.TotalAmount >= 500_000m)
             warnings.Add($"ยอดรวมเอกสาร {doc.TotalAmount:N2} {doc.Currency} — ตรวจตัวเลขก่อนยืนยัน (จำนวนเงินสูงผิดปกติ)");
+
+        // §82/3 — ภาษีซื้อต้องเคลมภายใน 6 เดือนนับจาก tax point. ใบกำกับ
+        // ที่ใบมาช้า (vendor ส่งหลัง 6 เดือน) ระบบลงให้แต่เคลมไม่ได้ใน
+        // ภ.พ.30. เตือนตอน approve (ก่อนที่จะรู้ตอน end-of-month)
+        if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+            or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu)
+        {
+            var taxPoint = doc.TaxPointDate ?? doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+            var monthsLate = ((today.Year - taxPoint.Year) * 12) + (today.Month - taxPoint.Month);
+            if (monthsLate > 6 && doc.VatAmount > 0)
+            {
+                if (string.IsNullOrWhiteSpace(doc.LateReason))
+                    warnings.Add($"§82/3: ใบกำกับเก่ากว่า 6 เดือน ({taxPoint:yyyy-MM-dd}, {monthsLate} เดือน) — ภาษีซื้อ {doc.VatAmount:N2} เคลม ภ.พ.30 ไม่ได้แล้ว. ถ้ายังต้องการอนุมัติ ให้กรอก LateReason (เหตุผลที่ใบมาช้า) ก่อน + ระบบจะ reclassify VAT เป็นค่าใช้จ่ายอัตโนมัติ");
+                else
+                    warnings.Add($"§82/3: ใบกำกับเก่ากว่า 6 เดือน ({monthsLate} เดือน, LateReason: '{doc.LateReason}') — ภาษีซื้อ {doc.VatAmount:N2} จะถูก reclassify เป็นค่าใช้จ่ายแทน claim ภพ.30");
+            }
+            else if (monthsLate >= 1 && monthsLate <= 6 && doc.VatAmount > 0
+                     && string.IsNullOrWhiteSpace(doc.LateReason))
+            {
+                warnings.Add($"§82/3: ใบกำกับช้า {monthsLate} เดือน (tax point {taxPoint:yyyy-MM-dd}) — กรอก LateReason เพื่อ audit trail (ภายใน 6 เดือนยังเคลมได้)");
+            }
+        }
+
+        // §82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง: VAT ค่าน้ำมัน/ซ่อม/เช่าซื้อ
+        // เคลมไม่ได้ (ยกเว้นบริษัทเป็น vehicle dealer). detect จาก keyword
+        // ใน description ไม่ใช่แค่ผัง — vendor อาจไม่ตั้งผังแยก.
+        // override: ถ้า CompanySettings.IsVehicleDealer=true → ข้าม warning
+        // (บริษัทขายรถ/อู่ — รถเป็น inventory เคลมได้ตามปกติ)
+        var isVehicleDealer = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (bool?)s.IsVehicleDealer)
+            .FirstOrDefaultAsync() ?? false;
+        if (!isVehicleDealer && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+            or DocumentType.PaymentVoucher)
+        {
+            var vehicleKw = new[] { "น้ำมัน", "เบนซิน", "ดีเซล", "ค่าซ่อม", "อะไหล่",
+                "ค่าเช่ารถ", "ค่าน้ำมันรถ", "fuel", "gasoline", "diesel" };
+            var passengerKw = new[] { "รถยนต์", "รถเก๋ง", "sedan", "passenger" };
+            foreach (var line in doc.Lines ?? new List<DocumentLine>())
+            {
+                var d = (line.Description ?? "").ToLowerInvariant();
+                if (line.IsVatClaimable
+                    && line.VatAmount > 0
+                    && vehicleKw.Any(k => d.Contains(k.ToLowerInvariant()))
+                    && (passengerKw.Any(k => d.Contains(k.ToLowerInvariant())) || vehicleKw.Any(k => d.Contains(k))))
+                {
+                    warnings.Add($"§82/5(6): '{line.Description}' — ถ้าเป็นรถยนต์นั่ง ≤10 ที่นั่ง ภาษีซื้อ {line.VatAmount:N2} เคลมไม่ได้ ติ๊กออก '✓ เคลม VAT' ที่บรรทัดนี้ (ยกเว้นบริษัทเป็น vehicle dealer)");
+                    break;
+                }
+            }
+        }
+
+        // Expense ที่มี VAT แต่ไม่ติ๊ก "ใช้งานใบกำกับภาษี" (HasTaxInvoiceReference
+        // =false): §86/4 ไม่ครบ → เคลม VAT ไม่ได้ เตือนผู้ใช้ก่อน approve
+        if (doc.DocumentType == DocumentType.Expense
+            && doc.VatAmount > 0
+            && !doc.HasTaxInvoiceReference)
+            warnings.Add($"เอกสารค่าใช้จ่ายมี VAT {doc.VatAmount:N2} แต่ไม่ระบุข้อมูลใบกำกับ — §86/4 ไม่ครบ ภาษีซื้อจะลง 11640 (ยังไม่ถึงกำหนด) เคลมไม่ได้จนกว่าจะเติมข้อมูลใบ");
 
         // Foreign currency without explicit FX rate (means the rate was
         // either captured at create-time or fell back to BoT) — surface so

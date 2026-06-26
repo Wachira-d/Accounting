@@ -80,10 +80,15 @@ public record ProductResponse(
 public record StockAdjustmentRequest(
     Guid ProductId,
     decimal Quantity,
-    string MovementType,   // "IN", "OUT", "ADJUST"
+    string MovementType,   // "IN", "OUT", "ADJUST", "TRANSFER_OUT", "TRANSFER_IN"
     decimal? UnitCost,
     string? Reference,
-    string? Notes);
+    string? Notes,
+    /// <summary>Multi-warehouse: ระบุคลังที่จะปรับ. Null = company default
+    /// warehouse (ตั้ง IsDefault=true ใน Warehouse table).</summary>
+    Guid? WarehouseId = null,
+    /// <summary>Lot/batch traceability (pharma/food). Null = ไม่ track.</summary>
+    string? LotNumber = null);
 
 public record StockMovementResponse(
     Guid Id,
