@@ -69,6 +69,13 @@ public interface IDocumentService
     /// — ต้อง void+ออกใบใหม่)</summary>
     Task<DocumentResponse> ReclassifyLineAccountAsync(Guid companyId, Guid documentId,
         Guid lineId, Guid newAccountId, string? reason, string actor);
+    /// <summary>เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับ
+    /// สดที่ approve แล้ว — post correcting-JE (Dr ผังเก่า / Cr ผังใหม่) ขนาด
+    /// PaidAmount. แก้เคส OCR เลือกธนาคารผิดโดยไม่ต้อง void. แหล่งเงินใหม่ระบุ
+    /// ผ่าน newBankAccountId หรือ newPaymentAccountId. gate เดียวกับ
+    /// ReclassifyLineAccountAsync.</summary>
+    Task<DocumentResponse> ReclassifyPaymentSourceAsync(Guid companyId, Guid documentId,
+        Guid? newBankAccountId, Guid? newPaymentAccountId, string? reason, string actor);
     /// <summary>ลบเอกสารถาวร: เฉพาะ Draft ที่ยังไม่กระทบบัญชี</summary>
     Task DeleteDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด (journal, payment, WHT, eTax) — เหมือนไม่เคยสร้าง</summary>

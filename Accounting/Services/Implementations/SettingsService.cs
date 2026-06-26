@@ -83,6 +83,12 @@ public class SettingsService : ISettingsService
         if (request.OcrBuyerInvoiceDefaultTarget.HasValue)
             settings.OcrBuyerInvoiceDefaultTarget = request.OcrBuyerInvoiceDefaultTarget.Value;
 
+        // OCR แหล่งเงิน default. Guid.Empty = ล้างค่า (กลับ auto-pick);
+        // null = ไม่แตะ; ค่าอื่น = ตั้งบัญชีนั้น.
+        if (request.DefaultPaymentAccountId.HasValue)
+            settings.DefaultPaymentAccountId = request.DefaultPaymentAccountId.Value == Guid.Empty
+                ? null : request.DefaultPaymentAccountId.Value;
+
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
     }
@@ -424,6 +430,7 @@ public class SettingsService : ISettingsService
         s.LandingServicesJson,
         // OCR preference
         s.OcrBuyerInvoiceDefaultTarget,
+        s.DefaultPaymentAccountId,
         // Print layout
         s.ShowGlEntryOnDocument,
         // HR

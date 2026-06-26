@@ -89,6 +89,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   Vision/OCR → local distillation model → historical lookup (vendor's last doc)
   → rule defaults (VAT 7%, branch 00000, vendor default GL) → AI ตอน last resort
   (ผ่าน `IAiOrchestrator.AskAsync` per กฎเหล็ก #1)
+- **แหล่งเงิน (Cr) auto-fill — 3 ชั้น priority** (`OcrService.cs` credit auto-fill
+  + `ResolvePaymentSourceOverrideAsync`): สำหรับ PV/Receipt/Expense จ่ายสด —
+  (1) partner metadata top-level `paymentAccountCode`/`bankCode`/`bankAccountCode`
+  (match CoA code → เลขบัญชีธนาคาร→LinkedAccountId) → (2)
+  `CompanySettings.DefaultPaymentAccountId` (admin ตั้งใน Settings) → (3)
+  lowest-code fallback เดิม. เดิมมีแต่ชั้น 3 → หยิบบัญชีรหัสต่ำสุดมั่ว
+  (กรุงไทย 11110 ชนะ กสิกร 11120). A/P-A/R ไม่มีแหล่งเงิน → ใช้ prefix เดิม.
+- **แก้แหล่งเงินหลัง approve** — `DocumentService.ReclassifyPaymentSourceAsync`
+  (`POST /documents/{id}/reclassify-payment-source`): คู่กับ reclassify-line
+  (ฝั่ง Dr). post correcting-JE **Dr ผังเก่า / Cr ผังใหม่** ขนาด PaidAmount →
+  เงินกลับเข้าบัญชีเก่า + ออกจากบัญชีใหม่. gate เดียวกับ reclassify-line
+  (period open, ไม่มี downstream/Payment แยก/TaxReport submitted/e-Tax).
+  UI: ปุ่ม ✏️ ข้าง "แหล่งเงิน (Cr)" ในหน้า detail (PV/Receipt/Expense ที่
+  Approved/Paid).
 - **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
   ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
@@ -631,10 +645,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ---
 
 _Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API = web UI:_
-_SanitizeVatSplitArtifacts ตัด "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)"; AutoCreate_
-_delegate ไป CreateDocumentFromScanAsync — ลบ path คู่ขนาน;_
-_CreateDocumentFromScanAsync ใช้ DRAFT- placeholder ตามกฎ §86/4 → เลขออก_
-_ตอน Approve เท่านั้น กัน DocumentNumber↔DocumentDate desync + sequence gap)._
+_SanitizeVatSplitArtifacts; AutoCreate delegate ไป CreateDocumentFromScanAsync;_
+_DRAFT- placeholder ตามกฎ §86/4; แหล่งเงิน Cr 3-layer priority (metadata →_
+_CompanySettings.DefaultPaymentAccountId → lowest-code) +_
+_ReclassifyPaymentSourceAsync แก้แหล่งเงินหลัง approve ด้วย correcting-JE)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 

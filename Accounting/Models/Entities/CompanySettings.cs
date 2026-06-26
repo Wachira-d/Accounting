@@ -187,6 +187,15 @@ public class CompanySettings : TenantEntity
     // FALLBACK when there's no learned preference yet.
     public DocumentType OcrBuyerInvoiceDefaultTarget { get; set; } = DocumentType.PaymentVoucher;
 
+    // ── แหล่งเงิน default สำหรับ OCR / auto-create (ฝั่ง Cr ของ PV/Receipt) ──
+    // เมื่อ OCR สร้างใบสำคัญจ่ายแบบจ่ายสด ต้องเลือก "แหล่งเงิน" (บัญชี Cr ที่
+    // เงินไหลออก). เดิมไม่มีค่านี้ → auto-fill หยิบบัญชีธนาคารรหัสต่ำสุดมั่ว ๆ
+    // (กรุงไทย 11110 ชนะ กสิกร 11120 เสมอ) ทำให้ลงผิดบัญชี. ตั้งค่านี้ =
+    // ChartOfAccount.Id ของบัญชีเงินสด/ธนาคารที่บริษัทใช้จ่ายเป็นหลัก →
+    // OcrService ใช้เป็น default แทนการเดา. null = พฤติกรรมเดิม (lowest-code).
+    // Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน metadata จะชนะค่านี้อีกที.
+    public Guid? DefaultPaymentAccountId { get; set; }
+
     // Landing Page – Accounting Services
     public string? LandingContactPhone { get; set; }           // เบอร์ติดต่อแสดงหน้าแรก
     public string? LandingContactLine { get; set; }            // LINE ID

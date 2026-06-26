@@ -1116,29 +1116,52 @@ public class OcrService : IOcrService
             if (string.IsNullOrEmpty(extractedData.CreditAccountCode)
                 && !string.IsNullOrEmpty(extractedData.TargetDocumentType))
             {
-                string[] creditPrefixes = extractedData.TargetDocumentType switch
+                // ── แหล่งเงิน Cr — 3 ชั้น priority (กัน auto-pick มั่ว) ──
+                // เฉพาะเอกสารจ่าย/รับสด (Cr = เงินสด/ธนาคาร). สำหรับ A/P-A/R
+                // ไม่มี "แหล่งเงิน" ให้เลือก → ใช้ prefix fallback ปกติ.
+                //   1. Partner metadata (paymentAccountCode/bankCode) — รู้แน่ที่สุด
+                //   2. CompanySettings.DefaultPaymentAccountId — บริษัทตั้งไว้
+                //   3. Lowest-code fallback (เดิม) — กัน null
+                var isCashCreditType = extractedData.TargetDocumentType
+                    is "PaymentVoucher" or "Expense" or "ReceiptVoucher";
+                if (isCashCreditType)
                 {
-                    "PaymentVoucher" or "Expense" => new[] { "1111", "1110", "111" },        // Cash / Bank
-                    "ReceiptVoucher"             => new[] { "1111", "1110", "111" },        // Cash received
-                    "PurchaseInvoice"            => new[] { "2110", "2100", "211" },        // A/P
-                    "Invoice" or "TaxInvoice"    => new[] { "1130", "1131", "113" },        // A/R
-                    _ => Array.Empty<string>()
-                };
-                foreach (var pfx in creditPrefixes)
-                {
-                    var creditAcct = await _db.ChartOfAccounts
-                        .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(pfx)
-                                && a.IsActive && !a.IsDeleted)
-                        .OrderBy(a => a.AccountCode)
-                        .Select(a => new { a.AccountCode, a.AccountName })
-                        .FirstOrDefaultAsync();
-                    if (creditAcct != null)
+                    var src = await ResolvePaymentSourceOverrideAsync(companyId, externalMetadataJson);
+                    if (src != null)
                     {
-                        extractedData.CreditAccountCode = creditAcct.AccountCode;
-                        extractedData.CreditAccountName = creditAcct.AccountName;
+                        extractedData.CreditAccountCode = src.Value.Code;
+                        extractedData.CreditAccountName = src.Value.Name;
                         extractedData.ReasoningTrace.Add(
-                            $"[Credit] เลือกบัญชีเครดิต {creditAcct.AccountCode} จากประเภทเอกสาร {extractedData.TargetDocumentType}");
-                        break;
+                            $"[Credit] แหล่งเงิน {src.Value.Code} {src.Value.Name} ({src.Value.Source})");
+                    }
+                }
+
+                if (string.IsNullOrEmpty(extractedData.CreditAccountCode))
+                {
+                    string[] creditPrefixes = extractedData.TargetDocumentType switch
+                    {
+                        "PaymentVoucher" or "Expense" => new[] { "1111", "1110", "111" },        // Cash / Bank
+                        "ReceiptVoucher"             => new[] { "1111", "1110", "111" },        // Cash received
+                        "PurchaseInvoice"            => new[] { "2110", "2100", "211" },        // A/P
+                        "Invoice" or "TaxInvoice"    => new[] { "1130", "1131", "113" },        // A/R
+                        _ => Array.Empty<string>()
+                    };
+                    foreach (var pfx in creditPrefixes)
+                    {
+                        var creditAcct = await _db.ChartOfAccounts
+                            .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(pfx)
+                                    && a.IsActive && !a.IsDeleted)
+                            .OrderBy(a => a.AccountCode)
+                            .Select(a => new { a.AccountCode, a.AccountName })
+                            .FirstOrDefaultAsync();
+                        if (creditAcct != null)
+                        {
+                            extractedData.CreditAccountCode = creditAcct.AccountCode;
+                            extractedData.CreditAccountName = creditAcct.AccountName;
+                            extractedData.ReasoningTrace.Add(
+                                $"[Credit] เลือกบัญชีเครดิต {creditAcct.AccountCode} จากประเภทเอกสาร {extractedData.TargetDocumentType} (default lowest-code)");
+                            break;
+                        }
                     }
                 }
             }
@@ -4371,6 +4394,90 @@ public class OcrService : IOcrService
             .Select(cu => (Guid?)cu.UserId)
             .FirstOrDefaultAsync();
         return ownerId?.ToString() ?? fallback;
+    }
+
+    /// <summary>
+    /// หา "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) สำหรับ OCR PV/Receipt แบบจ่ายสด
+    /// ตาม priority: (1) partner metadata top-level paymentAccountCode/bankCode
+    /// — match ChartOfAccount.AccountCode ก่อน ไม่เจอลอง BankAccount.AccountNumber
+    /// → LinkedAccountId; (2) CompanySettings.DefaultPaymentAccountId. คืน null
+    /// เมื่อไม่มีทั้งคู่ → caller ใช้ lowest-code fallback เดิม. Defensive: ทุก
+    /// step fail-safe (metadata เพี้ยน / บัญชีถูกลบ → ข้าม).
+    /// </summary>
+    private async Task<(string Code, string Name, string Source)?> ResolvePaymentSourceOverrideAsync(
+        Guid companyId, string? metadataJson)
+    {
+        // ── Layer 1: partner metadata ──
+        if (!string.IsNullOrWhiteSpace(metadataJson))
+        {
+            string? hint = null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
+                if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    foreach (var key in new[] { "paymentAccountCode", "paymentSourceCode",
+                                                "bankAccountCode", "bankCode", "paymentAccount" })
+                    {
+                        if (doc.RootElement.TryGetProperty(key, out var v))
+                        {
+                            if (v.ValueKind == System.Text.Json.JsonValueKind.String
+                                && !string.IsNullOrWhiteSpace(v.GetString()))
+                            { hint = v.GetString()!.Trim(); break; }
+                            if (v.ValueKind == System.Text.Json.JsonValueKind.Number)
+                            { hint = v.GetRawText(); break; }
+                        }
+                    }
+                }
+            }
+            catch { /* metadata เพี้ยน → ข้าม ไป Layer 2 */ }
+
+            if (!string.IsNullOrWhiteSpace(hint))
+            {
+                // 1a. match CoA code ตรง ๆ
+                var acct = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.AccountCode == hint
+                            && a.IsActive && !a.IsDeleted)
+                    .Select(a => new { a.AccountCode, a.AccountName })
+                    .FirstOrDefaultAsync();
+                if (acct != null)
+                    return (acct.AccountCode, acct.AccountName, "partner metadata");
+
+                // 1b. match เลขบัญชีธนาคาร → LinkedAccountId
+                var bankLinked = await _db.BankAccounts.AsNoTracking()
+                    .Where(b => b.CompanyId == companyId && !b.IsDeleted
+                            && b.AccountNumber == hint && b.LinkedAccountId != null)
+                    .Select(b => b.LinkedAccountId)
+                    .FirstOrDefaultAsync();
+                if (bankLinked.HasValue)
+                {
+                    var linkedAcct = await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.Id == bankLinked.Value && a.IsActive && !a.IsDeleted)
+                        .Select(a => new { a.AccountCode, a.AccountName })
+                        .FirstOrDefaultAsync();
+                    if (linkedAcct != null)
+                        return (linkedAcct.AccountCode, linkedAcct.AccountName, "partner metadata (bank)");
+                }
+            }
+        }
+
+        // ── Layer 2: company default ──
+        var defaultId = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => c.DefaultPaymentAccountId)
+            .FirstOrDefaultAsync();
+        if (defaultId.HasValue)
+        {
+            var acct = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == defaultId.Value && a.CompanyId == companyId
+                        && a.IsActive && !a.IsDeleted)
+                .Select(a => new { a.AccountCode, a.AccountName })
+                .FirstOrDefaultAsync();
+            if (acct != null)
+                return (acct.AccountCode, acct.AccountName, "ค่าตั้งต้นบริษัท");
+        }
+
+        return null;
     }
 
     private async Task AutoCreateDocumentAsync(Guid companyId, OcrScanResult scan, OcrExtractedData? extractedData = null)

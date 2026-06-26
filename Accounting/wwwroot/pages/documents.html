@@ -783,6 +783,35 @@
       </div>
     </div>
 
+    <!-- Reclassify payment source modal — แก้แหล่งเงิน (Cr) หลังอนุมัติ -->
+    <div class="modal-overlay" id="reclassifyPaymentSourceModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">เปลี่ยนแหล่งเงิน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('reclassifyPaymentSourceModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="rpsInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px"></div>
+          <div class="form-group">
+            <label class="form-label" data-help="บัญชีเงินสด/ธนาคารที่เงินจ่ายออกจริง — ระบบจะ Cr ผังนี้ใน JE คู่ใหม่">แหล่งเงินใหม่ <span class="req">*</span></label>
+            <select class="form-select" id="rpsNewChannel"><option value="">— เลือกแหล่งเงิน —</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-help="บันทึกเหตุผลลง JE description เพื่อ audit trail">เหตุผล (optional)</label>
+            <input type="text" class="form-input" id="rpsReason" placeholder="เช่น OCR เลือกธนาคารผิด ควรเป็นกสิกร">
+          </div>
+          <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
+            ⚠️ ระบบจะสร้าง JE คู่ใหม่ <b>Dr แหล่งเงินเดิม / Cr แหล่งเงินใหม่</b> (เงินกลับเข้าบัญชีเก่า + ออกจากบัญชีใหม่) ลงงวดเดียวกับเอกสาร — ไม่แก้ตัวเอกสารต้นฉบับ.
+            ใช้ได้เฉพาะเมื่อ: งวดบัญชียังไม่ปิด, ภพ.30 ยังไม่ยื่น, ไม่มีเอกสารปลายทาง, ไม่มี Payment แยก.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reclassifyPaymentSourceModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitReclassifyPaymentSource()">บันทึก + Post JE</button>
+        </div>
+      </div>
+    </div>
+
     <!-- PDF Preview Modal -->
     <div class="modal-overlay" id="pdfModal">
       <div class="modal" style="max-width:800px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
@@ -1426,6 +1455,70 @@
           this.openDetail?.(ctx.docId);
         } catch (e) {
           Layout.toast('เปลี่ยนผังไม่สำเร็จ: ' + e.message, 'error', 8000);
+        }
+      },
+
+      /** เปลี่ยน "แหล่งเงิน" (Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับสดที่ approved
+       * แล้ว — คู่กับ openReclassifyLine (ฝั่ง Dr). ใช้แก้เคส OCR เลือกธนาคาร
+       * ผิด. ระบบ post correcting-JE (Dr ผังเก่า / Cr ผังใหม่) ใต้ฉาก. */
+      async openReclassifyPaymentSource(docId) {
+        const d = this.docs?.find(x => x.id === docId);
+        if (!d) { Layout.toast('ไม่พบเอกสาร', 'error'); return; }
+        this._rpsCtx = { docId };
+        const api = Layout.api();
+        // โหลด bank/payment channels ถ้ายังไม่มี (เผื่อเปิด detail ก่อน init form)
+        if (api && (!this.bankAccounts?.length && !this.paymentChannels?.length)) {
+          const [baRes, pcRes] = await Promise.all([
+            api.getBankAccounts().catch(() => ({ data: [] })),
+            api.getPaymentChannels().catch(() => ({ data: [] }))
+          ]);
+          this.bankAccounts = baRes?.data || [];
+          this.paymentChannels = pcRes?.data || [];
+        }
+        const cur = d.bankAccountName || d.paymentAccountName || '(ไม่ระบุ)';
+        document.getElementById('rpsInfo').innerHTML =
+          `<div>เอกสาร: <b>${this.escapeHtml(d.documentNumber || docId.slice(0,8))}</b></div>` +
+          `<div>แหล่งเงินเดิม: <b>${this.escapeHtml(cur)}</b></div>` +
+          `<div>ยอดที่จะย้าย: <b>${Layout.money(d.paidAmount || 0)}</b> (เงินสดจ่ายจริง)</div>`;
+        const sel = document.getElementById('rpsNewChannel');
+        sel.innerHTML = '<option value="">— เลือกแหล่งเงิน —</option>';
+        if (this.bankAccounts?.length) {
+          sel.innerHTML += '<optgroup label="บัญชีธนาคาร">' +
+            this.bankAccounts.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
+            '</optgroup>';
+        }
+        const nonBank = (this.paymentChannels || []).filter(a => !String(a.accountCode||'').startsWith('1112'));
+        if (nonBank.length) {
+          sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
+            nonBank.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
+            '</optgroup>';
+        }
+        document.getElementById('rpsReason').value = '';
+        Layout.openModal('reclassifyPaymentSourceModal');
+      },
+
+      async submitReclassifyPaymentSource() {
+        const ctx = this._rpsCtx;
+        if (!ctx) return;
+        const val = document.getElementById('rpsNewChannel')?.value || '';
+        if (!val) { Layout.toast('กรุณาเลือกแหล่งเงินใหม่', 'error'); return; }
+        let newBankAccountId = null, newPaymentAccountId = null;
+        if (val.startsWith('bank:')) newBankAccountId = val.substring(5);
+        else if (val.startsWith('account:')) newPaymentAccountId = val.substring(8);
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.reclassifyPaymentSource(ctx.docId, {
+            newBankAccountId,
+            newPaymentAccountId,
+            reason: document.getElementById('rpsReason').value.trim() || null,
+          });
+          Layout.toast('เปลี่ยนแหล่งเงินสำเร็จ (JE คู่ใหม่ลงงวดเดิม)', 'success');
+          Layout.closeModal('reclassifyPaymentSourceModal');
+          this._rpsCtx = null;
+          await this.load();
+          this.detail?.(ctx.docId);   // เปิด detail ใหม่ให้เห็นแหล่งเงิน+JE ใหม่
+        } catch (e) {
+          Layout.toast('เปลี่ยนแหล่งเงินไม่สำเร็จ: ' + e.message, 'error', 8000);
         }
       },
 
@@ -4097,6 +4190,7 @@
               ${d.relatedDocument ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocument.id}');return false" style="color:var(--primary);font-weight:600" title="${Layout.docTypeLabel(d.relatedDocument.documentType)} · ${Layout.money(d.relatedDocument.totalAmount)}">⬅ ${d.relatedDocument.documentNumber}</a></div></div>` : (d.relatedDocumentId ? `<div><div class="text-xs text-gray-500">แปลงมาจาก</div><div><a href="#" onclick="Page.detail('${d.relatedDocumentId}');return false" style="color:var(--primary);font-weight:600">⬅ เอกสารต้นทาง</a></div></div>` : '')}
               ${d.conversionStatus && d.conversionStatus !== 'None' ? `<div><div class="text-xs text-gray-500">สถานะการแปลง</div><div class="font-medium" style="color:${d.conversionStatus === 'Full' ? '#15803d' : '#92400e'}">${d.conversionStatus === 'Full' ? '✓ แปลงครบ' : `◐ แปลง ${(d.conversionCompletionPercent || 0).toFixed(0)}%`}</div></div>` : ''}
               ${d.revenueContractId ? `<div><div class="text-xs text-gray-500">สัญญารายได้</div><div class="font-medium">📜 ${d.revenueContractId.substring(0,8)}...</div></div>` : ''}
+              ${(d.bankAccountId || d.paymentAccountId) ? `<div><div class="text-xs text-gray-500">แหล่งเงิน (Cr)</div><div class="font-medium">💳 ${this.escapeHtml(d.bankAccountName || d.paymentAccountName || '-')}${(['PaymentVoucher','Receipt','ReceiptVoucher','Expense'].includes(d.documentType) && ['Approved','Sent','PartiallyPaid','Paid'].includes(d.status)) ? ` <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:10px" onclick="Page.openReclassifyPaymentSource('${d.id}')" title="เปลี่ยนแหล่งเงิน (ระบบสร้าง JE คู่ใหม่ Dr ผังเก่า/Cr ผังใหม่ — ไม่แก้เอกสารต้นฉบับ)">✏️</button>` : ''}</div></div>` : ''}
             </div>
             ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) ? `
               <div style="margin-bottom:12px;padding:12px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">

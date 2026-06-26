@@ -324,6 +324,17 @@
           ถ้า vendor นี้เคยมีประวัติ ระบบจะเรียนรู้และเลือกตามที่คุณเคยใช้แทน
         </div>
       </div>
+      <div class="form-group">
+        <label class="form-label">แหล่งเงินเริ่มต้น (บัญชี Cr) เมื่อ OCR สร้างใบสำคัญจ่าย/ใบเสร็จแบบจ่ายสด</label>
+        <select class="form-select" id="sDefaultPaymentAccount">
+          <option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>
+        </select>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          💡 เดิมระบบหยิบบัญชีธนาคารรหัสต่ำสุดมาเป็นค่าเริ่มต้น (มักได้บัญชีผิด).
+          ตั้งค่านี้ = บัญชีที่บริษัทใช้จ่ายเป็นหลัก → OCR จะลง Cr บัญชีนี้ให้ทุกครั้ง.
+          (Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน API จะใช้ค่าที่ส่งมาแทน)
+        </div>
+      </div>
     </div>
 
     <!-- ===== e-Tax Tab ===== -->
@@ -1547,6 +1558,20 @@
           Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      /** เติม dropdown แหล่งเงิน default จาก ChartOfAccount เงินสด/ธนาคาร
+       * (getPaymentChannels คืน GL เงินสด/ธนาคารทั้งหมด, value = ChartOfAccount.Id
+       * ตรงกับ DefaultPaymentAccountId). */
+      async populateDefaultPaymentAccount(api, currentId) {
+        const sel = document.getElementById('sDefaultPaymentAccount');
+        if (!sel) return;
+        try {
+          const res = await api.getPaymentChannels();
+          const accts = res?.data || [];
+          sel.innerHTML = '<option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>' +
+            accts.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+          if (currentId && currentId !== '00000000-0000-0000-0000-000000000000') sel.value = currentId;
+        } catch (e) { /* non-critical — dropdown เหลือแค่ตัวเลือก auto */ }
+      },
       async loadSettings() {
         const api = Layout.api(); if (!api) return;
         try {
@@ -1585,6 +1610,8 @@
           document.getElementById('sIsVehicleDealer').checked = !!s.isVehicleDealer;
           // OCR preference — default 13 (PaymentVoucher)
           document.getElementById('sOcrBuyerTarget').value = String(s.ocrBuyerInvoiceDefaultTarget ?? 13);
+          // OCR แหล่งเงิน default — populate dropdown (bank + cash GL) แล้ว set ค่า
+          await this.populateDefaultPaymentAccount(api, s.defaultPaymentAccountId);
           // e-Tax
           document.getElementById('sEtaxEnabled').checked = s.etaxEnabled || false;
           document.getElementById('sEtaxTestMode').checked = s.etaxTestMode !== false;
@@ -1681,6 +1708,8 @@
             isVehicleDealer: document.getElementById('sIsVehicleDealer').checked,
             // OCR preference (DocumentType enum int — 13=PaymentVoucher, 11=PurchaseInvoice, 14=Expense)
             ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
+            // OCR แหล่งเงิน default — ว่าง = Guid.Empty (service แปลงเป็น null = auto-pick)
+            defaultPaymentAccountId: document.getElementById('sDefaultPaymentAccount').value || '00000000-0000-0000-0000-000000000000',
             // e-Tax
             etaxEnabled: document.getElementById('sEtaxEnabled').checked,
             etaxCertificatePath: document.getElementById('sEtaxCertPath').value || null,

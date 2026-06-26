@@ -4123,6 +4123,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineLastTestedAt" timestamp NULL;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineLastTestStatus" varchar(500) NULL;""",
 
+            // ===== CompanySettings: OCR แหล่งเงิน default (ฝั่ง Cr ของ PV/Receipt) =====
+            // null = พฤติกรรมเดิม (auto-pick bank รหัสต่ำสุด). ตั้งเป็น
+            // ChartOfAccount.Id ของบัญชีเงินสด/ธนาคารหลัก → OCR ใช้เป็น default.
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DefaultPaymentAccountId" uuid NULL;""",
+
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),

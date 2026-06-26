@@ -203,6 +203,7 @@ const API = {
       suggestPvAccounting: (body) => API.post(`${base}/document/ai-suggest-pv-accounting`, body),
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
+      reclassifyPaymentSource: (id, body) => API.post(`${base}/document/${id}/reclassify-payment-source`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
       purgeDocument: (id, force = false, reason = null) =>
         API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),
