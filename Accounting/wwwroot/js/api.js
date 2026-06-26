@@ -204,6 +204,8 @@ const API = {
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       reclassifyPaymentSource: (id, body) => API.post(`${base}/document/${id}/reclassify-payment-source`, body),
+      listAdjustingLines: (id) => API.get(`${base}/document/${id}/adjusting-lines`),
+      saveAdjustingLines: (id, body) => API.put(`${base}/document/${id}/adjusting-lines`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
       purgeDocument: (id, force = false, reason = null) =>
         API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),

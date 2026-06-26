@@ -76,6 +76,21 @@ public interface IDocumentService
     /// ReclassifyLineAccountAsync.</summary>
     Task<DocumentResponse> ReclassifyPaymentSourceAsync(Guid companyId, Guid documentId,
         Guid? newBankAccountId, Guid? newPaymentAccountId, string? reason, string actor);
+
+    // ===== Adjusting Journal Lines (Option 1: 3 Dr / 1 Cr และอื่น ๆ) =====
+    /// <summary>List adjusting JE lines ที่ผูกกับเอกสาร (sorted by LineOrder)</summary>
+    Task<List<Models.Entities.DocumentAdjustingJournalLine>> ListAdjustingJournalLinesAsync(
+        Guid companyId, Guid documentId);
+
+    /// <summary>Replace adjusting JE lines ของเอกสารทั้งชุด (full sync).
+    /// validate: ทุก line ต้อง Dr=0 หรือ Cr=0 (เลือกด้าน), ไม่ติดลบ.
+    /// caller รับผิดชอบ Dr รวม = Cr รวม (AutoPost re-validate ตอน approve).
+    /// อนุญาตเฉพาะ Draft (เพื่อให้ AutoPost รัน). หลัง approve → ใช้ JE
+    /// manual แทน.</summary>
+    Task<DocumentResponse> SaveAdjustingJournalLinesAsync(Guid companyId, Guid documentId,
+        IEnumerable<(Guid AccountId, decimal DebitAmount, decimal CreditAmount,
+            string? Description, Guid? ProjectId, string? Reason)> lines, string actor);
+
     /// <summary>ลบเอกสารถาวร: เฉพาะ Draft ที่ยังไม่กระทบบัญชี</summary>
     Task DeleteDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด (journal, payment, WHT, eTax) — เหมือนไม่เคยสร้าง</summary>

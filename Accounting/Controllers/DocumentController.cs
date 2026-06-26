@@ -366,6 +366,37 @@ public class DocumentController : ControllerBase
             "เปลี่ยนแหล่งเงินสำเร็จ (สร้าง JE คู่ใหม่ลงงวดเดิม)"));
     }
 
+    // ===== Adjusting Journal Lines (Option 1: 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ) =====
+    public sealed record AdjustingLineDto(Guid AccountId, decimal DebitAmount,
+        decimal CreditAmount, string? Description, Guid? ProjectId, string? Reason);
+    public sealed record SaveAdjustingLinesRequest(List<AdjustingLineDto> Lines);
+
+    /// <summary>List adjusting JE lines ของเอกสาร</summary>
+    [HttpGet("{documentId:guid}/adjusting-lines")]
+    public async Task<ActionResult<ApiResponse<List<Models.Entities.DocumentAdjustingJournalLine>>>> ListAdjustingLines(
+        Guid companyId, Guid documentId)
+    {
+        var rows = await _documentService.ListAdjustingJournalLinesAsync(companyId, documentId);
+        return Ok(new ApiResponse<List<Models.Entities.DocumentAdjustingJournalLine>>(true, rows));
+    }
+
+    /// <summary>Replace adjusting lines ทั้งชุด (full sync). เฉพาะ Draft.</summary>
+    [HttpPut("{documentId:guid}/adjusting-lines")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> SaveAdjustingLines(
+        Guid companyId, Guid documentId, [FromBody] SaveAdjustingLinesRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // ใช้ permission เดียวกับ Edit (เพราะแก้ Draft อยู่)
+        var lines = (request.Lines ?? new()).Select(l =>
+            (l.AccountId, l.DebitAmount, l.CreditAmount, l.Description, l.ProjectId, l.Reason));
+        var result = await _documentService.SaveAdjustingJournalLinesAsync(
+            companyId, documentId, lines, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            $"บันทึก adjusting JE lines {request.Lines?.Count ?? 0} รายการแล้ว"));
+    }
+
     [HttpPost("{documentId:guid}/void")]
     public async Task<ActionResult<ApiResponse<string>>> VoidDocument(Guid companyId, Guid documentId)
     {
