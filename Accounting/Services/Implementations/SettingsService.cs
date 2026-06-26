@@ -207,7 +207,10 @@ public class SettingsService : ISettingsService
         return MapSeriesToResponse(series);
     }
 
-    public async Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType)
+    public Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType)
+        => GetNextNumberAsync(companyId, documentType, documentDate: null);
+
+    public async Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType, DateTime? documentDate)
     {
         var series = await _db.Set<NumberSeries>()
             .FirstOrDefaultAsync(n => n.CompanyId == companyId && n.DocumentType == documentType && n.IsActive);
@@ -234,8 +237,11 @@ public class SettingsService : ISettingsService
                 DocumentType.CertificateInLieu => "CIL",
                 _ => "DOC"
             };
-            var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-            var pattern = $"{prefix}-{yearMonth}-";
+            // Format {PREFIX}-{yyyyMMdd}-{NNNN} — ใช้วันที่ของ documentDate
+            // ให้เลขสอดคล้องวันที่เสมอ (sequence reset รายวัน). ตรงกับ
+            // DocumentNumberGenerator. fallback UtcNow ถ้า null.
+            var datePart = (documentDate ?? DateTime.UtcNow).ToString("yyyyMMdd");
+            var pattern = $"{prefix}-{datePart}-";
             var lastDoc = await _db.Documents
                 .Where(d => d.CompanyId == companyId && d.DocumentType == documentType && d.DocumentNumber.StartsWith(pattern))
                 .OrderByDescending(d => d.DocumentNumber)

@@ -502,7 +502,7 @@ public class IntegrationService : IIntegrationService
             var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, request.CustomerTaxId);
 
             // Get next document number
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.TaxInvoice);
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.TaxInvoice, request.DocumentDate);
 
             // Calculate totals
             var vatRate = request.VatRate ?? 7m;
@@ -768,7 +768,7 @@ public class IntegrationService : IIntegrationService
             }
 
             var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, null);
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CreditNote);
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CreditNote, request.DocumentDate);
 
             // Find original document
             Guid? relatedDocId = request.OriginalDocumentId;
@@ -867,7 +867,7 @@ public class IntegrationService : IIntegrationService
             }
 
             var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, null);
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.DebitNote);
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.DebitNote, request.DocumentDate);
 
             Guid? relatedDocId = request.OriginalDocumentId;
             if (relatedDocId == null && !string.IsNullOrEmpty(request.OriginalInvoiceRef))
@@ -2044,7 +2044,7 @@ public class IntegrationService : IIntegrationService
                 await _db.SaveChangesAsync();
             }
 
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense);
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
             var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
             var subTotal = lines.Sum(l => l.Amount);
@@ -2138,7 +2138,7 @@ public class IntegrationService : IIntegrationService
                 await _db.SaveChangesAsync();
             }
 
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher);
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
             var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
             var subTotal = lines.Sum(l => l.Amount);
@@ -2367,7 +2367,7 @@ public class IntegrationService : IIntegrationService
                 await _db.SaveChangesAsync();
             }
 
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu);
+            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
             var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
             var subTotal = lines.Sum(l => l.Amount);

@@ -388,8 +388,10 @@ public partial class PosService
             // create a duplicate JE). We stamp the JE's SourceDocumentId at
             // the end to suppress the VAT-report JE-fallback (avoids VAT
             // double-count: the Document path counts it, the JE path skips it).
+            // เลขเอกสารใช้ yyyyMM ของ DocumentDate ให้สอดคล้องกัน
+            var posDocDate = order.CompletedAt ?? DateTime.UtcNow;
             var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-                _db, companyId, Models.Enums.DocumentType.TaxInvoice);
+                _db, companyId, Models.Enums.DocumentType.TaxInvoice, posDocDate);
 
             var doc = new Models.Entities.Document
             {

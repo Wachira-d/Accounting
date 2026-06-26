@@ -1820,8 +1820,11 @@ public class DocumentService : IDocumentService
                 // number already stamped) keep the existing number.
                 if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
                 {
+                    // ใช้เดือนของ DocumentDate (ไม่ใช่ "วันที่ approve") เพื่อให้
+                    // เลขกับวันที่สอดคล้องกัน: ใบ 28/05 ที่ approve 01/06 ต้องได้
+                    // "PV-202605-NNNN" ไม่ใช่ "PV-202606-..."
                     doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-                        _db, companyId, doc.DocumentType);
+                        _db, companyId, doc.DocumentType, doc.DocumentDate);
                 }
 
                 // A cash-settled document (จ่ายทันที) is already fully paid the

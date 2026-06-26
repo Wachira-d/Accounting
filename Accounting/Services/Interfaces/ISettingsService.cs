@@ -16,6 +16,9 @@ public interface ISettingsService
     Task<List<NumberSeriesResponse>> GetNumberSeriesAsync(Guid companyId);
     Task<NumberSeriesResponse> UpdateNumberSeriesAsync(Guid companyId, Guid seriesId, UpdateNumberSeriesRequest request);
     Task<string> GetNextNumberAsync(Guid companyId, Accounting.Models.Enums.DocumentType documentType);
+    /// <summary>Same as GetNextNumberAsync but uses yyyyMM ของ documentDate
+    /// (สอดคล้องเลข+วันที่). null = ใช้ DateTime.UtcNow ตามเดิม</summary>
+    Task<string> GetNextNumberAsync(Guid companyId, Accounting.Models.Enums.DocumentType documentType, DateTime? documentDate);
 
     // API Key Management
     Task<ApiKeyCreatedResponse> CreateApiKeyAsync(Guid companyId, Guid userId, CreateApiKeyRequest request);

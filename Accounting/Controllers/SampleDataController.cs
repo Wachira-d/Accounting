@@ -67,12 +67,13 @@ public class SampleDataController : ControllerBase
             var amt = 5000m + i * 3000m;
             var subTotal = Math.Round(amt / 1.07m, 2);
             var vat = amt - subTotal;
+            var invDocDate = now.AddDays(-i * 5);
             var inv = new Document
             {
                 CompanyId = companyId,
-                DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, DocumentType.Invoice),
+                DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, DocumentType.Invoice, invDocDate),
                 DocumentType = DocumentType.Invoice,
-                DocumentDate = now.AddDays(-i * 5),
+                DocumentDate = invDocDate,
                 DueDate = now.AddDays(-i * 5 + 30),
                 ContactId = c.Id,
                 Reference = "SAMPLE_DATA",
@@ -102,12 +103,13 @@ public class SampleDataController : ControllerBase
         {
             var v = vendors[i];
             var amt = 1200m + i * 800m;
+            var expDocDate = now.AddDays(-i * 3 - 1);
             var exp = new Document
             {
                 CompanyId = companyId,
-                DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, DocumentType.Expense),
+                DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, DocumentType.Expense, expDocDate),
                 DocumentType = DocumentType.Expense,
-                DocumentDate = now.AddDays(-i * 3 - 1),
+                DocumentDate = expDocDate,
                 ContactId = v.Id,
                 Reference = "SAMPLE_DATA",
                 Status = DocumentStatus.Approved,
