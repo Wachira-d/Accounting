@@ -104,6 +104,10 @@ public class AccountingDbContext : DbContext
     public DbSet<PettyCashFund> PettyCashFunds => Set<PettyCashFund>();
     public DbSet<PettyCashTransaction> PettyCashTransactions => Set<PettyCashTransaction>();
     public DbSet<PdpaDataSubjectRequest> PdpaDataSubjectRequests => Set<PdpaDataSubjectRequest>();
+    public DbSet<PdpaProcessingActivity> PdpaProcessingActivities => Set<PdpaProcessingActivity>();
+    public DbSet<PdpaConsentRecord> PdpaConsentRecords => Set<PdpaConsentRecord>();
+    public DbSet<PdpaPiiAccessLog> PdpaPiiAccessLogs => Set<PdpaPiiAccessLog>();
+    public DbSet<PdpaBreachIncident> PdpaBreachIncidents => Set<PdpaBreachIncident>();
     public DbSet<BillOfMaterials> BillsOfMaterials => Set<BillOfMaterials>();
     public DbSet<BomLine> BomLines => Set<BomLine>();
     public DbSet<ConsignmentRecord> ConsignmentRecords => Set<ConsignmentRecord>();
@@ -1277,6 +1281,14 @@ public class AccountingDbContext : DbContext
             e.Property(emp => emp.TaxId).HasMaxLength(200)
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
             e.Property(emp => emp.PassportNumber).HasMaxLength(200)
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            // เพิ่ม PDPA ม.26: เลขบัญชีธนาคาร + เลขประกันสังคม (sensitive PII).
+            // ปลอดภัยต่อการ encrypt เพราะไม่ถูกใช้ใน equality query ที่ไหน
+            // (ต่างจาก Contact.TaxId ที่ใช้ matching → ห้าม encrypt). Legacy
+            // plaintext อ่านได้ปกติ + re-save migrate เป็น ciphertext อัตโนมัติ.
+            e.Property(emp => emp.BankAccountNumber).HasMaxLength(200)
+                .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(emp => emp.SocialSecurityNumber).HasMaxLength(200)
                 .HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
             e.Property(emp => emp.BaseSalary).HasPrecision(18, 2);
             e.Property(emp => emp.ProvidentFundEmployeePercent).HasPrecision(5, 2);

@@ -17,13 +17,16 @@ public class TaxFilingExportController : ControllerBase
     private readonly ITaxFilingExportService _exportService;
     private readonly ISensitivityService _sensitivity;
     private readonly Data.AccountingDbContext _db;
+    private readonly Services.Implementations.IDbdXbrlExportService _xbrl;
 
     public TaxFilingExportController(ITaxFilingExportService exportService,
-        ISensitivityService sensitivity, Data.AccountingDbContext db)
+        ISensitivityService sensitivity, Data.AccountingDbContext db,
+        Services.Implementations.IDbdXbrlExportService xbrl)
     {
         _exportService = exportService;
         _sensitivity = sensitivity;
         _db = db;
+        _xbrl = xbrl;
     }
 
     /// <summary>Verify the caller actually belongs to {companyId}. Required
@@ -148,12 +151,77 @@ public class TaxFilingExportController : ControllerBase
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
+    /// <summary>Export ภ.ง.ด.51 (Half-year CIT §67 ทวิ). คำนวณกำไรครึ่งปี + ประมาณการ
+    /// ทั้งปี + ภาษีครึ่งปี = annual/2. ยื่นภายใน 2 เดือนนับจากวันสุดท้ายของ
+    /// 6 เดือนแรก. รอบ < 12 เดือน (ปีแรก) ยกเว้น.</summary>
+    [HttpGet("pnd51")]
+    public async Task<IActionResult> ExportPnd51(Guid companyId, [FromQuery] int year)
+    {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
+        var result = await _exportService.ExportPnd51Async(companyId, year);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Export DBD XBRL instance document — งบการเงินรายปีตามมาตรฐาน
+    /// TFRS-NPAEs taxonomy. ต้องตั้ง BookkeeperName + BookkeeperCpdNumber ใน
+    /// CompanySettings ก่อน (พ.ร.บ.การบัญชี ม.7) — ไม่งั้น throw.</summary>
+    [HttpGet("dbd-xbrl")]
+    public async Task<IActionResult> ExportDbdXbrl(Guid companyId, [FromQuery] int year, CancellationToken ct)
+    {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
+        var result = await _xbrl.ExportAnnualAsync(companyId, year, ct);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Preview XBRL totals (ไม่ดาวน์โหลด file) — สำหรับ UI โชว์ก่อนยืนยัน</summary>
+    [HttpGet("dbd-xbrl/preview")]
+    public async Task<ActionResult<ApiResponse<object>>> PreviewDbdXbrl(
+        Guid companyId, [FromQuery] int year, CancellationToken ct)
+    {
+        var member = await EnsureMemberAsync(companyId);
+        if (member != null) return (ActionResult<ApiResponse<object>>)member;
+        try
+        {
+            var r = await _xbrl.ExportAnnualAsync(companyId, year, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                r.FileName,
+                r.TotalAssets, r.TotalLiabilities, r.TotalEquity,
+                r.TotalRevenue, r.TotalExpenses, r.NetIncome,
+                r.Summary,
+                SizeBytes = r.FileData.Length,
+            }, r.Summary));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
+        }
+    }
+
     /// <summary>Export สปส.1-10 (SSO monthly contribution) — sensitive (payroll).</summary>
     [HttpGet("sso110")]
     public async Task<IActionResult> ExportSso110(Guid companyId, [FromQuery] int year, [FromQuery] int month)
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
         var result = await _exportService.ExportSso110Async(companyId, year, month);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Export สปส.1-03 (ขึ้นทะเบียนผู้ประกันตน) — sensitive (payroll).</summary>
+    [HttpGet("sps103")]
+    public async Task<IActionResult> ExportSps103(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var block = await CheckPayrollAsync(companyId); if (block != null) return block;
+        var result = await _exportService.ExportSps103Async(companyId, year, month);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Export สปส.6-09 (แจ้งสิ้นสุดความเป็นผู้ประกันตน) — sensitive (payroll).</summary>
+    [HttpGet("sps609")]
+    public async Task<IActionResult> ExportSps609(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var block = await CheckPayrollAsync(companyId); if (block != null) return block;
+        var result = await _exportService.ExportSps609Async(companyId, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -166,7 +234,7 @@ public class TaxFilingExportController : ControllerBase
         if (member != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)member;
         var code = formCode.ToUpper();
         // Block preview of payroll-derived forms behind the same Payroll gate.
-        if (code is "PND1" or "PND1K" or "SSO110")
+        if (code is "PND1" or "PND1K" or "SSO110" or "SPS103" or "SPS609")
         {
             var block = await CheckPayrollAsync(companyId); if (block != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)block;
         }
@@ -183,6 +251,9 @@ public class TaxFilingExportController : ControllerBase
             "PP36" => await _exportService.ExportPp36Async(companyId, year, month),
             "PND54" => await _exportService.ExportPnd54Async(companyId, year, month),
             "SSO110" => await _exportService.ExportSso110Async(companyId, year, month),
+            "SPS103" => await _exportService.ExportSps103Async(companyId, year, month),
+            "SPS609" => await _exportService.ExportSps609Async(companyId, year, month),
+            "PND51" => await _exportService.ExportPnd51Async(companyId, year),
             _ => throw new ArgumentException($"ไม่รู้จักรหัสแบบฟอร์ม: {formCode}")
         };
 

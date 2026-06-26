@@ -109,6 +109,24 @@
         </div>
       </div>
 
+      <!-- แบบฟอร์มประกันสังคม รายเดือน: สปส.1-03 (เข้าใหม่) / สปส.6-09 (ออก) -->
+      <div class="card" style="padding:24px;margin-top:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div>
+            <h3 style="margin:0;font-size:16px">🧾 แบบฟอร์มประกันสังคม (เข้า/ออก พนักงาน)</h3>
+            <p class="text-gray-400" style="font-size:12px;margin:4px 0 0">
+              <b>สปส.1-03</b> ขึ้นทะเบียนพนักงานเข้าใหม่ (แจ้งภายใน 30 วันนับจากวันเริ่มงาน §34) ·
+              <b>สปส.6-09</b> แจ้งพนักงานออก (ภายในวันที่ 15 ของเดือนถัดไป).
+              ดึงตามเดือนที่เลือกด้านบน (ปี/เดือนของรายงาน)
+            </p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-secondary" onclick="Page.downloadSsoForm('sps103')">📥 สปส.1-03 (เข้าใหม่)</button>
+            <button class="btn btn-secondary" onclick="Page.downloadSsoForm('sps609')">📥 สปส.6-09 (แจ้งออก)</button>
+          </div>
+        </div>
+      </div>
+
       <!-- SSO year-config: เพดานค่าจ้าง + อัตราสมทบ ปรับได้รายปี
            (พรฎ. ขั้นบันได: 15,000 → 17,500 ปี 2569 → 20,000 ปี 2572 →
            23,000 ปี 2575) — แถว override บันทึกลง SsoYearConfigs -->
@@ -234,6 +252,38 @@
           <div class="form-group"><label class="form-label">วันจ่ายเงิน *</label><input type="date" class="form-input" id="runPayDate"></div>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('runModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveRun()">สร้างรอบ</button></div>
+      </div>
+    </div>
+
+    <!-- Settle SSO Modal — นำส่งประกันสังคม (สปส.1-10) -->
+    <div class="modal-overlay" id="settleSsoModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header"><h3 class="modal-title">นำส่งประกันสังคม (สปส.1-10)</h3><button class="modal-close" onclick="Layout.closeModal('settleSsoModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="settleSsoSummary" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;font-size:13px;margin-bottom:14px"></div>
+          <div class="form-group">
+            <label class="form-label">วันที่นำส่ง <span class="req">*</span></label>
+            <input type="date" class="form-input" id="settleSsoPayDate">
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">กฎหมาย: ภายในวันที่ 15 ของเดือนถัดไป (§47). เลยกำหนด = ระบบคำนวณเงินเพิ่ม 2%/เดือน ให้อัตโนมัติ (§49)</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">บัญชีธนาคารที่จ่าย</label>
+            <select class="form-select" id="settleSsoBank"><option value="">— ใช้บัญชีเริ่มต้นของบริษัท —</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เลขรับใบ สปส.1-10 (ถ้ามี)</label>
+            <input type="text" class="form-input" id="settleSsoFilingNumber" placeholder="เช่น SSO-2026-0001">
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">กรอกหลังยื่นผ่าน e-Filing portal แล้วได้เลขรับ — ใช้สำหรับ audit trail</div>
+          </div>
+          <div id="settleSsoLateFee" style="font-size:12px;color:#dc2626;margin-bottom:8px;display:none"></div>
+          <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
+            ⚠️ ระบบจะสร้าง JE: <b>Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank</b> ลงงวดเดือนที่เลือก — ล้างหนี้ 21815 จากการจ่ายเงินเดือน
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('settleSsoModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitSettleSso()">บันทึก + Post JE</button>
+        </div>
       </div>
     </div>
 
@@ -411,6 +461,36 @@ const Page = {
       a.click();
       URL.revokeObjectURL(url);
       Layout.toast('ดาวน์โหลดสำเร็จ');
+    } catch (e) { Layout.toast(e.message, 'error'); }
+  },
+
+  /** ดาวน์โหลด สปส.1-03 (เข้าใหม่) / สปส.6-09 (แจ้งออก) ตามเดือน/ปีที่เลือก */
+  async downloadSsoForm(form) {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const year = parseInt(document.getElementById('reportYear')?.value);
+    const month = parseInt(document.getElementById('reportMonth')?.value);
+    if (!year || !month) { Layout.toast('เลือกปีและเดือนก่อน', 'error'); return; }
+    // reportYear ใส่เป็น พ.ศ. → แปลงเป็น ค.ศ.
+    const ceYear = year > 2400 ? year - 543 : year;
+    const label = form === 'sps103' ? 'สปส.1-03' : 'สปส.6-09';
+    try {
+      const res = await fetch(`/api/companies/${cid}/tax-filing-export/${form}?year=${ceYear}&month=${month}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (!res.ok) {
+        let msg = 'ดาวน์โหลดไม่สำเร็จ';
+        try { const j = await res.json(); msg = j?.message || j?.data?.message || msg; } catch {}
+        Layout.toast(msg, 'error'); return;
+      }
+      const blob = await res.blob();
+      const dispo = res.headers.get('content-disposition') || '';
+      const m = dispo.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      const filename = m ? decodeURIComponent(m[1]) : `${form.toUpperCase()}_${ceYear}${String(month).padStart(2,'0')}.txt`;
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+      a.click();
+      URL.revokeObjectURL(url);
+      Layout.toast(`ดาวน์โหลด ${label} สำเร็จ`);
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
 
@@ -661,9 +741,23 @@ const Page = {
       const items = res.data?.items || res.data || [];
       const tbody = document.getElementById('runBody');
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรอบเงินเดือน</td></tr>'; return; }
-      tbody.innerHTML = items.map((r, i) => `<tr>
+      tbody.innerHTML = items.map((r, i) => {
+        // ── SSO settlement banner: deadline = วันที่ 15 ของเดือนถัดไป ──
+        const ssoTotal = Number(r.totalSocialSecurityEmployee || 0) + Number(r.totalSocialSecurityEmployer || 0);
+        let ssoTag = '';
+        if (r.status === 'Paid' && ssoTotal > 0) {
+          if (r.ssoSettledAt) {
+            ssoTag = `<span style="font-size:10px;color:#16a34a;display:block;margin-top:2px">✓ นำส่ง สปส. ${Layout.date(r.ssoSettledAt)}${r.ssoFilingNumber ? ' #'+Layout.esc(r.ssoFilingNumber) : ''}</span>`;
+          } else {
+            const deadline = new Date(r.year, r.month, 15);    // = วันที่ 15 ของเดือนถัดไป (month is 0-indexed in JS)
+            const now = new Date();
+            const overdue = now > deadline;
+            ssoTag = `<span style="font-size:10px;color:${overdue?'#dc2626':'#d97706'};display:block;margin-top:2px">⏳ ยังไม่นำส่ง สปส. ${Layout.money(ssoTotal)} (กำหนด ${deadline.toLocaleDateString('th-TH')})${overdue?' • <b>เกินกำหนด!</b>':''}</span>`;
+          }
+        }
+        return `<tr>
         <td>${i+1}</td>
-        <td><span class="font-medium">${r.name || r.title || '-'}</span></td>
+        <td><span class="font-medium">${r.name || r.title || '-'}</span>${ssoTag}</td>
         <td>${r.month || '-'}/${r.year || '-'}</td>
         <td>${Layout.date(r.payDate || r.paymentDate)}</td>
         <td class="text-right">${r.employeeCount || r.totalEmployees || 0}</td>
@@ -674,8 +768,10 @@ const Page = {
           ${r.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.calculateRun('${r.id}')">คำนวณ</button>` : ''}
           ${r.status === 'Calculated' ? `<button class="btn btn-sm btn-success" onclick="Page.approveRun('${r.id}')">อนุมัติ</button>` : ''}
           ${r.status === 'Approved' ? `<button class="btn btn-sm btn-primary" onclick="Page.payRun('${r.id}')">จ่าย</button>` : ''}
+          ${(r.status === 'Paid' && ssoTotal > 0 && !r.ssoSettledAt) ? `<button class="btn btn-sm btn-warning" onclick="Page.openSettleSso('${r.id}')" title="นำส่งเงินสมทบประกันสังคมให้ สปส. — สร้าง JE Dr 21815 / Cr Bank อัตโนมัติ">💸 นำส่ง สปส.</button>` : ''}
         </td>
-      </tr>`).join('');
+      </tr>`;
+      }).join('');
       const totalPages = res.data?.totalPages || 1;
       document.getElementById('runPagination').innerHTML = Layout.renderPagination(this.runPage, totalPages, 'Page.gotoRunPage');
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -735,6 +831,71 @@ const Page = {
       Layout.toast('จ่ายเงินเดือนสำเร็จ');
       this.loadRuns();
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  /** เปิด modal นำส่งประกันสังคม — เติมข้อมูล run + bank dropdown + เตือน
+   * เงินเพิ่ม 2%/เดือน ถ้าวันที่นำส่งเกินวันที่ 15 ของเดือนถัดไป */
+  async openSettleSso(runId) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const [runRes, banksRes] = await Promise.all([
+        api.getPayrollRun(runId),
+        api.getBankAccounts().catch(() => ({ data: [] }))
+      ]);
+      const r = runRes.data;
+      const banks = banksRes?.data || [];
+      this._ssoCtx = { runId, year: r.year, month: r.month,
+        total: Number(r.totalSocialSecurityEmployee || 0) + Number(r.totalSocialSecurityEmployer || 0) };
+      // กำหนดส่ง = วันที่ 15 ของเดือนถัดไป (JS Date: month 0-indexed → r.month หมายถึง next month index)
+      const deadline = new Date(r.year, r.month, 15);
+      const today = new Date(); today.setHours(0,0,0,0);
+      // Default = วันนี้ ถ้ายังไม่เลย deadline; ไม่งั้นใช้ deadline (=วันที่กำหนด)
+      const defaultDate = today <= deadline ? today : deadline;
+      document.getElementById('settleSsoSummary').innerHTML = `
+        <div><b>${Layout.esc(r.name)}</b> · งวด ${r.month}/${r.year}</div>
+        <div style="margin-top:6px">ส่วนลูกจ้าง: <b>${Layout.money(r.totalSocialSecurityEmployee)}</b></div>
+        <div>ส่วนนายจ้าง: <b>${Layout.money(r.totalSocialSecurityEmployer)}</b></div>
+        <div style="border-top:1px solid #cbd5e1;margin-top:6px;padding-top:6px;font-size:14px">ยอดรวมที่ต้องนำส่ง: <b style="color:#0f766e">${Layout.money(this._ssoCtx.total)}</b></div>
+        <div style="margin-top:6px;font-size:11px;color:#64748b">กำหนดส่ง: ${deadline.toLocaleDateString('th-TH')}</div>
+      `;
+      document.getElementById('settleSsoPayDate').value = defaultDate.toLocaleDateString('sv-SE');
+      document.getElementById('settleSsoFilingNumber').value = '';
+      const bsel = document.getElementById('settleSsoBank');
+      bsel.innerHTML = '<option value="">— ใช้บัญชีเริ่มต้นของบริษัท —</option>' +
+        banks.map(b => `<option value="${b.id}">${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)})</option>`).join('');
+      // late-fee preview
+      const refreshLate = () => {
+        const pd = new Date(document.getElementById('settleSsoPayDate').value);
+        if (isNaN(pd.getTime())) { document.getElementById('settleSsoLateFee').style.display = 'none'; return; }
+        const days = Math.max(0, Math.ceil((pd - deadline) / 86400000));
+        if (days <= 0) { document.getElementById('settleSsoLateFee').style.display = 'none'; return; }
+        const months = Math.ceil(days / 30);
+        const fee = Math.min(this._ssoCtx.total, Math.round(this._ssoCtx.total * 0.02 * months * 100) / 100);
+        document.getElementById('settleSsoLateFee').style.display = 'block';
+        document.getElementById('settleSsoLateFee').innerHTML = `⚠️ เลยกำหนด ${days} วัน → ระบบจะคำนวณเงินเพิ่ม 2% × ${months} เดือน = <b>${Layout.money(fee)}</b> (Dr ค่าใช้จ่ายอื่น)`;
+      };
+      document.getElementById('settleSsoPayDate').onchange = refreshLate;
+      refreshLate();
+      Layout.openModal('settleSsoModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async submitSettleSso() {
+    const ctx = this._ssoCtx; if (!ctx) return;
+    const payDate = document.getElementById('settleSsoPayDate').value;
+    if (!payDate) { Layout.toast('กรุณาเลือกวันที่นำส่ง', 'error'); return; }
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.settleSso(ctx.runId, {
+        payDate,
+        bankAccountId: document.getElementById('settleSsoBank').value || null,
+        filingNumber: document.getElementById('settleSsoFilingNumber').value.trim() || null,
+      });
+      Layout.toast('นำส่งประกันสังคมสำเร็จ — JE Dr 21815 / Cr Bank ลงแล้ว', 'success');
+      Layout.closeModal('settleSsoModal');
+      this._ssoCtx = null;
+      this.loadRuns();
+    } catch (err) { Layout.toast('นำส่งไม่สำเร็จ: ' + err.message, 'error', 8000); }
   },
 
   async viewRun(id) {

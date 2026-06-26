@@ -187,6 +187,41 @@ public class CompanySettings : TenantEntity
     // FALLBACK when there's no learned preference yet.
     public DocumentType OcrBuyerInvoiceDefaultTarget { get; set; } = DocumentType.PaymentVoucher;
 
+    // ── แหล่งเงิน default สำหรับ OCR / auto-create (ฝั่ง Cr ของ PV/Receipt) ──
+    // เมื่อ OCR สร้างใบสำคัญจ่ายแบบจ่ายสด ต้องเลือก "แหล่งเงิน" (บัญชี Cr ที่
+    // เงินไหลออก). เดิมไม่มีค่านี้ → auto-fill หยิบบัญชีธนาคารรหัสต่ำสุดมั่ว ๆ
+    // (กรุงไทย 11110 ชนะ กสิกร 11120 เสมอ) ทำให้ลงผิดบัญชี. ตั้งค่านี้ =
+    // ChartOfAccount.Id ของบัญชีเงินสด/ธนาคารที่บริษัทใช้จ่ายเป็นหลัก →
+    // OcrService ใช้เป็น default แทนการเดา. null = พฤติกรรมเดิม (lowest-code).
+    // Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน metadata จะชนะค่านี้อีกที.
+    public Guid? DefaultPaymentAccountId { get; set; }
+
+    // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
+    // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
+    // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด
+    // ทางอาญา). ระบบใช้ field นี้เป็น gate ก่อน finalize งบ + XBRL export.
+    // null = ยังไม่เซ็ตค่า → ระบบ block การ export งบ/XBRL จนกว่าจะตั้ง.
+    public string? BookkeeperName { get; set; }
+    public string? BookkeeperCpdNumber { get; set; }
+
+    // ── §86/4 hard-enforcement (opt-in) ──
+    // เมื่อ true: ApproveDocumentAsync จะ block (throw) ถ้าใบกำกับ/ใบเสร็จ/CN/DN
+    // ขาด field บังคับ §86/4 (BuyerTaxId 13 หลัก, BuyerAddress, BuyerBranchCode
+    // 5 หลัก). default false = พฤติกรรมเดิม (soft warning, ผู้ใช้กด acknowledge
+    // ผ่านได้). บริษัทที่ต้องการเข้มเปิด flag นี้ → กัน operator-error ที่
+    // approve ใบไม่ครบ §86/4 ก่อนจะถูกตรวจสรรพากร.
+    public bool EnforceFullTaxInvoiceFields { get; set; } = false;
+
+    // ── กองทุนเงินทดแทน (กท.20ก, พ.ร.บ.เงินทดแทน §44) ──
+    // นายจ้างฝ่ายเดียวสมทบ 0.2%–1.0% ของค่าจ้างต่อปี (cap 240,000 บาท/คน/ปี)
+    // อัตราตามประเภทกิจการ 10 หมวด: สำนักงาน 0.2%, ค้าปลีก 0.4%, ก่อสร้าง 1.0%
+    // เปิด `WorkersCompensationEnabled` ตามที่บริษัทอยู่ในประกาศกระทรวงแรงงาน
+    // → ระบบคิดรายเดือนลง Dr 54121 / Cr 21816 ในรอบเงินเดือน → ยอดสรุปยื่น
+    // กท.20ก รายปี (มี.ค.). default ปิดไว้ (บริษัท SME ส่วนใหญ่ไม่ได้ลงทะเบียน
+    // จนกว่ามีลูกจ้าง) เพื่อไม่ทำให้ฐานข้อมูลเดิมโดน double-post.
+    public decimal WorkersCompensationRatePercent { get; set; } = 0.2m;
+    public bool WorkersCompensationEnabled { get; set; } = false;
+
     // Landing Page – Accounting Services
     public string? LandingContactPhone { get; set; }           // เบอร์ติดต่อแสดงหน้าแรก
     public string? LandingContactLine { get; set; }            // LINE ID

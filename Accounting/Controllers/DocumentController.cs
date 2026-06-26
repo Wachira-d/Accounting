@@ -344,6 +344,28 @@ public class DocumentController : ControllerBase
             "เปลี่ยนผังบัญชีสำเร็จ (สร้าง JE คู่ใหม่ลงงวดเดิม)"));
     }
 
+    /// <summary>เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับ
+    /// สดหลัง approve — แก้เคส OCR เลือกธนาคารผิดโดยไม่ต้อง void. post
+    /// correcting-JE (Dr ผังเก่า / Cr ผังใหม่). ดู gate ใน
+    /// DocumentService.ReclassifyPaymentSourceAsync</summary>
+    [HttpPost("{documentId:guid}/reclassify-payment-source")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ReclassifyPaymentSource(
+        Guid companyId, Guid documentId, [FromBody] ReclassifyPaymentSourceRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // ใช้ permission เดียวกับ Approve — มี GL impact ต้องระดับเดียวกัน
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์เปลี่ยนแหล่งเงินเอกสาร {docType} (ต้องการ Document.Approve)");
+        var result = await _documentService.ReclassifyPaymentSourceAsync(
+            companyId, documentId, request.NewBankAccountId, request.NewPaymentAccountId,
+            request.Reason, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            "เปลี่ยนแหล่งเงินสำเร็จ (สร้าง JE คู่ใหม่ลงงวดเดิม)"));
+    }
+
     [HttpPost("{documentId:guid}/void")]
     public async Task<ActionResult<ApiResponse<string>>> VoidDocument(Guid companyId, Guid documentId)
     {

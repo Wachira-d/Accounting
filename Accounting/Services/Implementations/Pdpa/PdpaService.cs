@@ -61,6 +61,45 @@ public interface IPdpaService
     /// + จำนวนเงิน + ลบชื่อ/ที่อยู่/อีเมล/โทรศัพท์</summary>
     Task<int> ApplyErasureAsync(Guid companyId, Guid? userId, Guid? contactId,
         string actor, CancellationToken ct = default);
+
+    // ===== Wave 3 — RoPA / Consent / PiiAccessLog / Breach (PDPC audit-grade) =====
+
+    /// <summary>RoPA (ม.39): list activities ของบริษัท</summary>
+    Task<IReadOnlyList<PdpaProcessingActivity>> ListProcessingActivitiesAsync(Guid companyId, CancellationToken ct = default);
+    /// <summary>RoPA upsert (ถ้า id != null = update, ไม่งั้น insert)</summary>
+    Task<PdpaProcessingActivity> UpsertProcessingActivityAsync(Guid companyId,
+        Guid? id, string purpose, string legalBasis, string dataCategories,
+        string retentionPeriod, string? recipients, bool transfersOutsideThailand,
+        string? transferSafeguards, string? notes, string actor, CancellationToken ct = default);
+
+    /// <summary>Consent grant (ม.19, 22): บันทึกความยินยอม</summary>
+    Task<PdpaConsentRecord> GrantConsentAsync(Guid companyId, Guid? subjectUserId,
+        Guid? subjectContactId, string? subjectContact, string purpose, string policyVersion,
+        string? channel, string? ipAddress, string? evidenceHash, CancellationToken ct = default);
+    /// <summary>Consent withdraw — set WithdrawnAt + reason. หลังจากนี้ระบบ
+    /// ต้องไม่ใช้ข้อมูลตาม purpose นั้นอีก (caller responsible).</summary>
+    Task<PdpaConsentRecord> WithdrawConsentAsync(Guid companyId, Guid consentId,
+        string reason, CancellationToken ct = default);
+    /// <summary>Consent ที่ active ของ subject + purpose (latest, ไม่ถูกถอน)</summary>
+    Task<PdpaConsentRecord?> GetActiveConsentAsync(Guid companyId, Guid? subjectUserId,
+        Guid? subjectContactId, string purpose, CancellationToken ct = default);
+
+    /// <summary>บันทึก PII access event (ม.37(4)). idempotency = caller ดูแลเอง</summary>
+    Task LogPiiAccessAsync(Guid companyId, Guid actorUserId, string actorEmail,
+        string subjectType, Guid subjectId, string fieldName, string operation,
+        string purpose, string? ipAddress, string? userAgent, CancellationToken ct = default);
+
+    /// <summary>Breach incident (ม.37(4)): สร้าง + คำนวณ NotifyPdpcDueBy = +72h</summary>
+    Task<PdpaBreachIncident> ReportBreachAsync(Guid companyId, string severity,
+        string description, string affectedDataCategories, int? affectedSubjectsCount,
+        Guid? reportedByUserId, CancellationToken ct = default);
+    /// <summary>Update breach status (Investigating/NotifiedPdpc/NotifiedSubjects/Closed)</summary>
+    Task<PdpaBreachIncident> UpdateBreachAsync(Guid companyId, Guid breachId,
+        string? status, DateTime? pdpcNotifiedAt, string? pdpcReferenceNumber,
+        DateTime? subjectsNotifiedAt, string? mitigation, string? rootCause,
+        CancellationToken ct = default);
+    /// <summary>Breach ที่ใกล้ครบ 72h หรือเกินกำหนดแล้ว (สำหรับ dashboard alert)</summary>
+    Task<IReadOnlyList<PdpaBreachIncident>> ListBreachAlertsAsync(Guid companyId, CancellationToken ct = default);
 }
 
 /// <summary>DSR ม.30 export — JSON portable ตามมาตรฐานสากล (W3C Verifiable
@@ -362,5 +401,179 @@ public class PdpaService : IPdpaService
             await _db.SaveChangesAsync(ct);
         }
         return changed;
+    }
+
+    // ===== Wave 3 — RoPA =====
+
+    public async Task<IReadOnlyList<PdpaProcessingActivity>> ListProcessingActivitiesAsync(
+        Guid companyId, CancellationToken ct = default)
+        => await _db.PdpaProcessingActivities.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted)
+            .OrderBy(a => a.Purpose).ToListAsync(ct);
+
+    public async Task<PdpaProcessingActivity> UpsertProcessingActivityAsync(Guid companyId,
+        Guid? id, string purpose, string legalBasis, string dataCategories,
+        string retentionPeriod, string? recipients, bool transfersOutsideThailand,
+        string? transferSafeguards, string? notes, string actor, CancellationToken ct = default)
+    {
+        PdpaProcessingActivity row;
+        if (id.HasValue)
+        {
+            row = await _db.PdpaProcessingActivities.FirstOrDefaultAsync(
+                a => a.Id == id.Value && a.CompanyId == companyId && !a.IsDeleted, ct)
+                ?? throw new KeyNotFoundException("ไม่พบ RoPA row");
+            row.UpdatedAt = DateTime.UtcNow;
+            row.UpdatedBy = actor;
+        }
+        else
+        {
+            row = new PdpaProcessingActivity { CompanyId = companyId, CreatedBy = actor };
+            _db.PdpaProcessingActivities.Add(row);
+        }
+        row.Purpose = purpose;
+        row.LegalBasis = legalBasis;
+        row.DataCategories = dataCategories;
+        row.RetentionPeriod = retentionPeriod;
+        row.Recipients = recipients;
+        row.TransfersOutsideThailand = transfersOutsideThailand;
+        row.TransferSafeguards = transferSafeguards;
+        row.Notes = notes;
+        row.LastReviewedAt = DateTime.UtcNow;
+        row.LastReviewedBy = actor;
+        await _db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    // ===== Wave 3 — Consent =====
+
+    public async Task<PdpaConsentRecord> GrantConsentAsync(Guid companyId, Guid? subjectUserId,
+        Guid? subjectContactId, string? subjectContact, string purpose, string policyVersion,
+        string? channel, string? ipAddress, string? evidenceHash, CancellationToken ct = default)
+    {
+        var row = new PdpaConsentRecord
+        {
+            CompanyId = companyId,
+            SubjectUserId = subjectUserId,
+            SubjectContactId = subjectContactId,
+            SubjectContact = subjectContact,
+            Purpose = purpose,
+            PolicyVersion = string.IsNullOrWhiteSpace(policyVersion) ? "1.0" : policyVersion,
+            Channel = channel,
+            IpAddress = ipAddress,
+            EvidenceHash = evidenceHash,
+        };
+        _db.PdpaConsentRecords.Add(row);
+        await _db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    public async Task<PdpaConsentRecord> WithdrawConsentAsync(Guid companyId, Guid consentId,
+        string reason, CancellationToken ct = default)
+    {
+        var row = await _db.PdpaConsentRecords
+            .FirstOrDefaultAsync(c => c.Id == consentId && c.CompanyId == companyId && !c.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบ consent");
+        if (row.WithdrawnAt.HasValue)
+            return row;   // idempotent
+        row.WithdrawnAt = DateTime.UtcNow;
+        row.WithdrawnReason = reason;
+        await _db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    public async Task<PdpaConsentRecord?> GetActiveConsentAsync(Guid companyId, Guid? subjectUserId,
+        Guid? subjectContactId, string purpose, CancellationToken ct = default)
+        => await _db.PdpaConsentRecords.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                && c.Purpose == purpose
+                && c.WithdrawnAt == null
+                && (subjectUserId == null || c.SubjectUserId == subjectUserId)
+                && (subjectContactId == null || c.SubjectContactId == subjectContactId))
+            .OrderByDescending(c => c.GrantedAt)
+            .FirstOrDefaultAsync(ct);
+
+    // ===== Wave 3 — PiiAccessLog =====
+
+    public async Task LogPiiAccessAsync(Guid companyId, Guid actorUserId, string actorEmail,
+        string subjectType, Guid subjectId, string fieldName, string operation,
+        string purpose, string? ipAddress, string? userAgent, CancellationToken ct = default)
+    {
+        _db.PdpaPiiAccessLogs.Add(new PdpaPiiAccessLog
+        {
+            CompanyId = companyId,
+            ActorUserId = actorUserId,
+            ActorEmail = actorEmail,
+            SubjectType = subjectType,
+            SubjectId = subjectId,
+            FieldName = fieldName,
+            Operation = operation,
+            Purpose = purpose,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    // ===== Wave 3 — Breach =====
+
+    public async Task<PdpaBreachIncident> ReportBreachAsync(Guid companyId, string severity,
+        string description, string affectedDataCategories, int? affectedSubjectsCount,
+        Guid? reportedByUserId, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var serial = Interlocked.Increment(ref _serial);
+        var row = new PdpaBreachIncident
+        {
+            CompanyId = companyId,
+            IncidentNumber = $"BREACH-{now:yyyyMMdd}-{serial % 10000:D4}",
+            DetectedAt = now,
+            NotifyPdpcDueBy = now.AddHours(72),
+            Severity = string.IsNullOrWhiteSpace(severity) ? "Medium" : severity,
+            Description = description,
+            AffectedDataCategories = affectedDataCategories,
+            AffectedSubjectsCount = affectedSubjectsCount,
+            ReportedByUserId = reportedByUserId,
+        };
+        _db.PdpaBreachIncidents.Add(row);
+        await _db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    public async Task<PdpaBreachIncident> UpdateBreachAsync(Guid companyId, Guid breachId,
+        string? status, DateTime? pdpcNotifiedAt, string? pdpcReferenceNumber,
+        DateTime? subjectsNotifiedAt, string? mitigation, string? rootCause,
+        CancellationToken ct = default)
+    {
+        var row = await _db.PdpaBreachIncidents
+            .FirstOrDefaultAsync(b => b.Id == breachId && b.CompanyId == companyId && !b.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบ breach");
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            row.Status = status;
+            if (status == "Closed" && !row.ClosedAt.HasValue)
+                row.ClosedAt = DateTime.UtcNow;
+        }
+        if (pdpcNotifiedAt.HasValue) row.PdpcNotifiedAt = pdpcNotifiedAt;
+        if (pdpcReferenceNumber != null) row.PdpcReferenceNumber = pdpcReferenceNumber;
+        if (subjectsNotifiedAt.HasValue) row.SubjectsNotifiedAt = subjectsNotifiedAt;
+        if (mitigation != null) row.Mitigation = mitigation;
+        if (rootCause != null) row.RootCause = rootCause;
+        await _db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    public async Task<IReadOnlyList<PdpaBreachIncident>> ListBreachAlertsAsync(
+        Guid companyId, CancellationToken ct = default)
+    {
+        // ใกล้ครบ 72 ชม. (เหลือ < 24h) หรือเลยกำหนด + ยังไม่แจ้ง PDPC.
+        var now = DateTime.UtcNow;
+        var warnFrom = now.AddHours(24);
+        return await _db.PdpaBreachIncidents.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted
+                && b.Status != "Closed"
+                && b.PdpcNotifiedAt == null
+                && b.NotifyPdpcDueBy <= warnFrom)
+            .OrderBy(b => b.NotifyPdpcDueBy)
+            .ToListAsync(ct);
     }
 }

@@ -89,6 +89,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   Vision/OCR → local distillation model → historical lookup (vendor's last doc)
   → rule defaults (VAT 7%, branch 00000, vendor default GL) → AI ตอน last resort
   (ผ่าน `IAiOrchestrator.AskAsync` per กฎเหล็ก #1)
+- **แหล่งเงิน (Cr) auto-fill — 3 ชั้น priority** (`OcrService.cs` credit auto-fill
+  + `ResolvePaymentSourceOverrideAsync`): สำหรับ PV/Receipt/Expense จ่ายสด —
+  (1) partner metadata top-level `paymentAccountCode`/`bankCode`/`bankAccountCode`
+  (match CoA code → เลขบัญชีธนาคาร→LinkedAccountId) → (2)
+  `CompanySettings.DefaultPaymentAccountId` (admin ตั้งใน Settings) → (3)
+  lowest-code fallback เดิม. เดิมมีแต่ชั้น 3 → หยิบบัญชีรหัสต่ำสุดมั่ว
+  (กรุงไทย 11110 ชนะ กสิกร 11120). A/P-A/R ไม่มีแหล่งเงิน → ใช้ prefix เดิม.
+- **แก้แหล่งเงินหลัง approve** — `DocumentService.ReclassifyPaymentSourceAsync`
+  (`POST /documents/{id}/reclassify-payment-source`): คู่กับ reclassify-line
+  (ฝั่ง Dr). post correcting-JE **Dr ผังเก่า / Cr ผังใหม่** ขนาด PaidAmount →
+  เงินกลับเข้าบัญชีเก่า + ออกจากบัญชีใหม่. gate เดียวกับ reclassify-line
+  (period open, ไม่มี downstream/Payment แยก/TaxReport submitted/e-Tax).
+  UI: ปุ่ม ✏️ ข้าง "แหล่งเงิน (Cr)" ในหน้า detail (PV/Receipt/Expense ที่
+  Approved/Paid).
 - **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
   ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
@@ -463,6 +477,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count) | JE Revenue/Expense + Document.NonDeductibleAmount |
 | **ภ.ง.ด.51** (ครึ่งปี) | `ExportPnd51Async` | half-year P&L |
 | **สปส.1-10** (ประกันสังคม) | `ExportSso110Async` (`:412`) | PayrollRun + Employee |
+| **สปส.1-03** (ขึ้นทะเบียนเข้าใหม่) | `ExportSps103Async` | Employee.StartDate ในเดือน + IsSubjectToSocialSecurity |
+| **สปส.6-09** (แจ้งออก) | `ExportSps609Async` | Employee.EndDate ในเดือน |
+
+> **นำส่ง สปส. (สปส.1-10):** `PayrollService.SettleSocialSecurityAsync` post JE
+> Dr 21815 / Cr Bank + เงินเพิ่ม §49 2%/เดือน. **Deadline tracker:** ตอนสร้าง/
+> เลิกจ้างพนักงาน → `TrackSsoEmployeeFilingAsync` สร้าง `ComplianceFiling`
+> (SSO_NewEmployee due+30วัน / SSO_Termination due วันที่15เดือนถัดไป).
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
@@ -630,11 +651,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API = web UI:_
-_SanitizeVatSplitArtifacts ตัด "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)"; AutoCreate_
-_delegate ไป CreateDocumentFromScanAsync — ลบ path คู่ขนาน;_
-_CreateDocumentFromScanAsync ใช้ DRAFT- placeholder ตามกฎ §86/4 → เลขออก_
-_ตอน Approve เท่านั้น กัน DocumentNumber↔DocumentDate desync + sequence gap)._
+_Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
+_DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
+_floor 1,650, กท.20ก, สปส.1-03/6-09._
+_รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
+_PII encrypt+ (Bank/SSN), audit-log DB trigger, §86/4 hard-block opt-in,_
+_ภ.ง.ด.51 SME bracket, PDPA Wave 3 (RoPA/Consent/PiiAccessLog/Breach)._
+_รอบ 16: DBD XBRL annual export (TFRS-NPAEs taxonomy) + ผู้ทำบัญชี CPD gate_
+_(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Consent/Breach with 72h timer)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 

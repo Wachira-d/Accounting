@@ -185,6 +185,17 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Pay(Guid companyId, Guid runId)
         => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.ProcessPaymentAsync(companyId, runId, User.Identity?.Name ?? "")));
 
+    /// <summary>นำส่งประกันสังคมให้ สปส. (สปส.1-10) — post JE คู่ที่สอง
+    /// Dr 21815 / Cr Bank. คำนวณเงินเพิ่ม §49 อัตโนมัติ. ใช้กับรอบ Paid +
+    /// ยังไม่นำส่ง.</summary>
+    [HttpPost("runs/{runId:guid}/settle-sso")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> SettleSso(
+        Guid companyId, Guid runId, [FromBody] SettleSsoRequest request)
+        => Ok(new ApiResponse<PayrollRunResponse>(true,
+            await _service.SettleSocialSecurityAsync(companyId, runId,
+                request.PayDate, request.BankAccountId, request.FilingNumber,
+                User.Identity?.Name ?? "")));
+
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollDetailResponse>>> GetDetail(Guid companyId, Guid runId, Guid employeeId)
     {

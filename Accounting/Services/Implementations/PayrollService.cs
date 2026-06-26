@@ -261,6 +261,16 @@ public class PayrollService : IPayrollService
         _db.Set<Employee>().Add(employee);
         await _db.SaveChangesAsync();
 
+        // สปส.1-03 — ขึ้นทะเบียนผู้ประกันตนภายใน 30 วันนับจากวันเริ่มงาน (§34).
+        // สร้าง ComplianceFiling row เป็น deadline tracker ให้ surface ในปฏิทิน
+        // compliance ที่มีอยู่ (ไม่ต้องสร้าง UI ใหม่). เฉพาะพนักงานที่อยู่ในระบบ สปส.
+        if (employee.IsSubjectToSocialSecurity)
+        {
+            await TrackSsoEmployeeFilingAsync(companyId, "SSO_NewEmployee", "สปส.1-03",
+                employee.StartDate, employee.StartDate.AddDays(30),
+                $"ขึ้นทะเบียน {employee.FirstNameTh} {employee.LastNameTh} ({employee.EmployeeCode}) — ภายใน 30 วัน");
+        }
+
         await FireWebhookAsync(companyId, "employee.created", new
         {
             id = employee.Id, employeeCode = employee.EmployeeCode,
@@ -808,6 +818,16 @@ public class PayrollService : IPayrollService
                 user.Status = UserStatus.Inactive;
         }
 
+        // สปส.6-09 — แจ้งสิ้นสุดความเป็นผู้ประกันตน ภายในวันที่ 15 ของเดือนถัดไป.
+        // deadline tracker ผ่าน ComplianceFiling (surface ในปฏิทิน compliance).
+        if (employee.IsSubjectToSocialSecurity)
+        {
+            var sps609Due = new DateTime(endDate.Year, endDate.Month, 15).AddMonths(1);
+            await TrackSsoEmployeeFilingAsync(companyId, "SSO_Termination", "สปส.6-09",
+                endDate, sps609Due,
+                $"แจ้งออก {employee.FirstNameTh} {employee.LastNameTh} ({employee.EmployeeCode}) — ภายในวันที่ 15 ของเดือนถัดไป");
+        }
+
         await _db.SaveChangesAsync();
         await FireWebhookAsync(companyId, "employee.terminated", new
         {
@@ -815,6 +835,51 @@ public class PayrollService : IPayrollService
             endDate = employee.EndDate,
             externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
         });
+    }
+
+    /// <summary>สร้าง ComplianceFiling deadline tracker สำหรับ สปส.1-03/6-09
+    /// (event-driven ตอนพนักงานเข้า/ออก). Idempotent: ถ้ามี row เดียวกัน
+    /// (type + เดือน + ปี) อยู่แล้วไม่สร้างซ้ำ. Fire-and-forget — fail
+    /// ไม่ทำให้ create/terminate พัง (deadline tracker เป็น nice-to-have).</summary>
+    private async Task TrackSsoEmployeeFilingAsync(
+        Guid companyId, string filingType, string formCode,
+        DateTime eventDate, DateTime dueDate, string note)
+    {
+        try
+        {
+            var year = eventDate.Year;
+            var month = eventDate.Month;
+            var exists = await _db.Set<ComplianceFiling>().AnyAsync(f =>
+                f.CompanyId == companyId && f.FilingType == filingType
+                && f.Year == year && f.Month == month && f.Status == "NotStarted");
+            if (exists)
+            {
+                // มี row เดือนนี้แล้ว → append note (มีหลายคนเข้า/ออกเดือนเดียวกัน)
+                var existing = await _db.Set<ComplianceFiling>().FirstAsync(f =>
+                    f.CompanyId == companyId && f.FilingType == filingType
+                    && f.Year == year && f.Month == month && f.Status == "NotStarted");
+                existing.Notes = string.IsNullOrWhiteSpace(existing.Notes)
+                    ? note : existing.Notes + "\n" + note;
+            }
+            else
+            {
+                _db.Set<ComplianceFiling>().Add(new ComplianceFiling
+                {
+                    CompanyId = companyId,
+                    FilingType = filingType,
+                    FormCode = formCode,
+                    Year = year,
+                    Month = month,
+                    DueDate = dueDate,
+                    Status = "NotStarted",
+                    Notes = note,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "TrackSsoEmployeeFiling failed (non-fatal) for {Type}", filingType);
+        }
     }
 
     // ===== Payroll Items =====
@@ -965,6 +1030,12 @@ public class PayrollService : IPayrollService
                     && (e.EndDate == null || e.EndDate >= run.PeriodStart))
                 .ToListAsync();
 
+            // CompanySettings — ใช้ในการคำนวณกองทุนเงินทดแทน (กท.20ก)
+            // โหลด 1 ครั้งก่อน loop เพื่อกัน N+1
+            var companySettings = await _db.Set<CompanySettings>()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
+
             // Get payroll items for earnings/deductions calculation
             var payrollItems = await _db.Set<PayrollItem>()
                 .Where(i => i.CompanyId == companyId && i.IsActive && !i.IsDeleted)
@@ -1027,6 +1098,7 @@ public class PayrollService : IPayrollService
 
             decimal totalGross = 0, totalDeductions = 0, totalNet = 0;
             decimal totalWht = 0, totalSsoEmp = 0, totalSsoEr = 0;
+            decimal totalWc = 0;   // กองทุนเงินทดแทน (กท.20ก)
             decimal totalPvdEmp = 0, totalPvdEr = 0;
 
             // SSO parameters effective for THIS run's year — the wage ceiling
@@ -1208,13 +1280,33 @@ public class PayrollService : IPayrollService
                 // Social security: base on BaseSalary (not gross), capped at the
                 // year's statutory wage ceiling (resolved above — 17,500 from
                 // 2026, stepping up per the royal decree; override-able per year).
+                // กฎหมาย ม.33: ฐานคำนวณ "ขั้นต่ำ 1,650 บาท ขั้นสูง = เพดานของปีนั้น"
+                // — เงินเดือนต่ำกว่า 1,650 → ใช้ฐาน 1,650 (ไม่ใช่ skip),
+                //   เพราะ ม.33 บังคับสมทบทุกคนที่อยู่ในระบบ (ลูกจ้าง <1,650
+                //   หายาก ปกติเด็กฝึกงาน — แต่ฐานคงต้องตามกฎ).
                 var ssoEmployee = 0m;
                 var ssoEmployer = 0m;
                 if (emp.IsSubjectToSocialSecurity)
                 {
-                    var ssoBase = Math.Min(emp.BaseSalary, sso.MaxBase);
+                    const decimal SsoMinBase = 1_650m;
+                    var ssoBase = Math.Max(SsoMinBase, Math.Min(emp.BaseSalary, sso.MaxBase));
                     ssoEmployee = Math.Min(Math.Round(ssoBase * sso.Rate, 2), sso.MaxContribution);
                     ssoEmployer = Math.Min(Math.Round(ssoBase * sso.EmployerRate, 2), sso.EmployerMaxContribution);
+                }
+
+                // กองทุนเงินทดแทน (กท.20ก) — นายจ้างฝ่ายเดียว, อัตรา 0.2–1.0%
+                // ตามประเภทกิจการ. ฐานต่อเดือน cap 20,000 (= 240,000/ปี ตาม
+                // พ.ร.บ.เงินทดแทน §44 — ส่วนเกิน 240k/ปี ไม่นับสมทบ). default
+                // ปิด → ระบบไม่คิดจนกว่าจะตั้งค่าใน Settings เพื่อกัน double-post
+                // ในข้อมูลเดิม.
+                var workersComp = 0m;
+                if (companySettings?.WorkersCompensationEnabled == true
+                    && emp.IsSubjectToSocialSecurity
+                    && companySettings.WorkersCompensationRatePercent > 0)
+                {
+                    const decimal WcMonthlyBaseCap = 20_000m;   // 240,000/12
+                    var wcBase = Math.Min(emp.BaseSalary, WcMonthlyBaseCap);
+                    workersComp = Math.Round(wcBase * companySettings.WorkersCompensationRatePercent / 100m, 2);
                 }
 
                 // Provident fund calculation
@@ -1307,6 +1399,7 @@ public class PayrollService : IPayrollService
                     TaxableGross = taxableGross,
                     SocialSecurityEmployee = ssoEmployee,
                     SocialSecurityEmployer = ssoEmployer,
+                    WorkersCompensation = workersComp,
                     WithholdingTax = monthlyTax,
                     ProvidentFundEmployee = pvdEmployee,
                     ProvidentFundEmployer = pvdEmployer,
@@ -1330,6 +1423,7 @@ public class PayrollService : IPayrollService
                 totalWht += monthlyTax;
                 totalSsoEmp += ssoEmployee;
                 totalSsoEr += ssoEmployer;
+                totalWc += workersComp;
                 totalPvdEmp += pvdEmployee;
                 totalPvdEr += pvdEmployer;
             }
@@ -1340,6 +1434,7 @@ public class PayrollService : IPayrollService
             run.TotalWithholdingTax = totalWht;
             run.TotalSocialSecurityEmployee = totalSsoEmp;
             run.TotalSocialSecurityEmployer = totalSsoEr;
+            run.TotalWorkersCompensation = totalWc;
             run.TotalProvidentFundEmployee = totalPvdEmp;
             run.TotalProvidentFundEmployer = totalPvdEr;
             run.EmployeeCount = employees.Count;
@@ -1531,6 +1626,30 @@ public class PayrollService : IPayrollService
                     if (ssoPayableAccount != null)
                         lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                             ssoPayableAccount.Id, 0, totalSso, "ประกันสังคมค้างจ่าย"));
+                }
+
+                // ── กองทุนเงินทดแทน (กท.20ก) — Dr ค่าใช้จ่าย + Cr ค้างจ่าย ──
+                // นายจ้างฝ่ายเดียว 0.2–1.0% เปิดเมื่อ CompanySettings.
+                // WorkersCompensationEnabled = true. ใช้คนละผัง SSO เพราะ
+                // ยื่นแยกแบบ + รอบยื่นต่างกัน (สปส.1-10 รายเดือน, กท.20ก รายปี)
+                if (run.TotalWorkersCompensation > 0)
+                {
+                    var wcExpAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode == "54121" && a.Level >= 4)
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4
+                        && a.AccountName.Contains("เงินทดแทน"));
+                    if (wcExpAccount != null)
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            wcExpAccount.Id, run.TotalWorkersCompensation, 0, "กองทุนเงินทดแทน (นายจ้าง)"));
+                    var wcPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.AccountCode == "21816" && a.Level >= 4)
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode.StartsWith("218") && a.Level >= 4
+                            && a.AccountName.Contains("เงินทดแทน"));
+                    if (wcPayableAccount != null)
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            wcPayableAccount.Id, 0, run.TotalWorkersCompensation, "กองทุนเงินทดแทนค้างจ่าย"));
                 }
 
                 // Cr: กองทุนสำรองเลี้ยงชีพค้างจ่าย (21818) — ส่วนลูกจ้าง+นายจ้าง
@@ -2751,7 +2870,9 @@ public class PayrollService : IPayrollService
         new(r.Id, r.PayrollNumber, r.Name, r.Year, r.Month, r.PayDate,
             r.Status, r.TotalGrossSalary, r.TotalDeductions, r.TotalNetPay,
             r.TotalWithholdingTax, r.TotalSocialSecurityEmployee,
-            r.TotalSocialSecurityEmployer, r.EmployeeCount, r.CreatedAt);
+            r.TotalSocialSecurityEmployer, r.EmployeeCount, r.CreatedAt,
+            r.SsoSettledAt, r.SsoSettlementJournalEntryId, r.SsoFilingNumber,
+            r.SsoLateFeeAmount, r.TotalWorkersCompensation);
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",
@@ -2759,4 +2880,160 @@ public class PayrollService : IPayrollService
             l.ApprovedBy, l.RejectionReason,
             HalfDayMarker: l.HalfDayMarker,
             CreatedAt: l.CreatedAt);
+
+    // ── Settle SSO to สำนักงานประกันสังคม (สปส.1-10) ────────────────────────
+    //
+    // ตอนจ่ายเงินเดือน (ProcessPaymentAsync) ระบบ Cr 21815 (ประกันสังคมค้างจ่าย)
+    // ค้างไว้. กฎหมาย — พ.ร.บ.ประกันสังคม §47: นายจ้างต้องนำส่งภายในวันที่ 15
+    // ของเดือนถัดไป (กระดาษ) / 22 ของเดือนถัดไป (e-Filing).
+    // method นี้ post JE คู่ที่สอง: **Dr 21815 / Cr Bank** ตามตัวอย่างที่
+    // ผู้ใช้แสดงมา → หนี้สิน 21815 หักล้างเหลือ 0 พอดี.
+    //
+    // late fee (§49): เงินเพิ่ม **2% ต่อเดือน** ของยอดที่นำส่งช้า เริ่มนับ
+    // จากวันที่เลยกำหนด. ระบบคำนวณ + post Dr 5xxx ค่าใช้จ่าย / Cr Bank ในรอบ
+    // เดียวกัน. payDate ≤ deadline → late fee = 0.
+    public async Task<PayrollRunResponse> SettleSocialSecurityAsync(
+        Guid companyId, Guid payrollRunId,
+        DateTime payDate, Guid? bankAccountId, string? filingNumber, string performedBy)
+    {
+        if (_accountingService == null)
+            throw new InvalidOperationException("ระบบบัญชียังไม่พร้อม — ไม่สามารถลง JE นำส่งประกันสังคม");
+
+        var run = await _db.Set<PayrollRun>()
+            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรอบเงินเดือน");
+
+        if (run.Status != "Paid")
+            throw new InvalidOperationException(
+                $"นำส่งประกันสังคมได้เมื่อรอบเงินเดือนอยู่สถานะ Paid เท่านั้น (ปัจจุบัน: {run.Status})");
+
+        if (run.SsoSettledAt.HasValue)
+            throw new InvalidOperationException(
+                $"รอบนี้นำส่ง สปส. ไปแล้วเมื่อ {run.SsoSettledAt:dd/MM/yyyy} (JE {run.SsoSettlementJournalEntryId})");
+
+        var totalSso = run.TotalSocialSecurityEmployee + run.TotalSocialSecurityEmployer;
+        if (totalSso <= 0)
+            throw new InvalidOperationException("รอบนี้ไม่มียอดประกันสังคมต้องนำส่ง");
+
+        // ── หาผังบัญชี ──
+        // 21815 ประกันสังคมค้างจ่าย (Cr ตอนจ่ายเงินเดือน) → ตอนนี้ Dr ล้างหนี้
+        var ssoPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode == "21815" && a.Level >= 4)
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode.StartsWith("218") && a.Level >= 4
+                && a.AccountName.Contains("ประกันสังคม"))
+            ?? throw new InvalidOperationException(
+                "ไม่พบบัญชี 'ประกันสังคมค้างจ่าย' (21815) — กรุณาสร้างก่อน");
+
+        // ── หา Bank/Cash ──
+        // (1) ถ้าผู้ใช้ระบุ BankAccountId → ใช้ LinkedAccountId ของบัญชีนั้น
+        // (2) ถ้าไม่ระบุ → ใช้ CompanySettings.DefaultPaymentAccountId
+        // (3) สุดท้าย fallback บัญชี 111x ตัวแรก (auto-pick lowest)
+        Guid? bankGlId = null;
+        if (bankAccountId.HasValue)
+        {
+            bankGlId = await _db.BankAccounts.AsNoTracking()
+                .Where(b => b.Id == bankAccountId.Value && b.CompanyId == companyId)
+                .Select(b => b.LinkedAccountId)
+                .FirstOrDefaultAsync();
+            if (!bankGlId.HasValue)
+                throw new InvalidOperationException(
+                    "บัญชีธนาคารที่เลือกยังไม่ผูกผังบัญชี (LinkedAccountId) — ตั้งค่าก่อน");
+        }
+        if (!bankGlId.HasValue)
+        {
+            var cs = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => c.DefaultPaymentAccountId)
+                .FirstOrDefaultAsync();
+            if (cs.HasValue) bankGlId = cs;
+        }
+        if (!bankGlId.HasValue)
+        {
+            bankGlId = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                    && a.AccountCode.StartsWith("111") && a.Level >= 4)
+                .OrderBy(a => a.AccountCode)
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync();
+        }
+        if (!bankGlId.HasValue)
+            throw new InvalidOperationException("ไม่พบบัญชีเงินสด/ธนาคาร (111x) — กรุณาสร้างก่อน");
+
+        // ── late fee §49 (2%/เดือนของยอดที่นำส่งช้า, เริ่มนับวันที่ 16 ของเดือนถัดไป) ──
+        // เพดาน late fee = 100% ของยอดที่นำส่ง (ตามคำพิพากษาสรรพากร — ใช้
+        // เกณฑ์เดียวกัน เพราะ พ.ร.บ.ประกันสังคมไม่ระบุ cap → ใช้ practice).
+        var lateFee = ComputeSsoLateFee(run.Year, run.Month, payDate, totalSso);
+
+        // ── post JE: Dr 21815 / Cr Bank (+ late fee ถ้ามี) ──
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var desc = $"นำส่งประกันสังคม {run.Month:D2}/{run.Year}" +
+                       (string.IsNullOrWhiteSpace(filingNumber) ? "" : $" — เลขรับ {filingNumber}");
+            var jeLines = new List<Models.DTOs.Accounting.JournalLineRequest>
+            {
+                new(ssoPayableAccount.Id, totalSso, 0,
+                    "ล้างประกันสังคมค้างจ่าย (Dr 21815)"),
+            };
+            if (lateFee > 0)
+            {
+                var lateFeeAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                    && a.AccountCode.StartsWith("54") && a.Level >= 4
+                    && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
+                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                        && a.AccountCode.StartsWith("58") && a.Level >= 4);   // ค่าใช้จ่ายอื่น
+                if (lateFeeAccount != null)
+                    jeLines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        lateFeeAccount.Id, lateFee, 0,
+                        $"เงินเพิ่มประกันสังคม 2%/เดือน (§49) — นำส่งช้า"));
+            }
+            jeLines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                bankGlId.Value, 0, totalSso + lateFee, $"จ่ายเงินสมทบประกันสังคม {run.Month:D2}/{run.Year}"));
+
+            var jeReq = new Models.DTOs.Accounting.CreateJournalEntryRequest(
+                EntryDate: payDate,
+                Description: desc,
+                Reference: run.PayrollNumber,
+                Lines: jeLines,
+                JournalType: Models.Enums.JournalType.General);
+            var je = await _accountingService.CreateJournalEntryAsync(companyId, jeReq, performedBy);
+            await _accountingService.PostJournalEntryAsync(companyId, je.Id);
+
+            run.SsoSettledAt = payDate;
+            run.SsoSettlementJournalEntryId = je.Id;
+            run.SsoFilingNumber = filingNumber;
+            run.SsoLateFeeAmount = lateFee;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            _logger?.LogInformation(
+                "Settled SSO for PayrollRun {RunId} ({Month}/{Year}): {Total} + late fee {Late} → JE {JeId}",
+                run.Id, run.Month, run.Year, totalSso, lateFee, je.Id);
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        return await GetPayrollRunAsync(companyId, payrollRunId);
+    }
+
+    /// <summary>คำนวณเงินเพิ่มประกันสังคม (§49 พ.ร.บ.ประกันสังคม):
+    /// 2% ต่อเดือนของยอดที่นำส่ง × จำนวนเดือนช้า (ปัดเศษเดือนขึ้น).
+    /// deadline = วันที่ 15 ของเดือนถัดจาก period; เพดาน 100% ของยอดส่ง.
+    /// payDate ≤ deadline → 0. คืน 0 ทันทีถ้าไม่มียอดส่ง.</summary>
+    public static decimal ComputeSsoLateFee(int periodYear, int periodMonth, DateTime payDate, decimal totalSso)
+    {
+        if (totalSso <= 0) return 0m;
+        var deadline = new DateTime(periodYear, periodMonth, 15).AddMonths(1);   // 15 of next month
+        if (payDate.Date <= deadline.Date) return 0m;
+        var daysLate = (payDate.Date - deadline.Date).Days;
+        var monthsLate = (decimal)Math.Ceiling(daysLate / 30.0);
+        var fee = Math.Round(totalSso * 0.02m * monthsLate, 2);
+        return Math.Min(fee, totalSso);   // cap 100%
+    }
 }

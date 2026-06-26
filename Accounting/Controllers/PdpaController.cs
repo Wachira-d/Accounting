@@ -144,4 +144,87 @@ public class PdpaController : ControllerBase
         return Ok(new ApiResponse<int>(true, changed,
             $"Anonymize เสร็จ {changed} แหล่ง (financial records ที่ยัง retain อยู่ภายใน 5 ปียังคงไว้)"));
     }
+
+    // ===== Wave 3 — RoPA =====
+    [HttpGet("ropa")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<PdpaProcessingActivity>>>> ListRopa(
+        Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<IReadOnlyList<PdpaProcessingActivity>>(true,
+            await _svc.ListProcessingActivitiesAsync(companyId, ct)));
+
+    public sealed record UpsertRopaRequest(Guid? Id, string Purpose, string LegalBasis,
+        string DataCategories, string RetentionPeriod, string? Recipients,
+        bool TransfersOutsideThailand, string? TransferSafeguards, string? Notes);
+
+    [HttpPost("ropa")]
+    public async Task<ActionResult<ApiResponse<PdpaProcessingActivity>>> UpsertRopa(
+        Guid companyId, [FromBody] UpsertRopaRequest req, CancellationToken ct)
+    {
+        var actor = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        var row = await _svc.UpsertProcessingActivityAsync(companyId, req.Id,
+            req.Purpose, req.LegalBasis, req.DataCategories, req.RetentionPeriod,
+            req.Recipients, req.TransfersOutsideThailand, req.TransferSafeguards,
+            req.Notes, actor, ct);
+        return Ok(new ApiResponse<PdpaProcessingActivity>(true, row,
+            req.Id.HasValue ? "อัปเดต RoPA แล้ว" : "บันทึก RoPA ใหม่แล้ว"));
+    }
+
+    // ===== Wave 3 — Consent =====
+    public sealed record GrantConsentRequest(Guid? SubjectUserId, Guid? SubjectContactId,
+        string? SubjectContact, string Purpose, string? PolicyVersion, string? Channel,
+        string? EvidenceHash);
+
+    [HttpPost("consent")]
+    public async Task<ActionResult<ApiResponse<PdpaConsentRecord>>> GrantConsent(
+        Guid companyId, [FromBody] GrantConsentRequest req, CancellationToken ct)
+    {
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var row = await _svc.GrantConsentAsync(companyId, req.SubjectUserId, req.SubjectContactId,
+            req.SubjectContact, req.Purpose, req.PolicyVersion ?? "1.0", req.Channel, ip,
+            req.EvidenceHash, ct);
+        return Ok(new ApiResponse<PdpaConsentRecord>(true, row, "บันทึกความยินยอมแล้ว"));
+    }
+
+    public sealed record WithdrawConsentRequest(string Reason);
+    [HttpPost("consent/{consentId:guid}/withdraw")]
+    public async Task<ActionResult<ApiResponse<PdpaConsentRecord>>> WithdrawConsent(
+        Guid companyId, Guid consentId, [FromBody] WithdrawConsentRequest req, CancellationToken ct)
+    {
+        var row = await _svc.WithdrawConsentAsync(companyId, consentId, req.Reason, ct);
+        return Ok(new ApiResponse<PdpaConsentRecord>(true, row, "ถอนความยินยอมแล้ว — หยุดใช้ข้อมูลตาม purpose นี้"));
+    }
+
+    // ===== Wave 3 — Breach =====
+    public sealed record ReportBreachRequest(string Severity, string Description,
+        string AffectedDataCategories, int? AffectedSubjectsCount);
+
+    [HttpPost("breach")]
+    public async Task<ActionResult<ApiResponse<PdpaBreachIncident>>> ReportBreach(
+        Guid companyId, [FromBody] ReportBreachRequest req, CancellationToken ct)
+    {
+        var reporter = Helpers.JwtHelper.GetUserIdFromClaims(User);
+        var row = await _svc.ReportBreachAsync(companyId, req.Severity, req.Description,
+            req.AffectedDataCategories, req.AffectedSubjectsCount, reporter, ct);
+        return Ok(new ApiResponse<PdpaBreachIncident>(true, row,
+            $"บันทึกเหตุการณ์ {row.IncidentNumber} — ต้องแจ้ง PDPC ภายใน {row.NotifyPdpcDueBy:yyyy-MM-dd HH:mm} (72 ชม.)"));
+    }
+
+    public sealed record UpdateBreachRequest(string? Status, DateTime? PdpcNotifiedAt,
+        string? PdpcReferenceNumber, DateTime? SubjectsNotifiedAt, string? Mitigation, string? RootCause);
+
+    [HttpPost("breach/{breachId:guid}")]
+    public async Task<ActionResult<ApiResponse<PdpaBreachIncident>>> UpdateBreach(
+        Guid companyId, Guid breachId, [FromBody] UpdateBreachRequest req, CancellationToken ct)
+    {
+        var row = await _svc.UpdateBreachAsync(companyId, breachId, req.Status,
+            req.PdpcNotifiedAt, req.PdpcReferenceNumber, req.SubjectsNotifiedAt,
+            req.Mitigation, req.RootCause, ct);
+        return Ok(new ApiResponse<PdpaBreachIncident>(true, row, "อัปเดต breach แล้ว"));
+    }
+
+    [HttpGet("breach/alerts")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<PdpaBreachIncident>>>> BreachAlerts(
+        Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<IReadOnlyList<PdpaBreachIncident>>(true,
+            await _svc.ListBreachAlertsAsync(companyId, ct)));
 }

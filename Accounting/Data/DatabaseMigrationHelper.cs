@@ -4123,6 +4123,163 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineLastTestedAt" timestamp NULL;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineLastTestStatus" varchar(500) NULL;""",
 
+            // ===== CompanySettings: OCR แหล่งเงิน default (ฝั่ง Cr ของ PV/Receipt) =====
+            // null = พฤติกรรมเดิม (auto-pick bank รหัสต่ำสุด). ตั้งเป็น
+            // ChartOfAccount.Id ของบัญชีเงินสด/ธนาคารหลัก → OCR ใช้เป็น default.
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DefaultPaymentAccountId" uuid NULL;""",
+
+            // ===== CompanySettings: กองทุนเงินทดแทน (กท.20ก) =====
+            // อัตราสมทบนายจ้างฝ่ายเดียว 0.2–1.0% ตามประเภทกิจการ. default 0.2%
+            // (หมวด 1 สำนักงาน); ปิดไว้ default เพื่อไม่ดับเบิ้ลโพสต์ข้อมูลเดิม.
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationRatePercent" decimal(4,2) NOT NULL DEFAULT 0.2;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationEnabled" boolean NOT NULL DEFAULT false;""",
+
+            // ===== CompanySettings: §86/4 hard-block opt-in =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EnforceFullTaxInvoiceFields" boolean NOT NULL DEFAULT false;""",
+
+            // ===== CompanySettings: ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BookkeeperName" varchar(200) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BookkeeperCpdNumber" varchar(50) NULL;""",
+
+            // ===== PDPA Wave 3: RoPA / Consent / PiiAccessLog / Breach =====
+            // RoPA (ม.39) — บันทึกกิจกรรมการประมวลผลข้อมูลส่วนบุคคล
+            """
+            CREATE TABLE IF NOT EXISTS "PdpaProcessingActivities" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Purpose" varchar(500) NOT NULL,
+                "LegalBasis" varchar(100) NOT NULL,
+                "DataCategories" varchar(1000) NOT NULL,
+                "RetentionPeriod" varchar(500) NOT NULL,
+                "Recipients" varchar(1000) NULL,
+                "TransfersOutsideThailand" boolean NOT NULL DEFAULT false,
+                "TransferSafeguards" varchar(1000) NULL,
+                "Notes" text NULL,
+                "LastReviewedAt" timestamp NOT NULL DEFAULT now(),
+                "LastReviewedBy" varchar(200) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PdpaProcessingActivities_Company" ON "PdpaProcessingActivities" ("CompanyId");""",
+
+            // Consent records (ม.19, 22) — เก็บประวัติยินยอม + ถอน
+            """
+            CREATE TABLE IF NOT EXISTS "PdpaConsentRecords" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "SubjectUserId" uuid NULL,
+                "SubjectContactId" uuid NULL,
+                "SubjectContact" varchar(200) NULL,
+                "Purpose" varchar(500) NOT NULL,
+                "PolicyVersion" varchar(50) NOT NULL DEFAULT '1.0',
+                "GrantedAt" timestamp NOT NULL DEFAULT now(),
+                "WithdrawnAt" timestamp NULL,
+                "WithdrawnReason" varchar(500) NULL,
+                "EvidenceHash" varchar(100) NULL,
+                "Channel" varchar(50) NULL,
+                "IpAddress" varchar(45) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PdpaConsentRecords_Subject" ON "PdpaConsentRecords" ("CompanyId", "SubjectUserId", "SubjectContactId");""",
+
+            // PII access log (ม.37(4)) — เก็บ event อ่าน PII ≥ 1 ปี
+            """
+            CREATE TABLE IF NOT EXISTS "PdpaPiiAccessLogs" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "ActorUserId" uuid NOT NULL,
+                "ActorEmail" varchar(200) NOT NULL,
+                "SubjectType" varchar(50) NOT NULL,
+                "SubjectId" uuid NOT NULL,
+                "FieldName" varchar(500) NOT NULL,
+                "Operation" varchar(50) NOT NULL DEFAULT 'Read',
+                "Purpose" varchar(500) NOT NULL,
+                "At" timestamp NOT NULL DEFAULT now(),
+                "IpAddress" varchar(45) NULL,
+                "UserAgent" varchar(500) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PdpaPiiAccessLogs_At" ON "PdpaPiiAccessLogs" ("CompanyId", "At" DESC);""",
+            """CREATE INDEX IF NOT EXISTS "IX_PdpaPiiAccessLogs_Subject" ON "PdpaPiiAccessLogs" ("CompanyId", "SubjectType", "SubjectId");""",
+
+            // Breach incidents (ม.37(4)) — แจ้ง PDPC ภายใน 72 ชม.
+            """
+            CREATE TABLE IF NOT EXISTS "PdpaBreachIncidents" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "IncidentNumber" varchar(50) NOT NULL,
+                "DetectedAt" timestamp NOT NULL DEFAULT now(),
+                "NotifyPdpcDueBy" timestamp NOT NULL,
+                "Severity" varchar(20) NOT NULL DEFAULT 'Medium',
+                "Description" text NOT NULL,
+                "AffectedDataCategories" varchar(1000) NOT NULL,
+                "AffectedSubjectsCount" integer NULL,
+                "Status" varchar(50) NOT NULL DEFAULT 'Detected',
+                "PdpcNotifiedAt" timestamp NULL,
+                "PdpcReferenceNumber" varchar(100) NULL,
+                "SubjectsNotifiedAt" timestamp NULL,
+                "Mitigation" text NULL,
+                "RootCause" text NULL,
+                "ReportedByUserId" uuid NULL,
+                "ClosedAt" timestamp NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_PdpaBreachIncidents_Status" ON "PdpaBreachIncidents" ("CompanyId", "Status", "NotifyPdpcDueBy");""",
+
+            // ===== AuditLogs: DB-level immutability (tamper-evident defense-in-depth) =====
+            // app layer ตัด AuditLog ออกจาก ChangeTracker อยู่แล้ว (append-only)
+            // แต่ DBA/SQL ตรง ๆ ยังลบได้ → เพิ่ม trigger บล็อค DELETE ที่ระดับ DB
+            // เพื่อให้ hash-chain ตรวจสอบความถูกต้องได้จริง (PDPA ม.37 + พ.ร.บ.บัญชี).
+            // บล็อคเฉพาะ DELETE (UPDATE เผื่อ migration backfill hash ในอนาคต).
+            """
+            CREATE OR REPLACE FUNCTION block_auditlog_delete() RETURNS TRIGGER AS $func$
+            BEGIN RAISE EXCEPTION 'AuditLogs are append-only (tamper-evident) — DELETE blocked'; END;
+            $func$ LANGUAGE plpgsql;
+            """,
+            """
+            DROP TRIGGER IF EXISTS audit_log_no_delete ON "AuditLogs";
+            """,
+            """
+            CREATE TRIGGER audit_log_no_delete BEFORE DELETE ON "AuditLogs"
+                FOR EACH ROW EXECUTE FUNCTION block_auditlog_delete();
+            """,
+
+            // ===== Employees: PDPA ม.26 encrypt bank/SSN — widen cols for ciphertext =====
+            // ciphertext = Base64(nonce+ct+tag) ~80 chars สำหรับ input สั้น ๆ →
+            // ขยายเป็น 200. Legacy plaintext คงอยู่ + re-save migrate เป็น ciphertext.
+            """ALTER TABLE "Employees" ALTER COLUMN "BankAccountNumber" TYPE varchar(200);""",
+            """ALTER TABLE "Employees" ALTER COLUMN "SocialSecurityNumber" TYPE varchar(200);""",
+
+            // ===== PayrollRuns: ประกันสังคมรอนำส่ง + กองทุนเงินทดแทน =====
+            // SsoSettled* fields ติดตามว่าได้นำส่งให้ สปส. แล้วหรือยัง (กฎหมาย
+            // วันที่ 15 ของเดือนถัดไป). เพิ่มเงินทดแทนรวมเพื่อทำ กท.20ก รายปี.
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoSettledAt" timestamp NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoSettlementJournalEntryId" uuid NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoSettlementDocumentId" uuid NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoFilingNumber" varchar(100) NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoLateFeeAmount" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "TotalWorkersCompensation" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "WorkersCompensation" decimal(18,2) NOT NULL DEFAULT 0;""",
+
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),

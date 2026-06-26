@@ -560,6 +560,13 @@ public record ApproveDocumentRequest(string? Notes, bool AcknowledgeWarnings = f
 /// — ระบบจะ post reclassify-JE (Dr ผังใหม่/Cr ผังเก่า) อัตโนมัติ.</summary>
 public record ReclassifyLineRequest(Guid LineId, Guid NewAccountId, string? Reason);
 
+/// <summary>เปลี่ยน "แหล่งเงิน" (บัญชี Cr) ของเอกสารจ่าย/รับสดหลัง approved —
+/// ระบุแหล่งเงินใหม่ทางใดทางหนึ่ง: NewBankAccountId (บัญชีธนาคาร) หรือ
+/// NewPaymentAccountId (ChartOfAccount เงินสด/อื่น ๆ). ระบบ post correcting-JE
+/// (Dr ผังเก่า/Cr ผังใหม่) อัตโนมัติ.</summary>
+public record ReclassifyPaymentSourceRequest(
+    Guid? NewBankAccountId, Guid? NewPaymentAccountId, string? Reason);
+
 /// <summary>Returned on the first approve attempt when pre-approval checks
 /// produced soft warnings (legal/correct but unusual). Operator reviews the
 /// list and retries with AcknowledgeWarnings=true to proceed. Hard errors

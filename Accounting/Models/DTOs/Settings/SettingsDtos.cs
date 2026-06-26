@@ -61,6 +61,19 @@ public record UpdateCompanySettingsRequest(
     // fields without overwriting this preference.
     DocumentType? OcrBuyerInvoiceDefaultTarget = null,
 
+    // แหล่งเงิน default (บัญชี Cr เงินสด/ธนาคาร) ที่ OCR/auto-create ใช้สร้าง
+    // PV/Receipt. null = ไม่แตะค่าเดิม. Guid.Empty (00000…) = ล้างค่า (กลับไป
+    // auto-pick lowest-code). ChartOfAccount.Id = ตั้งบัญชีนั้นเป็น default.
+    Guid? DefaultPaymentAccountId = null,
+
+    // กองทุนเงินทดแทน (กท.20ก) — เปิด/ปิด + อัตราสมทบ (0.2–1.0%)
+    bool? WorkersCompensationEnabled = null,
+    decimal? WorkersCompensationRatePercent = null,
+
+    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — จำเป็นก่อน finalize งบ + XBRL export
+    string? BookkeeperName = null,
+    string? BookkeeperCpdNumber = null,
+
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool? ShowGlEntryOnDocument = null,
 
@@ -124,6 +137,17 @@ public record CompanySettingsResponse(
 
     // OCR document-target preference
     DocumentType OcrBuyerInvoiceDefaultTarget = DocumentType.PaymentVoucher,
+
+    // แหล่งเงิน default ที่ OCR/auto-create ใช้ (null = auto-pick lowest-code)
+    Guid? DefaultPaymentAccountId = null,
+
+    // กองทุนเงินทดแทน (กท.20ก) — ปิด default; อัตรา default 0.2%
+    bool WorkersCompensationEnabled = false,
+    decimal WorkersCompensationRatePercent = 0.2m,
+
+    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
+    string? BookkeeperName = null,
+    string? BookkeeperCpdNumber = null,
 
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool ShowGlEntryOnDocument = false,

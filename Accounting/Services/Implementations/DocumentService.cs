@@ -1665,6 +1665,36 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ใบลดหนี้ต้องระบุเหตุผล (คืนสินค้า / ส่วนลด / ปรับยอด / ตัดยอด) ก่อนอนุมัติ");
 
+        // §86/4 hard-block (opt-in via CompanySettings.EnforceFullTaxInvoiceFields).
+        // เมื่อบริษัทเปิด flag นี้ → block approval ของใบกำกับ/ใบเสร็จ/CN/DN
+        // ที่ขาด field บังคับ (BuyerTaxId 13 หลัก + BuyerAddress + BuyerBranchCode 5 หลัก).
+        // กัน operator-error: ตอนนี้ระบบเตือนแล้ว user กด acknowledge ผ่านได้ →
+        // ใบกำกับที่ไม่ครบ §86/4 หลุดเข้า GL → ลูกค้ารับใบไปใช้ภาษีซื้อไม่ได้.
+        var rd864Types = new[] { DocumentType.TaxInvoice, DocumentType.Receipt,
+            DocumentType.DebitNote, DocumentType.CreditNote };
+        var enforce864 = await _db.CompanySettings.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => (bool?)c.EnforceFullTaxInvoiceFields)
+            .FirstOrDefaultAsync() ?? false;
+        if (enforce864 && rd864Types.Contains(doc.DocumentType) && doc.VatAmount > 0
+            && doc.Contact != null)
+        {
+            var missing = new List<string>();
+            var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();
+            if (btid != 13) missing.Add("เลขผู้เสียภาษีผู้ซื้อ 13 หลัก");
+            if (string.IsNullOrWhiteSpace(doc.Contact.Address)) missing.Add("ที่อยู่ผู้ซื้อ");
+            // SupplierBranchCode = สาขาผู้ขาย (เก็บฝั่งซื้อ); ฝั่งขายใช้
+            // Contact.BranchCode สำหรับสาขาผู้ซื้อ. ตรวจฝั่งขาย (TaxInvoice
+            // ที่เรา = ผู้ขาย).
+            var buyerBr = doc.Contact.BranchCode ?? "";
+            var buyerBrDigits = new string(buyerBr.Where(char.IsDigit).ToArray());
+            if (buyerBrDigits.Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
+            if (missing.Count > 0)
+                throw new InvalidOperationException(
+                    $"⛔ §86/4: ใบกำกับขาด field บังคับ — {string.Join(", ", missing)}. " +
+                    "เปิด setting 'บังคับ §86/4 ครบทุก field' ไว้ → ต้องเติมก่อนอนุมัติ");
+        }
+
         // Enforce CompanySettings.RequireApprovalForDocuments: when the
         // approval rail is on and the document's amount crosses the threshold,
         // refuse direct approve and force the multi-step SignatureApproval
@@ -2166,6 +2196,174 @@ public class DocumentService : IDocumentService
         _logger.LogInformation(
             "Reclassified line {LineId} of {DocNumber}: {OldCode} → {NewCode} by {Actor}",
             lineId, doc.DocumentNumber, oldAccount.AccountCode, newAccount.AccountCode, actor);
+
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
+    /// <summary>
+    /// เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับสดที่
+    /// approve แล้ว — คู่กับ ReclassifyLineAccountAsync (ที่แก้ฝั่ง Dr). ใช้แก้
+    /// เคส OCR/auto-create เลือกธนาคารผิด (กรุงไทย → กสิกร) โดยไม่ต้อง void.
+    /// ระบบ post correcting-JE: Dr {ผังเก่า} / Cr {ผังใหม่} ขนาด = PaidAmount
+    /// (เงินสดที่จ่ายจริง = ยอดที่ลง Cr บัญชีแหล่งเงินเดิม) → เงินกลับเข้าบัญชี
+    /// เก่า + ออกจากบัญชีใหม่. trial balance ก่อน-หลังตรง. ผ่าน gate เดียวกับ
+    /// reclassify-line (FiscalPeriod=Open, ไม่มีเอกสารปลายทาง, ไม่มี Payment
+    /// แยก, ไม่อยู่ TaxReport=Submitted, ไม่ได้ส่ง e-Tax).
+    ///
+    /// แหล่งเงินใหม่ระบุได้ทางใดทางหนึ่ง: newBankAccountId (บัญชีธนาคาร →
+    /// ใช้ LinkedAccountId เป็น Cr GL) หรือ newPaymentAccountId (ChartOfAccount
+    /// ตรง ๆ เช่นเงินสด 1111 / เงินทดรองกรรมการ).
+    /// </summary>
+    public async Task<DocumentResponse> ReclassifyPaymentSourceAsync(
+        Guid companyId, Guid documentId,
+        Guid? newBankAccountId, Guid? newPaymentAccountId,
+        string? reason, string actor)
+    {
+        var doc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (!newBankAccountId.HasValue && !newPaymentAccountId.HasValue)
+            throw new InvalidOperationException("กรุณาเลือกแหล่งเงินใหม่ (บัญชีธนาคารหรือบัญชีเงินสด)");
+
+        // เฉพาะเอกสารที่ "มีแหล่งเงิน" อยู่แล้ว (จ่าย/รับสด). เอกสาร A/P-A/R
+        // ที่ Cr เป็นเจ้าหนี้/ลูกหนี้ ไม่มีแหล่งเงินให้แก้ตรงนี้ (เงินไหลตอน
+        // PV/Receipt ปลายทาง) → แก้ที่เอกสารปลายทางแทน.
+        if (!doc.BankAccountId.HasValue && !doc.PaymentAccountId.HasValue)
+            throw new InvalidOperationException(
+                "เอกสารนี้ไม่มีแหล่งเงิน (บัญชี Cr เงินสด/ธนาคาร) ที่ระบุไว้ — " +
+                "ถ้าเป็นใบตั้งหนี้ เงินจะไหลตอนสร้างใบสำคัญจ่าย ให้แก้แหล่งเงินที่ใบนั้น");
+
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
+                       or DocumentStatus.Rejected)
+            throw new InvalidOperationException(
+                $"เอกสาร Status={doc.Status} ไม่อยู่ในขั้นที่แก้แหล่งเงินแบบ reclassify ได้ " +
+                "(Draft = แก้ผ่านฟอร์มปกติ, Voided/Rejected = สร้างใหม่)");
+
+        // ===== gate compliance เดียวกับ reclassify-line =====
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId
+            && p.StartDate <= doc.DocumentDate && p.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"วันที่เอกสารอยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — แก้แหล่งเงินไม่ได้");
+
+        var hasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == documentId
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted);
+        if (hasDownstream)
+            throw new InvalidOperationException(
+                "มีเอกสารปลายทางอ้างเอกสารนี้แล้ว — ยกเลิกเอกสารปลายทางก่อน หรือ void+ออกใหม่");
+
+        // มี Payment แยก = เงินไหลผ่าน JE ของ Payment ไม่ใช่ JE ของเอกสารนี้ →
+        // แก้แหล่งเงินต้องไปแก้ที่ Payment แทน (กัน JE คู่ใหม่ไม่ตรงของจริง).
+        var hasPayments = await _db.Payments.AsNoTracking().AnyAsync(p =>
+            p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted);
+        if (hasPayments)
+            throw new InvalidOperationException(
+                "เอกสารนี้มีรายการชำระเงินแยก — กรุณาแก้แหล่งเงินที่รายการชำระนั้น");
+
+        var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
+            l.DocumentId == documentId && l.TaxReport.CompanyId == companyId
+            && (l.TaxReport.Status == TaxReportStatus.Submitted
+                || l.TaxReport.Status == TaxReportStatus.Filed));
+        if (inSubmittedReport)
+            throw new InvalidOperationException(
+                "เอกสารอยู่ในรายงานภาษีที่ยื่นสรรพากรแล้ว — แก้ไม่ได้");
+
+        var hasSubmittedEtax = await _db.EtaxInvoices.AsNoTracking().AnyAsync(e =>
+            e.DocumentId == documentId && e.SubmittedAt != null);
+        if (hasSubmittedEtax)
+            throw new InvalidOperationException("เอกสารนี้ส่ง e-Tax XML ไปสรรพากรแล้ว — แก้ไม่ได้");
+
+        // ── Resolve Cr GL เดิม + ใหม่ ──
+        // BankAccount → LinkedAccountId เป็น GL; PaymentAccountId เป็น GL ตรง.
+        async Task<(Guid Id, string Code, string Name)> ResolveCreditGlAsync(
+            Guid? bankAccountId, Guid? paymentAccountId, string side)
+        {
+            Guid? glId = paymentAccountId;
+            if (!glId.HasValue && bankAccountId.HasValue)
+            {
+                glId = await _db.BankAccounts.AsNoTracking()
+                    .Where(b => b.Id == bankAccountId.Value && b.CompanyId == companyId)
+                    .Select(b => b.LinkedAccountId)
+                    .FirstOrDefaultAsync();
+                if (!glId.HasValue)
+                    throw new InvalidOperationException(
+                        $"บัญชีธนาคาร ({side}) ยังไม่ได้ผูกผังบัญชี (LinkedAccountId) — ตั้งค่าก่อน");
+            }
+            if (!glId.HasValue)
+                throw new InvalidOperationException($"หาแหล่งเงิน ({side}) ไม่เจอ");
+            var acct = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == glId.Value && a.CompanyId == companyId)
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+                .FirstOrDefaultAsync()
+                ?? throw new InvalidOperationException($"ไม่พบผังบัญชีแหล่งเงิน ({side})");
+            return (acct.Id, acct.AccountCode, acct.AccountName);
+        }
+
+        var oldGl = await ResolveCreditGlAsync(doc.BankAccountId, doc.PaymentAccountId, "เดิม");
+        var newGl = await ResolveCreditGlAsync(newBankAccountId, newPaymentAccountId, "ใหม่");
+
+        if (oldGl.Id == newGl.Id)
+        {
+            // GL ปลายทางเดียวกัน (เช่นสลับบัญชีธนาคารที่ผูก GL เดียวกัน) →
+            // ไม่ต้อง post JE แค่อัปเดต field อ้างอิง.
+            doc.BankAccountId = newBankAccountId;
+            doc.PaymentAccountId = newPaymentAccountId;
+            doc.UpdatedAt = DateTime.UtcNow;
+            doc.UpdatedBy = actor;
+            await _db.SaveChangesAsync();
+            return await GetDocumentAsync(companyId, documentId);
+        }
+
+        // เงินที่ลง Cr บัญชีแหล่งเงินเดิม = เงินสดจ่ายจริง = PaidAmount.
+        var amount = doc.PaidAmount;
+        if (amount <= 0.005m)
+        {
+            // ยังไม่ได้จ่ายจริง (ไม่กระทบ GL แหล่งเงิน) → แค่อัปเดต field.
+            doc.BankAccountId = newBankAccountId;
+            doc.PaymentAccountId = newPaymentAccountId;
+            doc.UpdatedAt = DateTime.UtcNow;
+            doc.UpdatedBy = actor;
+            await _db.SaveChangesAsync();
+            return await GetDocumentAsync(companyId, documentId);
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // Correcting JE: Dr {old} / Cr {new} — เงินกลับเข้าบัญชีเก่า +
+            // ออกจากบัญชีใหม่. (กลับทิศกับ reclassify-line เพราะแก้ฝั่ง Cr).
+            var desc = $"เปลี่ยนแหล่งเงิน — {doc.DocumentNumber} " +
+                       $"({oldGl.Code} → {newGl.Code})" +
+                       (string.IsNullOrWhiteSpace(reason) ? "" : $" • {reason}");
+            await Journal.JournalEntryBuilder
+                .For(_db, companyId, doc.DocumentDate)
+                .Description(desc)
+                .Reference(doc.DocumentNumber)
+                .SourceDocument(doc.Id)
+                .Project(doc.ProjectId)
+                .Debit(oldGl.Id, amount, $"Dr {oldGl.Code} — {oldGl.Name} (คืนแหล่งเงินเดิม)")
+                .Credit(newGl.Id, amount, $"Cr {newGl.Code} — {newGl.Name} (แหล่งเงินใหม่)")
+                .PostAsync(actor);
+
+            doc.BankAccountId = newBankAccountId;
+            doc.PaymentAccountId = newPaymentAccountId;
+            doc.UpdatedAt = DateTime.UtcNow;
+            doc.UpdatedBy = actor;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+
+        _logger.LogInformation(
+            "Reclassified payment source of {DocNumber}: {OldCode} → {NewCode} (amount {Amount}) by {Actor}",
+            doc.DocumentNumber, oldGl.Code, newGl.Code, amount, actor);
 
         return await GetDocumentAsync(companyId, documentId);
     }
@@ -6357,6 +6555,22 @@ public class DocumentService : IDocumentService
         var vatTypes = new[] { DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.DebitNote, DocumentType.CreditNote };
         if (vatTypes.Contains(doc.DocumentType) && doc.Contact != null && string.IsNullOrWhiteSpace(doc.Contact.TaxId))
             warnings.Add($"ผู้ติดต่อ '{doc.Contact.Name}' ไม่มีเลขผู้เสียภาษี — e-Tax XML จะใช้รูปแบบ Non-VAT ผู้รับใช้เป็นหลักฐาน Input VAT ไม่ได้");
+
+        // §81/1 — ผู้ที่ไม่ได้จด VAT ห้ามออกใบกำกับภาษี + เก็บ VAT. ถ้าบริษัท
+        // VatRegistered=false แต่กำลังออกใบกำกับ/ใบเพิ่ม-ลดหนี้ที่มี VAT → เตือน
+        // (ออกใบกำกับโดยไม่จด VAT = ความผิด §90/2 + ต้องนำส่ง VAT ที่เรียกเก็บ).
+        if (doc.DocumentType is DocumentType.TaxInvoice or DocumentType.DebitNote or DocumentType.CreditNote
+            && doc.VatAmount > 0)
+        {
+            var vatRegistered = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => (bool?)c.VatRegistered)
+                .FirstOrDefaultAsync() ?? true;
+            if (!vatRegistered)
+                warnings.Add("⚠️ บริษัทยังไม่ได้จดทะเบียน VAT แต่กำลังออกใบกำกับภาษีที่มี VAT — " +
+                    "ผู้ไม่จด VAT ห้ามออกใบกำกับ (§90/2) และต้องนำส่ง VAT ที่เรียกเก็บ. " +
+                    "ถ้ารายได้เกิน 1.8 ล้าน/ปี ต้องจด VAT ภายใน 30 วัน (§85/1)");
+        }
 
         // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
         // create path; this is the "rate is technically legal but unusual"

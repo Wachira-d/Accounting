@@ -83,6 +83,26 @@ public class SettingsService : ISettingsService
         if (request.OcrBuyerInvoiceDefaultTarget.HasValue)
             settings.OcrBuyerInvoiceDefaultTarget = request.OcrBuyerInvoiceDefaultTarget.Value;
 
+        // OCR แหล่งเงิน default. Guid.Empty = ล้างค่า (กลับ auto-pick);
+        // null = ไม่แตะ; ค่าอื่น = ตั้งบัญชีนั้น.
+        if (request.DefaultPaymentAccountId.HasValue)
+            settings.DefaultPaymentAccountId = request.DefaultPaymentAccountId.Value == Guid.Empty
+                ? null : request.DefaultPaymentAccountId.Value;
+
+        // กองทุนเงินทดแทน (กท.20ก)
+        if (request.WorkersCompensationEnabled.HasValue)
+            settings.WorkersCompensationEnabled = request.WorkersCompensationEnabled.Value;
+        if (request.WorkersCompensationRatePercent.HasValue
+            && request.WorkersCompensationRatePercent.Value >= 0.2m
+            && request.WorkersCompensationRatePercent.Value <= 1.0m)
+            settings.WorkersCompensationRatePercent = request.WorkersCompensationRatePercent.Value;
+
+        // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — null = ไม่แตะ, ค่าว่าง = ล้าง
+        if (request.BookkeeperName != null)
+            settings.BookkeeperName = string.IsNullOrWhiteSpace(request.BookkeeperName) ? null : request.BookkeeperName.Trim();
+        if (request.BookkeeperCpdNumber != null)
+            settings.BookkeeperCpdNumber = string.IsNullOrWhiteSpace(request.BookkeeperCpdNumber) ? null : request.BookkeeperCpdNumber.Trim();
+
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
     }
@@ -424,6 +444,11 @@ public class SettingsService : ISettingsService
         s.LandingServicesJson,
         // OCR preference
         s.OcrBuyerInvoiceDefaultTarget,
+        s.DefaultPaymentAccountId,
+        s.WorkersCompensationEnabled,
+        s.WorkersCompensationRatePercent,
+        s.BookkeeperName,
+        s.BookkeeperCpdNumber,
         // Print layout
         s.ShowGlEntryOnDocument,
         // HR
