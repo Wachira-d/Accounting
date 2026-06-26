@@ -4134,6 +4134,12 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationRatePercent" decimal(4,2) NOT NULL DEFAULT 0.2;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationEnabled" boolean NOT NULL DEFAULT false;""",
 
+            // ===== Employees: PDPA ม.26 encrypt bank/SSN — widen cols for ciphertext =====
+            // ciphertext = Base64(nonce+ct+tag) ~80 chars สำหรับ input สั้น ๆ →
+            // ขยายเป็น 200. Legacy plaintext คงอยู่ + re-save migrate เป็น ciphertext.
+            """ALTER TABLE "Employees" ALTER COLUMN "BankAccountNumber" TYPE varchar(200);""",
+            """ALTER TABLE "Employees" ALTER COLUMN "SocialSecurityNumber" TYPE varchar(200);""",
+
             // ===== PayrollRuns: ประกันสังคมรอนำส่ง + กองทุนเงินทดแทน =====
             // SsoSettled* fields ติดตามว่าได้นำส่งให้ สปส. แล้วหรือยัง (กฎหมาย
             // วันที่ 15 ของเดือนถัดไป). เพิ่มเงินทดแทนรวมเพื่อทำ กท.20ก รายปี.

@@ -182,6 +182,16 @@ public partial class TaxService : ITaxService
             .ToListAsync())
             .ToHashSet();
 
+        // §82/5(6) — รถยนต์นั่ง ≤ 10 ที่นั่ง + ค่าน้ำมัน/ซ่อม/เช่าซื้อ เคลม
+        // ภาษีซื้อไม่ได้ (ยกเว้นผู้ประกอบกิจการขายรถ/ให้เช่ารถ). โหลด flag
+        // IsVehicleDealer ครั้งเดียว → ถ้าไม่ใช่ vehicle dealer ระบบจะตรวจ
+        // keyword รถ/น้ำมัน บน line description แล้ว mark VAT ต้องห้ามอัตโนมัติ
+        // (เสริม account-level flag — กันเคสที่ผู้ใช้ไม่ได้ตั้งบัญชี nonClaimable).
+        var isVehicleDealer = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => (bool?)c.IsVehicleDealer)
+            .FirstOrDefaultAsync() ?? false;
+
         // CN/DN cross-period side resolution. Previously the CreditNote /
         // DebitNote loop looked up its RelatedDocumentId ONLY in the current
         // period's docs — a CN issued THIS month for a purchase invoice
@@ -382,27 +392,63 @@ public partial class TaxService : ITaxService
                         // (b) account-level fallback
                         var acct = l.AccountId ?? doc.ExpenseCategoryId;
                         if (acct.HasValue && nonClaimableAccountIds.Contains(acct.Value))
+                        {
+                            prohibitedVat += l.VatAmount;
+                            continue;
+                        }
+                        // (c) §82/5(6) keyword — รถยนต์นั่ง/น้ำมัน/ซ่อมรถ (เว้น vehicle dealer)
+                        if (!isVehicleDealer && IsProhibitedVehicleExpense(l.Description))
                             prohibitedVat += l.VatAmount;
                     }
                 }
                 var claimableVat = doc.VatAmount - prohibitedVat;
 
-                // ----- Rule A: tax-invoice 6-month age check -----
+                // ----- Rule A: tax-invoice 6-month age check (§82/3) -----
+                // §82/3: ภาษีซื้อเคลมได้ภายใน 6 เดือนนับจากเดือนภาษีของใบกำกับ.
+                // เกิน 6 เดือน = เคลม ภพ.30 ไม่ได้ตามกฎหมาย → ต้อง reclassify
+                // เป็นค่าใช้จ่าย (ลง expense). เดิม code แค่ใส่ ⚠️ warning string
+                // แต่ยังรวม claimableVat เข้า total → ผู้ใช้เคลมเกินสิทธิ์ →
+                // สรรพากรประเมินคืน + เบี้ยปรับ. ตอนนี้: เกิน window → ตัดออก
+                // จาก ภพ.30 total + แสดงเป็น excluded audit line แยก.
                 var windowEnd = new DateTime(doc.DocumentDate.Year, doc.DocumentDate.Month, 1)
                     .AddMonths(7).AddDays(-1);
                 var pastWindow = DateTime.UtcNow.Date > windowEnd;
 
-                // Claimable เข้า inputVat total (อัตโนมัติหักส่วนต้องห้าม)
-                inputVat += claimableVat;
+                if (pastWindow)
+                {
+                    // เกิน 6 เดือน → ภาษีซื้อทั้งก้อนเคลมไม่ได้ (§82/3). ตัดออก
+                    // จาก total, รวมส่วน prohibited เดิมด้วย, แสดง audit line เดียว.
+                    var expiredVat = claimableVat + prohibitedVat;
+                    if (expiredVat > 0)
+                    {
+                        report.Lines.Add(new TaxReportLine
+                        {
+                            TaxReportId = report.Id,
+                            LineOrder = lineOrder++,
+                            TaxPayerId = doc.Contact?.TaxId,
+                            TaxPayerName = doc.Contact?.Name ?? "",
+                            TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
+                            Description = $"🚫 [ภาษีซื้อเกิน 6 เดือน §82/3] {doc.DocumentNumber} — เคลม ภพ.30 ไม่ได้ ลงเป็นค่าใช้จ่ายแทน",
+                            IncomeAmount = 0,
+                            TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                            TaxAmount = expiredVat,
+                            DocumentId = doc.Id,
+                            IncomeTypeCode = "INPUT",
+                            IsExcluded = true
+                        });
+                    }
+                    continue;   // ไม่นับใบนี้เข้า input VAT total
+                }
 
-                var ageWarning = pastWindow ? " ⚠️ใบกำกับเกิน 6 เดือน" : "";
+                // ภายใน window — Claimable เข้า inputVat total (หักส่วนต้องห้าม §82/5)
+                inputVat += claimableVat;
 
                 // เพิ่ม line ส่วนเคลมได้ (ถ้ามี) — IsExcluded=false → นับใน
                 // ภพ.30 total. ถ้า doc ทั้งใบ prohibited (claimable=0) ก็
                 // ข้าม line นี้ — แค่แสดง line "ต้องห้าม" ด้านล่างพอ.
                 if (claimableVat > 0 || prohibitedVat == 0)
                 {
-                    var desc = $"[ภาษีซื้อ] {doc.DocumentNumber}{ageWarning}";
+                    var desc = $"[ภาษีซื้อ] {doc.DocumentNumber}";
                     report.Lines.Add(new TaxReportLine
                     {
                         TaxReportId = report.Id,
@@ -1277,6 +1323,26 @@ public partial class TaxService : ITaxService
 
     // Document types eligible to be pulled into a VAT return, and whether
     // each posts to the input (ภาษีซื้อ) side.
+    /// <summary>§82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง + ค่าน้ำมัน/ซ่อม/เช่าซื้อ
+    /// เคลมภาษีซื้อไม่ได้ (ประกาศอธิบดีฯ ฉบับที่ 42). ตรวจ keyword บน
+    /// description. คืน true = น่าจะเป็นรายจ่ายรถยนต์นั่งต้องห้าม. ระวัง
+    /// false-positive (รถบรรทุก/รถตู้ >10 ที่นั่งเคลมได้) — keyword จับเฉพาะ
+    /// ที่ชัดว่าเป็นรถนั่งส่วนบุคคล + น้ำมัน; user override ได้ด้วย IsVatClaimable.</summary>
+    private static bool IsProhibitedVehicleExpense(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return false;
+        var d = description.ToLowerInvariant();
+        // น้ำมันเชื้อเพลิง (รถนั่ง) — เบนซิน/ดีเซล/แก๊สโซฮอล์
+        string[] fuel = { "น้ำมันเชื้อเพลิง", "ค่าน้ำมัน", "เบนซิน", "ดีเซล",
+            "แก๊สโซฮอล", "gasohol", "diesel", "เติมน้ำมัน", "ค่าเชื้อเพลิง" };
+        // รถยนต์นั่ง + บริการที่เกี่ยวข้อง
+        string[] car = { "รถยนต์นั่ง", "รถเก๋ง", "ซ่อมรถ", "ค่าซ่อมรถยนต์",
+            "เช่าซื้อรถ", "ค่าเช่ารถยนต์", "ประดับยนต์", "อะไหล่รถ", "ยางรถยนต์" };
+        foreach (var k in fuel) if (d.Contains(k)) return true;
+        foreach (var k in car) if (d.Contains(k)) return true;
+        return false;
+    }
+
     private static readonly Dictionary<DocumentType, bool> PullableVatTypes = new()
     {
         [DocumentType.TaxInvoice] = false,        // output
