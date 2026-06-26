@@ -196,6 +196,16 @@ public class CompanySettings : TenantEntity
     // Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน metadata จะชนะค่านี้อีกที.
     public Guid? DefaultPaymentAccountId { get; set; }
 
+    // ── กองทุนเงินทดแทน (กท.20ก, พ.ร.บ.เงินทดแทน §44) ──
+    // นายจ้างฝ่ายเดียวสมทบ 0.2%–1.0% ของค่าจ้างต่อปี (cap 240,000 บาท/คน/ปี)
+    // อัตราตามประเภทกิจการ 10 หมวด: สำนักงาน 0.2%, ค้าปลีก 0.4%, ก่อสร้าง 1.0%
+    // เปิด `WorkersCompensationEnabled` ตามที่บริษัทอยู่ในประกาศกระทรวงแรงงาน
+    // → ระบบคิดรายเดือนลง Dr 54121 / Cr 21816 ในรอบเงินเดือน → ยอดสรุปยื่น
+    // กท.20ก รายปี (มี.ค.). default ปิดไว้ (บริษัท SME ส่วนใหญ่ไม่ได้ลงทะเบียน
+    // จนกว่ามีลูกจ้าง) เพื่อไม่ทำให้ฐานข้อมูลเดิมโดน double-post.
+    public decimal WorkersCompensationRatePercent { get; set; } = 0.2m;
+    public bool WorkersCompensationEnabled { get; set; } = false;
+
     // Landing Page – Accounting Services
     public string? LandingContactPhone { get; set; }           // เบอร์ติดต่อแสดงหน้าแรก
     public string? LandingContactLine { get; set; }            // LINE ID

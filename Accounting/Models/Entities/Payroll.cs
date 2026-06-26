@@ -159,6 +159,28 @@ public class PayrollRun : TenantEntity
     public string? ApprovedBy { get; set; }
     public DateTime? ApprovedAt { get; set; }
 
+    // ── ประกันสังคมรอนำส่ง (settle to สำนักงานประกันสังคม) ──
+    // เดิม payroll JE ตอนจ่ายเงินเดือนจะ Cr 21815 (ประกันสังคมค้างจ่าย) ค้าง
+    // ไว้ → ผู้ใช้ต้องจ่ายให้ สปส. ภายในวันที่ 15 ของเดือนถัดไป (พ.ร.บ.
+    // ประกันสังคม §47, แบบ สปส.1-10) แล้วบันทึก JE คู่ที่สอง (Dr 21815 /
+    // Cr Bank) เพื่อล้างหนี้. field ด้านล่างเก็บสถานะการ settle นี้:
+    //   • SsoSettledAt — วันที่นำส่ง (null = ยังไม่ได้นำส่ง)
+    //   • SsoSettlementJournalEntryId — JE ที่ล้างหนี้
+    //   • SsoSettlementDocumentId — PV/Document ที่ใช้ (ถ้ามี)
+    //   • SsoFilingNumber — เลขรับใบ สปส.1-10 จาก portal (กรอกเมื่อยื่นแล้ว)
+    //   • SsoLateFeeAmount — เงินเพิ่ม 2%/เดือน ที่เกิดเมื่อยื่นช้า
+    //     (พ.ร.บ.ประกันสังคม §49 — เริ่มนับจากวันที่ 16 ของเดือนถัดไป)
+    public DateTime? SsoSettledAt { get; set; }
+    public Guid? SsoSettlementJournalEntryId { get; set; }
+    public Guid? SsoSettlementDocumentId { get; set; }
+    public string? SsoFilingNumber { get; set; }
+    public decimal SsoLateFeeAmount { get; set; }
+
+    // กองทุนเงินทดแทน (กท.20ก) — นายจ้างฝ่ายเดียว 0.2%–1.0% ตามประเภทกิจการ
+    // cap 240,000/คน/ปี ยื่นรายปี (มี.ค.). เก็บยอดที่บันทึกในรอบนี้เพื่อทำ
+    // รายงานสรุปสิ้นปี.
+    public decimal TotalWorkersCompensation { get; set; }
+
     public ICollection<PayrollDetail> Details { get; set; } = new List<PayrollDetail>();
 }
 
@@ -191,6 +213,8 @@ public class PayrollDetail : TenantEntity
     // Deductions
     public decimal SocialSecurityEmployee { get; set; }  // สมทบประกันสังคม (ลูกจ้าง)
     public decimal SocialSecurityEmployer { get; set; }  // สมทบประกันสังคม (นายจ้าง)
+    // กองทุนเงินทดแทน — นายจ้างฝ่ายเดียว 0.2-1.0% × min(salary, cap). cap = 240,000/ปี/คน
+    public decimal WorkersCompensation { get; set; }
     public decimal WithholdingTax { get; set; }          // ภาษีหัก ณ ที่จ่าย
     public decimal ProvidentFundEmployee { get; set; }   // กองทุนสำรองเลี้ยงชีพ (ลูกจ้าง)
     public decimal ProvidentFundEmployer { get; set; }   // กองทุนสำรองเลี้ยงชีพ (นายจ้าง)

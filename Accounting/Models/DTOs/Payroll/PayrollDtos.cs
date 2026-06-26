@@ -103,7 +103,21 @@ public record PayrollRunResponse(
     decimal TotalNetPay, decimal TotalWithholdingTax,
     decimal TotalSocialSecurityEmployee,
     decimal TotalSocialSecurityEmployer,
-    int EmployeeCount, DateTime CreatedAt);
+    int EmployeeCount, DateTime CreatedAt,
+    // ── ประกันสังคมรอนำส่ง (สปส.1-10) ──
+    DateTime? SsoSettledAt = null,
+    Guid? SsoSettlementJournalEntryId = null,
+    string? SsoFilingNumber = null,
+    decimal SsoLateFeeAmount = 0,
+    decimal TotalWorkersCompensation = 0);
+
+/// <summary>นำส่งประกันสังคมให้ สปส. — เลือกวันที่จ่าย + บัญชีธนาคาร +
+/// เลขรับใบ สปส.1-10 (optional). ระบบ post JE Dr 21815 / Cr Bank
+/// (+ เงินเพิ่ม §49 2%/เดือนถ้าจ่ายช้า).</summary>
+public record SettleSsoRequest(
+    DateTime PayDate,
+    Guid? BankAccountId = null,
+    string? FilingNumber = null);
 
 public record PayrollDetailResponse(
     Guid EmployeeId, string EmployeeCode, string EmployeeName,

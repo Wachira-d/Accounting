@@ -89,6 +89,14 @@ public class SettingsService : ISettingsService
             settings.DefaultPaymentAccountId = request.DefaultPaymentAccountId.Value == Guid.Empty
                 ? null : request.DefaultPaymentAccountId.Value;
 
+        // กองทุนเงินทดแทน (กท.20ก)
+        if (request.WorkersCompensationEnabled.HasValue)
+            settings.WorkersCompensationEnabled = request.WorkersCompensationEnabled.Value;
+        if (request.WorkersCompensationRatePercent.HasValue
+            && request.WorkersCompensationRatePercent.Value >= 0.2m
+            && request.WorkersCompensationRatePercent.Value <= 1.0m)
+            settings.WorkersCompensationRatePercent = request.WorkersCompensationRatePercent.Value;
+
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
     }
@@ -431,6 +439,8 @@ public class SettingsService : ISettingsService
         // OCR preference
         s.OcrBuyerInvoiceDefaultTarget,
         s.DefaultPaymentAccountId,
+        s.WorkersCompensationEnabled,
+        s.WorkersCompensationRatePercent,
         // Print layout
         s.ShowGlEntryOnDocument,
         // HR

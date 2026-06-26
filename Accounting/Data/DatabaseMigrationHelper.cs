@@ -4128,6 +4128,23 @@ public static class DatabaseMigrationHelper
             // ChartOfAccount.Id ของบัญชีเงินสด/ธนาคารหลัก → OCR ใช้เป็น default.
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DefaultPaymentAccountId" uuid NULL;""",
 
+            // ===== CompanySettings: กองทุนเงินทดแทน (กท.20ก) =====
+            // อัตราสมทบนายจ้างฝ่ายเดียว 0.2–1.0% ตามประเภทกิจการ. default 0.2%
+            // (หมวด 1 สำนักงาน); ปิดไว้ default เพื่อไม่ดับเบิ้ลโพสต์ข้อมูลเดิม.
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationRatePercent" decimal(4,2) NOT NULL DEFAULT 0.2;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationEnabled" boolean NOT NULL DEFAULT false;""",
+
+            // ===== PayrollRuns: ประกันสังคมรอนำส่ง + กองทุนเงินทดแทน =====
+            // SsoSettled* fields ติดตามว่าได้นำส่งให้ สปส. แล้วหรือยัง (กฎหมาย
+            // วันที่ 15 ของเดือนถัดไป). เพิ่มเงินทดแทนรวมเพื่อทำ กท.20ก รายปี.
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoSettledAt" timestamp NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoSettlementJournalEntryId" uuid NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoSettlementDocumentId" uuid NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoFilingNumber" varchar(100) NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoLateFeeAmount" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "TotalWorkersCompensation" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "WorkersCompensation" decimal(18,2) NOT NULL DEFAULT 0;""",
+
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),

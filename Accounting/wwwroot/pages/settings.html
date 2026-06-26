@@ -335,6 +335,25 @@
           (Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน API จะใช้ค่าที่ส่งมาแทน)
         </div>
       </div>
+
+      <h3 class="card-title" style="margin:24px 0 12px">กองทุนเงินทดแทน (กท.20ก) — สมทบนายจ้างฝ่ายเดียว</h3>
+      <div class="form-group form-checkbox">
+        <input type="checkbox" id="sWorkersCompEnabled">
+        <label for="sWorkersCompEnabled">เปิดใช้กองทุนเงินทดแทน (พ.ร.บ.เงินทดแทน §44)</label>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          เมื่อเปิด: ระบบจะคิดสมทบรายเดือนตามอัตราด้านล่างของพนักงานที่อยู่ในระบบ
+          ประกันสังคม (cap ฐาน 240,000 บาท/คน/ปี) → ลงบัญชี Dr 54121 / Cr 21816
+          ในรอบเงินเดือน. รายงาน กท.20ก ยื่นรายปี (มี.ค.)
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">อัตราสมทบ (% ของค่าจ้าง)</label>
+        <input type="number" class="form-input" id="sWorkersCompRate" step="0.01" min="0.2" max="1.0" value="0.2" style="max-width:200px">
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          ตามประกาศกระทรวงแรงงาน 10 หมวด:
+          สำนักงาน 0.2% · ค้าปลีก 0.4% · อุตสาหกรรมเบา 0.6%–0.8% · ก่อสร้าง 1.0%
+        </div>
+      </div>
     </div>
 
     <!-- ===== e-Tax Tab ===== -->
@@ -1612,6 +1631,11 @@
           document.getElementById('sOcrBuyerTarget').value = String(s.ocrBuyerInvoiceDefaultTarget ?? 13);
           // OCR แหล่งเงิน default — populate dropdown (bank + cash GL) แล้ว set ค่า
           await this.populateDefaultPaymentAccount(api, s.defaultPaymentAccountId);
+          // กองทุนเงินทดแทน (กท.20ก)
+          if (document.getElementById('sWorkersCompEnabled'))
+            document.getElementById('sWorkersCompEnabled').checked = !!s.workersCompensationEnabled;
+          if (document.getElementById('sWorkersCompRate') && s.workersCompensationRatePercent != null)
+            document.getElementById('sWorkersCompRate').value = s.workersCompensationRatePercent;
           // e-Tax
           document.getElementById('sEtaxEnabled').checked = s.etaxEnabled || false;
           document.getElementById('sEtaxTestMode').checked = s.etaxTestMode !== false;
@@ -1710,6 +1734,9 @@
             ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
             // OCR แหล่งเงิน default — ว่าง = Guid.Empty (service แปลงเป็น null = auto-pick)
             defaultPaymentAccountId: document.getElementById('sDefaultPaymentAccount').value || '00000000-0000-0000-0000-000000000000',
+            // กองทุนเงินทดแทน (กท.20ก)
+            workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
+            workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),
             // e-Tax
             etaxEnabled: document.getElementById('sEtaxEnabled').checked,
             etaxCertificatePath: document.getElementById('sEtaxCertPath').value || null,

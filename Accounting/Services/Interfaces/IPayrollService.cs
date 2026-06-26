@@ -39,6 +39,12 @@ public interface IPayrollService
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);
     Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy);
     Task VoidPayrollAsync(Guid companyId, Guid payrollRunId);
+    /// <summary>นำส่งประกันสังคมให้ สปส. (สปส.1-10) — post JE คู่ที่สอง
+    /// Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank (+ เงินเพิ่ม §49 2%/เดือนถ้านำส่งช้า).
+    /// ใช้กับรอบที่ Status=Paid + ยังไม่ได้นำส่ง. คืน PayrollRunResponse ที่
+    /// อัปเดต SsoSettledAt + SsoSettlementJournalEntryId + SsoLateFeeAmount.</summary>
+    Task<PayrollRunResponse> SettleSocialSecurityAsync(Guid companyId, Guid payrollRunId,
+        DateTime payDate, Guid? bankAccountId, string? filingNumber, string performedBy);
     /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1)) — รวบรวม WHT
     /// ทั้งปีต่อพนักงาน 1 ใบ คืน PDF เดียวเมื่อระบุ employee, คืน Zip
     /// เมื่อต้องการทุกคน.</summary>

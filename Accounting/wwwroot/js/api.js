@@ -519,6 +519,8 @@ const API = {
       createPayrollRun: (d) => API.post(`${base}/payroll/runs`, d),
       calculatePayroll: (id) => API.post(`${base}/payroll/runs/${id}/calculate`),
       approvePayroll: (id) => API.post(`${base}/payroll/runs/${id}/approve`),
+      payPayroll: (id) => API.post(`${base}/payroll/runs/${id}/pay`),
+      settleSso: (id, body) => API.post(`${base}/payroll/runs/${id}/settle-sso`, body),
       // Expense Claims
       getExpenseClaims: (q = '') => API.get(`${base}/expense-claims${q}`),
       getExpenseClaim: (id) => API.get(`${base}/expense-claims/${id}`),

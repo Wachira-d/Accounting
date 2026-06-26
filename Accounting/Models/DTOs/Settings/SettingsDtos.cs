@@ -66,6 +66,10 @@ public record UpdateCompanySettingsRequest(
     // auto-pick lowest-code). ChartOfAccount.Id = ตั้งบัญชีนั้นเป็น default.
     Guid? DefaultPaymentAccountId = null,
 
+    // กองทุนเงินทดแทน (กท.20ก) — เปิด/ปิด + อัตราสมทบ (0.2–1.0%)
+    bool? WorkersCompensationEnabled = null,
+    decimal? WorkersCompensationRatePercent = null,
+
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool? ShowGlEntryOnDocument = null,
 
@@ -132,6 +136,10 @@ public record CompanySettingsResponse(
 
     // แหล่งเงิน default ที่ OCR/auto-create ใช้ (null = auto-pick lowest-code)
     Guid? DefaultPaymentAccountId = null,
+
+    // กองทุนเงินทดแทน (กท.20ก) — ปิด default; อัตรา default 0.2%
+    bool WorkersCompensationEnabled = false,
+    decimal WorkersCompensationRatePercent = 0.2m,
 
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool ShowGlEntryOnDocument = false,
