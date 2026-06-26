@@ -5,11 +5,11 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Helpers;
 
 /// <summary>
-/// Single source of truth for the per-tenant, per-month, per-type document
-/// number sequence (e.g. "PV-202605-0001"). Both DocumentService (manual
-/// creation) and OcrService (auto-create from scan) call into here so OCR-
-/// generated documents get the same numbering convention as user-created
-/// ones — no more "OCR-yyyyMMdd-XXXXXX" outliers.
+/// Single source of truth for the per-tenant, per-DAY, per-type document
+/// number sequence — format {PREFIX}-{yyyyMMdd}-{NNNN} (เช่น "PV-20260615-0001").
+/// เลขฝังวันเดือนปีของเอกสาร → เลขสอดคล้องกับวันที่เสมอ + sequence เริ่มใหม่
+/// ทุกวัน. Both DocumentService (manual) และ OcrService (auto-create from scan)
+/// เรียกที่นี่ → เลขแบบเดียวกันทุก channel.
 ///
 /// Atomicity: PostgreSQL advisory lock keyed by (companyId, prefix) keeps
 /// concurrent inserts from issuing duplicate sequence numbers. Caller is
@@ -72,14 +72,15 @@ public static class DocumentNumberGenerator
             }
             catch { yearMonthSource = DateTime.UtcNow.AddHours(7); }
         }
-        var yearMonth = yearMonthSource.ToString("yyyyMM");
-        var docPrefix = $"{prefix}-{yearMonth}-";
+        // Format: {PREFIX}-{yyyyMMdd}-{NNNN} — ฝังวันเดือนปีของเอกสารในเลข
+        // → เลขสอดคล้องวันที่เสมอ + sequence reset รายวัน (แต่ละวันเริ่ม 0001).
+        // §86/4: unique (date+seq) + gap-free per day + chronological ✓
+        var datePart = yearMonthSource.ToString("yyyyMMdd");
+        var docPrefix = $"{prefix}-{datePart}-";
         // BUG FIX: previously used `MaxAsync()` over the string column. That
         // returns the LEXICOGRAPHIC max — "9999" > "10000" because '9' > '1'.
-        // The moment a company hit 10000 documents/month the next call
-        // returned "9999" → next = 10000 → DUPLICATE. Pulling the suffix
-        // numbers + integer-max in-memory is correct regardless of digit
-        // width; we cap the pull at 1000 latest just to bound memory.
+        // Pulling the suffix numbers + integer-max in-memory is correct
+        // regardless of digit width. Daily prefix → same-day docs only (small set).
         var suffixes = await db.Documents
             .IgnoreQueryFilters()
             .Where(d => d.CompanyId == companyId && d.DocumentNumber.StartsWith(docPrefix))
@@ -90,10 +91,7 @@ public static class DocumentNumberGenerator
         var nextSeq = 1;
         foreach (var s in suffixes)
             if (int.TryParse(s, out var parsed) && parsed >= nextSeq) nextSeq = parsed + 1;
-        // D5 (5 digits) supports 99,999 per month — well past any realistic
-        // SME volume but still narrow enough to sort visually. Existing 4-
-        // digit numbers (0001-9999) remain readable; new ones beyond 9999
-        // just gain a digit.
+        // D4 (0001-9999/วัน) เพียงพอกับ SME; เกิน 9999/วัน → ขยายเป็น D5 เอง
         return nextSeq <= 9999
             ? $"{docPrefix}{nextSeq:D4}"
             : $"{docPrefix}{nextSeq:D5}";
