@@ -3721,12 +3721,19 @@ public class OcrService : IOcrService
             && !string.IsNullOrWhiteSpace(result.ExtractedDocumentNumber)
             && ((result.ExtractedVatAmount ?? 0) > 0 || !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId));
 
-        // Transaction holds the per-tenant advisory lock for the duration
-        // of the sequence-number assignment + insert, so concurrent OCR
-        // creations don't collide.
+        // Transaction wraps the insert. ก่อนหน้านี้ออก "เลขจริง" ทันทีตอนสร้าง
+        // Draft → ผิดกฎ CLAUDE.md ("เลขเอกสารออกตอน Approve เท่านั้น, Draft
+        // ใช้ DRAFT-{guid} placeholder") + เป็น root cause ของ DocumentNumber↔
+        // DocumentDate desync: ถ้า DocumentDate ถูกแก้ทีหลัง (review UI / OCR
+        // retry / artifact ก่อน TZ-fix), เลขที่ออกไปแล้วจะคาวันเก่า ตอน Approve
+        // ที่ regen เฉพาะเอกสารขึ้นต้น "DRAFT-" ก็ skip เลขเดิม → mismatch.
+        // ใช้ DRAFT- placeholder ตามกฎ → ApproveDocumentAsync จะ regen เลขจาก
+        // doc.DocumentDate ตอน Approve (ผ่าน DocumentNumberGenerator.NextAsync
+        // ใน DocumentService.cs:1828) → DocumentNumber ตรงกับ DocumentDate
+        // ที่ store ใน DB เสมอ. Bonus: ลบ Draft ไม่สร้าง gap ใน sequence
+        // (§86/4 compliance).
         await using var txn = await _db.Database.BeginTransactionAsync();
-        // เลขเอกสารใช้ yyyyMM ของ DocumentDate ให้สอดคล้องกัน
-        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType, docDate);
+        var docNumber = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
         var document = new Document
         {
             CompanyId = companyId,
