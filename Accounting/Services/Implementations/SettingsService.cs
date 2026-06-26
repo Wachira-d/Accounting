@@ -237,10 +237,9 @@ public class SettingsService : ISettingsService
                 DocumentType.CertificateInLieu => "CIL",
                 _ => "DOC"
             };
-            // Format {PREFIX}-{yyyyMMdd}-{NNNN} — ใช้วันที่ของ documentDate
-            // ให้เลขสอดคล้องวันที่เสมอ (sequence reset รายวัน). ตรงกับ
-            // DocumentNumberGenerator. fallback UtcNow ถ้า null.
-            var datePart = (documentDate ?? DateTime.UtcNow).ToString("yyyyMMdd");
+            // Format {PREFIX}-{yyyyMMdd}-{NNNN} — yyyyMMdd ของวันที่ไทย
+            // (ThaiDate.YyyyMmDd) ตรงกับ DocumentNumberGenerator + display
+            var datePart = Accounting.Helpers.ThaiDate.YyyyMmDd(documentDate ?? DateTime.UtcNow);
             var pattern = $"{prefix}-{datePart}-";
             var lastDoc = await _db.Documents
                 .Where(d => d.CompanyId == companyId && d.DocumentType == documentType && d.DocumentNumber.StartsWith(pattern))

@@ -54,28 +54,10 @@ public static class DocumentNumberGenerator
         var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
 
-        // เลือกเดือนจาก DocumentDate ก่อน — สอดคล้องกับวันที่ลงในเอกสาร.
-        // Fallback bkkNow (UtcNow → Asia/Bangkok) เคสไม่ส่ง: เลขกลางคืน
-        // 7 ชม.แรกของเดือนใหม่ใน UTC = previous month → ใช้ BKK TZ กัน drift.
-        DateTime yearMonthSource;
-        if (documentDate.HasValue)
-        {
-            yearMonthSource = documentDate.Value;
-        }
-        else
-        {
-            try
-            {
-                var bkkTz = TimeZoneInfo.FindSystemTimeZoneById(
-                    OperatingSystem.IsWindows() ? "SE Asia Standard Time" : "Asia/Bangkok");
-                yearMonthSource = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, bkkTz);
-            }
-            catch { yearMonthSource = DateTime.UtcNow.AddHours(7); }
-        }
-        // Format: {PREFIX}-{yyyyMMdd}-{NNNN} — ฝังวันเดือนปีของเอกสารในเลข
-        // → เลขสอดคล้องวันที่เสมอ + sequence reset รายวัน (แต่ละวันเริ่ม 0001).
-        // §86/4: unique (date+seq) + gap-free per day + chronological ✓
-        var datePart = yearMonthSource.ToString("yyyyMMdd");
+        // เลขใช้ yyyyMMdd ของวันที่ "ตามปฏิทินไทย" (ThaiDate.YyyyMmDd) — แม้
+        // DocumentDate ถูก store เป็น UTC ที่ shift (02/06 BKK = 01/06 17:00 UTC)
+        // ก็ได้เลข 20260602 ตรงกับ display เสมอ.
+        var datePart = ThaiDate.YyyyMmDd(documentDate ?? DateTime.UtcNow);
         var docPrefix = $"{prefix}-{datePart}-";
         // BUG FIX: previously used `MaxAsync()` over the string column. That
         // returns the LEXICOGRAPHIC max — "9999" > "10000" because '9' > '1'.
@@ -96,4 +78,5 @@ public static class DocumentNumberGenerator
             ? $"{docPrefix}{nextSeq:D4}"
             : $"{docPrefix}{nextSeq:D5}";
     }
+
 }

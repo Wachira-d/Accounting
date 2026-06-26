@@ -418,10 +418,12 @@ public class DocumentService : IDocumentService
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = request.DocumentType,
-                DocumentDate = request.DocumentDate,
+                // Normalize เป็น "วันที่ไทย ณ 00:00 UTC" — กัน timestamptz shift
+                // (02/06 ส่งมา → ห้ามเก็บ 01/06 17:00 UTC ที่ทำเลข/ภพ.30 ผิดวัน)
+                DocumentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DocumentDate),
                 Currency = string.IsNullOrWhiteSpace(request.Currency) ? "THB" : request.Currency.ToUpperInvariant(),
                 ExchangeRate = fxRate,
-                DueDate = request.DueDate,
+                DueDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DueDate),
                 ContactId = request.ContactId,
                 Reference = request.Reference,
                 Notes = request.Notes,
@@ -976,8 +978,8 @@ public class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft)
             throw new InvalidOperationException("แก้ไขได้เฉพาะเอกสาร Draft เท่านั้น");
 
-        if (request.DocumentDate.HasValue) doc.DocumentDate = request.DocumentDate.Value;
-        if (request.DueDate.HasValue) doc.DueDate = request.DueDate.Value;
+        if (request.DocumentDate.HasValue) doc.DocumentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DocumentDate.Value);
+        if (request.DueDate.HasValue) doc.DueDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DueDate.Value);
         if (request.ContactId.HasValue) doc.ContactId = request.ContactId.Value;
         if (request.Reference != null) doc.Reference = request.Reference;
         if (request.Notes != null) doc.Notes = request.Notes;
