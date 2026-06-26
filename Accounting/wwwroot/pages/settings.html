@@ -354,6 +354,22 @@
           สำนักงาน 0.2% · ค้าปลีก 0.4% · อุตสาหกรรมเบา 0.6%–0.8% · ก่อสร้าง 1.0%
         </div>
       </div>
+
+      <h3 id="accountant" class="card-title" style="margin:24px 0 12px">👤 ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)</h3>
+      <div style="background:#fef3c7;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;font-size:12px;color:#92400e;margin-bottom:12px">
+        ⚠️ <b>จำเป็นต้องระบุก่อนนำส่งงบการเงิน DBD</b> — งบที่นำส่งโดยไม่มีผู้ทำบัญชี ผู้บริหารรับผิดทางอาญา (พ.ร.บ.การบัญชี ม.7 + ม.40)
+      </div>
+      <div class="form-group">
+        <label class="form-label">ชื่อ-สกุลผู้ทำบัญชี</label>
+        <input type="text" class="form-input" id="sBookkeeperName" placeholder="เช่น นายสมชาย ใจดี" style="max-width:400px">
+      </div>
+      <div class="form-group">
+        <label class="form-label">เลขทะเบียนผู้ทำบัญชี (CPD)</label>
+        <input type="text" class="form-input" id="sBookkeeperCpdNumber" placeholder="เช่น CPD-123456" style="max-width:300px">
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          เลขทะเบียนที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี (TFAC). ตรวจได้ที่ <a href="https://www.tfac.or.th" target="_blank">tfac.or.th</a>
+        </div>
+      </div>
     </div>
 
     <!-- ===== e-Tax Tab ===== -->
@@ -1636,6 +1652,11 @@
             document.getElementById('sWorkersCompEnabled').checked = !!s.workersCompensationEnabled;
           if (document.getElementById('sWorkersCompRate') && s.workersCompensationRatePercent != null)
             document.getElementById('sWorkersCompRate').value = s.workersCompensationRatePercent;
+          // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
+          if (document.getElementById('sBookkeeperName'))
+            document.getElementById('sBookkeeperName').value = s.bookkeeperName || '';
+          if (document.getElementById('sBookkeeperCpdNumber'))
+            document.getElementById('sBookkeeperCpdNumber').value = s.bookkeeperCpdNumber || '';
           // e-Tax
           document.getElementById('sEtaxEnabled').checked = s.etaxEnabled || false;
           document.getElementById('sEtaxTestMode').checked = s.etaxTestMode !== false;
@@ -1737,6 +1758,9 @@
             // กองทุนเงินทดแทน (กท.20ก)
             workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),
+            // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
+            bookkeeperName: document.getElementById('sBookkeeperName')?.value?.trim() || null,
+            bookkeeperCpdNumber: document.getElementById('sBookkeeperCpdNumber')?.value?.trim() || null,
             // e-Tax
             etaxEnabled: document.getElementById('sEtaxEnabled').checked,
             etaxCertificatePath: document.getElementById('sEtaxCertPath').value || null,

@@ -654,10 +654,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
-_รอบ 15 (compliance + audit-grade): §82/3 block+reclassify, §82/5(6) keyword_
-_car/fuel, §81/1 VAT-reg warning, PII encrypt+ (Bank/SSN), audit-log DB trigger,_
-_§86/4 hard-block opt-in, ภ.ง.ด.51 half-year CIT (SME bracket),_
-_PDPA Wave 3: RoPA + Consent + PiiAccessLog + Breach (72h alert)._
+_รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
+_PII encrypt+ (Bank/SSN), audit-log DB trigger, §86/4 hard-block opt-in,_
+_ภ.ง.ด.51 SME bracket, PDPA Wave 3 (RoPA/Consent/PiiAccessLog/Breach)._
+_รอบ 16: DBD XBRL annual export (TFRS-NPAEs taxonomy) + ผู้ทำบัญชี CPD gate_
+_(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Consent/Breach with 72h timer)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 
