@@ -36,6 +36,12 @@ public interface IOcrService
     /// was created empty (pre line-building fix). Looked up by documentId.</summary>
     Task<OcrResultResponse> RepopulateDocumentLinesFromScanAsync(Guid companyId, Guid documentId, string performedBy);
 
+    /// <summary>ผูกไฟล์ scan ของ OCR เข้ากับเอกสารที่สร้างผ่าน path อื่น
+    /// (UI handoff: OCR review → ฟอร์มเอกสาร → POST /documents). กัน file
+    /// ค้างที่ EntityType="OcrScan" จนผู้ใช้เปิดเอกสารแล้วไม่เห็นไฟล์ต้นฉบับ.
+    /// Idempotent: เรียกซ้ำเป็น no-op. คืน false ถ้าไม่พบ scan/document.</summary>
+    Task<bool> LinkScanToExistingDocumentAsync(Guid companyId, Guid scanId, Guid documentId);
+
     /// <summary>Record a balanced Journal Entry directly from a scan (the
     /// "JE only" path — no business document). Returns the created JE id.</summary>
     Task<Guid> CreateJournalEntryFromScanAsync(Guid companyId, Guid scanResultId,

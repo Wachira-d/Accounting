@@ -256,6 +256,18 @@ public class OcrController : ControllerBase
             await _service.RepopulateDocumentLinesFromScanAsync(companyId, documentId, User.Identity?.Name ?? ""),
             "ดึงรายการจาก OCR สำเร็จ"));
 
+    /// <summary>ผูกไฟล์ scan เข้ากับเอกสารที่สร้างผ่าน UI handoff (documents.html
+    /// save()) — เรียกหลัง POST /documents สำเร็จ. แก้ปัญหา file ค้างที่
+    /// EntityType="OcrScan" ทำให้เปิดเอกสารแล้วไม่เห็นไฟล์แนบ</summary>
+    [HttpPost("{scanId:guid}/link-document/{documentId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> LinkScanToDocument(
+        Guid companyId, Guid scanId, Guid documentId)
+    {
+        var ok = await _service.LinkScanToExistingDocumentAsync(companyId, scanId, documentId);
+        if (!ok) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบ scan หรือเอกสาร"));
+        return Ok(new ApiResponse<bool>(true, true, "ผูกไฟล์ต้นฉบับเข้าเอกสารแล้ว"));
+    }
+
     /// <summary>Record a Journal Entry directly from a scan (no business
     /// document) — for when the real document was issued externally and only
     /// the GL effect is needed here.</summary>

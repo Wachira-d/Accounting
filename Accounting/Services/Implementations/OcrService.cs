@@ -4350,6 +4350,29 @@ public class OcrService : IOcrService
         _logger.LogInformation("Re-linked scan file {FileId} to Document {DocId}", attachment.Id, documentId);
     }
 
+    /// <summary>Public entry point — link an OCR scan's source file to a
+    /// Document ที่สร้างผ่าน path อื่น (เช่น UI handoff: OCR review →
+    /// "เปิดในฟอร์มเอกสาร" → documents.html → POST /documents) ที่ไม่ได้ผ่าน
+    /// CreateDocumentFromScanAsync ทำให้ FileAttachment ค้างอยู่ที่
+    /// EntityType="OcrScan" → เอกสารเปิดดูแล้วไม่เห็นไฟล์แนบ.
+    /// Idempotent: เรียกซ้ำได้ — relink ซ้ำเป็น no-op.</summary>
+    public async Task<bool> LinkScanToExistingDocumentAsync(Guid companyId, Guid scanId, Guid documentId)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(s => s.Id == scanId && s.CompanyId == companyId);
+        if (scan == null) return false;
+        var docExists = await _db.Documents
+            .AnyAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
+        if (!docExists) return false;
+        await RelinkScanFileToDocumentAsync(companyId, scan.FileAttachmentId, documentId);
+        if (scan.CreatedDocumentId != documentId)
+        {
+            scan.CreatedDocumentId = documentId;
+            await _db.SaveChangesAsync();
+        }
+        return true;
+    }
+
     /// <summary>
     /// Register one OCR'd line item as a FixedAsset, delegating to the
     /// existing FixedAssetService.CreateAsync (no duplication of asset

@@ -1122,6 +1122,12 @@
         // Stale payload guard (>10 min old).
         if (!payload.createdAt || (Date.now() - payload.createdAt) > 600_000) return;
 
+        // Remember source scan id — used after Page.save() to relink the
+        // OCR-uploaded file as a Document attachment. Without this, the
+        // scan PDF/image stays orphaned under EntityType="OcrScan" and the
+        // operator opens the new EXP/PV และไม่เห็นไฟล์ต้นฉบับ.
+        this._ocrSourceScanId = payload.scanId || null;
+
         const side = payload.side === 'expense' ? 'expense' : 'revenue';
         this.openCreate(side);
         // Wait a tick for openCreate's DOM mutations to settle.
@@ -3830,6 +3836,15 @@
               Layout.toast('สร้าง + อนุมัติเอกสารแล้ว', 'success');
             else
               Layout.toast('สร้างเอกสารสำเร็จ');
+
+            // OCR handoff path — relink ไฟล์ scan ต้นฉบับเข้าเอกสารใหม่
+            // กัน file ค้างที่ EntityType="OcrScan" จนเปิดเอกสารไม่เห็นไฟล์.
+            // Best-effort: ล้มเหลวก็ไม่ block flow create (เอกสารสร้างแล้ว)
+            if (savedDocId && this._ocrSourceScanId) {
+              try { await api.ocrLinkScanToDocument(this._ocrSourceScanId, savedDocId); }
+              catch (e) { Layout.toast('แนบไฟล์ต้นฉบับ OCR ไม่สำเร็จ: ' + e.message, 'warning', 6000); }
+              this._ocrSourceScanId = null;
+            }
             // Teach the local model: record the operator's actual payment-type
             // choice against the suggestion it was shown (trains per-supplier).
             if (payload.paymentType && this._lastPaymentTypeFeedbackId) {
