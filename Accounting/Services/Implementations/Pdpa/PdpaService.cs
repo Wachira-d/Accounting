@@ -350,7 +350,7 @@ public class PdpaService : IPdpaService
                 c.Email = null;
                 c.Phone = null;
                 c.Address = hasRetained ? "[ANON-RETAINED-FOR-RD-5Y]" : null;
-                c.LineId = null;
+                c.LineUserId = null;
                 c.IsDeleted = !hasRetained;   // ลบจริงเฉพาะที่หมด retention
                 changed++;
             }

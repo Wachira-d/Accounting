@@ -38,10 +38,10 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
             .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
         if (doc == null) return false;
-        var lineId = doc.Contact?.LineId;
+        var lineId = doc.Contact?.LineUserId;
         if (string.IsNullOrWhiteSpace(lineId))
         {
-            _logger.LogInformation("Doc {DocId} contact {ContactId} ไม่มี LineId — skip LINE delivery",
+            _logger.LogInformation("Doc {DocId} contact {ContactId} ไม่มี LineUserId — skip LINE delivery",
                 documentId, doc.ContactId);
             return false;
         }

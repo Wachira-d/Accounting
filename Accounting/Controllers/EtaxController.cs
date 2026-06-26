@@ -81,7 +81,9 @@ public class EtaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<EtaxRetryResultDto>>> RetryFailed(Guid companyId,
         [FromQuery] int limit = 100)
     {
-        var failed = await _etaxService.GetAllAsync(companyId, Models.Enums.EtaxStatus.Failed,
+        // EtaxStatus.Error = submission ล้มเหลวเชิงเทคนิค (network/cert/RD portal)
+        // ที่ retry มีโอกาสสำเร็จ. Rejected = RD ปฏิเสธเชิงธุรกิจ retry ไม่ช่วย
+        var failed = await _etaxService.GetAllAsync(companyId, Models.Enums.EtaxStatus.Error,
             new PagedRequest { Page = 1, PageSize = Math.Clamp(limit, 1, 500) });
         var successes = new List<string>(); var failures = new List<EtaxRetryFailureDto>();
         foreach (var e in failed.Items)

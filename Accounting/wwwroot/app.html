@@ -333,7 +333,7 @@
         // Parallel fetch — เร็วและไม่ block dashboard ถ้า endpoint ไหนล้ม
         const calls = await Promise.allSettled([
           fetch(`/api/companies/${cid}/fixed-assets/needs-review`, { headers: { Authorization: 'Bearer ' + token } }).then(r => r.ok ? r.json() : null),
-          fetch(`/api/companies/${cid}/etax?status=Failed`, { headers: { Authorization: 'Bearer ' + token } }).then(r => r.ok ? r.json() : null),
+          fetch(`/api/companies/${cid}/etax?status=Error`, { headers: { Authorization: 'Bearer ' + token } }).then(r => r.ok ? r.json() : null),
           fetch(`/api/companies/${cid}/document/undue-input-vat`, { headers: { Authorization: 'Bearer ' + token } }).then(r => r.ok ? r.json() : null),
         ]);
         const [assets, etax, undue] = calls.map(c => c.status === 'fulfilled' ? c.value : null);
@@ -354,7 +354,7 @@
             icon: '🧾', tone: 'danger',
             title: `e-Tax ${etaxFailedCount} ฉบับส่งสรรพากรล้มเหลว`,
             body: 'ต้องส่งซ้ำภายในวันที่ 15 ของเดือนถัดไป — กดเปิดเพื่อ retry',
-            href: '/pages/etax.html?status=Failed',
+            href: '/pages/etax.html?status=Error',
             cta: 'ดูคิวส่งซ้ำ →'
           });
         }
