@@ -6526,6 +6526,22 @@ public class DocumentService : IDocumentService
         if (vatTypes.Contains(doc.DocumentType) && doc.Contact != null && string.IsNullOrWhiteSpace(doc.Contact.TaxId))
             warnings.Add($"ผู้ติดต่อ '{doc.Contact.Name}' ไม่มีเลขผู้เสียภาษี — e-Tax XML จะใช้รูปแบบ Non-VAT ผู้รับใช้เป็นหลักฐาน Input VAT ไม่ได้");
 
+        // §81/1 — ผู้ที่ไม่ได้จด VAT ห้ามออกใบกำกับภาษี + เก็บ VAT. ถ้าบริษัท
+        // VatRegistered=false แต่กำลังออกใบกำกับ/ใบเพิ่ม-ลดหนี้ที่มี VAT → เตือน
+        // (ออกใบกำกับโดยไม่จด VAT = ความผิด §90/2 + ต้องนำส่ง VAT ที่เรียกเก็บ).
+        if (doc.DocumentType is DocumentType.TaxInvoice or DocumentType.DebitNote or DocumentType.CreditNote
+            && doc.VatAmount > 0)
+        {
+            var vatRegistered = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => (bool?)c.VatRegistered)
+                .FirstOrDefaultAsync() ?? true;
+            if (!vatRegistered)
+                warnings.Add("⚠️ บริษัทยังไม่ได้จดทะเบียน VAT แต่กำลังออกใบกำกับภาษีที่มี VAT — " +
+                    "ผู้ไม่จด VAT ห้ามออกใบกำกับ (§90/2) และต้องนำส่ง VAT ที่เรียกเก็บ. " +
+                    "ถ้ารายได้เกิน 1.8 ล้าน/ปี ต้องจด VAT ภายใน 30 วัน (§85/1)");
+        }
+
         // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
         // create path; this is the "rate is technically legal but unusual"
         // shoulder (e.g. ratio that doesn't match a known ภ.ง.ด. code).
