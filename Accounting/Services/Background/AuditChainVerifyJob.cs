@@ -48,8 +48,8 @@ public class AuditChainVerifyJob : BackgroundService
         var notify = scope.ServiceProvider.GetService<INotificationEngine>();
 
         var companyIds = await db.AuditLogs.AsNoTracking()
-            .Where(a => a.RowHash != null)
-            .Select(a => a.CompanyId)
+            .Where(a => a.RowHash != null && a.CompanyId != null)
+            .Select(a => a.CompanyId!.Value)
             .Distinct()
             .ToListAsync(ct);
 

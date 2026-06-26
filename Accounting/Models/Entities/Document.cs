@@ -452,6 +452,10 @@ public class Contact : TenantEntity
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public string? ContactPerson { get; set; }
+    /// <summary>LINE userId ของลูกค้า (ผูกผ่าน LINE OA / bind flow) — ใช้ส่ง
+    /// เอกสาร (ใบแจ้งหนี้/ใบเสร็จ) ผ่าน LINE flex message. null = ลูกค้ายัง
+    /// ไม่ผูก LINE → ระบบ fallback ไป email/print. PDPA: anonymize ตอน erase.</summary>
+    public string? LineUserId { get; set; }
     public bool IsActive { get; set; } = true;
 
     // ───── Per-contact GL account overrides ─────

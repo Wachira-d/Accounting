@@ -79,6 +79,8 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BranchName" varchar(200) NULL;
             """,
+            // Contact LINE binding — ส่งเอกสารผ่าน LINE flex message ให้ลูกค้า
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "LineUserId" varchar(100) NULL;""",
             """
             ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BuildingNumber" varchar(50) NULL;
             """,

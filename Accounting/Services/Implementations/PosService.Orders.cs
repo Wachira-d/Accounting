@@ -1201,7 +1201,7 @@ public partial class PosService
 
         // Top 10 products
         var top = completed.SelectMany(o => o.Items)
-            .Where(i => i.ProductId.HasValue && i.Status != PosItemStatus.Voided)
+            .Where(i => i.ProductId.HasValue && i.Status != PosItemStatus.Cancelled)
             .GroupBy(i => new { i.ProductId, i.ProductName })
             .Select(g => new PosTopProductSummary(
                 g.Key.ProductId!.Value, g.Key.ProductName ?? "(ไม่ระบุ)",

@@ -2053,10 +2053,10 @@ public class DocumentService : IDocumentService
                 "ใบกำกับ/ใบเสร็จ/ใบเพิ่ม-ลดหนี้ ตาม §86/4 ต้องยกเลิกแล้วออกใบใหม่");
 
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
-                       or DocumentStatus.Rejected or DocumentStatus.Cancelled)
+                       or DocumentStatus.Rejected)
             throw new InvalidOperationException(
                 $"เอกสาร Status={doc.Status} ไม่อยู่ในขั้นที่ reclassify ได้ " +
-                "(Draft = แก้ผ่านฟอร์มปกติ, Voided/Rejected/Cancelled = สร้างใหม่)");
+                "(Draft = แก้ผ่านฟอร์มปกติ, Voided/Rejected = สร้างใหม่)");
 
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
             p.CompanyId == companyId
