@@ -66,17 +66,21 @@ public class UnifiedPaymentQueryService : IUnifiedPaymentQueryService
             }
         }
 
-        // POS: PosPayment — BaseEntity → CompanyId via PosOrder join
+        // POS: PosPayment — BaseEntity → CompanyId via PosOrder join.
+        // Method syntax เพื่อเลี่ยง C# parser ambiguity ระหว่าง LINQ `from`
+        // keyword กับ parameter name `from` (date range)
         if (domain == null || domain == "POS")
         {
-            var posPays = await (
-                from p in _db.Set<PosPayment>().AsNoTracking()
-                join o in _db.PosOrders.AsNoTracking() on p.OrderId equals o.Id
-                where o.CompanyId == companyId && !p.IsDeleted
-                    && p.PaidAt >= from && p.PaidAt <= to
-                select new {
-                    p.Id, p.PaidAt, p.Amount, p.PaymentMethod, p.ReferenceNo,
-                }).ToListAsync(ct);
+            var posPays = await _db.Set<PosPayment>().AsNoTracking()
+                .Join(_db.PosOrders.AsNoTracking(),
+                    p => p.OrderId, o => o.Id,
+                    (p, o) => new { p, o })
+                .Where(x => x.o.CompanyId == companyId && !x.p.IsDeleted
+                    && x.p.PaidAt >= from && x.p.PaidAt <= to)
+                .Select(x => new {
+                    x.p.Id, x.p.PaidAt, x.p.Amount, x.p.PaymentMethod, x.p.ReferenceNo,
+                })
+                .ToListAsync(ct);
             foreach (var p in posPays)
                 result.Add(new UnifiedPaymentRow("POS", p.Id, p.PaidAt, p.Amount,
                     p.PaymentMethod, "THB", p.ReferenceNo));
