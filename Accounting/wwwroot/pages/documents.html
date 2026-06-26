@@ -812,6 +812,49 @@
       </div>
     </div>
 
+    <!-- Adjusting JE Lines Modal — Option 1: 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ -->
+    <div class="modal-overlay" id="adjustingLinesModal">
+      <div class="modal" style="max-width:780px;width:95%">
+        <div class="modal-header">
+          <h3 class="modal-title">✏️ ปรับปรุงรายการบัญชี (Adjusting JE Lines)</h3>
+          <button class="modal-close" onclick="Layout.closeModal('adjustingLinesModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="background:#fef3c7;border:1px solid #fde68a;padding:10px 12px;border-radius:6px;font-size:12px;color:#92400e;margin-bottom:12px">
+            💡 เพิ่ม/ลด Dr/Cr ที่ไม่อยู่ในรายการสินค้า/บริการหลัก (ค่าธรรมเนียมโอน, สำรอง, ปันส่วน).
+            <b>ผลรวม Dr ของ adjusting ต้องเท่ากับ Cr</b> (กัน JE หลักเสียสมดุล).
+            เฉพาะเอกสารฉบับร่าง (Draft) — หลัง approve ใช้ Reclassify หรือ Manual JE แทน.
+          </div>
+          <div style="overflow-x:auto">
+            <table class="table" style="font-size:13px">
+              <thead><tr>
+                <th style="width:32px">#</th>
+                <th>ผังบัญชี</th>
+                <th class="text-right" style="width:120px">Dr</th>
+                <th class="text-right" style="width:120px">Cr</th>
+                <th>คำอธิบาย</th>
+                <th style="width:50px"></th>
+              </tr></thead>
+              <tbody id="adjLinesTbody"></tbody>
+              <tfoot>
+                <tr style="background:var(--gray-50);font-weight:700">
+                  <td colspan="2" class="text-right">รวม</td>
+                  <td class="text-right" id="adjLinesTotalDr">0.00</td>
+                  <td class="text-right" id="adjLinesTotalCr">0.00</td>
+                  <td colspan="2"><span id="adjLinesBalance" style="font-size:12px"></span></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="Page.adjAddRow()" style="margin-top:8px">+ เพิ่มบรรทัด</button>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('adjustingLinesModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitAdjustingLines()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
     <!-- PDF Preview Modal -->
     <div class="modal-overlay" id="pdfModal">
       <div class="modal" style="max-width:800px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
@@ -1520,6 +1563,197 @@
         } catch (e) {
           Layout.toast('เปลี่ยนแหล่งเงินไม่สำเร็จ: ' + e.message, 'error', 8000);
         }
+      },
+
+      // ===== Adjusting JE Lines (Option 1) =====
+
+      _adjState: { docId: null, lines: [] },
+
+      /** Render section "ปรับปรุงรายการบัญชี" บน detail. Draft → ปุ่มแก้ไข,
+       *  Approved+ → read-only display เพื่อให้ user เห็นว่าเอกสารมี adjusting */
+      async renderAdjustingLinesSection(docId, status) {
+        const host = document.getElementById('docAdjustingLines_' + docId);
+        if (!host) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.listAdjustingLines(docId);
+          const rows = res?.data || [];
+          const editable = status === 'Draft';
+          let body = '';
+          if (rows.length === 0) {
+            if (!editable) return;  // hide section entirely if Approved+ and no rows
+            body = '<div style="color:#94a3b8;font-size:13px;padding:8px 0">ยังไม่มี adjusting lines</div>';
+          } else {
+            const totalDr = rows.reduce((s,r) => s + Number(r.debitAmount||0), 0);
+            const totalCr = rows.reduce((s,r) => s + Number(r.creditAmount||0), 0);
+            const balanced = Math.abs(totalDr - totalCr) < 0.01;
+            body = `<table class="table" style="font-size:12px;margin-top:6px">
+              <thead><tr><th>#</th><th>ผังบัญชี</th><th class="text-right">Dr</th><th class="text-right">Cr</th><th>คำอธิบาย</th></tr></thead>
+              <tbody>${rows.map((r,i) => {
+                const acc = this.coaByCode ? Object.values(this.coaByCode).find(a => a.id === r.accountId) : null;
+                return `<tr>
+                  <td>${i+1}</td>
+                  <td><span style="font-family:ui-monospace,monospace;font-size:11px">${acc ? '<b>'+this.escapeHtml(acc.accountCode)+'</b> '+this.escapeHtml(acc.accountName.substring(0,30)) : r.accountId.substring(0,8)}</span></td>
+                  <td class="text-right">${Number(r.debitAmount) > 0 ? Layout.money(r.debitAmount) : '-'}</td>
+                  <td class="text-right">${Number(r.creditAmount) > 0 ? Layout.money(r.creditAmount) : '-'}</td>
+                  <td>${this.escapeHtml(r.description || '')}</td>
+                </tr>`;
+              }).join('')}</tbody>
+              <tfoot><tr style="background:var(--gray-50);font-weight:700">
+                <td colspan="2" class="text-right">รวม</td>
+                <td class="text-right">${Layout.money(totalDr)}</td>
+                <td class="text-right">${Layout.money(totalCr)}</td>
+                <td><span style="color:${balanced?'#15803d':'#dc2626'};font-size:11px">${balanced?'✓ Balance':'⚠ Dr ≠ Cr'}</span></td>
+              </tr></tfoot>
+            </table>`;
+          }
+          host.innerHTML = `
+            <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:14px">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <div>
+                  <h4 style="margin:0;font-size:14px">✏️ ปรับปรุงรายการบัญชี (Adjusting JE)</h4>
+                  <div style="font-size:11px;color:#6b7280;margin-top:2px">Dr/Cr ลอย ๆ ที่ผูกเอกสารนี้ (ค่าธรรมเนียม, สำรอง, ปันส่วน) — รวมเข้า JE ตอน Approve</div>
+                </div>
+                ${editable ? `<button class="btn btn-sm btn-primary" onclick="Page.openAdjustingLines('${docId}')">${rows.length>0?'✏️ แก้ไข':'+ เพิ่ม Adjusting Lines'}</button>` : ''}
+              </div>
+              ${body}
+            </div>`;
+        } catch (e) {
+          host.innerHTML = `<div style="color:#dc2626;font-size:12px">โหลด adjusting lines ไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
+        }
+      },
+
+      async openAdjustingLines(docId) {
+        const api = Layout.api(); if (!api) return;
+        // โหลด CoA ถ้ายังไม่มี
+        if (!this.coaByCode || Object.keys(this.coaByCode).length === 0) {
+          try {
+            const coa = await api.getAccounts();
+            const list = coa?.data?.items || coa?.data || [];
+            this.coaByCode = {};
+            list.forEach(a => { this.coaByCode[a.accountCode] = a; });
+          } catch { /* non-fatal */ }
+        }
+        try {
+          const res = await api.listAdjustingLines(docId);
+          const rows = res?.data || [];
+          this._adjState = {
+            docId,
+            lines: rows.map(r => ({
+              accountId: r.accountId,
+              accountCode: this._codeOf(r.accountId),
+              debitAmount: Number(r.debitAmount || 0),
+              creditAmount: Number(r.creditAmount || 0),
+              description: r.description || '',
+            })),
+          };
+          if (this._adjState.lines.length === 0) this.adjAddRow();
+          this.adjRender();
+          Layout.openModal('adjustingLinesModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      _codeOf(accountId) {
+        if (!this.coaByCode) return '';
+        const a = Object.values(this.coaByCode).find(x => x.id === accountId);
+        return a ? a.accountCode : '';
+      },
+
+      adjAddRow() {
+        this._adjState.lines.push({ accountId: null, accountCode: '', debitAmount: 0, creditAmount: 0, description: '' });
+        this.adjRender();
+      },
+
+      adjRemoveRow(idx) {
+        this._adjState.lines.splice(idx, 1);
+        if (this._adjState.lines.length === 0) this.adjAddRow();
+        this.adjRender();
+      },
+
+      adjRender() {
+        const tbody = document.getElementById('adjLinesTbody');
+        const dl = this.coaByCode ? Object.values(this.coaByCode).slice(0, 300) : [];
+        const datalistId = 'adjCoaList';
+        let dlHtml = `<datalist id="${datalistId}">` +
+          dl.map(a => `<option value="${this.escapeHtml(a.accountCode)} ${this.escapeHtml(a.accountName)}">`).join('') +
+          '</datalist>';
+        tbody.innerHTML = dlHtml + this._adjState.lines.map((l, i) => `
+          <tr>
+            <td>${i+1}</td>
+            <td><input class="form-input" list="${datalistId}" value="${this.escapeHtml(l.accountCode || '')}" oninput="Page.adjOnAcct(${i}, this.value)" placeholder="พิมพ์รหัส/ชื่อ เช่น 54100"></td>
+            <td><input type="number" class="form-input text-right" step="0.01" min="0" value="${l.debitAmount || ''}" oninput="Page.adjOnAmt(${i},'debitAmount', this.value)"></td>
+            <td><input type="number" class="form-input text-right" step="0.01" min="0" value="${l.creditAmount || ''}" oninput="Page.adjOnAmt(${i},'creditAmount', this.value)"></td>
+            <td><input class="form-input" value="${this.escapeHtml(l.description || '')}" oninput="Page.adjOnDesc(${i}, this.value)" placeholder="เช่น ค่าธรรมเนียมโอน"></td>
+            <td><button class="btn btn-sm btn-danger" onclick="Page.adjRemoveRow(${i})" title="ลบบรรทัด">×</button></td>
+          </tr>`).join('');
+        this.adjUpdateTotals();
+      },
+
+      adjOnAcct(i, raw) {
+        const code = (raw || '').trim().split(/\s+/)[0];
+        const acc = this.coaByCode?.[code];
+        this._adjState.lines[i].accountCode = raw;
+        this._adjState.lines[i].accountId = acc ? acc.id : null;
+      },
+      adjOnAmt(i, field, val) {
+        const n = Number(val) || 0;
+        this._adjState.lines[i][field] = n;
+        // ห้าม Dr/Cr ทั้งคู่ — ถ้าใส่ฝั่งหนึ่ง > 0, อีกฝั่ง = 0
+        if (n > 0) {
+          const other = field === 'debitAmount' ? 'creditAmount' : 'debitAmount';
+          this._adjState.lines[i][other] = 0;
+        }
+        this.adjUpdateTotals();
+      },
+      adjOnDesc(i, val) { this._adjState.lines[i].description = val; },
+
+      adjUpdateTotals() {
+        const dr = this._adjState.lines.reduce((s,l) => s + (Number(l.debitAmount)||0), 0);
+        const cr = this._adjState.lines.reduce((s,l) => s + (Number(l.creditAmount)||0), 0);
+        document.getElementById('adjLinesTotalDr').textContent = Layout.money(dr);
+        document.getElementById('adjLinesTotalCr').textContent = Layout.money(cr);
+        const balEl = document.getElementById('adjLinesBalance');
+        const diff = Math.abs(dr - cr);
+        if (diff < 0.01) {
+          balEl.innerHTML = '<span style="color:#15803d">✓ Balance</span>';
+        } else {
+          balEl.innerHTML = `<span style="color:#dc2626">⚠ ต่าง ${Layout.money(diff)}</span>`;
+        }
+      },
+
+      async submitAdjustingLines() {
+        const api = Layout.api(); if (!api) return;
+        const ctx = this._adjState;
+        if (!ctx.docId) return;
+
+        // Filter ออก rows ว่าง (ไม่มี account หรือทั้ง Dr และ Cr = 0)
+        const lines = ctx.lines.filter(l => l.accountId && (l.debitAmount > 0 || l.creditAmount > 0));
+
+        // Client-side balance check (server enforces ตอน approve อยู่แล้ว แต่
+        // ป้องกัน save ที่ user น่าจะลืม)
+        const dr = lines.reduce((s,l) => s + (Number(l.debitAmount)||0), 0);
+        const cr = lines.reduce((s,l) => s + (Number(l.creditAmount)||0), 0);
+        if (lines.length > 0 && Math.abs(dr - cr) >= 0.01) {
+          if (!confirm(`ยอด Dr (${Layout.money(dr)}) ≠ Cr (${Layout.money(cr)}). บันทึกไว้ก่อนก็ได้ แต่ Approve จะ block ถ้าไม่ balance — ดำเนินการต่อ?`))
+            return;
+        }
+
+        try {
+          await api.saveAdjustingLines(ctx.docId, {
+            lines: lines.map(l => ({
+              accountId: l.accountId,
+              debitAmount: Number(l.debitAmount) || 0,
+              creditAmount: Number(l.creditAmount) || 0,
+              description: l.description || null,
+              projectId: null,
+              reason: null,
+            })),
+          });
+          Layout.closeModal('adjustingLinesModal');
+          Layout.toast(`บันทึก adjusting lines ${lines.length} รายการแล้ว`, 'success');
+          // refresh detail
+          await this.renderAdjustingLinesSection(ctx.docId, 'Draft');
+        } catch (e) { Layout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error', 8000); }
       },
 
       _applyOcrConfidenceHints(conf) {
@@ -4274,11 +4508,14 @@
                 <div>${d.witnessName ? `<div class="text-sm"><strong>พยาน:</strong> ${d.witnessName}</div>` : ''}${d.witnessPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${d.witnessPosition}</div>` : ''}</div>
               </div>
             </div>` : ''}
+            <!-- Adjusting JE Lines — 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ (Option 1) -->
+            <div id="docAdjustingLines_${d.id}" style="margin-top:20px"></div>
             <!-- Attachments section — file upload/list/delete for this document -->
             <div id="docAttachments_${d.id}" style="margin-top:20px"></div>`;
 
           // Load attachments asynchronously (doesn't block other sections)
           this.renderAttachmentSection(d.id);
+          this.renderAdjustingLinesSection(d.id, d.status);
           // Partial-fulfilment status (delivery / billing progress per line)
           this.renderFulfillmentSection(d.id);
           // เอกสารอื่นที่ผูก booking เดียวกัน (มัดจำ → ใบสุดท้าย → ใบเสร็จ)

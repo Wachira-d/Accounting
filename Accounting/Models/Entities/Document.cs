@@ -339,6 +339,41 @@ public class Document : TenantEntity
     // Navigation
     public ICollection<DocumentLine> Lines { get; set; } = new List<DocumentLine>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+    /// <summary>Adjusting JE lines ที่ user เพิ่มเองนอกเหนือจาก DocumentLine
+    /// ปกติ (เช่น ค่าธรรมเนียมโอน, สำรอง, ปันส่วน). AutoPostToJournalAsync
+    /// รวม lines เหล่านี้เข้า JE หลังจาก gen lines มาตรฐานครบ — ก่อน balance
+    /// check. user รับผิดชอบให้ยอด Dr/Cr ของ adjusting lines balance กันเอง
+    /// (Dr รวม = Cr รวม) — auto-gen lines ที่เหลือ + adjusting lines ทั้งหมด
+    /// จะ balance อัตโนมัติ.</summary>
+    public ICollection<DocumentAdjustingJournalLine> AdjustingJournalLines { get; set; }
+        = new List<DocumentAdjustingJournalLine>();
+}
+
+/// <summary>
+/// Adjusting Journal Entry Line — รายการ Dr/Cr "เพิ่มเติม" บนเอกสาร 1 ใบ
+/// นอกเหนือจาก DocumentLine ปกติ. ใช้รองรับเคส:
+///   • PV 1 ใบ มีค่าธรรมเนียมโอนเงิน 50 บาท ที่ไม่ใช่ค่าใช้จ่ายหลัก
+///   • ตั้งสำรอง / accrual ในเอกสารเดียว
+///   • ปันส่วน cost ไปหลาย project ที่ไม่ได้ map 1:1 กับ DocumentLine
+///   • Reverse partial — Cr ค่าใช้จ่ายที่ผันแปร
+///
+/// **ข้อบังคับ:** ผู้ใช้ต้องทำให้ "ผลรวม Dr ของ adjusting = ผลรวม Cr ของ
+/// adjusting" — เพราะ auto-gen JE ที่เหลือ balance อยู่แล้ว (Dr=Cr) →
+/// adjusting ต้องเป็น net-zero ไม่งั้นรวมแล้วเอกสารเสีย balance.
+/// AutoPostToJournalAsync ตรวจ Dr=Cr รวมทั้ง JE ตอน post → throw ถ้าเสีย.
+/// </summary>
+public class DocumentAdjustingJournalLine : BaseEntity
+{
+    public Guid DocumentId { get; set; }
+    public Document Document { get; set; } = null!;
+    public int LineOrder { get; set; }
+    public Guid AccountId { get; set; }
+    public ChartOfAccount? Account { get; set; }
+    public decimal DebitAmount { get; set; }
+    public decimal CreditAmount { get; set; }
+    public string? Description { get; set; }
+    public Guid? ProjectId { get; set; }
+    public string? Reason { get; set; }   // เหตุผลในการเพิ่ม line (audit)
 }
 
 /// <summary>

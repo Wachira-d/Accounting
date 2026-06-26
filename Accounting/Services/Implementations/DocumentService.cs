@@ -2368,6 +2368,96 @@ public class DocumentService : IDocumentService
         return await GetDocumentAsync(companyId, documentId);
     }
 
+    // ===== Adjusting Journal Lines (Option 1) =====
+
+    public async Task<List<DocumentAdjustingJournalLine>> ListAdjustingJournalLinesAsync(
+        Guid companyId, Guid documentId)
+    {
+        var docExists = await _db.Documents.AsNoTracking()
+            .AnyAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
+        if (!docExists) throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        return await _db.Set<DocumentAdjustingJournalLine>()
+            .AsNoTracking()
+            .Where(a => a.DocumentId == documentId && !a.IsDeleted)
+            .OrderBy(a => a.LineOrder)
+            .ToListAsync();
+    }
+
+    public async Task<DocumentResponse> SaveAdjustingJournalLinesAsync(Guid companyId, Guid documentId,
+        IEnumerable<(Guid AccountId, decimal DebitAmount, decimal CreditAmount,
+            string? Description, Guid? ProjectId, string? Reason)> lines, string actor)
+    {
+        var doc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // เฉพาะ Draft — หลัง approve JE ถูก post แล้ว ห้ามแก้ผ่าน flow นี้
+        // (ใช้ ReclassifyLineAccountAsync หรือ manual JE แทน)
+        if (doc.Status != DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                $"เอกสารต้องเป็นฉบับร่าง (Draft) ถึงจะแก้ adjusting lines ได้ — " +
+                $"สถานะปัจจุบัน: {doc.Status}. หลัง approve ใช้ Reclassify หรือ Manual JE.");
+
+        var list = lines.ToList();
+
+        // Validate ทุก line + load account ids ของบริษัทเพื่อ validate FK
+        var companyAccountIds = await _db.ChartOfAccounts
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
+            .Select(a => a.Id)
+            .ToListAsync();
+
+        foreach (var l in list)
+        {
+            if (!companyAccountIds.Contains(l.AccountId))
+                throw new InvalidOperationException(
+                    $"ไม่พบบัญชี {l.AccountId} ในผังบัญชีของบริษัท หรือถูกปิดใช้");
+            if (l.DebitAmount < 0 || l.CreditAmount < 0)
+                throw new InvalidOperationException("ยอดเดบิตและเครดิตต้องไม่ติดลบ");
+            if (l.DebitAmount > 0 && l.CreditAmount > 0)
+                throw new InvalidOperationException("แต่ละรายการต้องเลือก Dr หรือ Cr ด้านเดียว");
+            if (l.DebitAmount == 0 && l.CreditAmount == 0)
+                throw new InvalidOperationException("รายการต้องมียอด Dr หรือ Cr อย่างน้อยด้านเดียว");
+        }
+
+        // Balance check — Dr รวม = Cr รวม (ของ adjusting). ระบบไม่ block
+        // ตอน save (user อาจกำลังเขียนค้าง) แต่ AutoPost ตรวจตอน approve.
+        // ที่นี่แค่เตือนใน log; การ block จริงอยู่ที่ AutoPost.
+
+        // Replace all — ลบเก่าทิ้ง insert ใหม่ (full sync)
+        var existing = await _db.Set<DocumentAdjustingJournalLine>()
+            .Where(a => a.DocumentId == documentId)
+            .ToListAsync();
+        _db.Set<DocumentAdjustingJournalLine>().RemoveRange(existing);
+
+        var order = 1;
+        foreach (var l in list)
+        {
+            _db.Set<DocumentAdjustingJournalLine>().Add(new DocumentAdjustingJournalLine
+            {
+                DocumentId = documentId,
+                LineOrder = order++,
+                AccountId = l.AccountId,
+                DebitAmount = l.DebitAmount,
+                CreditAmount = l.CreditAmount,
+                Description = l.Description,
+                ProjectId = l.ProjectId,
+                Reason = l.Reason,
+                CreatedBy = actor,
+            });
+        }
+
+        doc.UpdatedAt = DateTime.UtcNow;
+        doc.UpdatedBy = actor;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Saved {Count} adjusting JE lines for document {DocNumber} by {Actor}",
+            list.Count, doc.DocumentNumber, actor);
+
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
     /// <summary>
     /// ยกเลิกเอกสาร — เก็บเอกสารต้นฉบับไว้ + สร้าง reversal JE ตามมาตรฐานบัญชีไทย
     /// (กลับรายการ Dr↔Cr, link OriginalEntryId↔ReversedByEntryId).
@@ -5921,6 +6011,44 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ไม่สามารถบันทึกบัญชีอัตโนมัติได้: ผังบัญชี (COA) ที่ใช้สำหรับเอกสารประเภทนี้ยังไม่ครบ. " +
                 "กรุณาเปิดเมนู ตั้งค่าผังบัญชี เพื่อ seed บัญชีที่จำเป็น (รายได้ / ค่าใช้จ่าย / VAT / AR / AP / เงินสด) ก่อนอนุมัติ");
+        }
+
+        // Adjusting JE lines (Option 1) — user เพิ่ม Dr/Cr ลอย ๆ ที่ผูกเอกสาร
+        // (เช่น ค่าธรรมเนียมโอน, สำรอง). รวมเข้า pendingLines ก่อน balance check.
+        // user รับผิดชอบให้ adjusting Dr รวม = adjusting Cr รวม (net-zero) →
+        // auto-gen ที่ balance อยู่แล้ว + adjusting net-zero = JE ยัง balance.
+        var adjustingLines = await _db.Set<DocumentAdjustingJournalLine>()
+            .AsNoTracking()
+            .Where(a => a.DocumentId == doc.Id && !a.IsDeleted)
+            .OrderBy(a => a.LineOrder)
+            .ToListAsync();
+        if (adjustingLines.Count > 0)
+        {
+            var adjDr = adjustingLines.Sum(a => a.DebitAmount);
+            var adjCr = adjustingLines.Sum(a => a.CreditAmount);
+            if (Math.Round(adjDr, 2, MidpointRounding.AwayFromZero) != Math.Round(adjCr, 2, MidpointRounding.AwayFromZero))
+                throw new InvalidOperationException(
+                    $"⛔ Adjusting JE Lines ไม่ balance: เดบิต {adjDr:N2} ≠ เครดิต {adjCr:N2} — " +
+                    "ผลรวม Dr และ Cr ของ adjusting lines ต้องเท่ากัน (กัน JE หลักเสียสมดุล). " +
+                    "แก้ที่หน้า 'ปรับปรุงรายการบัญชี' ของเอกสารก่อนอนุมัติ");
+            // ห้าม adjusting line มีทั้ง Dr และ Cr ในบรรทัดเดียวกัน
+            foreach (var a in adjustingLines)
+            {
+                if (a.DebitAmount > 0 && a.CreditAmount > 0)
+                    throw new InvalidOperationException(
+                        $"⛔ Adjusting line '{a.Description}' มีทั้ง Dr และ Cr — ต้องเลือกด้านเดียว");
+                if (a.DebitAmount < 0 || a.CreditAmount < 0)
+                    throw new InvalidOperationException(
+                        $"⛔ Adjusting line '{a.Description}' มียอดติดลบ");
+            }
+            foreach (var a in adjustingLines)
+            {
+                AddLine(a.AccountId, a.DebitAmount, a.CreditAmount,
+                    string.IsNullOrWhiteSpace(a.Description)
+                        ? $"ปรับปรุง — {doc.DocumentNumber}"
+                        : $"ปรับปรุง: {a.Description}",
+                    a.ProjectId);
+            }
         }
 
         // Validate double-entry balance per Thai accounting standards (TAS 1)

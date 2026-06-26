@@ -40,6 +40,7 @@ public class AccountingDbContext : DbContext
     // Documents
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentLine> DocumentLines => Set<DocumentLine>();
+    public DbSet<DocumentAdjustingJournalLine> DocumentAdjustingJournalLines => Set<DocumentAdjustingJournalLine>();
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentAllocation> PaymentAllocations => Set<PaymentAllocation>();

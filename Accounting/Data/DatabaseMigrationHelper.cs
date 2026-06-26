@@ -4137,6 +4137,30 @@ public static class DatabaseMigrationHelper
             // ===== CompanySettings: §86/4 hard-block opt-in =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EnforceFullTaxInvoiceFields" boolean NOT NULL DEFAULT false;""",
 
+            // ===== DocumentAdjustingJournalLines (Option 1: เพิ่ม Dr/Cr ลอย) =====
+            // ใช้รองรับเคส PV/Doc 1 ใบ มี Dr/Cr เพิ่มเติมที่ไม่ map กับ DocumentLine
+            // ปกติ (ค่าธรรมเนียมโอน, สำรอง, ปันส่วน). AutoPost รวมเข้า JE +
+            // validate balance Dr=Cr รวม.
+            """
+            CREATE TABLE IF NOT EXISTS "DocumentAdjustingJournalLines" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "DocumentId" uuid NOT NULL REFERENCES "Documents"("Id") ON DELETE CASCADE,
+                "LineOrder" integer NOT NULL DEFAULT 0,
+                "AccountId" uuid NOT NULL,
+                "DebitAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "CreditAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "Description" varchar(500) NULL,
+                "ProjectId" uuid NULL,
+                "Reason" varchar(500) NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_DocumentAdjustingJournalLines_Doc" ON "DocumentAdjustingJournalLines" ("DocumentId");""",
+
             // ===== CompanySettings: ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BookkeeperName" varchar(200) NULL;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BookkeeperCpdNumber" varchar(50) NULL;""",
