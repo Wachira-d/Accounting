@@ -123,7 +123,13 @@ public record DocumentLineRequest(
     // ส่วนลดต่อบรรทัดเป็น "ยอดเงิน" (มาตรฐานสากล: ERP รองรับ discount ทั้ง %
     // และ amount). เมื่อระบุ > 0 ระบบใช้ค่านี้ตรง ๆ แทนการคิดจาก DiscountPercent
     // (เคสใบกำกับระบุส่วนลดเป็นบาท เช่น "ส่วนลด 600.28"). null/0 = ใช้ %.
-    decimal? DiscountAmount = null);
+    decimal? DiscountAmount = null,
+    // VAT amount (บาท) ที่ระบุมาตรง ๆ — ใช้เมื่อบรรทัดปนของเสียภาษี 7% กับ
+    // ของยกเว้น (exempt) ในก้อนเดียว ที่ VatRate เดียวแสดงไม่ได้. เมื่อระบุ
+    // ระบบจะ honor ค่านี้แทนการคิด net × VatRate (กัน external/integration
+    // ส่งยอดจ่ายจริงมาแล้ว NextAcc คิด VAT ใหม่จนเกิดส่วนต่าง ค้างชำระผี).
+    // null = คิดตามปกติ (backward compatible).
+    decimal? VatAmountOverride = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,

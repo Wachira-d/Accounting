@@ -119,7 +119,14 @@ public record InboundInvoiceLineRequest(
     string? Unit, decimal? VatRate,
     // Withholding-tax rate (%) for this line. Used on purchase-side docs
     // (Expense) so integration sync can auto-issue the WHT certificate.
-    decimal? WithholdingTaxRate = null);
+    decimal? WithholdingTaxRate = null,
+    // Explicit VAT amount (บาท) for this line. When the external system has
+    // ALREADY computed VAT — typically because the line mixes ภาษี 7% goods
+    // with ของยกเว้น (exempt) where a single VatRate can't express the true
+    // VAT — NextAcc honors THIS value instead of recomputing net × rate.
+    // Null = recompute as before (backward compatible). Prevents the
+    // "ยอดจ่าย ≠ ยอด NextAcc" mismatch that creates a phantom ค้างชำระ.
+    decimal? VatAmount = null);
 
 public record InboundPaymentRequest(
     string? ExternalId, string? ExternalRef,
