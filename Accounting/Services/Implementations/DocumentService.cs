@@ -6434,7 +6434,8 @@ public class DocumentService : IDocumentService
         // commits a sale we can't actually deliver.
         if (doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice)
         {
-            var lineCodes = doc.Lines.Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+            var lineCodes = (doc.Lines ?? new List<DocumentLine>())
+                .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
                 .Select(l => l.ProductCode!).Distinct().ToList();
             if (lineCodes.Count > 0)
             {
@@ -6517,7 +6518,7 @@ public class DocumentService : IDocumentService
         if (doc.DocumentType == DocumentType.PaymentVoucher
             && doc.PaymentType == Models.Enums.PaymentType.Cash)
         {
-            var lineAccountIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+            var lineAccountIds = (doc.Lines ?? new List<DocumentLine>()).Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
             if (lineAccountIds.Count > 0)
             {
                 var payableCodes = await _db.ChartOfAccounts.AsNoTracking()

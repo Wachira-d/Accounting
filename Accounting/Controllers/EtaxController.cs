@@ -97,8 +97,8 @@ public class EtaxController : ControllerBase
             { failures.Add(new EtaxRetryFailureDto(e.Id, e.DocumentNumber, ex.Message)); }
         }
         return Ok(new ApiResponse<EtaxRetryResultDto>(true,
-            new EtaxRetryResultDto(failed.Total, successes.Count, failures.Count, successes, failures),
-            $"Retry e-Tax: สำเร็จ {successes.Count}/{failed.Total} ฉบับ"));
+            new EtaxRetryResultDto(failed.TotalCount, successes.Count, failures.Count, successes, failures),
+            $"Retry e-Tax: สำเร็จ {successes.Count}/{failed.TotalCount} ฉบับ"));
     }
 
     public sealed record EtaxRetryResultDto(int TotalAttempted, int SuccessCount,
