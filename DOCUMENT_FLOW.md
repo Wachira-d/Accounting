@@ -89,6 +89,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   Vision/OCR → local distillation model → historical lookup (vendor's last doc)
   → rule defaults (VAT 7%, branch 00000, vendor default GL) → AI ตอน last resort
   (ผ่าน `IAiOrchestrator.AskAsync` per กฎเหล็ก #1)
+- **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
+  ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
+  ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
+  ที่ description ตรงกัน + drop phantom remainder ≤ ฿1. รันก่อน serialize ลง
+  `ExtractedItemsJson` → ทุก path (web UI + OCR API) ได้ไฟล์ items ที่สะอาด.
+- **Line reconcile (Case A/B/C/D)**: ทั้ง `CreateDocumentFromScanAsync` และ
+  `AutoCreateDocumentAsync` (OCR API path) ต้อง reconcile line amounts กับ
+  header subtotal/total ก่อนสร้าง `DocumentLine`:
+  - (A) ราคารวม VAT — `grossSum` อยู่ระหว่าง subtotal กับ total → ตั้ง
+    `PricesIncludeVat=true` + เติม line "ค่าขนส่ง/บริการอื่น" ถ้ามี gap
+  - (B) ราคาแยก VAT — `grossSum ≈ subtotal` → ไม่ปรับ
+  - (C) ส่วนลด — `grossSum > total` → คำนวณ `docDiscountPercent` ลงทุกบรรทัด
+  - (D) OCR ขาด — `grossSum < subtotal` → ปล่อยให้ user แก้
+  เดิม AutoCreate path ขาด step นี้ → OCR API สร้างเอกสารบรรทัดผิดต่างจาก
+  web UI flow.
 - **Quota refund**: ถ้า re-OCR (retry) ไม่ใช้ quota ใหม่ (`OcrService.cs`)
 
 ### 2.3 Integration ภายนอก
@@ -601,11 +616,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-23 — รอบ 12 (JE Builder phase 2_
-_migrate ReclassifyLine + FxRevaluation + UnifiedPaymentQueryService_
-_cross-domain aggregate + POS deposit field + Tip §50 ทวิ payout +_
-_RecurringLateFeeAccrualJob + LINE invoice delivery flex message +_
-_Budget scenario best/base/worst modeling)._
+_Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API phantom_
+_split-VAT line fix: SanitizeVatSplitArtifacts ตัด "(ส่วนมีภาษี)/_
+_(ส่วนไม่มีภาษี)" suffix + ยุบบรรทัดซ้ำ + drop phantom remainder; พอร์ต_
+_Case A/B/C/D reconcile logic เข้า AutoCreateDocumentAsync ให้ตรงกับ_
+_CreateDocumentFromScanAsync — OCR API กับ web UI สร้างเอกสารบรรทัดเหมือนกัน)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 

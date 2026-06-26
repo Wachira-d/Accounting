@@ -615,6 +615,18 @@ public class OcrService : IOcrService
                 }
             }
 
+            // 🔧 Sanitize phantom split-VAT line items BEFORE persistence.
+            // OfficeMate (และใบกำกับสไตล์เดียวกัน) มี footer แยก "Amount Exclude
+            // VAT (ส่วนที่มีภาษี)" + "Amount NON VAT (ส่วนที่ไม่มีภาษี)" — Typhoon/
+            // DeepSeek-VL บางครั้งอ่าน footer 2 บรรทัดนี้เป็น line items แยก
+            // (เช่น "Epson L6370 (ส่วนมีภาษี) 9,289.71" + "Epson L6370
+            // (ส่วนไม่มีภาษี) 0.01"). Sanitizer ตัด suffix + ยุบบรรทัดที่ซ้ำกัน
+            // ทิ้ง phantom remainder (≤ ฿1). ทำที่นี่ครั้งเดียวก่อน serialize →
+            // ทั้ง CreateDocumentFromScanAsync และ AutoCreateDocumentAsync ได้
+            // ประโยชน์เหมือนกัน (ก่อนหน้านี้ AutoCreate path ไม่มี reconcile →
+            // เอกสารที่สร้างจาก OCR API ได้บรรทัดผิดต่างจาก web UI).
+            SanitizeVatSplitArtifacts(extractedData);
+
             // Store extracted items and account suggestions
             if (extractedData.Items.Count > 0)
             {
@@ -2283,6 +2295,128 @@ public class OcrService : IOcrService
         if (string.IsNullOrEmpty(value)) return null;
         var digits = new string(value.Where(char.IsDigit).ToArray());
         return digits.Length == expectedLength ? digits : (digits.Length > 0 ? digits : null);
+    }
+
+    /// <summary>
+    /// ตัด "(ส่วนมีภาษี)" / "(ส่วนไม่มีภาษี)" / "(VATable)" / "(non-VAT)" /
+    /// "(VAT-included)" และคู่ขนานทั้งไทย+อังกฤษ ออกจากท้าย description ของ
+    /// item ที่ AI/OCR แตก footer summary ของใบกำกับ (เช่น OfficeMate
+    /// "Amount Exclude VAT" + "Amount NON VAT") เป็น line items หลอก. หลังตัด
+    /// suffix:
+    ///   • ยุบบรรทัดที่ description ตรงกันให้เหลือบรรทัดเดียว (sum amount/qty)
+    ///   • drop บรรทัดที่ amount + unit_price เป็น 0 หรือ ≤ ฿1 (rounding artifact)
+    /// Idempotent + side-effect-free นอกจาก mutate extractedData.Items.
+    /// </summary>
+    internal static void SanitizeVatSplitArtifacts(OcrExtractedData data)
+    {
+        if (data?.Items == null || data.Items.Count == 0) return;
+
+        // Suffixes ที่บ่งบอกว่าเป็น footer split — ไม่ใช่ line item จริง.
+        // ใช้ trailing-paren match (ตัดเฉพาะที่ขึ้นต้น "(" + จบ ")" ท้าย string)
+        // เพื่อไม่ไปแตะ "Epson L6370 (รุ่นปี 2024)" หรือ description ที่ใส่
+        // วงเล็บบอก spec จริง.
+        string[] splitMarkers =
+        {
+            "ส่วนมีภาษี", "ส่วนที่มีภาษี", "ส่วนคิดภาษี",
+            "ส่วนไม่มีภาษี", "ส่วนที่ไม่มีภาษี", "ส่วนยกเว้นภาษี",
+            "vatable", "non-vat", "non vat", "nonvat",
+            "vat included", "vat-included", "incl. vat", "incl vat",
+            "vat excluded", "vat-excluded", "excl. vat", "excl vat",
+            "with vat", "without vat",
+            "มีภาษี", "ไม่มีภาษี",   // shorter forms (fallback — checked AFTER longer matches above)
+        };
+
+        static string TrimSplitSuffix(string? desc, string[] markers)
+        {
+            if (string.IsNullOrWhiteSpace(desc)) return desc ?? "";
+            var s = desc.TrimEnd();
+            // ลบวงเล็บท้ายซ้ำๆ — เผื่อ AI ใส่ซ้อน "(...) (...)" (rare).
+            for (var safety = 0; safety < 3; safety++)
+            {
+                if (!s.EndsWith(")")) break;
+                var openIdx = s.LastIndexOf('(');
+                if (openIdx < 0) break;
+                var inside = s.Substring(openIdx + 1, s.Length - openIdx - 2)
+                    .Trim().ToLowerInvariant();
+                var match = false;
+                foreach (var m in markers)
+                {
+                    if (inside.Contains(m.ToLowerInvariant())) { match = true; break; }
+                }
+                if (!match) break;
+                s = s.Substring(0, openIdx).TrimEnd();
+            }
+            return s;
+        }
+
+        // 1) ตัด suffix
+        foreach (var item in data.Items)
+            item.Description = TrimSplitSuffix(item.Description, splitMarkers);
+
+        // 2) drop บรรทัดที่กลายเป็นว่าง / phantom remainder (amount + price ≤ ฿1)
+        //    Phantom เกิดจาก AI พยายาม "ปัด" ส่วนที่ไม่ได้ถูกหารกับ subtotal
+        //    เช่น 0.01 / 0.02 / 0.03 บาท — ไม่ใช่สินค้าจริง.
+        const decimal PHANTOM_THRESHOLD = 1m;
+        data.Items.RemoveAll(it =>
+        {
+            var amt = it.Amount ?? 0m;
+            var price = it.UnitPrice ?? 0m;
+            var emptyDesc = string.IsNullOrWhiteSpace(it.Description);
+            var isPhantom = Math.Abs(amt) <= PHANTOM_THRESHOLD
+                && Math.Abs(price) <= PHANTOM_THRESHOLD;
+            return emptyDesc && isPhantom;
+        });
+
+        // 3) ยุบบรรทัดที่ description ตรงกัน (เคสปกติของ VAT split: 2 บรรทัด
+        //    เป็นสินค้าเดียวกันถูกแยกตาม VATable/Non-VATable). Merge:
+        //       qty   = sum
+        //       amount = sum
+        //       unit_price = amount / qty (ถ้า qty > 0)
+        //    เก็บลำดับเดิมไว้ (LINQ GroupBy ไม่ stable → ทำเองด้วย dictionary).
+        var seen = new Dictionary<string, OcrExtractedLineItem>(StringComparer.OrdinalIgnoreCase);
+        var merged = new List<OcrExtractedLineItem>();
+        foreach (var item in data.Items)
+        {
+            var key = (item.Description ?? "").Trim();
+            if (string.IsNullOrEmpty(key))
+            {
+                merged.Add(item); // ปล่อยผ่าน — จะไม่ถูก merge
+                continue;
+            }
+            if (seen.TryGetValue(key, out var existing))
+            {
+                var addQty = item.Quantity ?? 0m;
+                var addAmt = item.Amount ?? 0m;
+                existing.Quantity = (existing.Quantity ?? 0m) + addQty;
+                existing.Amount = (existing.Amount ?? 0m) + addAmt;
+                if (existing.Quantity is decimal q && q > 0m && existing.Amount is decimal a)
+                    existing.UnitPrice = Math.Round(a / q, 2);
+                // SuggestedAccountCode/ProjectId — เก็บของ existing ไว้
+                if (string.IsNullOrEmpty(existing.SuggestedAccountCode)
+                    && !string.IsNullOrEmpty(item.SuggestedAccountCode))
+                    existing.SuggestedAccountCode = item.SuggestedAccountCode;
+            }
+            else
+            {
+                seen[key] = item;
+                merged.Add(item);
+            }
+        }
+
+        // 4) Final phantom-remainder drop — หลัง merge แล้วยังเหลือบรรทัดที่
+        //    เป็น noise (amount ≤ ฿1 + qty 0/1) จะหลุดมาเพราะ description
+        //    ไม่ตรงกับใครให้ merge ได้. ทิ้งเฉพาะกรณีมีหลายบรรทัด — ใบบรรทัด
+        //    เดียวต่อให้ ฿0 ก็ปล่อยไว้ (อาจเป็นใบบริการที่ผู้ใช้แก้ตอน review).
+        if (merged.Count > 1)
+        {
+            merged.RemoveAll(it =>
+                (it.Amount ?? 0m) <= PHANTOM_THRESHOLD
+                && (it.UnitPrice ?? 0m) <= PHANTOM_THRESHOLD
+                && (it.Quantity ?? 1m) <= 1m);
+        }
+
+        data.Items.Clear();
+        foreach (var it in merged) data.Items.Add(it);
     }
 
     /// <summary>
@@ -4304,9 +4438,63 @@ public class OcrService : IOcrService
         // Create document lines from extracted items or a single line
         if (extractedData?.Items.Count > 0)
         {
-            int lineOrder = 1;
-            foreach (var item in extractedData.Items)
+            // 🔧 Reconcile line amounts (same Case A/B/C/D as
+            // CreateDocumentFromScanAsync) — เดิม AutoCreate path ทาง OCR
+            // API ไม่มี reconcile ทำให้ใบที่ราคา/หน่วยรวม VAT มาแล้ว (เช่น
+            // OfficeMate Epson L6370 9,890 incl. + ขนส่ง 50 = 9,940) สร้าง
+            // เอกสารเลขผิดจาก web UI flow:
+            //   (A) ราคารวม VAT — grossSum อยู่ระหว่าง subtotal กับ total →
+            //       ตั้ง PricesIncludeVat + เติม line ค่าขนส่งถ้ามี gap
+            //   (B) ราคาแยก VAT — grossSum ≈ subtotal → ไม่ทำอะไร
+            //   (C) ส่วนลด — grossSum > total → คำนวณ docDiscountPercent
+            //   (D) OCR ขาด — grossSum < subtotal → ปล่อยให้ user แก้
+            var items = extractedData.Items.ToList();
+            var hdrSub   = scan.ExtractedSubTotal   ?? 0m;
+            var hdrTotal = scan.ExtractedTotalAmount ?? 0m;
+            var hdrVatHdr = scan.ExtractedVatAmount  ?? 0m;
+            var grossSum = items.Sum(x =>
+                (x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m)));
+            const decimal TOL = 1m;
+            var pricesIncludeVatFlag = hdrSub > 0m && hdrTotal > 0m && grossSum > 0m
+                && grossSum > hdrSub + TOL && grossSum <= hdrTotal + TOL;
+
+            decimal docDiscountPercent = 0m;
+            if (pricesIncludeVatFlag)
             {
+                document.PricesIncludeVat = true;
+                var missing = Math.Round(hdrTotal - grossSum, 2);
+                if (missing > TOL)
+                {
+                    items.Add(new OcrExtractedLineItem
+                    {
+                        Description = "ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)",
+                        Quantity = 1m,
+                        UnitPrice = missing,
+                        Amount = missing,
+                    });
+                }
+            }
+            else if (grossSum > hdrTotal + TOL && hdrTotal > 0m)
+            {
+                docDiscountPercent = Math.Round((grossSum - hdrTotal) / grossSum * 100m, 2);
+                foreach (var it in items)
+                {
+                    var gross = it.UnitPrice.HasValue ? it.UnitPrice.Value * (it.Quantity ?? 1m) : (it.Amount ?? 0m);
+                    it.Amount = Math.Round(gross * (1m - docDiscountPercent / 100m), 2);
+                }
+            }
+
+            // Pro-rate VAT ตามสัดส่วน amount ของแต่ละบรรทัด (paper rarely
+            // itemizes VAT per line). Remainder ลง line สุดท้ายให้ตัวเลข
+            // บรรทัดรวมตรงกับ header VAT เป๊ะ.
+            var lineAmountSum = items.Sum(x => x.Amount ?? 0);
+            var headerVat = scan.ExtractedVatAmount ?? 0;
+            decimal vatAssigned = 0;
+
+            int lineOrder = 1;
+            for (var i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
                 Guid? lineAccountId = expenseAccountId;
                 if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
                 {
@@ -4315,14 +4503,31 @@ public class OcrService : IOcrService
                     if (lineAccount != null) lineAccountId = lineAccount.Id;
                 }
 
+                var amount = item.Amount ?? 0;
+                decimal lineVat = 0;
+                if (headerVat > 0 && lineAmountSum > 0)
+                {
+                    lineVat = i == items.Count - 1
+                        ? Math.Round(headerVat - vatAssigned, 2)
+                        : Math.Round(headerVat * amount / lineAmountSum, 2);
+                    vatAssigned += lineVat;
+                }
+
                 document.Lines.Add(new DocumentLine
                 {
                     LineOrder = lineOrder++,
                     Description = item.Description ?? scan.DocumentType ?? "รายการจาก OCR",
                     Quantity = item.Quantity ?? 1,
+                    Unit = string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
-                    Amount = item.Amount ?? 0,
+                    DiscountPercent = docDiscountPercent,
+                    DiscountAmount = docDiscountPercent > 0m
+                        ? Math.Round((item.UnitPrice ?? item.Amount ?? 0) * (item.Quantity ?? 1m)
+                            - amount, 2)
+                        : 0m,
+                    Amount = amount,
                     VatRate = scan.ExtractedVatAmount > 0 ? 7 : 0,
+                    VatAmount = lineVat,
                     AccountId = lineAccountId,
                     // Per-line project allocation from the OCR review UI —
                     // user picks the project in /pages/ocr-review.html
