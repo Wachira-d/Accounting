@@ -109,6 +109,24 @@
         </div>
       </div>
 
+      <!-- แบบฟอร์มประกันสังคม รายเดือน: สปส.1-03 (เข้าใหม่) / สปส.6-09 (ออก) -->
+      <div class="card" style="padding:24px;margin-top:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div>
+            <h3 style="margin:0;font-size:16px">🧾 แบบฟอร์มประกันสังคม (เข้า/ออก พนักงาน)</h3>
+            <p class="text-gray-400" style="font-size:12px;margin:4px 0 0">
+              <b>สปส.1-03</b> ขึ้นทะเบียนพนักงานเข้าใหม่ (แจ้งภายใน 30 วันนับจากวันเริ่มงาน §34) ·
+              <b>สปส.6-09</b> แจ้งพนักงานออก (ภายในวันที่ 15 ของเดือนถัดไป).
+              ดึงตามเดือนที่เลือกด้านบน (ปี/เดือนของรายงาน)
+            </p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-secondary" onclick="Page.downloadSsoForm('sps103')">📥 สปส.1-03 (เข้าใหม่)</button>
+            <button class="btn btn-secondary" onclick="Page.downloadSsoForm('sps609')">📥 สปส.6-09 (แจ้งออก)</button>
+          </div>
+        </div>
+      </div>
+
       <!-- SSO year-config: เพดานค่าจ้าง + อัตราสมทบ ปรับได้รายปี
            (พรฎ. ขั้นบันได: 15,000 → 17,500 ปี 2569 → 20,000 ปี 2572 →
            23,000 ปี 2575) — แถว override บันทึกลง SsoYearConfigs -->
@@ -443,6 +461,36 @@ const Page = {
       a.click();
       URL.revokeObjectURL(url);
       Layout.toast('ดาวน์โหลดสำเร็จ');
+    } catch (e) { Layout.toast(e.message, 'error'); }
+  },
+
+  /** ดาวน์โหลด สปส.1-03 (เข้าใหม่) / สปส.6-09 (แจ้งออก) ตามเดือน/ปีที่เลือก */
+  async downloadSsoForm(form) {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const year = parseInt(document.getElementById('reportYear')?.value);
+    const month = parseInt(document.getElementById('reportMonth')?.value);
+    if (!year || !month) { Layout.toast('เลือกปีและเดือนก่อน', 'error'); return; }
+    // reportYear ใส่เป็น พ.ศ. → แปลงเป็น ค.ศ.
+    const ceYear = year > 2400 ? year - 543 : year;
+    const label = form === 'sps103' ? 'สปส.1-03' : 'สปส.6-09';
+    try {
+      const res = await fetch(`/api/companies/${cid}/tax-filing-export/${form}?year=${ceYear}&month=${month}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (!res.ok) {
+        let msg = 'ดาวน์โหลดไม่สำเร็จ';
+        try { const j = await res.json(); msg = j?.message || j?.data?.message || msg; } catch {}
+        Layout.toast(msg, 'error'); return;
+      }
+      const blob = await res.blob();
+      const dispo = res.headers.get('content-disposition') || '';
+      const m = dispo.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      const filename = m ? decodeURIComponent(m[1]) : `${form.toUpperCase()}_${ceYear}${String(month).padStart(2,'0')}.txt`;
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+      a.click();
+      URL.revokeObjectURL(url);
+      Layout.toast(`ดาวน์โหลด ${label} สำเร็จ`);
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
 

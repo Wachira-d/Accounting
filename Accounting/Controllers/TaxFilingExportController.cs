@@ -157,6 +157,24 @@ public class TaxFilingExportController : ControllerBase
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
+    /// <summary>Export สปส.1-03 (ขึ้นทะเบียนผู้ประกันตน) — sensitive (payroll).</summary>
+    [HttpGet("sps103")]
+    public async Task<IActionResult> ExportSps103(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var block = await CheckPayrollAsync(companyId); if (block != null) return block;
+        var result = await _exportService.ExportSps103Async(companyId, year, month);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Export สปส.6-09 (แจ้งสิ้นสุดความเป็นผู้ประกันตน) — sensitive (payroll).</summary>
+    [HttpGet("sps609")]
+    public async Task<IActionResult> ExportSps609(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var block = await CheckPayrollAsync(companyId); if (block != null) return block;
+        var result = await _exportService.ExportSps609Async(companyId, year, month);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
     /// <summary>Get export summary (preview) without downloading</summary>
     [HttpGet("preview/{formCode}")]
     public async Task<ActionResult<ApiResponse<TaxFilingExportResult>>> Preview(
@@ -166,7 +184,7 @@ public class TaxFilingExportController : ControllerBase
         if (member != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)member;
         var code = formCode.ToUpper();
         // Block preview of payroll-derived forms behind the same Payroll gate.
-        if (code is "PND1" or "PND1K" or "SSO110")
+        if (code is "PND1" or "PND1K" or "SSO110" or "SPS103" or "SPS609")
         {
             var block = await CheckPayrollAsync(companyId); if (block != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)block;
         }
@@ -183,6 +201,8 @@ public class TaxFilingExportController : ControllerBase
             "PP36" => await _exportService.ExportPp36Async(companyId, year, month),
             "PND54" => await _exportService.ExportPnd54Async(companyId, year, month),
             "SSO110" => await _exportService.ExportSso110Async(companyId, year, month),
+            "SPS103" => await _exportService.ExportSps103Async(companyId, year, month),
+            "SPS609" => await _exportService.ExportSps609Async(companyId, year, month),
             _ => throw new ArgumentException($"ไม่รู้จักรหัสแบบฟอร์ม: {formCode}")
         };
 

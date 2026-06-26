@@ -477,6 +477,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count) | JE Revenue/Expense + Document.NonDeductibleAmount |
 | **ภ.ง.ด.51** (ครึ่งปี) | `ExportPnd51Async` | half-year P&L |
 | **สปส.1-10** (ประกันสังคม) | `ExportSso110Async` (`:412`) | PayrollRun + Employee |
+| **สปส.1-03** (ขึ้นทะเบียนเข้าใหม่) | `ExportSps103Async` | Employee.StartDate ในเดือน + IsSubjectToSocialSecurity |
+| **สปส.6-09** (แจ้งออก) | `ExportSps609Async` | Employee.EndDate ในเดือน |
+
+> **นำส่ง สปส. (สปส.1-10):** `PayrollService.SettleSocialSecurityAsync` post JE
+> Dr 21815 / Cr Bank + เงินเพิ่ม §49 2%/เดือน. **Deadline tracker:** ตอนสร้าง/
+> เลิกจ้างพนักงาน → `TrackSsoEmployeeFilingAsync` สร้าง `ComplianceFiling`
+> (SSO_NewEmployee due+30วัน / SSO_Termination due วันที่15เดือนถัดไป).
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
@@ -645,10 +652,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ---
 
 _Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API = web UI:_
-_SanitizeVatSplitArtifacts; AutoCreate delegate ไป CreateDocumentFromScanAsync;_
-_DRAFT- placeholder ตามกฎ §86/4; แหล่งเงิน Cr 3-layer priority (metadata →_
-_CompanySettings.DefaultPaymentAccountId → lowest-code) +_
-_ReclassifyPaymentSourceAsync แก้แหล่งเงินหลัง approve ด้วย correcting-JE)._
+_SanitizeVatSplitArtifacts; AutoCreate delegate; DRAFT- placeholder; แหล่งเงิน_
+_3-layer + ReclassifyPaymentSourceAsync. รอบ 14: ประกันสังคมครบวงจร —_
+_SettleSocialSecurityAsync (Dr 21815/Cr Bank + late fee §49), floor 1,650,_
+_กองทุนเงินทดแทน กท.20ก, สปส.1-03/6-09 export + ComplianceFiling deadline tracker)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 

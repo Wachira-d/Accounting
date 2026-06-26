@@ -261,6 +261,16 @@ public class PayrollService : IPayrollService
         _db.Set<Employee>().Add(employee);
         await _db.SaveChangesAsync();
 
+        // สปส.1-03 — ขึ้นทะเบียนผู้ประกันตนภายใน 30 วันนับจากวันเริ่มงาน (§34).
+        // สร้าง ComplianceFiling row เป็น deadline tracker ให้ surface ในปฏิทิน
+        // compliance ที่มีอยู่ (ไม่ต้องสร้าง UI ใหม่). เฉพาะพนักงานที่อยู่ในระบบ สปส.
+        if (employee.IsSubjectToSocialSecurity)
+        {
+            await TrackSsoEmployeeFilingAsync(companyId, "SSO_NewEmployee", "สปส.1-03",
+                employee.StartDate, employee.StartDate.AddDays(30),
+                $"ขึ้นทะเบียน {employee.FirstNameTh} {employee.LastNameTh} ({employee.EmployeeCode}) — ภายใน 30 วัน");
+        }
+
         await FireWebhookAsync(companyId, "employee.created", new
         {
             id = employee.Id, employeeCode = employee.EmployeeCode,
@@ -808,6 +818,16 @@ public class PayrollService : IPayrollService
                 user.Status = UserStatus.Inactive;
         }
 
+        // สปส.6-09 — แจ้งสิ้นสุดความเป็นผู้ประกันตน ภายในวันที่ 15 ของเดือนถัดไป.
+        // deadline tracker ผ่าน ComplianceFiling (surface ในปฏิทิน compliance).
+        if (employee.IsSubjectToSocialSecurity)
+        {
+            var sps609Due = new DateTime(endDate.Year, endDate.Month, 15).AddMonths(1);
+            await TrackSsoEmployeeFilingAsync(companyId, "SSO_Termination", "สปส.6-09",
+                endDate, sps609Due,
+                $"แจ้งออก {employee.FirstNameTh} {employee.LastNameTh} ({employee.EmployeeCode}) — ภายในวันที่ 15 ของเดือนถัดไป");
+        }
+
         await _db.SaveChangesAsync();
         await FireWebhookAsync(companyId, "employee.terminated", new
         {
@@ -815,6 +835,51 @@ public class PayrollService : IPayrollService
             endDate = employee.EndDate,
             externalId = employee.ExternalId, externalSystem = employee.ExternalSystem,
         });
+    }
+
+    /// <summary>สร้าง ComplianceFiling deadline tracker สำหรับ สปส.1-03/6-09
+    /// (event-driven ตอนพนักงานเข้า/ออก). Idempotent: ถ้ามี row เดียวกัน
+    /// (type + เดือน + ปี) อยู่แล้วไม่สร้างซ้ำ. Fire-and-forget — fail
+    /// ไม่ทำให้ create/terminate พัง (deadline tracker เป็น nice-to-have).</summary>
+    private async Task TrackSsoEmployeeFilingAsync(
+        Guid companyId, string filingType, string formCode,
+        DateTime eventDate, DateTime dueDate, string note)
+    {
+        try
+        {
+            var year = eventDate.Year;
+            var month = eventDate.Month;
+            var exists = await _db.Set<ComplianceFiling>().AnyAsync(f =>
+                f.CompanyId == companyId && f.FilingType == filingType
+                && f.Year == year && f.Month == month && f.Status == "NotStarted");
+            if (exists)
+            {
+                // มี row เดือนนี้แล้ว → append note (มีหลายคนเข้า/ออกเดือนเดียวกัน)
+                var existing = await _db.Set<ComplianceFiling>().FirstAsync(f =>
+                    f.CompanyId == companyId && f.FilingType == filingType
+                    && f.Year == year && f.Month == month && f.Status == "NotStarted");
+                existing.Notes = string.IsNullOrWhiteSpace(existing.Notes)
+                    ? note : existing.Notes + "\n" + note;
+            }
+            else
+            {
+                _db.Set<ComplianceFiling>().Add(new ComplianceFiling
+                {
+                    CompanyId = companyId,
+                    FilingType = filingType,
+                    FormCode = formCode,
+                    Year = year,
+                    Month = month,
+                    DueDate = dueDate,
+                    Status = "NotStarted",
+                    Notes = note,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "TrackSsoEmployeeFiling failed (non-fatal) for {Type}", filingType);
+        }
     }
 
     // ===== Payroll Items =====

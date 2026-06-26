@@ -399,6 +399,91 @@ public class TaxFilingExportService : ITaxFilingExportService
     }
 
     // =====================================================================
+    // สปส.1-03 — ขึ้นทะเบียนผู้ประกันตน (พนักงานเข้าใหม่ภายในเดือนนั้น)
+    // กฎหมาย: นายจ้างต้องแจ้งภายใน 30 วันนับจากวันเริ่มงาน (พ.ร.บ.ประกันสังคม §34)
+    // Layout (pipe-delimited, อ้างอิงโครงสร้าง portal e-Service):
+    //   H|TaxId|BranchCode|CompanyName|Period(YYYYMM)|TotalRecords
+    //   D|Seq|CitizenId|TitleCode|FirstName|LastName|StartDate(yyyyMMdd)|Salary|HospitalPref
+    //   T|TotalRecords
+    // =====================================================================
+    public async Task<TaxFilingExportResult> ExportSps103Async(Guid companyId, int year, int month)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var thaiYear = year + 543;
+        var period = $"{thaiYear:D4}{month:D2}";
+        var periodStart = new DateTime(year, month, 1);
+        var periodEnd = periodStart.AddMonths(1).AddDays(-1);
+
+        // พนักงานที่ "เริ่มงาน" ภายในเดือนนั้น + อยู่ในระบบประกันสังคม
+        var newEmployees = await _db.Set<Employee>().AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted
+                && e.IsSubjectToSocialSecurity
+                && e.StartDate >= periodStart && e.StartDate <= periodEnd)
+            .OrderBy(e => e.StartDate).ThenBy(e => e.EmployeeCode)
+            .ToListAsync();
+
+        var sb = new StringBuilder();
+        var branchSeq = company.BranchCode ?? "00000";
+        sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{period}|{newEmployees.Count}");
+        int seq = 1;
+        foreach (var emp in newEmployees)
+        {
+            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}" +
+                $"|{emp.StartDate:yyyyMMdd}|{emp.BaseSalary:F2}|{emp.SocialSecurityHospital}");
+        }
+        sb.AppendLine($"T|{newEmployees.Count}");
+
+        return new TaxFilingExportResult(
+            "SPS103", "สปส.1-03", $"SPS103_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            newEmployees.Count, newEmployees.Sum(e => e.BaseSalary), 0,
+            $"สปส.1-03 (ขึ้นทะเบียนผู้ประกันตน) เดือน {month}/{year} จำนวน {newEmployees.Count} คน" +
+            (newEmployees.Count > 0 ? $" — แจ้งภายใน 30 วันนับจากวันเริ่มงาน (§34)" : " — ไม่มีพนักงานเข้าใหม่"));
+    }
+
+    // =====================================================================
+    // สปส.6-09 — แจ้งสิ้นสุดความเป็นผู้ประกันตน (พนักงานออกภายในเดือนนั้น)
+    // กฎหมาย: นายจ้างต้องแจ้งภายในวันที่ 15 ของเดือนถัดจากเดือนที่ลาออก
+    // Layout:
+    //   H|TaxId|BranchCode|CompanyName|Period(YYYYMM)|TotalRecords
+    //   D|Seq|CitizenId|SSNumber|TitleCode|FirstName|LastName|EndDate(yyyyMMdd)|ReasonCode
+    //   T|TotalRecords
+    // ReasonCode: 1=ลาออก, 2=เลิกจ้าง, 3=เกษียณ, 4=เสียชีวิต, 9=อื่นๆ (default 1)
+    // =====================================================================
+    public async Task<TaxFilingExportResult> ExportSps609Async(Guid companyId, int year, int month)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var thaiYear = year + 543;
+        var period = $"{thaiYear:D4}{month:D2}";
+        var periodStart = new DateTime(year, month, 1);
+        var periodEnd = periodStart.AddMonths(1).AddDays(-1);
+
+        // พนักงานที่ "สิ้นสุดการจ้าง" (EndDate) ภายในเดือนนั้น + เคยอยู่ในระบบ สปส.
+        var leavers = await _db.Set<Employee>().AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted
+                && e.IsSubjectToSocialSecurity
+                && e.EndDate != null && e.EndDate >= periodStart && e.EndDate <= periodEnd)
+            .OrderBy(e => e.EndDate).ThenBy(e => e.EmployeeCode)
+            .ToListAsync();
+
+        var sb = new StringBuilder();
+        var branchSeq = company.BranchCode ?? "00000";
+        sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{period}|{leavers.Count}");
+        int seq = 1;
+        foreach (var emp in leavers)
+        {
+            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{emp.SocialSecurityNumber}|{TitleCode(emp.TitleTh)}" +
+                $"|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.EndDate:yyyyMMdd}|1");
+        }
+        sb.AppendLine($"T|{leavers.Count}");
+
+        return new TaxFilingExportResult(
+            "SPS609", "สปส.6-09", $"SPS609_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            leavers.Count, 0, 0,
+            $"สปส.6-09 (แจ้งออก) เดือน {month}/{year} จำนวน {leavers.Count} คน" +
+            (leavers.Count > 0 ? " — แจ้งภายในวันที่ 15 ของเดือนถัดไป" : " — ไม่มีพนักงานออก"));
+    }
+
+    // =====================================================================
     // Helpers
     // =====================================================================
 
