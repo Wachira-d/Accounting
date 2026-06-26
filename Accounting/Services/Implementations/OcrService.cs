@@ -1004,10 +1004,17 @@ public class OcrService : IOcrService
                     {
                         var localConf = (decimal)extractedData.FieldConfidence.GetValueOrDefault("DebitAccount", 0);
                         using var glCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                        // vendorIndustry = ประเภทธุรกิจของ "ผู้ขาย" (ไม่ใช่บริษัทเรา!)
+                        // เดิมส่ง companyContext.IndustryType ผิด — ทำให้ AI คิดว่า
+                        // ผู้ขายเป็นธุรกิจเดียวกับเรา (เช่นใบปั๊มน้ำมัน → AI เห็น
+                        // "vendor.industry=Hotel" เลยเดาว่าเป็นของใช้โรงแรม). company
+                        // industry ส่งแยกผ่าน businessContext ใน augmenter อยู่แล้ว.
+                        // DBD ยังไม่มี vendor TSIC ชัด → ส่ง null ให้ AI อนุมานจาก
+                        // ชื่อผู้ขาย + รหัสสินค้า/หน่วย ตาม decode rules ใน prompt.
                         var glResult = await _aiAugmenter.SuggestGlAccountAsync(
                             companyId, scanResult.Id,
                             extractedData.VendorName, extractedData.VendorTaxId,
-                            companyContext?.IndustryType.ToString(),
+                            extractedData.DbdJuristicType,   // ประเภทนิติบุคคลผู้ขาย (ถ้า DBD เจอ) มิฉะนั้น null
                             aiLineDesc, extractedData.TotalAmount ?? 0m, "THB",
                             extractedData.DebitAccountCode, localConf,
                             glCts.Token);
