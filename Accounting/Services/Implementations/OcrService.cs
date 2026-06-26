@@ -3589,7 +3589,8 @@ public class OcrService : IOcrService
         // of the sequence-number assignment + insert, so concurrent OCR
         // creations don't collide.
         await using var txn = await _db.Database.BeginTransactionAsync();
-        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
+        // เลขเอกสารใช้ yyyyMM ของ DocumentDate ให้สอดคล้องกัน
+        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType, docDate);
         var document = new Document
         {
             CompanyId = companyId,
@@ -4273,7 +4274,8 @@ public class OcrService : IOcrService
         var autoIsPaid = docType == DocumentType.PaymentVoucher;
 
         await using var txn = await _db.Database.BeginTransactionAsync();
-        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType);
+        // เลขเอกสารใช้ yyyyMM ของ DocumentDate (autoDocDate) ให้สอดคล้องกัน
+        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType, autoDocDate);
         var document = new Document
         {
             CompanyId = companyId,

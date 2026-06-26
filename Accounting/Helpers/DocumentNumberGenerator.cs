@@ -39,25 +39,40 @@ public static class DocumentNumberGenerator
         _ => "DOC"
     };
 
-    public static async Task<string> NextAsync(AccountingDbContext db, Guid companyId, DocumentType type)
+    public static Task<string> NextAsync(AccountingDbContext db, Guid companyId, DocumentType type)
+        => NextAsync(db, companyId, type, documentDate: null);
+
+    /// <summary>เลขเอกสารใช้ yyyyMM ของ <paramref name="documentDate"/> (ถ้าระบุ)
+    /// — เลขกับวันที่จะสอดคล้องกันเสมอ. เดิมใช้ "เดือนปัจจุบัน" ของเครื่อง
+    /// → เอกสารวันที่ 28/05 ที่ approve วันที่ 1/06 จะได้ "PV-202606-0001"
+    /// (ผิด — เลขควรเป็น 202605). null = fallback bkkNow (เคสไม่รู้วันที่
+    /// ตอน generate เช่น JE manual).</summary>
+    public static async Task<string> NextAsync(AccountingDbContext db, Guid companyId, DocumentType type,
+        DateTime? documentDate)
     {
         var prefix = GetPrefix(type);
         var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
 
-        // BUG FIX (TZ): ใช้ Asia/Bangkok แทน UTC. เดิม UtcNow ที่
-        // 00:00-06:59 BKK ของวันแรกของเดือน = previous month UTC →
-        // เอกสารที่สร้างกลางคืน 7 ชม.แรกของเดือนใหม่ ได้เลขเดือนก่อน
-        // (เช่น 1 มี.ค. 03:00 BKK → "INV-202402-001" แทน "INV-202403-001").
-        DateTime bkkNow;
-        try
+        // เลือกเดือนจาก DocumentDate ก่อน — สอดคล้องกับวันที่ลงในเอกสาร.
+        // Fallback bkkNow (UtcNow → Asia/Bangkok) เคสไม่ส่ง: เลขกลางคืน
+        // 7 ชม.แรกของเดือนใหม่ใน UTC = previous month → ใช้ BKK TZ กัน drift.
+        DateTime yearMonthSource;
+        if (documentDate.HasValue)
         {
-            var bkkTz = TimeZoneInfo.FindSystemTimeZoneById(
-                OperatingSystem.IsWindows() ? "SE Asia Standard Time" : "Asia/Bangkok");
-            bkkNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, bkkTz);
+            yearMonthSource = documentDate.Value;
         }
-        catch { bkkNow = DateTime.UtcNow.AddHours(7); }   // hardcoded fallback (+07:00 ตลอดปี ไม่มี DST)
-        var yearMonth = bkkNow.ToString("yyyyMM");
+        else
+        {
+            try
+            {
+                var bkkTz = TimeZoneInfo.FindSystemTimeZoneById(
+                    OperatingSystem.IsWindows() ? "SE Asia Standard Time" : "Asia/Bangkok");
+                yearMonthSource = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, bkkTz);
+            }
+            catch { yearMonthSource = DateTime.UtcNow.AddHours(7); }
+        }
+        var yearMonth = yearMonthSource.ToString("yyyyMM");
         var docPrefix = $"{prefix}-{yearMonth}-";
         // BUG FIX: previously used `MaxAsync()` over the string column. That
         // returns the LEXICOGRAPHIC max — "9999" > "10000" because '9' > '1'.
