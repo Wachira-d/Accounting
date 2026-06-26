@@ -4134,6 +4134,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationRatePercent" decimal(4,2) NOT NULL DEFAULT 0.2;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WorkersCompensationEnabled" boolean NOT NULL DEFAULT false;""",
 
+            // ===== CompanySettings: §86/4 hard-block opt-in =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EnforceFullTaxInvoiceFields" boolean NOT NULL DEFAULT false;""",
+
             // ===== AuditLogs: DB-level immutability (tamper-evident defense-in-depth) =====
             // app layer ตัด AuditLog ออกจาก ChangeTracker อยู่แล้ว (append-only)
             // แต่ DBA/SQL ตรง ๆ ยังลบได้ → เพิ่ม trigger บล็อค DELETE ที่ระดับ DB

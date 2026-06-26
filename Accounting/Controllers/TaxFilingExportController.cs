@@ -148,6 +148,17 @@ public class TaxFilingExportController : ControllerBase
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
+    /// <summary>Export ภ.ง.ด.51 (Half-year CIT §67 ทวิ). คำนวณกำไรครึ่งปี + ประมาณการ
+    /// ทั้งปี + ภาษีครึ่งปี = annual/2. ยื่นภายใน 2 เดือนนับจากวันสุดท้ายของ
+    /// 6 เดือนแรก. รอบ < 12 เดือน (ปีแรก) ยกเว้น.</summary>
+    [HttpGet("pnd51")]
+    public async Task<IActionResult> ExportPnd51(Guid companyId, [FromQuery] int year)
+    {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
+        var result = await _exportService.ExportPnd51Async(companyId, year);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
     /// <summary>Export สปส.1-10 (SSO monthly contribution) — sensitive (payroll).</summary>
     [HttpGet("sso110")]
     public async Task<IActionResult> ExportSso110(Guid companyId, [FromQuery] int year, [FromQuery] int month)
@@ -203,6 +214,7 @@ public class TaxFilingExportController : ControllerBase
             "SSO110" => await _exportService.ExportSso110Async(companyId, year, month),
             "SPS103" => await _exportService.ExportSps103Async(companyId, year, month),
             "SPS609" => await _exportService.ExportSps609Async(companyId, year, month),
+            "PND51" => await _exportService.ExportPnd51Async(companyId, year),
             _ => throw new ArgumentException($"ไม่รู้จักรหัสแบบฟอร์ม: {formCode}")
         };
 

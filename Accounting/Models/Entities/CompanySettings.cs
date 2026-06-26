@@ -196,6 +196,14 @@ public class CompanySettings : TenantEntity
     // Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน metadata จะชนะค่านี้อีกที.
     public Guid? DefaultPaymentAccountId { get; set; }
 
+    // ── §86/4 hard-enforcement (opt-in) ──
+    // เมื่อ true: ApproveDocumentAsync จะ block (throw) ถ้าใบกำกับ/ใบเสร็จ/CN/DN
+    // ขาด field บังคับ §86/4 (BuyerTaxId 13 หลัก, BuyerAddress, BuyerBranchCode
+    // 5 หลัก). default false = พฤติกรรมเดิม (soft warning, ผู้ใช้กด acknowledge
+    // ผ่านได้). บริษัทที่ต้องการเข้มเปิด flag นี้ → กัน operator-error ที่
+    // approve ใบไม่ครบ §86/4 ก่อนจะถูกตรวจสรรพากร.
+    public bool EnforceFullTaxInvoiceFields { get; set; } = false;
+
     // ── กองทุนเงินทดแทน (กท.20ก, พ.ร.บ.เงินทดแทน §44) ──
     // นายจ้างฝ่ายเดียวสมทบ 0.2%–1.0% ของค่าจ้างต่อปี (cap 240,000 บาท/คน/ปี)
     // อัตราตามประเภทกิจการ 10 หมวด: สำนักงาน 0.2%, ค้าปลีก 0.4%, ก่อสร้าง 1.0%

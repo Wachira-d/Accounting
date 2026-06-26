@@ -1665,6 +1665,36 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ใบลดหนี้ต้องระบุเหตุผล (คืนสินค้า / ส่วนลด / ปรับยอด / ตัดยอด) ก่อนอนุมัติ");
 
+        // §86/4 hard-block (opt-in via CompanySettings.EnforceFullTaxInvoiceFields).
+        // เมื่อบริษัทเปิด flag นี้ → block approval ของใบกำกับ/ใบเสร็จ/CN/DN
+        // ที่ขาด field บังคับ (BuyerTaxId 13 หลัก + BuyerAddress + BuyerBranchCode 5 หลัก).
+        // กัน operator-error: ตอนนี้ระบบเตือนแล้ว user กด acknowledge ผ่านได้ →
+        // ใบกำกับที่ไม่ครบ §86/4 หลุดเข้า GL → ลูกค้ารับใบไปใช้ภาษีซื้อไม่ได้.
+        var rd864Types = new[] { DocumentType.TaxInvoice, DocumentType.Receipt,
+            DocumentType.DebitNote, DocumentType.CreditNote };
+        var enforce864 = await _db.CompanySettings.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => (bool?)c.EnforceFullTaxInvoiceFields)
+            .FirstOrDefaultAsync() ?? false;
+        if (enforce864 && rd864Types.Contains(doc.DocumentType) && doc.VatAmount > 0
+            && doc.Contact != null)
+        {
+            var missing = new List<string>();
+            var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();
+            if (btid != 13) missing.Add("เลขผู้เสียภาษีผู้ซื้อ 13 หลัก");
+            if (string.IsNullOrWhiteSpace(doc.Contact.Address)) missing.Add("ที่อยู่ผู้ซื้อ");
+            // SupplierBranchCode = สาขาผู้ขาย (เก็บฝั่งซื้อ); ฝั่งขายใช้
+            // Contact.BranchCode สำหรับสาขาผู้ซื้อ. ตรวจฝั่งขาย (TaxInvoice
+            // ที่เรา = ผู้ขาย).
+            var buyerBr = doc.Contact.BranchCode ?? "";
+            var buyerBrDigits = new string(buyerBr.Where(char.IsDigit).ToArray());
+            if (buyerBrDigits.Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
+            if (missing.Count > 0)
+                throw new InvalidOperationException(
+                    $"⛔ §86/4: ใบกำกับขาด field บังคับ — {string.Join(", ", missing)}. " +
+                    "เปิด setting 'บังคับ §86/4 ครบทุก field' ไว้ → ต้องเติมก่อนอนุมัติ");
+        }
+
         // Enforce CompanySettings.RequireApprovalForDocuments: when the
         // approval rail is on and the document's amount crosses the threshold,
         // refuse direct approve and force the multi-step SignatureApproval

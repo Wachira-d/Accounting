@@ -45,6 +45,12 @@ public interface ITaxFilingExportService
     /// <summary>ภ.พ.36 — Foreign Service VAT self-assessment.</summary>
     Task<TaxFilingExportResult> ExportPp36Async(Guid companyId, int year, int month);
 
+    /// <summary>ภ.ง.ด.51 — Half-year CIT (รอบครึ่งปี §67 ทวิ). คำนวณกำไรสุทธิ
+    /// 6 เดือนแรกของรอบบัญชี → ประมาณการทั้งปี × 2 → ภาษีครึ่งปี = annual/2.
+    /// SME rate (ทุน ≤ 5M + รายได้ ≤ 30M) ใช้ขั้นบันได 0/15/20%, อื่น ๆ 20%.
+    /// รอบ < 12 เดือน (ปีแรก) คืน "ยกเว้น".</summary>
+    Task<TaxFilingExportResult> ExportPnd51Async(Guid companyId, int year);
+
     /// <summary>ภ.ง.ด.54 — WHT จาก foreign vendor (จ่ายค่าบริการ ดอกเบี้ย
     /// ค่าสิทธิ์ ฯลฯ ไปต่างประเทศ) ผู้จ่ายในไทยต้องหัก ณ ที่จ่าย ตาม DTA
     /// (15% สำหรับประเทศไม่มีอนุสัญญา / 5-15% มี DTA). ยื่นภายในวันที่ 7
