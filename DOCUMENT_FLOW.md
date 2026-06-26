@@ -94,16 +94,23 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
   ที่ description ตรงกัน + drop phantom remainder ≤ ฿1. รันก่อน serialize ลง
   `ExtractedItemsJson` → ทุก path (web UI + OCR API) ได้ไฟล์ items ที่สะอาด.
-- **Line reconcile (Case A/B/C/D)**: ทั้ง `CreateDocumentFromScanAsync` และ
-  `AutoCreateDocumentAsync` (OCR API path) ต้อง reconcile line amounts กับ
-  header subtotal/total ก่อนสร้าง `DocumentLine`:
+- **Single create path (กฎ: ห้ามมี path คู่ขนาน)**: ทั้ง web UI ("สร้างเอกสาร")
+  และ OCR API (`autoCreate=true`) สร้างเอกสารผ่าน **`CreateDocumentFromScanAsync`
+  ตัวเดียวกัน**. `AutoCreateDocumentAsync` (เรียกตอน scan ผ่าน confidence gate)
+  เป็น thin wrapper: `SaveChangesAsync()` (persist scan fields) → delegate ไป
+  `CreateDocumentFromScanAsync(scan.Id, targetType=null)`. เดิมเป็น
+  implementation คู่ขนานที่ "ง่ายกว่า" → OCR API ได้เอกสารไม่ตรงกับอัปโหลดผ่าน
+  เว็บ (ขาด WHT base reconstruct, supplier-invoice ref ภพ.30, bank/payment
+  account, sales-side contact, PO linkage, CertInLieu fields, line reconcile,
+  GL feedback, RD-compliance). ตอนนี้ data point ทุกตัวตรงกัน.
+- **Line reconcile (Case A/B/C/D)** ใน `CreateDocumentFromScanAsync` (ใช้ร่วม
+  ทั้ง 2 path) — reconcile line amounts กับ header subtotal/total ก่อนสร้าง
+  `DocumentLine`:
   - (A) ราคารวม VAT — `grossSum` อยู่ระหว่าง subtotal กับ total → ตั้ง
     `PricesIncludeVat=true` + เติม line "ค่าขนส่ง/บริการอื่น" ถ้ามี gap
   - (B) ราคาแยก VAT — `grossSum ≈ subtotal` → ไม่ปรับ
   - (C) ส่วนลด — `grossSum > total` → คำนวณ `docDiscountPercent` ลงทุกบรรทัด
   - (D) OCR ขาด — `grossSum < subtotal` → ปล่อยให้ user แก้
-  เดิม AutoCreate path ขาด step นี้ → OCR API สร้างเอกสารบรรทัดผิดต่างจาก
-  web UI flow.
 - **Quota refund**: ถ้า re-OCR (retry) ไม่ใช้ quota ใหม่ (`OcrService.cs`)
 
 ### 2.3 Integration ภายนอก
@@ -616,11 +623,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-_Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API phantom_
-_split-VAT line fix: SanitizeVatSplitArtifacts ตัด "(ส่วนมีภาษี)/_
-_(ส่วนไม่มีภาษี)" suffix + ยุบบรรทัดซ้ำ + drop phantom remainder; พอร์ต_
-_Case A/B/C/D reconcile logic เข้า AutoCreateDocumentAsync ให้ตรงกับ_
-_CreateDocumentFromScanAsync — OCR API กับ web UI สร้างเอกสารบรรทัดเหมือนกัน)._
+_Last verified against codebase: 2026-06-26 — รอบ 13 (OCR API = web UI:_
+_SanitizeVatSplitArtifacts ตัด "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)" + ยุบบรรทัดซ้ำ +_
+_drop phantom remainder; AutoCreateDocumentAsync delegate ไป_
+_CreateDocumentFromScanAsync ทั้งหมด — ลบ path คู่ขนาน, ทุก data point ตรงกัน:_
+_WHT base, supplier-invoice ภพ.30, bank/payment account, line reconcile, GL feedback)._
 
 ## รายการที่ผ่านมาเรียงตามรอบ
 

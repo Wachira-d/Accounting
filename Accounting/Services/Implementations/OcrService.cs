@@ -4368,201 +4368,35 @@ public class OcrService : IOcrService
 
     private async Task AutoCreateDocumentAsync(Guid companyId, OcrScanResult scan, OcrExtractedData? extractedData = null)
     {
-        // Prefer the inferred TargetDocumentType (set by OcrDocumentRoleInferrer).
-        // Fall back to the legacy scanned-type-based mapping for older rows that
-        // pre-date the inference step.
-        DocumentType docType;
-        if (!string.IsNullOrEmpty(scan.TargetDocumentType)
-            && Enum.TryParse<DocumentType>(scan.TargetDocumentType, ignoreCase: true, out var inferredTarget))
-        {
-            docType = inferredTarget;
-        }
-        else
-        {
-            docType = scan.DocumentType switch
-            {
-                "Invoice" or "TaxInvoice" => DocumentType.PurchaseInvoice,
-                "Receipt" => DocumentType.PaymentVoucher,   // paid receipt → payment voucher
-                "CreditNote" => DocumentType.CreditNote,
-                "DebitNote" => DocumentType.DebitNote,
-                "CertificateInLieu" => DocumentType.CertificateInLieu,
-                _ => DocumentType.Expense
-            };
-        }
-
-        // Resolve expense account from suggestions
-        Guid? expenseAccountId = null;
-        if (extractedData?.DebitAccountCode != null)
-        {
-            var account = await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == extractedData.DebitAccountCode && !a.IsDeleted);
-            expenseAccountId = account?.Id;
-        }
-
-        var autoDocDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(scan.ExtractedDate ?? DateTime.UtcNow);
-        DateTime? autoDueDate = scan.PaymentTermsDays.HasValue
-            ? autoDocDate.AddDays(scan.PaymentTermsDays.Value)
-            : null;
-        DateTime? autoPaymentDate = docType == DocumentType.PaymentVoucher ? autoDocDate : null;
-        // Role separation: a PV is real disbursement (cash-settled, no
-        // balance); an Expense is the request/accrual (Credit, full balance
-        // until a PV / payment clears it).
-        var autoIsPaid = docType == DocumentType.PaymentVoucher;
-
-        await using var txn = await _db.Database.BeginTransactionAsync();
-        // เลขเอกสารใช้ yyyyMM ของ DocumentDate (autoDocDate) ให้สอดคล้องกัน
-        var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, docType, autoDocDate);
-        var document = new Document
-        {
-            CompanyId = companyId,
-            DocumentNumber = docNumber,
-            DocumentType = docType,
-            Status = DocumentStatus.Draft,
-            DocumentDate = autoDocDate,
-            DueDate = autoIsPaid ? null : autoDueDate,
-            PaymentDate = autoPaymentDate,
-            ContactId = scan.MatchedContactId!.Value,
-            SubTotal = scan.ExtractedSubTotal ?? 0,
-            VatAmount = scan.ExtractedVatAmount ?? 0,
-            TotalAmount = scan.ExtractedTotalAmount ?? 0,
-            PaymentType = autoIsPaid ? Models.Enums.PaymentType.Cash
-                : docType == DocumentType.Expense ? Models.Enums.PaymentType.Credit
-                : null,
-            PaidAmount = autoIsPaid ? scan.ExtractedTotalAmount ?? 0 : 0,
-            BalanceDue = autoIsPaid ? 0 : scan.ExtractedTotalAmount ?? 0,
-            Reference = scan.ExtractedDocumentNumber,
-            Notes = $"Auto-created from OCR scan (confidence: {scan.Confidence:P0}): {scan.OriginalFileName}",
-            CreatedBy = await ResolveOcrCreatorAsync(companyId, scan.CreatedBy, "OCR-AutoCreate")
-        };
-
-        // Create document lines from extracted items or a single line
-        if (extractedData?.Items.Count > 0)
-        {
-            // 🔧 Reconcile line amounts (same Case A/B/C/D as
-            // CreateDocumentFromScanAsync) — เดิม AutoCreate path ทาง OCR
-            // API ไม่มี reconcile ทำให้ใบที่ราคา/หน่วยรวม VAT มาแล้ว (เช่น
-            // OfficeMate Epson L6370 9,890 incl. + ขนส่ง 50 = 9,940) สร้าง
-            // เอกสารเลขผิดจาก web UI flow:
-            //   (A) ราคารวม VAT — grossSum อยู่ระหว่าง subtotal กับ total →
-            //       ตั้ง PricesIncludeVat + เติม line ค่าขนส่งถ้ามี gap
-            //   (B) ราคาแยก VAT — grossSum ≈ subtotal → ไม่ทำอะไร
-            //   (C) ส่วนลด — grossSum > total → คำนวณ docDiscountPercent
-            //   (D) OCR ขาด — grossSum < subtotal → ปล่อยให้ user แก้
-            var items = extractedData.Items.ToList();
-            var hdrSub   = scan.ExtractedSubTotal   ?? 0m;
-            var hdrTotal = scan.ExtractedTotalAmount ?? 0m;
-            var hdrVatHdr = scan.ExtractedVatAmount  ?? 0m;
-            var grossSum = items.Sum(x =>
-                (x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m)));
-            const decimal TOL = 1m;
-            var pricesIncludeVatFlag = hdrSub > 0m && hdrTotal > 0m && grossSum > 0m
-                && grossSum > hdrSub + TOL && grossSum <= hdrTotal + TOL;
-
-            decimal docDiscountPercent = 0m;
-            if (pricesIncludeVatFlag)
-            {
-                document.PricesIncludeVat = true;
-                var missing = Math.Round(hdrTotal - grossSum, 2);
-                if (missing > TOL)
-                {
-                    items.Add(new OcrExtractedLineItem
-                    {
-                        Description = "ค่าขนส่ง/บริการอื่น (ตรวจสอบใบจริง)",
-                        Quantity = 1m,
-                        UnitPrice = missing,
-                        Amount = missing,
-                    });
-                }
-            }
-            else if (grossSum > hdrTotal + TOL && hdrTotal > 0m)
-            {
-                docDiscountPercent = Math.Round((grossSum - hdrTotal) / grossSum * 100m, 2);
-                foreach (var it in items)
-                {
-                    var gross = it.UnitPrice.HasValue ? it.UnitPrice.Value * (it.Quantity ?? 1m) : (it.Amount ?? 0m);
-                    it.Amount = Math.Round(gross * (1m - docDiscountPercent / 100m), 2);
-                }
-            }
-
-            // Pro-rate VAT ตามสัดส่วน amount ของแต่ละบรรทัด (paper rarely
-            // itemizes VAT per line). Remainder ลง line สุดท้ายให้ตัวเลข
-            // บรรทัดรวมตรงกับ header VAT เป๊ะ.
-            var lineAmountSum = items.Sum(x => x.Amount ?? 0);
-            var headerVat = scan.ExtractedVatAmount ?? 0;
-            decimal vatAssigned = 0;
-
-            int lineOrder = 1;
-            for (var i = 0; i < items.Count; i++)
-            {
-                var item = items[i];
-                Guid? lineAccountId = expenseAccountId;
-                if (!string.IsNullOrEmpty(item.SuggestedAccountCode))
-                {
-                    var lineAccount = await _db.ChartOfAccounts
-                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
-                    if (lineAccount != null) lineAccountId = lineAccount.Id;
-                }
-
-                var amount = item.Amount ?? 0;
-                decimal lineVat = 0;
-                if (headerVat > 0 && lineAmountSum > 0)
-                {
-                    lineVat = i == items.Count - 1
-                        ? Math.Round(headerVat - vatAssigned, 2)
-                        : Math.Round(headerVat * amount / lineAmountSum, 2);
-                    vatAssigned += lineVat;
-                }
-
-                document.Lines.Add(new DocumentLine
-                {
-                    LineOrder = lineOrder++,
-                    Description = item.Description ?? scan.DocumentType ?? "รายการจาก OCR",
-                    Quantity = item.Quantity ?? 1,
-                    Unit = string.IsNullOrWhiteSpace(item.Unit) ? "ชิ้น" : item.Unit,
-                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
-                    DiscountPercent = docDiscountPercent,
-                    DiscountAmount = docDiscountPercent > 0m
-                        ? Math.Round((item.UnitPrice ?? item.Amount ?? 0) * (item.Quantity ?? 1m)
-                            - amount, 2)
-                        : 0m,
-                    Amount = amount,
-                    VatRate = scan.ExtractedVatAmount > 0 ? 7 : 0,
-                    VatAmount = lineVat,
-                    AccountId = lineAccountId,
-                    // Per-line project allocation from the OCR review UI —
-                    // user picks the project in /pages/ocr-review.html
-                    // before clicking "Create document". When set, this
-                    // line books costs against the right job/project.
-                    ProjectId = item.ProjectId,
-                });
-            }
-        }
-        else
-        {
-            document.Lines.Add(new DocumentLine
-            {
-                LineOrder = 1,
-                Description = extractedData?.ExpenseCategory ?? scan.DocumentType ?? "รายการจาก OCR",
-                Quantity = 1,
-                UnitPrice = scan.ExtractedSubTotal ?? scan.ExtractedTotalAmount ?? 0,
-                Amount = scan.ExtractedSubTotal ?? scan.ExtractedTotalAmount ?? 0,
-                VatRate = scan.ExtractedVatAmount > 0 ? 7 : 0,
-                VatAmount = scan.ExtractedVatAmount ?? 0,
-                WithholdingTaxRate = extractedData?.HasWht == true && extractedData.WhtRate.HasValue ? extractedData.WhtRate.Value : 0,
-                AccountId = expenseAccountId,
-            });
-        }
-
-        _db.Documents.Add(document);
-        scan.CreatedDocumentId = document.Id;
-        scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + " Auto-created document with lines.";
+        // ───── ทางเดียวกับ "อัปโหลดผ่านระบบ" (กฎ: ห้ามมี path คู่ขนาน) ─────
+        // เดิม method นี้เป็น implementation คู่ขนานที่ "ง่ายกว่า"
+        // CreateDocumentFromScanAsync (path ที่ web UI กดปุ่ม "สร้างเอกสาร" ใช้)
+        // → ทำให้ "โยนไฟล์ผ่าน OCR API (autoCreate=true)" ได้เอกสารไม่ตรงกับ
+        // การอัปโหลดผ่านหน้าเว็บ. สิ่งที่ path เดิมขาด:
+        //   • WHT base reconstruct (TotalAmount = SubTotal + VAT − WHT)
+        //   • supplier-invoice reference → HasTaxInvoiceReference (ขึ้น ภพ.30)
+        //   • bank/payment account จาก CreditAccountCode (BankAccountId vs
+        //     PaymentAccountId + LinkedAccountId lookup)
+        //   • sales-side contact resolution (buyer แทน vendor)
+        //   • PO linkage + per-line GL inherit
+        //   • CertificateInLieu legal fields
+        //   • line reconcile Case A/B/C/D + VAT pro-rate
+        //   • GlAccountAiFeedbackId ต่อบรรทัด (ปิดลูปสอน local model)
+        //   • RD-compliance validation
+        // ตอนนี้ delegate ไป path เดียวกันทั้งหมด → ทุก data point ตรงกัน.
+        //
+        // CreateDocumentFromScanAsync re-query scan ตาม Id แล้วอ่าน
+        // ExtractedItemsJson / SuggestedAccountsJson / TargetDocumentType /
+        // Buyer* ฯลฯ ที่ ScanAsync เพิ่ง set — persist ก่อน delegate เพื่อให้
+        // ค่าเหล่านั้นถูก commit (กัน identity-map subtlety + เปิด txn ซ้อน).
         await _db.SaveChangesAsync();
-        await txn.CommitAsync();
 
-        // Re-link the original scanned file to the new Document so users see it as
-        // an attachment when they open the document. Without this, the file lives
-        // forever orphaned under EntityType="OcrScan" + a placeholder Guid.
-        await RelinkScanFileToDocumentAsync(companyId, scan.FileAttachmentId, document.Id);
+        // createdBy: ปล่อยให้ ResolveOcrCreatorAsync ภายในจัดการ (scan.CreatedBy
+        //   → owner fallback เมื่อเป็น int_ key ที่ไม่ใช่ user จริง).
+        // targetType = null: ใช้ TargetDocumentType ที่ role-inferrer/VendorIntel
+        //   infer ไว้บน scan (เหมือนที่ web UI default เลือกให้ในตัวเลือกหลัก).
+        await CreateDocumentFromScanAsync(
+            companyId, scan.Id, scan.CreatedBy ?? string.Empty, targetTypeOverride: null);
     }
 
     /// <summary>
