@@ -17,13 +17,16 @@ public class TaxFilingExportController : ControllerBase
     private readonly ITaxFilingExportService _exportService;
     private readonly ISensitivityService _sensitivity;
     private readonly Data.AccountingDbContext _db;
+    private readonly Services.Implementations.IDbdXbrlExportService _xbrl;
 
     public TaxFilingExportController(ITaxFilingExportService exportService,
-        ISensitivityService sensitivity, Data.AccountingDbContext db)
+        ISensitivityService sensitivity, Data.AccountingDbContext db,
+        Services.Implementations.IDbdXbrlExportService xbrl)
     {
         _exportService = exportService;
         _sensitivity = sensitivity;
         _db = db;
+        _xbrl = xbrl;
     }
 
     /// <summary>Verify the caller actually belongs to {companyId}. Required
@@ -157,6 +160,42 @@ public class TaxFilingExportController : ControllerBase
         var member = await EnsureMemberAsync(companyId); if (member != null) return member;
         var result = await _exportService.ExportPnd51Async(companyId, year);
         return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Export DBD XBRL instance document — งบการเงินรายปีตามมาตรฐาน
+    /// TFRS-NPAEs taxonomy. ต้องตั้ง BookkeeperName + BookkeeperCpdNumber ใน
+    /// CompanySettings ก่อน (พ.ร.บ.การบัญชี ม.7) — ไม่งั้น throw.</summary>
+    [HttpGet("dbd-xbrl")]
+    public async Task<IActionResult> ExportDbdXbrl(Guid companyId, [FromQuery] int year, CancellationToken ct)
+    {
+        var member = await EnsureMemberAsync(companyId); if (member != null) return member;
+        var result = await _xbrl.ExportAnnualAsync(companyId, year, ct);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
+    /// <summary>Preview XBRL totals (ไม่ดาวน์โหลด file) — สำหรับ UI โชว์ก่อนยืนยัน</summary>
+    [HttpGet("dbd-xbrl/preview")]
+    public async Task<ActionResult<ApiResponse<object>>> PreviewDbdXbrl(
+        Guid companyId, [FromQuery] int year, CancellationToken ct)
+    {
+        var member = await EnsureMemberAsync(companyId);
+        if (member != null) return (ActionResult<ApiResponse<object>>)member;
+        try
+        {
+            var r = await _xbrl.ExportAnnualAsync(companyId, year, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                r.FileName,
+                r.TotalAssets, r.TotalLiabilities, r.TotalEquity,
+                r.TotalRevenue, r.TotalExpenses, r.NetIncome,
+                r.Summary,
+                SizeBytes = r.FileData.Length,
+            }, r.Summary));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
+        }
     }
 
     /// <summary>Export สปส.1-10 (SSO monthly contribution) — sensitive (payroll).</summary>

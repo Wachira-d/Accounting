@@ -97,6 +97,12 @@ public class SettingsService : ISettingsService
             && request.WorkersCompensationRatePercent.Value <= 1.0m)
             settings.WorkersCompensationRatePercent = request.WorkersCompensationRatePercent.Value;
 
+        // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — null = ไม่แตะ, ค่าว่าง = ล้าง
+        if (request.BookkeeperName != null)
+            settings.BookkeeperName = string.IsNullOrWhiteSpace(request.BookkeeperName) ? null : request.BookkeeperName.Trim();
+        if (request.BookkeeperCpdNumber != null)
+            settings.BookkeeperCpdNumber = string.IsNullOrWhiteSpace(request.BookkeeperCpdNumber) ? null : request.BookkeeperCpdNumber.Trim();
+
         await _db.SaveChangesAsync();
         return MapToResponse(companyId, settings);
     }
@@ -441,6 +447,8 @@ public class SettingsService : ISettingsService
         s.DefaultPaymentAccountId,
         s.WorkersCompensationEnabled,
         s.WorkersCompensationRatePercent,
+        s.BookkeeperName,
+        s.BookkeeperCpdNumber,
         // Print layout
         s.ShowGlEntryOnDocument,
         // HR

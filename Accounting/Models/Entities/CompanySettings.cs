@@ -196,6 +196,14 @@ public class CompanySettings : TenantEntity
     // Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน metadata จะชนะค่านี้อีกที.
     public Guid? DefaultPaymentAccountId { get; set; }
 
+    // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
+    // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
+    // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด
+    // ทางอาญา). ระบบใช้ field นี้เป็น gate ก่อน finalize งบ + XBRL export.
+    // null = ยังไม่เซ็ตค่า → ระบบ block การ export งบ/XBRL จนกว่าจะตั้ง.
+    public string? BookkeeperName { get; set; }
+    public string? BookkeeperCpdNumber { get; set; }
+
     // ── §86/4 hard-enforcement (opt-in) ──
     // เมื่อ true: ApproveDocumentAsync จะ block (throw) ถ้าใบกำกับ/ใบเสร็จ/CN/DN
     // ขาด field บังคับ §86/4 (BuyerTaxId 13 หลัก, BuyerAddress, BuyerBranchCode

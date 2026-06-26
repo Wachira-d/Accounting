@@ -70,6 +70,10 @@ public record UpdateCompanySettingsRequest(
     bool? WorkersCompensationEnabled = null,
     decimal? WorkersCompensationRatePercent = null,
 
+    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — จำเป็นก่อน finalize งบ + XBRL export
+    string? BookkeeperName = null,
+    string? BookkeeperCpdNumber = null,
+
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool? ShowGlEntryOnDocument = null,
 
@@ -140,6 +144,10 @@ public record CompanySettingsResponse(
     // กองทุนเงินทดแทน (กท.20ก) — ปิด default; อัตรา default 0.2%
     bool WorkersCompensationEnabled = false,
     decimal WorkersCompensationRatePercent = 0.2m,
+
+    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
+    string? BookkeeperName = null,
+    string? BookkeeperCpdNumber = null,
 
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool ShowGlEntryOnDocument = false,

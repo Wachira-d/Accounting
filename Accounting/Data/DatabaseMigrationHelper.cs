@@ -4137,6 +4137,10 @@ public static class DatabaseMigrationHelper
             // ===== CompanySettings: §86/4 hard-block opt-in =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EnforceFullTaxInvoiceFields" boolean NOT NULL DEFAULT false;""",
 
+            // ===== CompanySettings: ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BookkeeperName" varchar(200) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BookkeeperCpdNumber" varchar(50) NULL;""",
+
             // ===== PDPA Wave 3: RoPA / Consent / PiiAccessLog / Breach =====
             // RoPA (ม.39) — บันทึกกิจกรรมการประมวลผลข้อมูลส่วนบุคคล
             """

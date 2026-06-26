@@ -109,6 +109,8 @@ builder.Services.AddMemoryCache();
 // Core
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccountingService, AccountingService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.IDbdXbrlExportService,
+    Accounting.Services.Implementations.DbdXbrlExportService>();
 builder.Services.AddScoped<IMigrationWizardService, MigrationWizardService>();
 // Accountant tools (Phase I-N)
 builder.Services.AddScoped<SubLedgerReconciliationService>();
