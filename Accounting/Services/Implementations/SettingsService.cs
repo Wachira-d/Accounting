@@ -237,20 +237,9 @@ public class SettingsService : ISettingsService
                 DocumentType.CertificateInLieu => "CIL",
                 _ => "DOC"
             };
-            // Format {PREFIX}-{yyyyMMdd}-{NNNN} — ใช้วันที่ของ documentDate
-            // (แปลง Asia/Bangkok ตรงกับ display + DocumentNumberGenerator).
-            // กัน TZ shift: DB timestamptz กลับมาเป็น UTC → format ตรง = ผิดวัน
-            var dt = documentDate ?? DateTime.UtcNow;
-            var utcDt = dt.Kind == DateTimeKind.Utc ? dt : DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-            DateTime bkkDt;
-            try
-            {
-                var tz = TimeZoneInfo.FindSystemTimeZoneById(
-                    OperatingSystem.IsWindows() ? "SE Asia Standard Time" : "Asia/Bangkok");
-                bkkDt = TimeZoneInfo.ConvertTimeFromUtc(utcDt, tz);
-            }
-            catch { bkkDt = utcDt.AddHours(7); }
-            var datePart = bkkDt.ToString("yyyyMMdd");
+            // Format {PREFIX}-{yyyyMMdd}-{NNNN} — yyyyMMdd ของวันที่ไทย
+            // (ThaiDate.YyyyMmDd) ตรงกับ DocumentNumberGenerator + display
+            var datePart = Accounting.Helpers.ThaiDate.YyyyMmDd(documentDate ?? DateTime.UtcNow);
             var pattern = $"{prefix}-{datePart}-";
             var lastDoc = await _db.Documents
                 .Where(d => d.CompanyId == companyId && d.DocumentType == documentType && d.DocumentNumber.StartsWith(pattern))

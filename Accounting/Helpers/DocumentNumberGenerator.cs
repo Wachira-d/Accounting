@@ -54,13 +54,10 @@ public static class DocumentNumberGenerator
         var lockKey = HashCode.Combine(companyId, prefix, "doc-seq");
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
 
-        // เลือกวันที่จาก DocumentDate ก่อน — สอดคล้องกับวันที่ลงในเอกสาร.
-        // ⚠️ TZ FIX: DocumentDate ที่ round-trip ผ่าน DB (timestamptz) กลับมา
-        // เป็น Kind=Utc ที่ shift แล้ว — เช่น 02/06 BKK = 01/06 17:00 UTC.
-        // ถ้า format UTC ดิบ → ได้ "20260601" แต่ display แปลงเป็น BKK = "02/06"
-        // → เลข ≠ วันที่. แก้: แปลงเป็น Asia/Bangkok ก่อน format ทุกครั้ง
-        // (ตรงกับที่ UI แสดง) → เลข + วันที่สอดคล้องกัน 100%.
-        var datePart = ToBangkokDate(documentDate ?? DateTime.UtcNow);
+        // เลขใช้ yyyyMMdd ของวันที่ "ตามปฏิทินไทย" (ThaiDate.YyyyMmDd) — แม้
+        // DocumentDate ถูก store เป็น UTC ที่ shift (02/06 BKK = 01/06 17:00 UTC)
+        // ก็ได้เลข 20260602 ตรงกับ display เสมอ.
+        var datePart = ThaiDate.YyyyMmDd(documentDate ?? DateTime.UtcNow);
         var docPrefix = $"{prefix}-{datePart}-";
         // BUG FIX: previously used `MaxAsync()` over the string column. That
         // returns the LEXICOGRAPHIC max — "9999" > "10000" because '9' > '1'.
@@ -82,23 +79,4 @@ public static class DocumentNumberGenerator
             : $"{docPrefix}{nextSeq:D5}";
     }
 
-    /// <summary>คืน yyyyMMdd ของ "วันที่ตามปฏิทินไทย" (Asia/Bangkok) — ตรงกับ
-    /// ที่ UI แสดง. รับ DateTime ทุก Kind: Utc → แปลง +07:00; Unspecified/Local
-    /// (calendar date จาก date input ที่ยังไม่ผ่าน DB) → treat เป็น UTC แล้ว
-    /// แปลง (midnight Unspecified → 07:00 BKK = วันเดิม ไม่ shift).</summary>
-    private static string ToBangkokDate(DateTime dt)
-    {
-        var utc = dt.Kind == DateTimeKind.Utc
-            ? dt
-            : DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-        DateTime bkk;
-        try
-        {
-            var tz = TimeZoneInfo.FindSystemTimeZoneById(
-                OperatingSystem.IsWindows() ? "SE Asia Standard Time" : "Asia/Bangkok");
-            bkk = TimeZoneInfo.ConvertTimeFromUtc(utc, tz);
-        }
-        catch { bkk = utc.AddHours(7); }   // +07:00 ตลอดปี ไม่มี DST
-        return bkk.ToString("yyyyMMdd");
-    }
 }

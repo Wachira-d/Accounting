@@ -3487,7 +3487,9 @@ public class OcrService : IOcrService
         // ReceiptVoucher / CertInLieu) record WHEN the money moved and carry
         // no credit due date; credit types (PI / Invoice / Expense / …) are
         // the reverse — due date from the OCR-read terms, no payment date.
-        var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
+        // Normalize เป็น "วันที่ไทย ณ 00:00 UTC" — กัน DocumentDate ถูก store
+        // แบบ shift (02/06 BKK = 01/06 17:00 UTC) ที่ทำให้เลข/ภพ.30 boundary ผิด
+        var docDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(result.ExtractedDate ?? DateTime.UtcNow);
         var isPaidType = docType is DocumentType.PaymentVoucher or DocumentType.Receipt
             or DocumentType.ReceiptVoucher or DocumentType.CertificateInLieu;
         DateTime? dueDate = isPaidType ? null
@@ -4263,7 +4265,7 @@ public class OcrService : IOcrService
             expenseAccountId = account?.Id;
         }
 
-        var autoDocDate = scan.ExtractedDate ?? DateTime.UtcNow.Date;
+        var autoDocDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(scan.ExtractedDate ?? DateTime.UtcNow);
         DateTime? autoDueDate = scan.PaymentTermsDays.HasValue
             ? autoDocDate.AddDays(scan.PaymentTermsDays.Value)
             : null;
