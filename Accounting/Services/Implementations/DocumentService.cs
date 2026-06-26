@@ -263,7 +263,15 @@ public class DocumentService : IDocumentService
         var afterDiscount = gross - discountAmt;
 
         decimal net, vatAmt;
-        if (pricesIncludeVat && line.VatRate > 0)
+        if (line.VatAmountOverride.HasValue)
+        {
+            // External/integration ส่ง VAT ที่คำนวณเองมาแล้ว (บรรทัดปนของ
+            // เสียภาษี + ยกเว้น) → honor ตรง ๆ ไม่คิดใหม่. pricesIncludeVat
+            // = true หมายถึง afterDiscount รวม VAT แล้ว → net = ส่วนต่าง.
+            vatAmt = Math.Round(line.VatAmountOverride.Value, 2, R);
+            net = pricesIncludeVat ? afterDiscount - vatAmt : afterDiscount;
+        }
+        else if (pricesIncludeVat && line.VatRate > 0)
         {
             // Entered price already contains VAT → strip it out.
             // net = incl × 100/(100+rate); vat = incl − net.

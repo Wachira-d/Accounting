@@ -524,9 +524,21 @@ public class IntegrationService : IIntegrationService
                 var lineDiscount = line.DiscountAmount ?? 0;
                 var lineNet = lineAmount - lineDiscount;
                 var lineVatRate = line.VatRate ?? vatRate;
-                var lineVat = request.IncludeVat
-                    ? lineNet - (lineNet / (1 + lineVatRate / 100))
-                    : lineNet * lineVatRate / 100;
+                // Honor explicit VatAmount when partner pre-computed it (mixed
+                // 7%/exempt line). For IncludeVat=true the override is the VAT
+                // baked into lineNet → strip it so subTotal stays ex-VAT.
+                decimal lineVat;
+                if (line.VatAmount.HasValue)
+                {
+                    lineVat = Math.Round(line.VatAmount.Value, 2, MidpointRounding.AwayFromZero);
+                    if (request.IncludeVat) lineNet -= lineVat;
+                }
+                else
+                {
+                    lineVat = request.IncludeVat
+                        ? lineNet - (lineNet / (1 + lineVatRate / 100))
+                        : lineNet * lineVatRate / 100;
+                }
 
                 subTotal += lineNet;
                 totalVat += lineVat;
@@ -1227,7 +1239,12 @@ public class IntegrationService : IIntegrationService
             var lineDiscount = line.DiscountAmount ?? 0;
             var lineNet = lineAmount - lineDiscount;
             var lineVatRate = line.VatRate ?? defaultVatRate;
-            var lineVat = lineNet * lineVatRate / 100;
+            // Honor explicit VatAmount when the partner pre-computed it (mixed
+            // 7%/exempt line that a single rate can't express). Otherwise
+            // recompute net × rate as before. Rounded to 2dp to match GL.
+            var lineVat = line.VatAmount.HasValue
+                ? Math.Round(line.VatAmount.Value, 2, MidpointRounding.AwayFromZero)
+                : Math.Round(lineNet * lineVatRate / 100, 2, MidpointRounding.AwayFromZero);
             var lineWhtRate = line.WithholdingTaxRate ?? 0;
             var lineWht = Math.Round(lineNet * lineWhtRate / 100, 2, MidpointRounding.AwayFromZero);
 
