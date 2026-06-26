@@ -2075,11 +2075,18 @@ const Layout = {
     return dt.toLocaleTimeString('th-TH');
   },
 
+  /// <summary>Format วันที่สำหรับ <input type="date" value="yyyy-MM-dd"> โดย
+  /// ใช้วัน "ตามปฏิทินไทย" (Asia/Bangkok) ตรงกับที่ Layout.date() แสดง.
+  /// เดิมใช้ toISOString().split[0] → UTC date → form edit ของเอกสาร DocumentDate
+  /// 02/06 (stored as UTC 02/06 00:00) จะกลายเป็น "2026-06-01" → ผู้ใช้บันทึก
+  /// แล้ว shift ผิด 1 วัน. ใช้ asUtc + ดึง Y/M/D ใน BKK locale แทน.</summary>
   dateInput(d) {
     if (!d) return '';
-    const dt = new Date(d);
+    const dt = this.asUtc(d);
     if (isNaN(dt.getTime())) return '';
-    return dt.toISOString().split('T')[0];
+    // toLocaleDateString('sv-SE', {timeZone: 'Asia/Bangkok'}) → "yyyy-MM-dd"
+    // sv-SE locale ใช้ ISO format ตรง ๆ ไม่ต้อง parse string
+    return dt.toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' });
   },
 
   statusBadge(status) {
