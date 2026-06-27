@@ -651,6 +651,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
+_รอบ 17: Payroll import endpoint (TakeTime) — POST /payroll/runs/import รับ
+ยอดสำเร็จรูปต่อพนักงาน → run สถานะ Calculated (ไม่ recalc) → approve/pay/
+exports เดิมออก GL+ภงด.1+สปส.1-10+50ทวิ+payslip จากยอดที่ส่งมา. idempotent
+(ExternalRunRef + unique index), validate net=gross−หักลูกจ้าง, account override
+(salary/payment code) ลง JE. + integration outbound document attachments[]._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

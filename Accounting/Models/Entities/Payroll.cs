@@ -181,6 +181,17 @@ public class PayrollRun : TenantEntity
     // รายงานสรุปสิ้นปี.
     public decimal TotalWorkersCompensation { get; set; }
 
+    // ── External import (ระบบนอกคำนวณเงินเดือนเอง เช่น TakeTime) ──
+    // เมื่อ run ถูกสร้างผ่าน POST /payroll/runs/import — ใช้ยอดที่ส่งมาตรง ๆ
+    // (ไม่ recalc). ExternalRunRef = idempotency key (กันสร้างซ้ำ).
+    // SalaryExpense/NetPaymentAccountCode = override ผังบัญชีตอน post GL
+    // (null = ใช้ default ของ NextAcc 54111 / 11122).
+    public string? ExternalSystem { get; set; }
+    public string? ExternalRunRef { get; set; }
+    public bool IsExternalImport { get; set; }
+    public string? SalaryExpenseAccountCode { get; set; }
+    public string? NetPaymentAccountCode { get; set; }
+
     public ICollection<PayrollDetail> Details { get; set; } = new List<PayrollDetail>();
 }
 

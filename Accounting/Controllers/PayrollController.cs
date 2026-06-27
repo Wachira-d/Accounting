@@ -159,6 +159,25 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> CreateRun(Guid companyId, [FromBody] CreatePayrollRunRequest request)
         => StatusCode(201, new ApiResponse<PayrollRunResponse>(true, await _service.CreatePayrollRunAsync(companyId, request, User.Identity?.Name ?? "")));
 
+    /// <summary>Import payroll run จากระบบนอก (TakeTime) — รับยอดสำเร็จรูป
+    /// ต่อพนักงาน สร้าง run สถานะ Calculated ทันที (ไม่คำนวณใหม่). จากนั้น
+    /// approve → pay → ออก GL + ภงด.1 + สปส.1-10 + 50ทวิ + payslip จากยอด
+    /// ที่ส่งมา. Idempotent ผ่าน externalRunRef. CreatedBy = X-Acting-User
+    /// (ผ่าน NameIdentifier ของ int_/acc_ key).</summary>
+    [HttpPost("runs/import")]
+    public async Task<ActionResult<ApiResponse<ImportPayrollRunResult>>> ImportRun(
+        Guid companyId, [FromBody] ImportPayrollRunRequest request)
+    {
+        var createdBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _service.ImportPayrollRunAsync(companyId, request, createdBy);
+        return StatusCode(result.WasExisting ? 200 : 201,
+            new ApiResponse<ImportPayrollRunResult>(true, result,
+                result.WasExisting
+                    ? "พบ run เดิม (idempotent) — คืน run ที่มีอยู่"
+                    : $"import สำเร็จ — run {result.PayrollNumber} สถานะ Calculated ({result.EmployeeCount} คน). " +
+                      "เรียก /approve → /pay เพื่อออก GL + เอกสารตามกฎหมาย"));
+    }
+
     [HttpGet("runs/{runId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> GetRun(Guid companyId, Guid runId)
     {

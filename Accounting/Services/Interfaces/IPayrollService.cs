@@ -33,6 +33,11 @@ public interface IPayrollService
 
     // Payroll Runs
     Task<PayrollRunResponse> CreatePayrollRunAsync(Guid companyId, CreatePayrollRunRequest request, string createdBy);
+    /// <summary>Import payroll run จากระบบนอก (TakeTime) — รับยอดสำเร็จรูปต่อ
+    /// พนักงาน สร้าง run สถานะ Calculated ทันที (ไม่คำนวณใหม่). approve/pay/
+    /// exports เดิมออก GL + ภงด.1 + สปส.1-10 + 50ทวิ + payslip จากยอดที่ส่งมา.
+    /// Idempotent ผ่าน ExternalRunRef.</summary>
+    Task<ImportPayrollRunResult> ImportPayrollRunAsync(Guid companyId, ImportPayrollRunRequest request, string createdBy);
     Task<PayrollRunResponse> GetPayrollRunAsync(Guid companyId, Guid payrollRunId);
     Task<PagedResponse<PayrollRunResponse>> GetPayrollRunsAsync(Guid companyId, PagedRequest request);
     Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId);
