@@ -657,14 +657,20 @@ exports เดิมออก GL+ภงด.1+สปส.1-10+50ทวิ+payslip 
 (ExternalRunRef + unique index), validate net=gross−หักลูกจ้าง, account override
 (salary/payment code) ลง JE. + integration outbound document attachments[]._
 
-_รอบ 18: OCR contact address enrichment ครบ structured fields — เดิม enrichment
-ของ contact ที่ match จากของเดิม (`OcrService.ScanAsync` ~:1606) เติมแค่ free-text
-`Address` ทำให้ (1) PDF (`FormatThaiAddress`) เมื่อ structured ว่าง→fallback
-free-text ที่ OCR เดาผิด = "ที่อยู่ในเอกสารผิด" (2) ฟอร์มผู้ติดต่ออ่าน structured
-→ ขึ้นว่าง ต้องกด "ดึงข้อมูล" (DBD) เอง. เพิ่ม `EnrichContactAddress` เติมทั้ง
-free-text + structured (บ้านเลขที่/หมู่/ถนน/ตำบล/อำเภอ/จังหวัด/ไปรษณีย์) จาก
-DbdAddress (ground truth) ก่อน VendorAddress; ทับค่าเดิมเฉพาะเมื่อ DBD ยืนยัน +
-contact เป็น OCR-managed (กันแตะข้อมูลที่ผู้ใช้กรอกเอง)._
+_รอบ 18: OCR contact address ครบ + กทม. แสดง แขวง/เขต ถูกต้อง. ปัญหา: OCR ผ่าน
+API → เอกสารที่อยู่ กทม. ขึ้น "ตำบล/อำเภอ" (ผิด ต้องเป็น "แขวง/เขต") + ผู้ติดต่อ
+ไม่มีที่อยู่จนกด "ดึงข้อมูล" เอง. แก้ 4 ชั้น:
+(1) `OcrService.EnrichContactAddress` — contact ที่ match จากของเดิม เติมทั้ง
+free-text + structured (เดิมเติมแค่ free-text) จาก DbdAddress ก่อน VendorAddress;
+ทับเฉพาะเมื่อ DBD ยืนยัน + contact OCR-managed.
+(2) `PdfGenerationService.FormatThaiAddress` — เมื่อ structured locality ว่าง
+parse free-text ผ่าน `ThaiAddressParser` ตอน render → กทม. ได้ แขวง/เขต ครบทุก
+เอกสารโดยไม่ต้อง migrate; แก้ token-strip เป็น word-aware (เดิม substring replace
+ทำ "บางนาตราด"→"ตราด"); 50ทวิ payee/company address route ผ่าน FormatThaiAddress.
+(3) `ThaiAddressParser` — StreetRegex/BuildingNameRegex หยุดที่ marker เขตปกครอง
+(ไม่กลืนชื่อตำบล) + `ExtractStreetHead` รักษาส่วนหัวเต็ม (ห้อง/ชั้น/อาคาร/ซอย/ถนน).
+(4) `DocumentService.GetContactAsync` — lazy backfill structured จาก free-text
+ตอนเปิดฟอร์ม (self-heal contact เก่า ไม่ต้องกด "ดึงข้อมูล")._
 
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_

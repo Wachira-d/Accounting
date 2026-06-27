@@ -1960,10 +1960,13 @@ public class OcrService : IOcrService
             return false;
         }
 
+        // street = ส่วนหัวเต็ม (ห้อง/ชั้น/อาคาร/ซอย/ถนน) ไม่ใช่แค่ชื่อถนนสั้นจาก
+        // parser — กันรายละเอียดหายตอน render structured address.
+        var streetHead = ThaiAddressParser.ExtractStreetHead(freeAddr, parts.BuildingNumber, parts.Moo);
         if (Apply(c.Address, freeAddr, v => c.Address = v)) changed = true;
         if (Apply(c.BuildingNumber, parts.BuildingNumber, v => c.BuildingNumber = v)) changed = true;
         if (Apply(c.Moo, parts.Moo, v => c.Moo = v)) changed = true;
-        if (Apply(c.StreetName, parts.StreetName, v => c.StreetName = v)) changed = true;
+        if (Apply(c.StreetName, streetHead, v => c.StreetName = v)) changed = true;
         if (Apply(c.SubDistrict, parts.SubDistrict, v => c.SubDistrict = v)) changed = true;
         if (Apply(c.District, parts.District, v => c.District = v)) changed = true;
         if (Apply(c.Province, parts.Province, v => c.Province = v)) changed = true;

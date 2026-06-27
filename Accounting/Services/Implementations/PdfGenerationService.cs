@@ -964,8 +964,13 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var sb = new StringBuilder();
         var certNum = WebUtility.HtmlEncode(cert.CertificateNumber);
-        var fullAddress = string.Join(" ", new[] { company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode }.Where(s => !string.IsNullOrEmpty(s)));
-        var payeeAddr = string.Join(" ", new[] { cert.PayeeContact.Address, cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode }.Where(s => !string.IsNullOrEmpty(s)));
+        // ใช้ FormatThaiAddress (เหมือน path เอกสารอื่น) — รวม structured fields
+        // อย่างถูกต้อง + แปลง ตำบล/อำเภอ → แขวง/เขต สำหรับ กทม. + กัน locality
+        // ซ้ำซ้อนเมื่อ free-text มีอยู่แล้ว.
+        var fullAddress = FormatThaiAddress(company.Address, company.BuildingNumber, company.Moo, company.StreetName,
+            company.SubDistrict, company.District, company.Province, company.PostalCode);
+        var payeeAddr = FormatThaiAddress(cert.PayeeContact.Address, cert.PayeeContact.BuildingNumber, cert.PayeeContact.Moo, cert.PayeeContact.StreetName,
+            cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
 
         string TaxIdBoxes(string? taxId)
@@ -1528,6 +1533,32 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         var prov = province?.Trim();
         var post = postalCode?.Trim();
 
+        // เมื่อ structured locality ว่าง แต่มี free-text → parse free-text เป็น
+        // structured ก่อน render. ครอบคลุม contact เก่า / contact ที่ OCR เติม
+        // แต่ free-text (ก่อนแก้ enrichment) → ทำให้ที่อยู่ กทม. แสดง "แขวง/เขต"
+        // ถูกต้อง แทนที่จะ echo "ตำบล/อำเภอ" ที่ DBD/OCR ส่งมาดิบ ๆ. ใช้
+        // ThaiAddressParser ตัวเดียวกับฟอร์ม + OCR (เลี่ยง drift).
+        if (string.IsNullOrWhiteSpace(sub) && string.IsNullOrWhiteSpace(dist)
+            && string.IsNullOrWhiteSpace(prov) && !string.IsNullOrWhiteSpace(freeText))
+        {
+            var p = ThaiAddressParser.Parse(freeText);
+            if (!string.IsNullOrWhiteSpace(p.Province)
+                || !string.IsNullOrWhiteSpace(p.SubDistrict)
+                || !string.IsNullOrWhiteSpace(p.District))
+            {
+                sub = p.SubDistrict?.Trim();
+                dist = p.District?.Trim();
+                prov = p.Province?.Trim();
+                post ??= p.PostalCode?.Trim();
+                buildingNumber ??= p.BuildingNumber;
+                moo ??= p.Moo;
+                // รักษาส่วนหัวเต็ม (ห้อง/ชั้น/อาคาร/ซอย/ถนน) ไม่ใช่แค่ชื่อถนนสั้น ๆ
+                // จาก parser — ผู้ใช้เห็นที่อยู่ครบเหมือนเดิม แค่แก้ ตำบล/อำเภอ →
+                // แขวง/เขต ให้ถูกต้องสำหรับ กทม.
+                street ??= ThaiAddressParser.ExtractStreetHead(freeText, p.BuildingNumber, p.Moo);
+            }
+        }
+
         // No structured locality → use whatever free text we have, but still
         // collapse an accidental "กทม กรุงเทพมหานคร" double-spelling the user
         // may have typed into the single free-text field.
@@ -1551,15 +1582,33 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             : (freeText ?? "");
 
         // The street line must NEVER echo the locality we're about to print as
-        // its own fields. Strip the explicit sub/district/province values, every
-        // Bangkok synonym, the postal code and the bare prefixes — whether the
-        // street came from structured fields or free text. This is what kills
-        // "8/36 แขวงดอกไม้ เขตประเวศ กทม กรุงเทพมหานคร 10250".
-        foreach (var tok in new[] { sub, dist, prov, post,
-                                    "กทม.", "กทมฯ", "กทม", "กรุงเทพมหานคร", "กรุงเทพฯ", "กรุงเทพ",
-                                    "แขวง", "เขต", "ตำบล", "อำเภอ", "จังหวัด", "ต.", "อ.", "จ." })
-            if (!string.IsNullOrWhiteSpace(tok))
-                streetPart = streetPart.Replace(tok, " ");
+        // its own fields. Drop locality echoes **token by token** — NOT via
+        // substring Replace, which mangled "บางนาตราด" → "ตราด" when the
+        // sub-district was "บางนา" (substring of the road name). A token is
+        // dropped when it equals a locality value, a bare prefix, a glued
+        // prefix+value ("ตำบลบางนา"), a Bangkok synonym, or the postal code.
+        // This still kills "8/36 แขวงดอกไม้ เขตประเวศ กทม กรุงเทพมหานคร 10250"
+        // without eating real road names.
+        var localityVals = new[] { sub, dist, prov, post }
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s!.Trim())
+            .ToHashSet();
+        var areaPrefixes = new[] { "แขวง", "เขต", "ตำบล", "อำเภอ", "จังหวัด", "ต.", "อ.", "จ." };
+        bool DropStreetToken(string raw)
+        {
+            var x = raw.Trim().Trim(',').Trim();
+            if (string.IsNullOrEmpty(x)) return true;
+            if (localityVals.Contains(x)) return true;
+            if (areaPrefixes.Contains(x)) return true;
+            if (IsBangkokToken(x)) return true;
+            foreach (var pfx in areaPrefixes)
+                if (x.StartsWith(pfx, StringComparison.Ordinal)
+                    && localityVals.Contains(x[pfx.Length..].Trim())) return true;
+            return false;
+        }
+        streetPart = string.Join(" ",
+            streetPart.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                      .Where(t => !DropStreetToken(t)));
         streetPart = Regex.Replace(streetPart, @"\s{2,}", " ").Trim().Trim(',').Trim();
 
         var parts = new List<string>();
