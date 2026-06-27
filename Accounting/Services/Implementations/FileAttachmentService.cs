@@ -136,6 +136,43 @@ public class FileAttachmentService : IFileAttachmentService
             .OrderByDescending(f => f.CreatedAt)
             .ToListAsync();
 
+        // ⭐ Bulletproof fallback: เอกสารที่สร้างจาก OCR — ถ้าไฟล์ต้นฉบับยัง
+        // ค้างที่ EntityType="OcrScan" (relink พลาด: race / old-build / refactor
+        // regression) → query หา OcrScanResult ที่ CreatedDocumentId = เอกสารนี้
+        // แล้วดึงไฟล์มา + relink on-read (idempotent). กันเคส "บนระบบมีไฟล์ แต่
+        // api ดึงไปไม่เจอ" เพราะ EntityType ไม่ตรง.
+        if (string.Equals(entityType, "Document", StringComparison.OrdinalIgnoreCase))
+        {
+            var scanFileIds = await _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
+                .Where(s => s.CompanyId == companyId && s.CreatedDocumentId == entityId
+                    && s.FileAttachmentId != null)
+                .Select(s => s.FileAttachmentId!.Value)
+                .ToListAsync();
+
+            if (scanFileIds.Count > 0)
+            {
+                var alreadyIds = attachments.Select(a => a.Id).ToHashSet();
+                var orphanFiles = await _db.FileAttachments
+                    .Include(f => f.UploadedByUser)
+                    .Where(f => f.CompanyId == companyId && scanFileIds.Contains(f.Id)
+                        && !f.IsDeleted && !alreadyIds.Contains(f.Id))
+                    .ToListAsync();
+
+                if (orphanFiles.Count > 0)
+                {
+                    // relink on-read → ครั้งถัดไป query ปกติเจอเลย (lazy repair)
+                    foreach (var f in orphanFiles)
+                    {
+                        f.EntityType = "Document";
+                        f.EntityId = entityId;
+                    }
+                    try { await _db.SaveChangesAsync(); } catch { /* read path — best-effort */ }
+                    attachments.AddRange(orphanFiles);
+                    attachments = attachments.OrderByDescending(f => f.CreatedAt).ToList();
+                }
+            }
+        }
+
         return attachments.Select(f => MapToResponse(f, f.UploadedByUser?.FullName ?? "")).ToList();
     }
 
