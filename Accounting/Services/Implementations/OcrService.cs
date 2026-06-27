@@ -2376,17 +2376,20 @@ public class OcrService : IOcrService
         foreach (var item in data.Items)
             item.Description = TrimSplitSuffix(item.Description, splitMarkers);
 
+        // EffAmt = ยอดบรรทัดที่เชื่อถือได้ — Amount ถ้ามี, ไม่งั้น UnitPrice×Quantity.
+        // กันเคส external OCR ส่งแต่ UnitPrice+Quantity ไม่ได้ส่ง Amount.
+        static decimal EffAmt(OcrExtractedLineItem it)
+            => (it.Amount ?? 0m) > 0m
+                ? it.Amount!.Value
+                : (it.UnitPrice ?? 0m) * (it.Quantity ?? 1m);
+
         // 2) drop บรรทัดที่กลายเป็นว่าง / phantom remainder (amount + price ≤ ฿1)
-        //    Phantom เกิดจาก AI พยายาม "ปัด" ส่วนที่ไม่ได้ถูกหารกับ subtotal
-        //    เช่น 0.01 / 0.02 / 0.03 บาท — ไม่ใช่สินค้าจริง.
         const decimal PHANTOM_THRESHOLD = 1m;
         data.Items.RemoveAll(it =>
         {
-            var amt = it.Amount ?? 0m;
-            var price = it.UnitPrice ?? 0m;
             var emptyDesc = string.IsNullOrWhiteSpace(it.Description);
-            var isPhantom = Math.Abs(amt) <= PHANTOM_THRESHOLD
-                && Math.Abs(price) <= PHANTOM_THRESHOLD;
+            var isPhantom = Math.Abs(EffAmt(it)) <= PHANTOM_THRESHOLD
+                && Math.Abs(it.UnitPrice ?? 0m) <= PHANTOM_THRESHOLD;
             return emptyDesc && isPhantom;
         });
 
@@ -2395,26 +2398,20 @@ public class OcrService : IOcrService
         //    external OCR คำนวณฐาน VAT ย้อนกลับ (VAT/0.07) ได้ 4,691.57 แล้ว
         //    โยนเศษ 4,691.59−4,691.57 = 0.02 เป็น line "ส่วนไม่มีภาษี". เศษนี้
         //    ไม่ใช่สินค้าจริง (ขายของ 2 สตางค์ไม่มีจริง) → fold เข้าบรรทัดหลัก.
-        //    ทำ "ก่อน" merge by description เพื่อไม่ให้ qty เพิ่มหลอก (1+1=2).
-        //    เงื่อนไข fold: มี ≥ 2 บรรทัด + บรรทัดนี้ amount > 0 และ ≤ ฿1 +
-        //    unit_price ≤ ฿1 + มีบรรทัดอื่นที่ใหญ่กว่าให้ fold เข้า.
         if (data.Items.Count >= 2)
         {
             var phantoms = data.Items.Where(it =>
-                (it.Amount ?? 0m) > 0m
-                && (it.Amount ?? 0m) <= PHANTOM_THRESHOLD
+                EffAmt(it) > 0m
+                && EffAmt(it) <= PHANTOM_THRESHOLD
                 && (it.UnitPrice ?? 0m) <= PHANTOM_THRESHOLD).ToList();
             var reals = data.Items.Where(it => !phantoms.Contains(it)).ToList();
             if (phantoms.Count > 0 && reals.Count > 0)
             {
-                // fold ยอด phantom เข้าบรรทัด "amount ใหญ่สุด" (บรรทัดสินค้าจริง)
-                var main = reals.OrderByDescending(it => it.Amount ?? 0m).First();
-                var foldAmt = phantoms.Sum(p => p.Amount ?? 0m);
-                main.Amount = (main.Amount ?? 0m) + foldAmt;
-                // unit_price ปรับตาม qty เดิม (ไม่เพิ่ม qty) — ยอด/หน่วยจะ
-                // = amount ใหม่ / qty เดิม. qty 1 → unit_price = amount.
-                if (main.Quantity is decimal mq && mq > 0m && main.Amount is decimal ma)
-                    main.UnitPrice = Math.Round(ma / mq, 2);
+                var main = reals.OrderByDescending(EffAmt).First();
+                var foldAmt = phantoms.Sum(EffAmt);
+                main.Amount = EffAmt(main) + foldAmt;
+                if (main.Quantity is decimal mq && mq > 0m)
+                    main.UnitPrice = Math.Round(main.Amount.Value / mq, 2);
                 foreach (var p in phantoms) data.Items.Remove(p);
             }
         }

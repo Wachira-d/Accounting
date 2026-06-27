@@ -3332,6 +3332,65 @@
        * item typeahead to upgrade an OCR'd "น้ำดื่ม 12 ขวด" line into a
        * linked product, or to fix anything the OCR mis-extracted.
        */
+      /** ยุบ VAT-split phantom lines (mirror backend CleanVatSplitLines).
+       * เคส external OCR แตกสินค้า 1 ตัวเป็น "...(ส่วนมีภาษี)" + "...(ส่วนไม่มีภาษี)"
+       * + เศษ ≤฿1 (VAT/0.07 rounding). gate ด้วย marker — ไม่มี marker ไม่แตะ. */
+      _cleanVatSplitLines(lines) {
+        if (!Array.isArray(lines) || lines.length < 2) return lines || [];
+        const markers = ['ส่วนมีภาษี','ส่วนที่มีภาษี','ส่วนคิดภาษี','ส่วนไม่มีภาษี',
+          'ส่วนที่ไม่มีภาษี','ส่วนยกเว้นภาษี','vatable','non-vat','non vat','nonvat',
+          'vat included','vat-included','incl. vat','incl vat','vat excluded',
+          'vat-excluded','excl. vat','excl vat','with vat','without vat','มีภาษี','ไม่มีภาษี'];
+        const trimMarker = (desc) => {
+          let s = (desc || '').replace(/\s+$/,'');
+          let had = false;
+          for (let i = 0; i < 3; i++) {
+            if (!s.endsWith(')')) break;
+            const open = s.lastIndexOf('(');
+            if (open < 0) break;
+            const inside = s.substring(open + 1, s.length - 1).trim().toLowerCase();
+            if (!markers.some(m => inside.includes(m.toLowerCase()))) break;
+            s = s.substring(0, open).replace(/\s+$/,'');
+            had = true;
+          }
+          return { had, cleaned: s };
+        };
+        const anyMarker = lines.some(l => trimMarker(l.description).had);
+        if (!anyMarker) return lines;   // เอกสารปกติ — ไม่แตะ
+        // 1) trim suffix
+        let trimmed = lines.map(l => ({ ...l, description: trimMarker(l.description).cleaned }));
+        const TOL = 1;
+        const amt = (l) => (Number(l.unitPrice) || 0) * (Number(l.quantity) || 1);
+        // 2) fold phantom ≤฿1 เข้าบรรทัดใหญ่สุด
+        const phantoms = trimmed.filter(l => amt(l) > 0 && amt(l) <= TOL && (Number(l.unitPrice)||0) <= TOL);
+        let reals = trimmed.filter(l => !phantoms.includes(l));
+        if (phantoms.length > 0 && reals.length > 0) {
+          const foldAmt = phantoms.reduce((s,p) => s + amt(p), 0);
+          let main = reals.reduce((a,b) => amt(b) > amt(a) ? b : a, reals[0]);
+          const newAmt = amt(main) + foldAmt;
+          main.unitPrice = (Number(main.quantity)||1) > 0
+            ? Math.round((newAmt / (Number(main.quantity)||1)) * 100) / 100 : newAmt;
+          trimmed = reals;
+        }
+        // 3) merge true duplicate (desc เดียวกัน)
+        const out = [];
+        const seen = {};
+        for (const l of trimmed) {
+          const key = (l.description || '').trim();
+          if (key && seen[key] !== undefined) {
+            const ex = out[seen[key]];
+            const newQty = (Number(ex.quantity)||0) + (Number(l.quantity)||0);
+            const totAmt = amt(ex) + amt(l);
+            ex.quantity = newQty;
+            ex.unitPrice = newQty > 0 ? Math.round((totAmt / newQty) * 100) / 100 : ex.unitPrice;
+          } else {
+            if (key) seen[key] = out.length;
+            out.push(l);
+          }
+        }
+        return out;
+      },
+
       openInDocumentForm(overrideType) {
         const scan = this._reviewScan;
         if (!scan) return;
@@ -3355,7 +3414,7 @@
         // Extract line items the OCR pulled out. ProductCode left blank
         // here — the typeahead on the documents page will let the user
         // attach a product to each line interactively.
-        const lines = (scan.extractedItems || []).map(it => ({
+        let lines = (scan.extractedItems || []).map(it => ({
           description: it.description || '',
           quantity: it.quantity || 1,
           unitPrice: it.unitPrice || (it.amount && it.quantity ? it.amount / it.quantity : 0),
@@ -3363,6 +3422,11 @@
           vatRate: scan.extractedVatAmount && scan.extractedSubTotal ? 7 : 0,
           withholdingTaxRate: scan.hasWht ? (scan.whtRate || 0) : 0,
         }));
+        // ⭐ ยุบ VAT-split phantom lines ที่ external OCR แตกมา ("...(ส่วนมีภาษี)"
+        // 4,691.57 + "...(ส่วนไม่มีภาษี)" 0.02). clean ที่นี่ → user เห็น 1 บรรทัด
+        // ในฟอร์มทันที (frontend, ไม่ต้อง rebuild backend). backend
+        // CleanVatSplitLines เป็น safety net อีกชั้น.
+        lines = this._cleanVatSplitLines(lines);
         // Always provide at least one row so the user has somewhere to start.
         if (!lines.length) lines.push({ description: '', quantity: 1, unitPrice: 0, discountPercent: 0, vatRate: 7, withholdingTaxRate: 0 });
 
