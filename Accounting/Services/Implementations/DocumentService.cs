@@ -288,8 +288,108 @@ public class DocumentService : IDocumentService
         return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
     }
 
+    /// <summary>ยุบ VAT-split phantom lines — choke point สุดท้ายครอบคลุมทุก
+    /// path (frontend form / integration / OCR handoff ที่เข้าทาง POST /documents).
+    /// เคส: external OCR แตกสินค้า 1 ตัวเป็น "...(ส่วนมีภาษี)" + "...(ส่วนไม่มีภาษี)"
+    /// + เศษ ≤฿1 (VAT/0.07 rounding). Gate ด้วย "มี marker ส่วน(ไม่)มีภาษี"
+    /// — ถ้าไม่มี marker ไม่แตะ (กันเอกสารปกติที่มี line ≤฿1 จริง). DocumentLineRequest
+    /// เป็น immutable record → rebuild list. คืน list ใหม่; caller replace
+    /// request.Lines contents.</summary>
+    internal static List<DocumentLineRequest> CleanVatSplitLines(List<DocumentLineRequest>? lines)
+    {
+        if (lines == null || lines.Count < 2) return lines ?? new();
+
+        string[] markers =
+        {
+            "ส่วนมีภาษี", "ส่วนที่มีภาษี", "ส่วนคิดภาษี",
+            "ส่วนไม่มีภาษี", "ส่วนที่ไม่มีภาษี", "ส่วนยกเว้นภาษี",
+            "vatable", "non-vat", "non vat", "nonvat",
+            "vat included", "vat-included", "incl. vat", "incl vat",
+            "vat excluded", "vat-excluded", "excl. vat", "excl vat",
+            "with vat", "without vat", "มีภาษี", "ไม่มีภาษี",
+        };
+
+        // ตรวจว่ามี line ที่มี VAT-split marker ไหม — gate: ไม่มี = ไม่แตะ
+        static (bool Had, string Cleaned) TrimMarker(string? desc, string[] mk)
+        {
+            if (string.IsNullOrWhiteSpace(desc)) return (false, desc ?? "");
+            var s = desc.TrimEnd();
+            var had = false;
+            for (var safety = 0; safety < 3; safety++)
+            {
+                if (!s.EndsWith(")")) break;
+                var open = s.LastIndexOf('(');
+                if (open < 0) break;
+                var inside = s.Substring(open + 1, s.Length - open - 2).Trim().ToLowerInvariant();
+                var match = false;
+                foreach (var m in mk) if (inside.Contains(m.ToLowerInvariant())) { match = true; break; }
+                if (!match) break;
+                s = s.Substring(0, open).TrimEnd();
+                had = true;
+            }
+            return (had, s);
+        }
+
+        var anyMarker = lines.Any(l => TrimMarker(l.Description, markers).Had);
+        if (!anyMarker) return lines;   // เอกสารปกติ — ไม่แตะ
+
+        // 1) trim suffix (rebuild — record immutable)
+        var trimmed = lines.Select(l => l with { Description = TrimMarker(l.Description, markers).Cleaned }).ToList();
+
+        const decimal TOL = 1m;
+        decimal Amt(DocumentLineRequest l) => l.Quantity * l.UnitPrice;
+
+        // 2) fold phantom (≤฿1) เข้าบรรทัด amount ใหญ่สุด — รักษายอดรวมเป๊ะ
+        var phantoms = trimmed.Where(l => Amt(l) > 0m && Amt(l) <= TOL && l.UnitPrice <= TOL).ToList();
+        var reals = trimmed.Where(l => !phantoms.Contains(l)).ToList();
+        if (phantoms.Count > 0 && reals.Count > 0)
+        {
+            var foldAmt = phantoms.Sum(Amt);
+            var main = reals.OrderByDescending(Amt).First();
+            var idx = reals.IndexOf(main);
+            var newAmt = Amt(main) + foldAmt;
+            var newUnit = main.Quantity > 0m ? Math.Round(newAmt / main.Quantity, 2) : newAmt;
+            reals[idx] = main with { UnitPrice = newUnit };
+            trimmed = reals;
+        }
+
+        // 3) merge true duplicates (desc + account เดียวกัน) — เคส split เท่า ๆ กัน
+        var outList = new List<DocumentLineRequest>();
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var l in trimmed)
+        {
+            var key = $"{(l.Description ?? "").Trim()}|{l.AccountId}|{l.AccountCode}";
+            if (seen.TryGetValue(key, out var oi))
+            {
+                var ex = outList[oi];
+                var newQty = ex.Quantity + l.Quantity;
+                // amount รวม = ex.Amt + l.Amt; unit price = amount/qty
+                var totAmt = Amt(ex) + Amt(l);
+                var unit = newQty > 0m ? Math.Round(totAmt / newQty, 2) : ex.UnitPrice;
+                outList[oi] = ex with { Quantity = newQty, UnitPrice = unit };
+            }
+            else
+            {
+                seen[key] = outList.Count;
+                outList.Add(l);
+            }
+        }
+        return outList;
+    }
+
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy)
     {
+        // ⭐ ยุบ VAT-split phantom lines ก่อนทุกอย่าง (choke point ครอบคลุมทุก path)
+        if (request.Lines is { Count: > 1 })
+        {
+            var cleaned = CleanVatSplitLines(request.Lines);
+            if (!ReferenceEquals(cleaned, request.Lines))
+            {
+                request.Lines.Clear();
+                request.Lines.AddRange(cleaned);
+            }
+        }
+
         // Check usage limit
         if (!await _subscriptionService.CheckUsageLimitAsync(companyId, "document"))
             throw new InvalidOperationException("เกินจำนวนเอกสารที่อนุญาตต่อเดือน");
