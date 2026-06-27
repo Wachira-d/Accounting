@@ -657,6 +657,15 @@ exports เดิมออก GL+ภงด.1+สปส.1-10+50ทวิ+payslip 
 (ExternalRunRef + unique index), validate net=gross−หักลูกจ้าง, account override
 (salary/payment code) ลง JE. + integration outbound document attachments[]._
 
+_รอบ 18: OCR contact address enrichment ครบ structured fields — เดิม enrichment
+ของ contact ที่ match จากของเดิม (`OcrService.ScanAsync` ~:1606) เติมแค่ free-text
+`Address` ทำให้ (1) PDF (`FormatThaiAddress`) เมื่อ structured ว่าง→fallback
+free-text ที่ OCR เดาผิด = "ที่อยู่ในเอกสารผิด" (2) ฟอร์มผู้ติดต่ออ่าน structured
+→ ขึ้นว่าง ต้องกด "ดึงข้อมูล" (DBD) เอง. เพิ่ม `EnrichContactAddress` เติมทั้ง
+free-text + structured (บ้านเลขที่/หมู่/ถนน/ตำบล/อำเภอ/จังหวัด/ไปรษณีย์) จาก
+DbdAddress (ground truth) ก่อน VendorAddress; ทับค่าเดิมเฉพาะเมื่อ DBD ยืนยัน +
+contact เป็น OCR-managed (กันแตะข้อมูลที่ผู้ใช้กรอกเอง)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
