@@ -96,6 +96,58 @@ public record CreatePayrollRunRequest(
     string Name, int Year, int Month,
     DateTime PayDate, DateTime PeriodStart, DateTime PeriodEnd);
 
+/// <summary>Import payroll run จากระบบนอกที่คำนวณยอดเองแล้ว (เช่น TakeTime).
+/// recalculate=false → NextAcc ใช้ยอดที่ส่งมาตรง ๆ ไม่คำนวณใหม่ → run ออกมา
+/// สถานะ Calculated ทันที (ข้าม calculate). idempotency ผ่าน ExternalRunRef.</summary>
+public record ImportPayrollRunRequest(
+    string Name, int Year, int Month,
+    DateTime PayDate, DateTime PeriodStart, DateTime PeriodEnd,
+    List<ImportPayrollLine> Lines,
+    string? ExternalSystem = null,
+    string? ExternalRunRef = null,
+    bool Recalculate = false);
+
+/// <summary>ยอดเงินเดือนสำเร็จรูปต่อพนักงาน 1 คน (จาก TakeTime). map พนักงาน
+/// ด้วย EmployeeExternalId (Employee.ExternalId) ก่อน, fallback CitizenId.</summary>
+public record ImportPayrollLine(
+    string? EmployeeExternalId,
+    string? CitizenId,
+    string? EmployeeName,
+    // รายได้
+    decimal BaseSalary,
+    decimal OvertimePay,
+    decimal Allowances,
+    decimal Commission,
+    decimal Bonus,
+    decimal OtherEarnings,
+    decimal GrossIncome,
+    // หัก
+    decimal SocialSecurityEmployee,
+    decimal SocialSecurityEmployer,
+    decimal WithholdingTax,
+    decimal ProvidentFundEmployee,
+    decimal ProvidentFundEmployer,
+    decimal SalaryAdvance,
+    decimal OtherDeductions,
+    decimal TotalDeductions,
+    decimal NetPay,
+    // override (optional)
+    string? SalaryExpenseAccountCode = null,
+    string? PaymentAccountCode = null,
+    string? IncomeTypeCode = null,
+    // taxableGross (ถ้าต่างจาก gross — สวัสดิการยกเว้นภาษี). null = ใช้ gross
+    decimal? TaxableGross = null);
+
+/// <summary>ผลลัพธ์ import — run + เอกสารที่ออกให้.</summary>
+public record ImportPayrollRunResult(
+    Guid Id, string PayrollNumber, string Status,
+    decimal TotalGrossSalary, decimal TotalWithholdingTax,
+    decimal TotalSocialSecurityEmployee, decimal TotalSocialSecurityEmployer,
+    decimal TotalNetPay, int EmployeeCount,
+    Guid? JournalEntryId,
+    bool WasExisting,
+    List<string> Warnings);
+
 public record PayrollRunResponse(
     Guid Id, string PayrollNumber, string Name,
     int Year, int Month, DateTime PayDate, string Status,

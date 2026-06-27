@@ -2863,11 +2863,56 @@ public class IntegrationService : IIntegrationService
             q = q.Where(d => d.DocumentType == docType);
 
         var total = await q.CountAsync();
-        var items = await q
+        var docs = await q
             .OrderByDescending(d => d.DocumentDate)
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
-            .Select(d => new OutboundDocumentResponse(
+            .ToListAsync();
+
+        // ── ไฟล์แนบ — รวม "ไฟล์ของเอกสาร" (EntityType=Document) + "ไฟล์ต้นฉบับ
+        // OCR" (ค้างที่ EntityType=OcrScan จาก relink พลาด). batch query กัน
+        // N+1: หา FileAttachment ที่ EntityId ∈ docIds + OcrScan.FileAttachmentId
+        // ที่ CreatedDocumentId ∈ docIds. map กลับเข้าแต่ละเอกสาร. นี่คือเหตุที่
+        // "บนระบบมีไฟล์ แต่ api ดึงไปไม่มี" — เดิม outbound response ไม่ join
+        // attachment เลย.
+        var docIds = docs.Select(d => d.Id).ToList();
+        var directFiles = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted
+                && f.EntityType == "Document" && docIds.Contains(f.EntityId))
+            .ToListAsync();
+        // OCR-orphan: scan.CreatedDocumentId ∈ docIds + FileAttachmentId ที่ยัง
+        // ไม่ relink (ไม่อยู่ใน directFiles)
+        var directIds = directFiles.Select(f => f.Id).ToHashSet();
+        var scanMap = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.CreatedDocumentId != null
+                && docIds.Contains(s.CreatedDocumentId!.Value) && s.FileAttachmentId != null)
+            .Select(s => new { DocId = s.CreatedDocumentId!.Value, FileId = s.FileAttachmentId!.Value })
+            .ToListAsync();
+        var orphanScanFileIds = scanMap.Select(x => x.FileId).Where(id => !directIds.Contains(id)).Distinct().ToList();
+        var orphanFiles = orphanScanFileIds.Count == 0
+            ? new List<Models.Entities.FileAttachment>()
+            : await _db.FileAttachments.AsNoTracking()
+                .Where(f => f.CompanyId == companyId && !f.IsDeleted && orphanScanFileIds.Contains(f.Id))
+                .ToListAsync();
+
+        // index: docId → list of (file)
+        var filesByDoc = new Dictionary<Guid, List<Models.Entities.FileAttachment>>();
+        foreach (var f in directFiles)
+        {
+            if (!filesByDoc.TryGetValue(f.EntityId, out var l)) { l = new(); filesByDoc[f.EntityId] = l; }
+            l.Add(f);
+        }
+        foreach (var s in scanMap)
+        {
+            var of = orphanFiles.FirstOrDefault(f => f.Id == s.FileId);
+            if (of == null) continue;
+            if (!filesByDoc.TryGetValue(s.DocId, out var l)) { l = new(); filesByDoc[s.DocId] = l; }
+            if (l.All(x => x.Id != of.Id)) l.Add(of);
+        }
+
+        string AttUrl(Guid fileId) => $"/api/companies/{companyId}/attachments/{fileId}/download";
+
+        var items = docs.Select(d => new OutboundDocumentResponse(
                 d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.Status.ToString(),
                 d.DocumentDate, d.DueDate,
                 d.Contact != null ? d.Contact.Name : null, d.Contact != null ? d.Contact.TaxId : null,
@@ -2876,8 +2921,13 @@ public class IntegrationService : IIntegrationService
                 d.Lines.Select(l => new OutboundDocumentLineResponse(
                     l.ProductCode, l.Description, l.Quantity, l.Unit, l.UnitPrice,
                     l.DiscountAmount, l.Amount, l.VatRate, l.VatAmount)).ToList(),
-                d.CreatedAt))
-            .ToListAsync();
+                d.CreatedAt,
+                filesByDoc.TryGetValue(d.Id, out var fl)
+                    ? fl.OrderByDescending(f => f.CreatedAt)
+                        .Select(f => new OutboundAttachment(f.Id, f.FileName, f.OriginalFileName,
+                            f.ContentType, f.FileSize, AttUrl(f.Id), f.CreatedAt)).ToList()
+                    : null))
+            .ToList();
 
         var totalPages = (int)Math.Ceiling((double)total / query.PageSize);
         return new OutboundPagedResponse<OutboundDocumentResponse>(items, total, query.Page, query.PageSize, totalPages);

@@ -4304,6 +4304,15 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "TotalWorkersCompensation" decimal(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "WorkersCompensation" decimal(18,2) NOT NULL DEFAULT 0;""",
 
+            // ===== PayrollRuns: external import (TakeTime ส่งยอดสำเร็จรูป) =====
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(100) NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ExternalRunRef" varchar(200) NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "IsExternalImport" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SalaryExpenseAccountCode" varchar(50) NULL;""",
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "NetPaymentAccountCode" varchar(50) NULL;""",
+            // idempotency — unique partial index บน (CompanyId, ExternalRunRef)
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PayrollRuns_ExternalRunRef" ON "PayrollRuns" ("CompanyId", "ExternalRunRef") WHERE "ExternalRunRef" IS NOT NULL;""",
+
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),

@@ -306,6 +306,20 @@ public record OutboundDocumentResponse(
     decimal SubTotal, decimal VatAmount, decimal TotalAmount, decimal PaidAmount, decimal BalanceDue,
     string? Reference, string? Notes,
     List<OutboundDocumentLineResponse> Lines,
+    DateTime CreatedAt,
+    // ไฟล์แนบ (รวมไฟล์ต้นฉบับ OCR) — partner ดึงไปแสดง/ดาวน์โหลด.
+    // เดิม response ไม่มี field นี้ → "บนระบบมีไฟล์ แต่ api ดึงไปไม่มี".
+    List<OutboundAttachment>? Attachments = null);
+
+/// <summary>ไฟล์แนบของเอกสารใน outbound response — partner ใช้ DownloadUrl
+/// (relative path) ดาวน์โหลดผ่าน API เดิม (แนบ X-Api-Key/Bearer).</summary>
+public record OutboundAttachment(
+    Guid Id,
+    string FileName,
+    string OriginalFileName,
+    string ContentType,
+    long FileSize,
+    string DownloadUrl,
     DateTime CreatedAt);
 
 public record OutboundDocumentLineResponse(

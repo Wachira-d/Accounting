@@ -1614,15 +1614,17 @@ public class OcrService : IOcrService
                     { existing.TaxId = extractedData.VendorTaxId; changed = true; }
                     // (2) DBD / phone / address enrichment — gated ตามเดิม
                     var hasDbdOrContacts = extractedData.DbdCanonicalName != null
+                        || !string.IsNullOrWhiteSpace(extractedData.DbdAddress)
                         || !string.IsNullOrWhiteSpace(extractedData.VendorPhone)
                         || !string.IsNullOrWhiteSpace(extractedData.VendorAddress);
                     if (hasDbdOrContacts)
                     {
-                        if (string.IsNullOrWhiteSpace(existing.Address))
-                        {
-                            var addr = extractedData.DbdAddress ?? extractedData.VendorAddress;
-                            if (!string.IsNullOrEmpty(addr)) { existing.Address = addr; changed = true; }
-                        }
+                        // ที่อยู่: เติมทั้ง free-text + structured (บ้านเลขที่/ตำบล/
+                        // อำเภอ/จังหวัด/ไปรษณีย์). เดิมเติมแค่ free-text ทำให้เอกสาร
+                        // PDF (structured ว่าง→fallback free-text ที่ OCR เดาผิด) +
+                        // ฟอร์มผู้ติดต่อ (อ่าน structured) ขึ้นว่าง/ผิด — ดู
+                        // EnrichContactAddress.
+                        if (EnrichContactAddress(existing, extractedData)) changed = true;
                         var sanePhone = SanePhone(extractedData.VendorPhone);
                         if (string.IsNullOrWhiteSpace(existing.Phone) && !string.IsNullOrWhiteSpace(sanePhone))
                         { existing.Phone = sanePhone; changed = true; }
@@ -1919,6 +1921,54 @@ public class OcrService : IOcrService
     {
         var p = ThaiAddressParser.Parse(address);
         return (p.BuildingNumber, p.StreetName, p.SubDistrict, p.District, p.Province, p.PostalCode, p.Moo);
+    }
+
+    /// <summary>เติม/อัปเดตที่อยู่ของ Contact ที่ "ถูก match จากของเดิม" ให้ครบทั้ง
+    /// free-text (<c>Address</c>) และ structured fields (บ้านเลขที่/หมู่/ถนน/ตำบล/
+    /// อำเภอ/จังหวัด/รหัสไปรษณีย์).
+    ///
+    /// แก้บั๊ก OCR-via-API: เดิม enrichment เติมแค่ free-text <c>Address</c> ทำให้
+    ///   • เอกสาร/PDF (FormatThaiAddress) เมื่อ structured ว่าง → ตกไปใช้ free-text
+    ///     ที่ OCR เดามาผิด → "ที่อยู่ในเอกสารผิด"
+    ///   • ฟอร์มผู้ติดต่ออ่าน structured fields → ขึ้นว่าง → ผู้ใช้ต้องกด "ดึงข้อมูล"
+    ///     (DBD) เองทุกครั้ง
+    ///
+    /// ลำดับความน่าเชื่อถือ: DBD (ground truth) ก่อน VendorAddress (OCR เดา) เสมอ.
+    /// การ "ทับ" ค่าเดิมที่ไม่ว่าง อนุญาตเฉพาะเมื่อ DBD ยืนยัน **และ** contact ถูก
+    /// จัดการโดย OCR เอง (CreatedBy/UpdatedBy ขึ้นต้น "OCR") — ไม่แตะที่อยู่ที่ผู้ใช้
+    /// กรอก/ยืนยันด้วยตนเอง. field ที่ว่างอยู่แล้วเติมได้เสมอ (ปลอดภัย).
+    /// คืน true เมื่อมีการเปลี่ยนแปลง.</summary>
+    private static bool EnrichContactAddress(Contact c, OcrExtractedData data)
+    {
+        var dbdMatched = data.DbdMatched && !string.IsNullOrWhiteSpace(data.DbdAddress);
+        var freeAddr = dbdMatched ? data.DbdAddress : data.VendorAddress;
+        if (string.IsNullOrWhiteSpace(freeAddr)) return false;
+
+        var ocrManaged = (c.CreatedBy ?? "").StartsWith("OCR", StringComparison.OrdinalIgnoreCase)
+                      || (c.UpdatedBy ?? "").StartsWith("OCR", StringComparison.OrdinalIgnoreCase);
+        var allowOverwrite = dbdMatched && ocrManaged;
+
+        var parts = ParseAddressIntoParts(freeAddr);
+        bool changed = false;
+
+        bool Apply(string? cur, string? val, Action<string> set)
+        {
+            if (string.IsNullOrWhiteSpace(val)) return false;
+            if (string.IsNullOrWhiteSpace(cur)
+                || (allowOverwrite && !string.Equals(cur, val, StringComparison.Ordinal)))
+            { set(val!); return true; }
+            return false;
+        }
+
+        if (Apply(c.Address, freeAddr, v => c.Address = v)) changed = true;
+        if (Apply(c.BuildingNumber, parts.BuildingNumber, v => c.BuildingNumber = v)) changed = true;
+        if (Apply(c.Moo, parts.Moo, v => c.Moo = v)) changed = true;
+        if (Apply(c.StreetName, parts.StreetName, v => c.StreetName = v)) changed = true;
+        if (Apply(c.SubDistrict, parts.SubDistrict, v => c.SubDistrict = v)) changed = true;
+        if (Apply(c.District, parts.District, v => c.District = v)) changed = true;
+        if (Apply(c.Province, parts.Province, v => c.Province = v)) changed = true;
+        if (Apply(c.PostalCode, parts.PostalCode, v => c.PostalCode = v)) changed = true;
+        return changed;
     }
 
     /// <summary>

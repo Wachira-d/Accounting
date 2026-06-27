@@ -959,6 +959,187 @@ public class PayrollService : IPayrollService
         return MapToPayrollRunResponse(run);
     }
 
+    /// <summary>
+    /// Import payroll run จากระบบนอก (TakeTime) — รับยอดสำเร็จรูปต่อพนักงาน
+    /// แล้วสร้าง run สถานะ Calculated ทันที (ไม่คำนวณใหม่). approve/pay/exports
+    /// เดิมทำงานต่อจากยอดที่ส่งมา → ออก GL + ภงด.1 + สปส.1-10 + 50ทวิ + payslip
+    /// จากตัวเลขที่ผันแปรของ TakeTime จริง ๆ.
+    ///
+    /// Validation: gross − totalDeductions(ฝั่งลูกจ้าง) == netPay ต่อบรรทัด;
+    /// employee map เจอ (ExternalId → CitizenId); account code resolve ได้.
+    /// Idempotency: ExternalRunRef ซ้ำ → คืน run เดิม ไม่สร้างซ้ำ.
+    /// </summary>
+    public async Task<ImportPayrollRunResult> ImportPayrollRunAsync(
+        Guid companyId, ImportPayrollRunRequest request, string createdBy)
+    {
+        if (request.Recalculate)
+            throw new InvalidOperationException(
+                "endpoint นี้สำหรับ import ยอดสำเร็จรูป (recalculate=false). ถ้าต้องการให้ NextAcc " +
+                "คำนวณเอง ใช้ POST /runs → /calculate แทน.");
+        if (request.Month < 1 || request.Month > 12)
+            throw new InvalidOperationException("เดือนต้องอยู่ระหว่าง 1 ถึง 12");
+        if (request.Lines == null || request.Lines.Count == 0)
+            throw new InvalidOperationException("ต้องมีรายการพนักงานอย่างน้อย 1 คน");
+
+        // ── Idempotency ──
+        if (!string.IsNullOrWhiteSpace(request.ExternalRunRef))
+        {
+            var existing = await _db.Set<PayrollRun>()
+                .FirstOrDefaultAsync(r => r.CompanyId == companyId
+                    && r.ExternalRunRef == request.ExternalRunRef && !r.IsDeleted);
+            if (existing != null)
+                return ToImportResult(existing, wasExisting: true,
+                    new List<string> { $"ExternalRunRef '{request.ExternalRunRef}' มีอยู่แล้ว — คืน run เดิม (ไม่สร้างซ้ำ)" });
+        }
+
+        var warnings = new List<string>();
+
+        // ── Resolve employees: load ทั้งบริษัท (CitizenId decrypt in-memory
+        //    ผ่าน ValueConverter — query SQL by encrypted ไม่ได้). ──
+        var employees = await _db.Set<Employee>()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted)
+            .ToListAsync();
+        var byExtId = employees.Where(e => !string.IsNullOrEmpty(e.ExternalId))
+            .GroupBy(e => e.ExternalId!).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        string DigitsOnly(string? s) => new string((s ?? "").Where(char.IsDigit).ToArray());
+        var byCitizen = employees.Where(e => !string.IsNullOrEmpty(e.CitizenId))
+            .GroupBy(e => DigitsOnly(e.CitizenId)).ToDictionary(g => g.Key, g => g.First());
+
+        // ── Resolve + validate ทุก line ก่อน (atomic: ผิดคนเดียว reject ทั้ง run) ──
+        var resolved = new List<(ImportPayrollLine Line, Employee Emp)>();
+        foreach (var (line, idx) in request.Lines.Select((l, i) => (l, i + 1)))
+        {
+            Employee? emp = null;
+            if (!string.IsNullOrWhiteSpace(line.EmployeeExternalId)
+                && byExtId.TryGetValue(line.EmployeeExternalId, out var e1)) emp = e1;
+            if (emp == null && !string.IsNullOrWhiteSpace(line.CitizenId)
+                && byCitizen.TryGetValue(DigitsOnly(line.CitizenId), out var e2)) emp = e2;
+            if (emp == null)
+                throw new InvalidOperationException(
+                    $"บรรทัด {idx} ({line.EmployeeName ?? line.EmployeeExternalId ?? line.CitizenId}): " +
+                    "หาพนักงานในระบบไม่เจอ — sync employee (ExternalId/CitizenId) ก่อน import");
+
+            // gross − หักฝั่งลูกจ้าง == net. **สำคัญ:** SSO/PVD ฝั่งนายจ้างเป็น
+            // ค่าใช้จ่ายของบริษัท ไม่หักจาก net ของลูกจ้าง — ถ้านับรวมจะทำให้
+            // GL ไม่ balance ตอน pay (Dr salary+SSO-er ≠ Cr payable+WHT+cash).
+            // validate ที่นี่เพื่อ reject 422 ทันที (แทนที่จะ fail cryptic ตอน pay).
+            var empDeductions = line.SocialSecurityEmployee + line.WithholdingTax
+                + line.ProvidentFundEmployee + line.SalaryAdvance + line.OtherDeductions;
+            var expectedNet = Math.Round(line.GrossIncome - empDeductions, 2);
+            if (Math.Abs(expectedNet - line.NetPay) > 0.01m)
+                throw new InvalidOperationException(
+                    $"บรรทัด {idx} ({emp.FirstNameTh} {emp.LastNameTh}): netPay ไม่ตรง — " +
+                    $"net ต้อง = gross − (หักฝั่งลูกจ้าง: ปกส.ลูกจ้าง + WHT + PVD ลูกจ้าง + เบิกล่วงหน้า + อื่นๆ). " +
+                    $"คำนวณได้ {line.GrossIncome:N2} − {empDeductions:N2} = {expectedNet:N2} แต่ส่ง netPay {line.NetPay:N2}. " +
+                    $"หมายเหตุ: ปกส./PVD ฝั่งนายจ้าง ห้ามนำมาหักจาก net (เป็นค่าใช้จ่ายบริษัท ลง GL แยก)");
+
+            // ตรวจ account code (ถ้าส่งมา) resolve ได้
+            foreach (var code in new[] { line.SalaryExpenseAccountCode, line.PaymentAccountCode })
+            {
+                if (!string.IsNullOrWhiteSpace(code)
+                    && !await _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId
+                        && a.AccountCode == code && a.IsActive && !a.IsDeleted))
+                    throw new InvalidOperationException($"บรรทัด {idx}: ผังบัญชี '{code}' ไม่มีในระบบหรือถูกปิดใช้");
+            }
+            resolved.Add((line, emp));
+        }
+
+        // ── สร้าง run + details ──
+        var count = await _db.Set<PayrollRun>()
+            .CountAsync(r => r.CompanyId == companyId && r.Year == request.Year);
+        var payrollNumber = $"PR-{request.Year}{request.Month:D2}-{(count + 1):D3}";
+
+        var run = new PayrollRun
+        {
+            CompanyId = companyId,
+            PayrollNumber = payrollNumber,
+            Name = request.Name,
+            Year = request.Year,
+            Month = request.Month,
+            PayDate = request.PayDate,
+            PeriodStart = request.PeriodStart,
+            PeriodEnd = request.PeriodEnd,
+            Status = "Calculated",                 // ข้าม calculate — ใช้ยอดที่ส่งมา
+            CreatedBy = createdBy,
+            IsExternalImport = true,
+            ExternalSystem = request.ExternalSystem,
+            ExternalRunRef = request.ExternalRunRef,
+            // account override ระดับ run — ใช้ของ line แรกที่ส่งมา (ปกติทุก line
+            // ใช้บัญชีเดียวกัน). post GL จะ prefer ค่านี้ถ้า set.
+            SalaryExpenseAccountCode = resolved.Select(r => r.Line.SalaryExpenseAccountCode)
+                .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)),
+            NetPaymentAccountCode = resolved.Select(r => r.Line.PaymentAccountCode)
+                .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)),
+        };
+
+        foreach (var (line, emp) in resolved)
+        {
+            run.Details.Add(new PayrollDetail
+            {
+                CompanyId = companyId,
+                EmployeeId = emp.Id,
+                BaseSalary = line.BaseSalary,
+                OvertimePay = line.OvertimePay,
+                Allowances = line.Allowances,
+                Commission = line.Commission,
+                Bonus = line.Bonus,
+                OtherIncome = line.OtherEarnings,
+                GrossIncome = line.GrossIncome,
+                TaxableGross = line.TaxableGross ?? line.GrossIncome,
+                SocialSecurityEmployee = line.SocialSecurityEmployee,
+                SocialSecurityEmployer = line.SocialSecurityEmployer,
+                WithholdingTax = line.WithholdingTax,
+                ProvidentFundEmployee = line.ProvidentFundEmployee,
+                ProvidentFundEmployer = line.ProvidentFundEmployer,
+                OtherDeductions = line.OtherDeductions + line.SalaryAdvance,
+                TotalDeductions = line.TotalDeductions,
+                NetPay = line.NetPay,
+            });
+        }
+
+        // totals = ผลรวมยอดที่ส่งมา (ไม่คำนวณใหม่)
+        run.TotalGrossSalary = resolved.Sum(r => r.Line.GrossIncome);
+        run.TotalWithholdingTax = resolved.Sum(r => r.Line.WithholdingTax);
+        run.TotalSocialSecurityEmployee = resolved.Sum(r => r.Line.SocialSecurityEmployee);
+        run.TotalSocialSecurityEmployer = resolved.Sum(r => r.Line.SocialSecurityEmployer);
+        run.TotalProvidentFundEmployee = resolved.Sum(r => r.Line.ProvidentFundEmployee);
+        run.TotalProvidentFundEmployer = resolved.Sum(r => r.Line.ProvidentFundEmployer);
+        run.TotalNetPay = resolved.Sum(r => r.Line.NetPay);
+        run.TotalDeductions = resolved.Sum(r => r.Line.TotalDeductions);
+        run.EmployeeCount = resolved.Count;
+
+        _db.Set<PayrollRun>().Add(run);
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException) when (!string.IsNullOrWhiteSpace(request.ExternalRunRef))
+        {
+            // race: 2 import พร้อมกัน ExternalRunRef เดียวกัน → unique index ชน.
+            // คืน run ที่อีก request สร้างไว้.
+            var existing = await _db.Set<PayrollRun>().AsNoTracking()
+                .FirstOrDefaultAsync(r => r.CompanyId == companyId
+                    && r.ExternalRunRef == request.ExternalRunRef && !r.IsDeleted);
+            if (existing != null)
+                return ToImportResult(existing, wasExisting: true,
+                    new List<string> { "ExternalRunRef ซ้ำ (race) — คืน run ที่สร้างไว้แล้ว" });
+            throw;
+        }
+
+        _logger?.LogInformation(
+            "Imported payroll run {Num} from {Sys} ({Ref}): {Count} emp, gross {Gross}, net {Net}",
+            run.PayrollNumber, request.ExternalSystem, request.ExternalRunRef,
+            run.EmployeeCount, run.TotalGrossSalary, run.TotalNetPay);
+
+        return ToImportResult(run, wasExisting: false, warnings);
+    }
+
+    private static ImportPayrollRunResult ToImportResult(PayrollRun run, bool wasExisting, List<string> warnings)
+        => new(run.Id, run.PayrollNumber, run.Status,
+            run.TotalGrossSalary, run.TotalWithholdingTax,
+            run.TotalSocialSecurityEmployee, run.TotalSocialSecurityEmployer,
+            run.TotalNetPay, run.EmployeeCount, run.JournalEntryId, wasExisting, warnings);
+
     public async Task<PayrollRunResponse> GetPayrollRunAsync(Guid companyId, Guid payrollRunId)
     {
         var run = await _db.Set<PayrollRun>()
@@ -1559,7 +1740,13 @@ public class PayrollService : IPayrollService
                 // org-structure linkage) and fall back to the employee's
                 // own DimensionId, then to null. Companies that haven't
                 // configured departments still produce a single line.
-                var salaryAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                // External import override → prefer run.SalaryExpenseAccountCode
+                var salaryAccount = (!string.IsNullOrWhiteSpace(run.SalaryExpenseAccountCode)
+                        ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode == run.SalaryExpenseAccountCode
+                            && a.IsActive && !a.IsDeleted)
+                        : null)
+                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "54111" && a.Level >= 4)
                     ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4);
@@ -1728,8 +1915,14 @@ public class PayrollService : IPayrollService
                 }
 
                 // Cr: เงินสด/ธนาคาร (111) — เงินเดือนสุทธิ หักเงินทดรองที่เรียกคืน
+                // External import override → prefer run.NetPaymentAccountCode
                 var cashPaid = run.TotalNetPay - totalAdvanceRecovered;
-                var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                var cashAccount = (!string.IsNullOrWhiteSpace(run.NetPaymentAccountCode)
+                        ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode == run.NetPaymentAccountCode
+                            && a.IsActive && !a.IsDeleted)
+                        : null)
+                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
                     ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
