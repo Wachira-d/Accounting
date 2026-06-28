@@ -4164,7 +4164,46 @@ public class DocumentService : IDocumentService
             .Include(c => c.DefaultIrGrAccount)
             .FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        // Lazy backfill: contact เก่า / ที่ OCR เติมแต่ free-text Address (ก่อน
+        // แก้ enrichment) มี structured fields ว่าง → ฟอร์มแก้ผู้ติดต่อขึ้นที่อยู่
+        // ว่าง. เมื่อเปิดดู ให้ parse free-text เป็น structured ครั้งเดียวแล้ว
+        // persist — ผู้ใช้ไม่ต้องกด "ดึงข้อมูล" เองอีก. ทำเฉพาะ single-get
+        // (ฟอร์มแก้) ไม่ทำใน list เพื่อเลี่ยง write ก้อนใหญ่.
+        if (BackfillContactStructuredAddress(contact))
+            await _db.SaveChangesAsync();
         return MapContactToResponse(contact);
+    }
+
+    /// <summary>เติม structured address fields (บ้านเลขที่/หมู่/ถนน/ตำบล/อำเภอ/
+    /// จังหวัด/ไปรษณีย์) จาก free-text <c>Address</c> เมื่อ locality ว่างทั้งหมด.
+    /// ใช้ ThaiAddressParser ตัวเดียวกับฟอร์ม + OCR. เติมเฉพาะ field ที่ว่าง
+    /// (ไม่ทับค่าที่มีอยู่). คืน true เมื่อมีการเปลี่ยนแปลง.</summary>
+    private static bool BackfillContactStructuredAddress(Contact c)
+    {
+        if (string.IsNullOrWhiteSpace(c.Address)) return false;
+        // มี locality อยู่แล้ว — ไม่ต้องทำ
+        if (!string.IsNullOrWhiteSpace(c.SubDistrict)
+            || !string.IsNullOrWhiteSpace(c.District)
+            || !string.IsNullOrWhiteSpace(c.Province)) return false;
+
+        var p = ThaiAddressParser.Parse(c.Address);
+        if (string.IsNullOrWhiteSpace(p.Province)
+            && string.IsNullOrWhiteSpace(p.SubDistrict)
+            && string.IsNullOrWhiteSpace(p.District)) return false;
+
+        bool changed = false;
+        void Set(string? cur, string? val, Action<string> set)
+        { if (string.IsNullOrWhiteSpace(cur) && !string.IsNullOrWhiteSpace(val)) { set(val!); changed = true; } }
+        Set(c.BuildingNumber, p.BuildingNumber, v => c.BuildingNumber = v);
+        Set(c.Moo, p.Moo, v => c.Moo = v);
+        // เก็บส่วนหัวเต็ม (ห้อง/ชั้น/อาคาร/ซอย/ถนน) ไม่ใช่แค่ชื่อถนนสั้น เพื่อไม่ให้
+        // รายละเอียดหายตอน render เป็น structured address.
+        Set(c.StreetName, ThaiAddressParser.ExtractStreetHead(c.Address, p.BuildingNumber, p.Moo), v => c.StreetName = v);
+        Set(c.SubDistrict, p.SubDistrict, v => c.SubDistrict = v);
+        Set(c.District, p.District, v => c.District = v);
+        Set(c.Province, p.Province, v => c.Province = v);
+        Set(c.PostalCode, p.PostalCode, v => c.PostalCode = v);
+        return changed;
     }
 
     public async Task<PagedResponse<ContactResponse>> GetContactsAsync(Guid companyId, bool? isCustomer = null, bool? isSupplier = null, string? search = null, PagedRequest? paging = null)

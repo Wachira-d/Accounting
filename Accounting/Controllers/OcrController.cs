@@ -188,7 +188,8 @@ public class OcrController : ControllerBase
 
     [HttpPost("scan/{fileAttachmentId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Scan(
-        Guid companyId, Guid fileAttachmentId, [FromQuery] bool? autoCreate = null)
+        Guid companyId, Guid fileAttachmentId, [FromQuery] bool? autoCreate = null,
+        [FromBody] OcrScanMetadataRequest? body = null)
     {
         // Same auto-create defaulting as /upload — integration partners using
         // the two-step upload-then-scan flow keep their zero-touch behavior;
@@ -196,9 +197,18 @@ public class OcrController : ControllerBase
         var isIntegrationPartner = HttpContext.Items.ContainsKey("IntegrationId")
             || User.FindFirst("IntegrationId") != null;
         var effective = autoCreate ?? isIntegrationPartner;
+        // forward partner metadata (amount override / payment source / project)
+        // — เหมือน path /upload เพื่อให้ flow 2 ขั้น (upload→scan) เชื่อค่าที่
+        // ระบบภายนอกส่งมาได้เหมือนกัน
         return Ok(new ApiResponse<OcrResultResponse>(true,
-            await _service.ScanAsync(companyId, fileAttachmentId, autoCreate: effective)));
+            await _service.ScanAsync(companyId, fileAttachmentId,
+                preferredEngine: body?.Engine, externalMetadataJson: body?.Metadata,
+                autoCreate: effective)));
     }
+
+    /// <summary>Body ของ /scan สำหรับ flow 2 ขั้น — แนบ metadata (ยอดที่ระบบ
+    /// ภายนอกกรอก/แหล่งเงิน/project) + เลือก engine ได้. ทุก field optional.</summary>
+    public record OcrScanMetadataRequest(string? Metadata = null, string? Engine = null);
 
     /// <summary>
     /// Re-process an existing scan without consuming additional quota.

@@ -593,6 +593,17 @@ public class OcrService : IOcrService
             // inferrer (derived credit terms flip the PV/PI decision).
             EnrichFromRawText(extractedData, extractedText);
 
+            // ── เชื่อค่าเงินจากระบบภายนอก (override OCR vision) ──
+            // พาร์ทเนอร์ที่ยิง OCR ผ่าน API ส่งยอดที่กรอก/คำนวณเองมาใน metadata →
+            // เชื่อค่านั้นแทนค่าที่ OCR แกะจากรูป (กันอ่านเลขผิด 530↔630). ทำหลัง
+            // EnrichFromRawText เพื่อให้ override ทับค่าที่เดาจาก raw text ด้วย,
+            // และก่อน serialize/dup-check/auto-create เพื่อให้ทุก path ใช้ค่าจริง.
+            ApplyExternalAmountOverrides(extractedData, externalMetadataJson);
+            // re-sync ค่าที่ถูก override กลับเข้า scanResult (assigned ไว้ด้านบนแล้ว)
+            scanResult.ExtractedSubTotal = extractedData.SubTotal;
+            scanResult.ExtractedVatAmount = extractedData.VatAmount;
+            scanResult.ExtractedTotalAmount = extractedData.TotalAmount;
+
             // ── External metadata → auto project allocation ──
             // When the partner uploaded order/project metadata with the file,
             // link each OCR'd line back to its originating project so the
@@ -1960,10 +1971,13 @@ public class OcrService : IOcrService
             return false;
         }
 
+        // street = ส่วนหัวเต็ม (ห้อง/ชั้น/อาคาร/ซอย/ถนน) ไม่ใช่แค่ชื่อถนนสั้นจาก
+        // parser — กันรายละเอียดหายตอน render structured address.
+        var streetHead = ThaiAddressParser.ExtractStreetHead(freeAddr, parts.BuildingNumber, parts.Moo);
         if (Apply(c.Address, freeAddr, v => c.Address = v)) changed = true;
         if (Apply(c.BuildingNumber, parts.BuildingNumber, v => c.BuildingNumber = v)) changed = true;
         if (Apply(c.Moo, parts.Moo, v => c.Moo = v)) changed = true;
-        if (Apply(c.StreetName, parts.StreetName, v => c.StreetName = v)) changed = true;
+        if (Apply(c.StreetName, streetHead, v => c.StreetName = v)) changed = true;
         if (Apply(c.SubDistrict, parts.SubDistrict, v => c.SubDistrict = v)) changed = true;
         if (Apply(c.District, parts.District, v => c.District = v)) changed = true;
         if (Apply(c.Province, parts.Province, v => c.Province = v)) changed = true;
@@ -3720,8 +3734,30 @@ public class OcrService : IOcrService
         // WHT base is ALWAYS (grand total − VAT) — not ExtractedSubTotal,
         // which on discounted papers is the PRE-discount figure and would
         // overstate the withholding by discount × rate.
-        var headerSubTotal = result.ExtractedSubTotal
-            ?? Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        // SubTotal ต้อง "ผูก" กับ grand total: subtotal + VAT − discount = total.
+        // เดิมเชื่อ ExtractedSubTotal ตรง ๆ → เคส OCR แกะ subtotal (เช่น 630) ไม่
+        // ตรงกับ grand total (เช่น 530) โดยไม่มี VAT/ส่วนลดอธิบาย → fallback line
+        // ใช้ headerSubTotal (630) แต่ document.TotalAmount = headerTotal (530) →
+        // "บรรทัด/ใบพิมพ์/JE = 630 แต่ยอดในรายงาน = 530" (report ≠ print ≠ JE).
+        // ใช้ ExtractedSubTotal เฉพาะตอนที่ tie กับ grand total (รองรับ VAT-incl +
+        // ส่วนลดจริง); ไม่งั้น derive จาก grand total (ตัวเลขเด่น/พาร์ทเนอร์ส่ง =
+        // ตัวตั้งต้นที่เชื่อถือได้สุด) เพื่อให้ subtotal/line/total แตกกันไม่ได้.
+        var hdrTotalRaw = result.ExtractedTotalAmount ?? 0;
+        var hdrVatRaw = result.ExtractedVatAmount ?? 0;
+        var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
+        decimal headerSubTotal;
+        if (hdrTotalRaw <= 0)
+        {
+            // ไม่มี grand total ที่เชื่อได้ → คงพฤติกรรมเดิม (ใช้ subtotal ที่ OCR แกะ)
+            headerSubTotal = result.ExtractedSubTotal ?? 0m;
+        }
+        else
+        {
+            var subFromTotal = Math.Max(0, hdrTotalRaw - hdrVatRaw);
+            var subTies = result.ExtractedSubTotal is > 0
+                && Math.Abs((result.ExtractedSubTotal!.Value + hdrVatRaw - hdrDiscRaw) - hdrTotalRaw) <= 1m;
+            headerSubTotal = subTies ? result.ExtractedSubTotal!.Value : subFromTotal;
+        }
         var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
         var headerWht = whtRate > 0 ? Math.Round(whtBase * whtRate / 100m, 2) : 0m;
@@ -4477,6 +4513,117 @@ public class OcrService : IOcrService
             .Select(cu => (Guid?)cu.UserId)
             .FirstOrDefaultAsync();
         return ownerId?.ToString() ?? fallback;
+    }
+
+    /// <summary>
+    /// เชื่อค่าเงินที่ระบบภายนอก "กรอก/คำนวณเองแล้ว" ส่งมาใน OCR API metadata —
+    /// override ค่าที่ OCR แกะจากรูป (กัน OCR อ่านเลขผิด เช่น 530↔630). per
+    /// กฎเหล็ก #3 fallback chain: partner-provided > OCR vision. รับได้ทั้งวางที่
+    /// top-level หรือซ้อนใน "amounts": { ... }. key ที่รองรับ (case-sensitive,
+    /// ลองหลายชื่อ): total/totalAmount/grandTotal/amount, subTotal, vat/vatAmount,
+    /// wht/whtAmount หรือ whtRate, และ "lineItems":[{description,quantity,
+    /// unitPrice,amount}] (key เฉพาะ ไม่ชนกับ "items" ของ project matcher).
+    /// Fail-safe: metadata เพี้ยน → ไม่ทำอะไร (คงค่า OCR).
+    /// </summary>
+    private void ApplyExternalAmountOverrides(OcrExtractedData data, string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson)) return;
+        try
+        {
+            using var docu = System.Text.Json.JsonDocument.Parse(metadataJson);
+            var root = docu.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+
+            // ยอมรับทั้ง top-level และ nested "amounts" object
+            var scope = root;
+            if (root.TryGetProperty("amounts", out var amtObj)
+                && amtObj.ValueKind == System.Text.Json.JsonValueKind.Object)
+                scope = amtObj;
+
+            static decimal? Num(System.Text.Json.JsonElement obj, params string[] keys)
+            {
+                foreach (var k in keys)
+                    if (obj.TryGetProperty(k, out var v))
+                    {
+                        if (v.ValueKind == System.Text.Json.JsonValueKind.Number && v.TryGetDecimal(out var d))
+                            return d;
+                        if (v.ValueKind == System.Text.Json.JsonValueKind.String
+                            && decimal.TryParse(v.GetString(), System.Globalization.NumberStyles.Any,
+                                System.Globalization.CultureInfo.InvariantCulture, out var ds))
+                            return ds;
+                    }
+                return null;
+            }
+
+            var extTotal = Num(scope, "total", "totalAmount", "grandTotal", "grandtotal", "amount", "netTotal");
+            var extSub   = Num(scope, "subTotal", "subtotal", "subTotalAmount");
+            var extVat   = Num(scope, "vat", "vatAmount", "tax", "taxAmount");
+            var extWht   = Num(scope, "wht", "whtAmount", "withholdingTax", "withholdingTaxAmount");
+            var extWhtRate = Num(scope, "whtRate", "withholdingTaxRate");
+
+            var changed = new List<string>();
+
+            // line items override (key เฉพาะ "lineItems")
+            if (root.TryGetProperty("lineItems", out var li)
+                && li.ValueKind == System.Text.Json.JsonValueKind.Array && li.GetArrayLength() > 0)
+            {
+                var newItems = new List<OcrExtractedLineItem>();
+                foreach (var el in li.EnumerateArray())
+                {
+                    if (el.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                    var qty = Num(el, "quantity", "qty") ?? 1m;
+                    var unit = Num(el, "unitPrice", "price", "unit_price");
+                    var amt = Num(el, "amount", "lineAmount", "total");
+                    if (!amt.HasValue && unit.HasValue) amt = Math.Round(unit.Value * qty, 2);
+                    if (!unit.HasValue && amt.HasValue && qty != 0) unit = Math.Round(amt.Value / qty, 2);
+                    string? desc = null;
+                    if (el.TryGetProperty("description", out var de) && de.ValueKind == System.Text.Json.JsonValueKind.String)
+                        desc = de.GetString();
+                    desc ??= (el.TryGetProperty("name", out var ne) && ne.ValueKind == System.Text.Json.JsonValueKind.String)
+                        ? ne.GetString() : null;
+                    newItems.Add(new OcrExtractedLineItem
+                    {
+                        Description = string.IsNullOrWhiteSpace(desc) ? "รายการจากระบบภายนอก" : desc!.Trim(),
+                        Quantity = qty,
+                        UnitPrice = unit,
+                        Amount = amt,
+                    });
+                }
+                if (newItems.Count > 0)
+                {
+                    data.Items.Clear();
+                    foreach (var it in newItems) data.Items.Add(it);
+                    changed.Add($"lineItems×{newItems.Count}");
+                    // ถ้าไม่ได้ส่ง total มา → ผูก total จากผลรวมบรรทัดที่ส่งมา
+                    if (!extTotal.HasValue)
+                        extTotal = newItems.Sum(x => x.Amount ?? (x.UnitPrice ?? 0) * (x.Quantity ?? 1));
+                }
+            }
+
+            if (extTotal.HasValue && extTotal.Value > 0)
+            { data.TotalAmount = extTotal.Value; data.FieldConfidence["TotalAmount"] = 1.0; changed.Add($"total={extTotal:0.00}"); }
+            if (extSub.HasValue && extSub.Value > 0)
+            { data.SubTotal = extSub.Value; data.FieldConfidence["SubTotal"] = 1.0; changed.Add($"subTotal={extSub:0.00}"); }
+            if (extVat.HasValue)
+            { data.VatAmount = extVat.Value; data.FieldConfidence["VatAmount"] = 1.0; changed.Add($"vat={extVat:0.00}"); }
+            if (extWht.HasValue && extWht.Value > 0)
+            {
+                data.HasWht = true;
+                var baseAmt = (data.TotalAmount ?? 0) - (data.VatAmount ?? 0);
+                if (baseAmt > 0) data.WhtRate = Math.Round(extWht.Value / baseAmt * 100m, 2);
+                changed.Add($"wht={extWht:0.00}");
+            }
+            else if (extWhtRate.HasValue && extWhtRate.Value > 0)
+            { data.HasWht = true; data.WhtRate = extWhtRate.Value; changed.Add($"whtRate={extWhtRate}"); }
+
+            if (changed.Count > 0)
+                data.ReasoningTrace.Add("[ExternalAmounts] เชื่อค่าจากระบบภายนอก (override OCR): "
+                    + string.Join(", ", changed));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "External amount override parse failed — คงค่า OCR เดิม");
+        }
     }
 
     /// <summary>

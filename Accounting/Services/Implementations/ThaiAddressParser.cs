@@ -19,8 +19,10 @@ public static class ThaiAddressParser
     private static readonly Regex BuildingNumberRegex = new(
         @"^(?:เลขที่\s*)?(\d+(?:[/-]\d+)*)\s",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // หยุดจับเมื่อ token ถัดไปเป็น marker (ถนน/ตำบล/อำเภอ/จังหวัด/หมู่) — เดิม
+    // จับเลย marker ไปทำให้ buildingName กลืน "ถนน บางนาตราด ตำบล" เข้ามา.
     private static readonly Regex BuildingNameRegex = new(
-        @"(?:อาคาร|Building)\s+([^\s,]+(?:\s+[^\s,]+){0,3})",
+        @"(?:อาคาร|Building)\s+([^\s,]+(?:\s+(?!ถนน|ถ\.|ตำบล|แขวง|อำเภอ|เขต|จังหวัด|ต\.|อ\.|จ\.|หมู่|ม\.)[^\s,]+){0,3})",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     // หมู่ที่ — matches "หมู่ 5", "หมู่ที่ 5", "ม.5", "ม. 5", and Thai-numeral
     // variants like "หมู่ ๕". The captured group is the number itself.
@@ -38,8 +40,10 @@ public static class ThaiAddressParser
     private static readonly Regex ProvinceRegex = new(
         @"(?:จังหวัด|จ\.)\s*([^\s,\d]+)",
         RegexOptions.Compiled);
+    // หยุดจับเมื่อ token ถัดไปเป็น marker เขตปกครอง — เดิมจับ "บางนาตราด ตำบล
+    // บางนา" รวมชื่อตำบลเข้ามาในชื่อถนน.
     private static readonly Regex StreetRegex = new(
-        @"(?:ถนน|ถ\.|Road|Rd\.?)\s*([^\s,]+(?:\s+[^\s,]+){0,2})",
+        @"(?:ถนน|ถ\.|Road|Rd\.?)\s*([^\s,]+(?:\s+(?!ตำบล|แขวง|อำเภอ|เขต|จังหวัด|ต\.|อ\.|จ\.|หมู่|ม\.)[^\s,]+){0,2})",
         RegexOptions.Compiled);
 
     public static ParsedAddressResponse Parse(string? address)
@@ -88,6 +92,33 @@ public static class ThaiAddressParser
         return new ParsedAddressResponse(
             buildingNumber, buildingName, street,
             subDistrict, district, province, postcode, moo);
+    }
+
+    /// <summary>ดึง "ส่วนหัว" ของที่อยู่ = ทุกอย่างก่อน marker เขตปกครองแรก
+    /// (ตำบล/แขวง/อำเภอ/เขต/จังหวัด) — บ้านเลขที่/ห้อง/ชั้น/อาคาร/ซอย/ถนน — โดย
+    /// ตัด buildingNumber + วลีหมู่ที่ ออก (เก็บแยกในฟิลด์ของตัวเอง). ใช้เก็บลง
+    /// StreetName เพื่อรักษารายละเอียดที่ field-parser รายฟิลด์จับไม่ครบ (ห้อง/
+    /// ชั้น/ชื่ออาคาร) ไม่ให้หายตอน render เป็น structured address. คืน null เมื่อ
+    /// ไม่เหลืออะไร.</summary>
+    public static string? ExtractStreetHead(string? freeText, string? buildingNumber, string? moo)
+    {
+        if (string.IsNullOrWhiteSpace(freeText)) return null;
+        var t = freeText.Trim();
+        int cut = -1;
+        // marker เขตปกครอง + Bangkok ที่เขียนตรง ๆ ไม่มี "จังหวัด" นำ (กรุงเทพฯ/กทม)
+        foreach (var m in new[] { "ตำบล", "แขวง", "อำเภอ", "เขต", "จังหวัด", "กรุงเทพ", "กทม" })
+        {
+            var idx = t.IndexOf(m, StringComparison.Ordinal);
+            if (idx >= 0 && (cut < 0 || idx < cut)) cut = idx;
+        }
+        var head = (cut >= 0 ? t[..cut] : t).Trim().Trim(',').Trim();
+        if (!string.IsNullOrWhiteSpace(buildingNumber)
+            && head.StartsWith(buildingNumber!, StringComparison.Ordinal))
+            head = head[buildingNumber!.Length..].Trim();
+        if (!string.IsNullOrWhiteSpace(moo))
+            head = Regex.Replace(head, @"(?:หมู่ที่|หมู่|ม\.)\s*[0-9๐-๙]+", " ").Trim();
+        head = Regex.Replace(head, @"\s{2,}", " ").Trim().Trim(',').Trim();
+        return string.IsNullOrWhiteSpace(head) ? null : head;
     }
 
     private static string CleanArea(string raw) =>

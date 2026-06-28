@@ -657,14 +657,40 @@ exports เดิมออก GL+ภงด.1+สปส.1-10+50ทวิ+payslip 
 (ExternalRunRef + unique index), validate net=gross−หักลูกจ้าง, account override
 (salary/payment code) ลง JE. + integration outbound document attachments[]._
 
-_รอบ 18: OCR contact address enrichment ครบ structured fields — เดิม enrichment
-ของ contact ที่ match จากของเดิม (`OcrService.ScanAsync` ~:1606) เติมแค่ free-text
-`Address` ทำให้ (1) PDF (`FormatThaiAddress`) เมื่อ structured ว่าง→fallback
-free-text ที่ OCR เดาผิด = "ที่อยู่ในเอกสารผิด" (2) ฟอร์มผู้ติดต่ออ่าน structured
-→ ขึ้นว่าง ต้องกด "ดึงข้อมูล" (DBD) เอง. เพิ่ม `EnrichContactAddress` เติมทั้ง
-free-text + structured (บ้านเลขที่/หมู่/ถนน/ตำบล/อำเภอ/จังหวัด/ไปรษณีย์) จาก
-DbdAddress (ground truth) ก่อน VendorAddress; ทับค่าเดิมเฉพาะเมื่อ DBD ยืนยัน +
-contact เป็น OCR-managed (กันแตะข้อมูลที่ผู้ใช้กรอกเอง)._
+_รอบ 18: OCR contact address ครบ + กทม. แสดง แขวง/เขต ถูกต้อง. ปัญหา: OCR ผ่าน
+API → เอกสารที่อยู่ กทม. ขึ้น "ตำบล/อำเภอ" (ผิด ต้องเป็น "แขวง/เขต") + ผู้ติดต่อ
+ไม่มีที่อยู่จนกด "ดึงข้อมูล" เอง. แก้ 4 ชั้น:
+(1) `OcrService.EnrichContactAddress` — contact ที่ match จากของเดิม เติมทั้ง
+free-text + structured (เดิมเติมแค่ free-text) จาก DbdAddress ก่อน VendorAddress;
+ทับเฉพาะเมื่อ DBD ยืนยัน + contact OCR-managed.
+(2) `PdfGenerationService.FormatThaiAddress` — เมื่อ structured locality ว่าง
+parse free-text ผ่าน `ThaiAddressParser` ตอน render → กทม. ได้ แขวง/เขต ครบทุก
+เอกสารโดยไม่ต้อง migrate; แก้ token-strip เป็น word-aware (เดิม substring replace
+ทำ "บางนาตราด"→"ตราด"); 50ทวิ payee/company address route ผ่าน FormatThaiAddress.
+(3) `ThaiAddressParser` — StreetRegex/BuildingNameRegex หยุดที่ marker เขตปกครอง
+(ไม่กลืนชื่อตำบล) + `ExtractStreetHead` รักษาส่วนหัวเต็ม (ห้อง/ชั้น/อาคาร/ซอย/ถนน).
+(4) `DocumentService.GetContactAsync` — lazy backfill structured จาก free-text
+ตอนเปิดฟอร์ม (self-heal contact เก่า ไม่ต้องกด "ดึงข้อมูล")._
+
+_รอบ 19: OCR header subtotal ผูกกับ grand total — แก้ "รายงานยอด 530 แต่ใบพิมพ์/
+JE = 630". เคส: OCR แกะ subtotal (630) ไม่ตรง grand total (530) โดยไม่มี VAT/ส่วนลด
+อธิบาย → `CreateDocumentFromScanAsync` fallback line (items==0) ใช้ headerSubTotal
+(630) แต่ document.TotalAmount = headerTotal (530) → report (อ่าน TotalAmount) ≠
+print/JE (อ่าน line). แก้: headerSubTotal ใช้ ExtractedSubTotal เฉพาะตอน tie กับ
+grand total (subtotal+VAT−discount=total); ไม่งั้น derive จาก grand total (ตัวเลข
+ที่พาร์ทเนอร์/ใบส่งมา = ตัวตั้งต้นเชื่อถือได้สุด) → line/subtotal/total แตกกันไม่ได้.
+หมายเหตุ: แก้เฉพาะ doc ที่สร้างใหม่ — เอกสารเดิมที่ผิดต้องลบแล้ว re-OCR._
+
+_รอบ 20: OCR เชื่อค่าเงินจากระบบภายนอก (override OCR vision). `ScanAsync` →
+`ApplyExternalAmountOverrides(extractedData, metadata)` หลัง EnrichFromRawText:
+อ่านยอดที่พาร์ทเนอร์กรอกมาใน metadata (top-level หรือ nested "amounts") —
+total/totalAmount/grandTotal/amount, subTotal, vat/vatAmount, wht/whtAmount|whtRate,
+และ "lineItems":[{description,quantity,unitPrice,amount}] — เขียนทับค่าที่ OCR แกะ
+จากรูป (กันอ่านเลขผิด 530↔630) + ตั้ง FieldConfidence=1.0 + re-sync เข้า scanResult
+ก่อน dup-check/serialize/auto-create. เพิ่ม body metadata ให้ endpoint POST
+/ocr/scan/{fileId} (flow 2 ขั้น) ด้วย (`OcrScanMetadataRequest{Metadata,Engine}`).
+fallback chain กฎเหล็ก #3: partner-provided > OCR vision. Fail-safe: metadata
+เพี้ยน → คงค่า OCR._
 
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
