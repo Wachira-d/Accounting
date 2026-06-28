@@ -681,6 +681,17 @@ grand total (subtotal+VAT−discount=total); ไม่งั้น derive จา
 ที่พาร์ทเนอร์/ใบส่งมา = ตัวตั้งต้นเชื่อถือได้สุด) → line/subtotal/total แตกกันไม่ได้.
 หมายเหตุ: แก้เฉพาะ doc ที่สร้างใหม่ — เอกสารเดิมที่ผิดต้องลบแล้ว re-OCR._
 
+_รอบ 20: OCR เชื่อค่าเงินจากระบบภายนอก (override OCR vision). `ScanAsync` →
+`ApplyExternalAmountOverrides(extractedData, metadata)` หลัง EnrichFromRawText:
+อ่านยอดที่พาร์ทเนอร์กรอกมาใน metadata (top-level หรือ nested "amounts") —
+total/totalAmount/grandTotal/amount, subTotal, vat/vatAmount, wht/whtAmount|whtRate,
+และ "lineItems":[{description,quantity,unitPrice,amount}] — เขียนทับค่าที่ OCR แกะ
+จากรูป (กันอ่านเลขผิด 530↔630) + ตั้ง FieldConfidence=1.0 + re-sync เข้า scanResult
+ก่อน dup-check/serialize/auto-create. เพิ่ม body metadata ให้ endpoint POST
+/ocr/scan/{fileId} (flow 2 ขั้น) ด้วย (`OcrScanMetadataRequest{Metadata,Engine}`).
+fallback chain กฎเหล็ก #3: partner-provided > OCR vision. Fail-safe: metadata
+เพี้ยน → คงค่า OCR._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
