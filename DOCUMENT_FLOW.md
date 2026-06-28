@@ -672,6 +672,15 @@ parse free-text ผ่าน `ThaiAddressParser` ตอน render → กทม.
 (4) `DocumentService.GetContactAsync` — lazy backfill structured จาก free-text
 ตอนเปิดฟอร์ม (self-heal contact เก่า ไม่ต้องกด "ดึงข้อมูล")._
 
+_รอบ 19: OCR header subtotal ผูกกับ grand total — แก้ "รายงานยอด 530 แต่ใบพิมพ์/
+JE = 630". เคส: OCR แกะ subtotal (630) ไม่ตรง grand total (530) โดยไม่มี VAT/ส่วนลด
+อธิบาย → `CreateDocumentFromScanAsync` fallback line (items==0) ใช้ headerSubTotal
+(630) แต่ document.TotalAmount = headerTotal (530) → report (อ่าน TotalAmount) ≠
+print/JE (อ่าน line). แก้: headerSubTotal ใช้ ExtractedSubTotal เฉพาะตอน tie กับ
+grand total (subtotal+VAT−discount=total); ไม่งั้น derive จาก grand total (ตัวเลข
+ที่พาร์ทเนอร์/ใบส่งมา = ตัวตั้งต้นเชื่อถือได้สุด) → line/subtotal/total แตกกันไม่ได้.
+หมายเหตุ: แก้เฉพาะ doc ที่สร้างใหม่ — เอกสารเดิมที่ผิดต้องลบแล้ว re-OCR._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

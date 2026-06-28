@@ -3723,8 +3723,30 @@ public class OcrService : IOcrService
         // WHT base is ALWAYS (grand total − VAT) — not ExtractedSubTotal,
         // which on discounted papers is the PRE-discount figure and would
         // overstate the withholding by discount × rate.
-        var headerSubTotal = result.ExtractedSubTotal
-            ?? Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        // SubTotal ต้อง "ผูก" กับ grand total: subtotal + VAT − discount = total.
+        // เดิมเชื่อ ExtractedSubTotal ตรง ๆ → เคส OCR แกะ subtotal (เช่น 630) ไม่
+        // ตรงกับ grand total (เช่น 530) โดยไม่มี VAT/ส่วนลดอธิบาย → fallback line
+        // ใช้ headerSubTotal (630) แต่ document.TotalAmount = headerTotal (530) →
+        // "บรรทัด/ใบพิมพ์/JE = 630 แต่ยอดในรายงาน = 530" (report ≠ print ≠ JE).
+        // ใช้ ExtractedSubTotal เฉพาะตอนที่ tie กับ grand total (รองรับ VAT-incl +
+        // ส่วนลดจริง); ไม่งั้น derive จาก grand total (ตัวเลขเด่น/พาร์ทเนอร์ส่ง =
+        // ตัวตั้งต้นที่เชื่อถือได้สุด) เพื่อให้ subtotal/line/total แตกกันไม่ได้.
+        var hdrTotalRaw = result.ExtractedTotalAmount ?? 0;
+        var hdrVatRaw = result.ExtractedVatAmount ?? 0;
+        var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
+        decimal headerSubTotal;
+        if (hdrTotalRaw <= 0)
+        {
+            // ไม่มี grand total ที่เชื่อได้ → คงพฤติกรรมเดิม (ใช้ subtotal ที่ OCR แกะ)
+            headerSubTotal = result.ExtractedSubTotal ?? 0m;
+        }
+        else
+        {
+            var subFromTotal = Math.Max(0, hdrTotalRaw - hdrVatRaw);
+            var subTies = result.ExtractedSubTotal is > 0
+                && Math.Abs((result.ExtractedSubTotal!.Value + hdrVatRaw - hdrDiscRaw) - hdrTotalRaw) <= 1m;
+            headerSubTotal = subTies ? result.ExtractedSubTotal!.Value : subFromTotal;
+        }
         var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
         var headerWht = whtRate > 0 ? Math.Round(whtBase * whtRate / 100m, 2) : 0m;
