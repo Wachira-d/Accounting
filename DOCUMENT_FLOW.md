@@ -692,6 +692,15 @@ total/totalAmount/grandTotal/amount, subTotal, vat/vatAmount, wht/whtAmount|whtR
 fallback chain กฎเหล็ก #3: partner-provided > OCR vision. Fail-safe: metadata
 เพี้ยน → คงค่า OCR._
 
+_รอบ 21: ภ.พ.30 ภาษีซื้อ = 0 ทั้งที่มียอด — `GenerateVatReport`
+(`TaxService.cs`) loop จัด input VAT จาก PurchaseInvoice/Expense/CertificateInLieu
+เท่านั้น **ไม่มี branch ของ PaymentVoucher** → ใบสำคัญจ่ายที่ติ๊ก "ใช้งานใบกำกับ
+ภาษี" (HasTaxInvoiceReference=true) ภาษีซื้อตกหล่นทั้งหมด (JE ของ PV มี
+SourceDocumentId → JE-only fallback ก็ข้าม). แก้: เพิ่มเงื่อนไข
+`|| (DocumentType==PaymentVoucher && HasTaxInvoiceReference)` เข้า branch ภาษีซื้อ
+(ใช้ §82/5 prohibited + §82/3 window เดิม). PV ที่ไม่ติ๊ก = ไม่เคลม (§82/5(1)).
+มีผลทั้งจอ + CSV ยื่น (ComputeVatReportAsync → GenerateVatReport ตัวเดียวกัน)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

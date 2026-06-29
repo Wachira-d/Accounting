@@ -360,9 +360,17 @@ public partial class TaxService : ITaxService
                 }
             }
             // Input VAT - from purchase documents (PurchaseOrder excluded: no VAT obligation)
+            // ใบสำคัญจ่าย (PaymentVoucher) ที่ติ๊ก "ใช้งานใบกำกับภาษี"
+            // (HasTaxInvoiceReference=true) = อ้างใบกำกับภาษีซื้อเพื่อเครดิต ภพ.30
+            // → ต้องนับเป็นภาษีซื้อเหมือน PI/Expense. เดิม PV ไม่มี branch →
+            // ภาษีซื้อจาก PV ตกหล่นทั้งหมด (ภพ.30 ภาษีซื้อ = 0 ทั้งที่มียอด).
+            // JE ของ PV มี SourceDocumentId → JE-only fallback ข้ามอยู่แล้ว
+            // (ไม่ double count). PV ที่ไม่ติ๊ก flag = จ่ายเฉย ๆ ไม่เคลม VAT
+            // (§82/5(1) ไม่มีใบกำกับเต็มรูป) → ไม่นับ.
             else if (doc.DocumentType == DocumentType.PurchaseInvoice
                   || doc.DocumentType == DocumentType.Expense
-                  || doc.DocumentType == DocumentType.CertificateInLieu)
+                  || doc.DocumentType == DocumentType.CertificateInLieu
+                  || (doc.DocumentType == DocumentType.PaymentVoucher && doc.HasTaxInvoiceReference))
             {
                 // ----- Rule B: detect prohibited input VAT (ภาษีซื้อต้องห้าม) -----
                 // Prohibited VAT = ผลรวมจาก (a) บรรทัดที่ user/AI ติ๊ก
