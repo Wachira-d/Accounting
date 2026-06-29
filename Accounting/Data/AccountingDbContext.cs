@@ -109,6 +109,7 @@ public class AccountingDbContext : DbContext
     public DbSet<PdpaConsentRecord> PdpaConsentRecords => Set<PdpaConsentRecord>();
     public DbSet<PdpaPiiAccessLog> PdpaPiiAccessLogs => Set<PdpaPiiAccessLog>();
     public DbSet<PdpaBreachIncident> PdpaBreachIncidents => Set<PdpaBreachIncident>();
+    public DbSet<StatutoryRemittance> StatutoryRemittances => Set<StatutoryRemittance>();
     public DbSet<BillOfMaterials> BillsOfMaterials => Set<BillOfMaterials>();
     public DbSet<BomLine> BomLines => Set<BomLine>();
     public DbSet<ConsignmentRecord> ConsignmentRecords => Set<ConsignmentRecord>();
