@@ -70,6 +70,9 @@ public record UpdateCompanySettingsRequest(
     bool? WorkersCompensationEnabled = null,
     decimal? WorkersCompensationRatePercent = null,
 
+    // แนบ PDF ใบหัก ณ ที่จ่าย (50ทวิ) เข้าใบสำคัญจ่ายอัตโนมัติ (default ปิด)
+    bool? AutoAttachWhtCertPdf = null,
+
     // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — จำเป็นก่อน finalize งบ + XBRL export
     string? BookkeeperName = null,
     string? BookkeeperCpdNumber = null,
@@ -144,6 +147,9 @@ public record CompanySettingsResponse(
     // กองทุนเงินทดแทน (กท.20ก) — ปิด default; อัตรา default 0.2%
     bool WorkersCompensationEnabled = false,
     decimal WorkersCompensationRatePercent = 0.2m,
+
+    // แนบ PDF ใบ 50ทวิ เข้าใบสำคัญจ่ายอัตโนมัติ (default ปิด)
+    bool AutoAttachWhtCertPdf = false,
 
     // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
     string? BookkeeperName = null,
