@@ -4313,6 +4313,33 @@ public static class DatabaseMigrationHelper
             // idempotency — unique partial index บน (CompanyId, ExternalRunRef)
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PayrollRuns_ExternalRunRef" ON "PayrollRuns" ("CompanyId", "ExternalRunRef") WHERE "ExternalRunRef" IS NOT NULL;""",
 
+            // ===== StatutoryRemittances: นำส่งภาษี/ประกันสังคมรวม (สปส.1-10/ภงด.1/3/53/ภพ.30) =====
+            """
+            CREATE TABLE IF NOT EXISTS "StatutoryRemittances" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "RemittanceType" varchar(40) NOT NULL,
+                "PeriodYear" integer NOT NULL,
+                "PeriodMonth" integer NOT NULL,
+                "Amount" decimal(18,2) NOT NULL DEFAULT 0,
+                "LateFee" decimal(18,2) NOT NULL DEFAULT 0,
+                "PayDate" timestamp NOT NULL DEFAULT now(),
+                "BankGlAccountId" uuid NULL,
+                "JournalEntryId" uuid NULL,
+                "DocumentId" uuid NULL,
+                "FilingNumber" varchar(100) NULL,
+                "ReceiptAttachmentId" uuid NULL,
+                "Note" text NULL,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            // นำส่ง 1 ครั้ง/ประเภท/งวด (กันจ่ายซ้ำ) — เฉพาะ row ที่ยังไม่ลบ
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_StatutoryRemittances_Period" ON "StatutoryRemittances" ("CompanyId", "RemittanceType", "PeriodYear", "PeriodMonth") WHERE "IsDeleted" = false;""",
+
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),

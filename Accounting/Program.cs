@@ -256,6 +256,7 @@ builder.Services.AddScoped<IDimensionalAccountingService, DimensionalAccountingS
 builder.Services.AddScoped<IIntercompanyService, IntercompanyService>();
 builder.Services.AddScoped<IConsolidationService, ConsolidationService>();
 builder.Services.AddScoped<IPayrollService, PayrollService>();
+builder.Services.AddScoped<IStatutoryRemittanceService, StatutoryRemittanceService>();
 builder.Services.AddScoped<HrAllocationService>();
 builder.Services.AddScoped<IEmployeeProjectTimeService>(sp => sp.GetRequiredService<HrAllocationService>());
 builder.Services.AddScoped<IFixVariableCostReportService>(sp => sp.GetRequiredService<HrAllocationService>());

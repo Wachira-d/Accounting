@@ -918,9 +918,9 @@ public class DocumentService : IDocumentService
             CreditNoteReason: stub.CreditNoteReason);
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null)
     {
-        var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly);
+        var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, types);
         if (_sensitivity == null) return page;
         var visible = await _sensitivity.GetVisibleKindsAsync(companyId, userId);
 
@@ -953,7 +953,7 @@ public class DocumentService : IDocumentService
         _                            => "ต้องมีสิทธิ์เพิ่มเติม"
     };
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null)
     {
         var query = _db.Documents
             .Include(d => d.Contact)
@@ -966,6 +966,12 @@ public class DocumentService : IDocumentService
 
         if (type.HasValue)
             query = query.Where(d => d.DocumentType == type.Value);
+        // กรองหลายประเภทพร้อมกัน (ฝั่งรายรับ/รายจ่าย) — ต้องทำที่ server เพื่อให้
+        // pagination ถูกต้อง. เดิม UI ส่ง types[] มาแต่ server อ่านแค่ type เดียว →
+        // server แบ่งหน้ารวมทุกประเภท แล้วค่อยกรองฝั่งที่ client → เอกสารฝั่ง
+        // รายจ่ายที่เก่ากว่า 20 อันดับแรก (รวมทุกประเภท) หลุดหน้า ไม่ขึ้นเลย.
+        else if (types != null && types.Count > 0)
+            query = query.Where(d => types.Contains(d.DocumentType));
 
         if (projectId.HasValue)
             query = query.Where(d => d.ProjectId == projectId.Value
