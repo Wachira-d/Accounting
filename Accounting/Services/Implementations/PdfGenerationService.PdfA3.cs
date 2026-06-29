@@ -17,13 +17,34 @@ public partial class PdfGenerationService
 {
     private static readonly string[] ThaiFontCandidatePaths =
     {
+        // ── App-bundled (cross-platform, ชนะทุก OS ถ้ามีไฟล์) ──
+        // วางไฟล์ฟอนต์ไว้ที่ {ContentRoot}/Fonts/ แล้วจะถูก register ก่อน system font
+        // → คุมหน้าตา PDF ให้เหมือนกันทุกเครื่อง (เดิม Windows ไม่มี Sarabun เลย
+        //   fallback เป็น Leelawadee ทำให้ใบหัก ณ ที่จ่ายหน้าตาต่างจากที่ download).
+        "Fonts/Sarabun-Regular.ttf",
+        "Fonts/Sarabun-Bold.ttf",
+        "Fonts/THSarabunNew.ttf",
+        "Fonts/THSarabunNew Bold.ttf",
+        // ── Windows (ฟอนต์ราชการไทยที่มักติดตั้งบนเครื่องธุรกิจไทย) ──
+        @"C:\Windows\Fonts\THSarabunNew.ttf",
+        @"C:\Windows\Fonts\THSarabunNew Bold.ttf",
+        @"C:\Windows\Fonts\THSarabunNew Italic.ttf",
+        @"C:\Windows\Fonts\THSarabunNew BoldItalic.ttf",
+        @"C:\Windows\Fonts\Sarabun-Regular.ttf",
+        @"C:\Windows\Fonts\Sarabun-Bold.ttf",
+        // ── macOS ──
+        "/Library/Fonts/Sarabun-Regular.ttf",
+        "/Library/Fonts/THSarabunNew.ttf",
+        // ── Linux (tlwg / dejavu) ──
+        "/usr/share/fonts/truetype/Sarabun-Regular.ttf",
+        "/usr/share/fonts/truetype/Sarabun-Bold.ttf",
+        "/usr/share/fonts/truetype/tlwg/Sarabun.ttf",
+        "/usr/share/fonts/truetype/tlwg/Sarabun-Bold.ttf",
         "/usr/share/fonts/opentype/tlwg/Loma.otf",
         "/usr/share/fonts/opentype/tlwg/Loma-Bold.otf",
         "/usr/share/fonts/opentype/tlwg/Loma-Oblique.otf",
         "/usr/share/fonts/opentype/tlwg/Loma-BoldOblique.otf",
         "/usr/share/fonts/truetype/tlwg/Loma.ttf",
-        "/usr/share/fonts/truetype/Sarabun-Regular.ttf",
-        "/usr/share/fonts/truetype/Sarabun-Bold.ttf"
     };
 
     private static bool _fontsRegistered;
@@ -35,17 +56,22 @@ public partial class PdfGenerationService
         lock (_fontLock)
         {
             if (_fontsRegistered) return;
-            foreach (var path in ThaiFontCandidatePaths)
+            foreach (var candidate in ThaiFontCandidatePaths)
             {
                 try
                 {
+                    // relative ("Fonts/..") → resolve กับ AppContext.BaseDirectory
+                    // เพื่อให้หาเจอไม่ว่ารันจาก working dir ไหน
+                    var path = Path.IsPathRooted(candidate)
+                        ? candidate
+                        : Path.Combine(AppContext.BaseDirectory, candidate);
                     if (File.Exists(path))
                     {
                         using var stream = File.OpenRead(path);
                         FontManager.RegisterFont(stream);
                     }
                 }
-                catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to register font from {path}: {ex.Message}"); }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to register font from {candidate}: {ex.Message}"); }
             }
             _fontsRegistered = true;
         }

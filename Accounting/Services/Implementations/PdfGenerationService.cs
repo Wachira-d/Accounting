@@ -244,13 +244,27 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
         }
 
-        // PDF route uses the dedicated QuestPDF renderer (BuildWhtCertPdf) so
-        // the official RD form layout — TIN boxes, payer/payee blocks, income
-        // table, signature area — is preserved. The HTML version
-        // (BuildWithholdingTaxCertHtml) is kept for browser-print and on-screen
-        // preview; the HTML→block flatten path destroyed the form when used
-        // for PDF, producing a wall of text.
-        var pdfBytes = BuildWhtCertPdf(cert, company, sigBytes, sigName);
+        // ── ทางที่ "ตรงกับไฟล์ที่ download" (browser print) ──
+        // render HTML ฟอร์มราชการ §50ทวิ ตัวเดียวกับ browser-print ผ่าน headless
+        // Chromium (Edge/Chrome ที่ติดตั้งบนเครื่อง) → ได้ layout + ฟอนต์ Sarabun
+        // + ลายเซ็น เหมือนไฟล์ที่ผู้ใช้ download เป๊ะ. เปิดใช้เมื่อ build
+        // USE_PUPPETEER + ตั้ง Pdf:UseHtmlRenderer=true (+ Pdf:ExecutablePath ชี้
+        // msedge.exe/chrome.exe). best-effort: renderer ปิด/พัง → คืน null →
+        // fallback QuestPDF (BuildWhtCertPdf) ใบยังออกได้เสมอ.
+        byte[]? pdfBytes = null;
+        if (_htmlPdf?.Enabled == true)
+        {
+            try
+            {
+                var sigB64 = sigBytes != null ? Convert.ToBase64String(sigBytes) : null;
+                var certHtml = BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName);
+                pdfBytes = await _htmlPdf.TryRenderAsync(certHtml);
+            }
+            catch { /* fallback QuestPDF */ }
+        }
+        // QuestPDF fallback — official RD form (TIN boxes/payer-payee/income table),
+        // ฟอนต์ Sarabun (เมื่อ register ได้) — ใช้เมื่อ HTML renderer ไม่พร้อม.
+        pdfBytes ??= BuildWhtCertPdf(cert, company, sigBytes, sigName);
 
         return new GeneratePdfResponse(cert.Id, cert.CertificateNumber,
             $"WHT-{cert.CertificateNumber}.pdf", "application/pdf", pdfBytes.Length, pdfBytes, DateTime.UtcNow);
@@ -960,7 +974,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         return sb.ToString();
     }
 
-    private string BuildWithholdingTaxCertHtml(WithholdingTaxCert cert, Company company)
+    private string BuildWithholdingTaxCertHtml(WithholdingTaxCert cert, Company company,
+        string? sigBase64 = null, string? sigName = null)
     {
         var sb = new StringBuilder();
         var certNum = WebUtility.HtmlEncode(cert.CertificateNumber);
@@ -1152,7 +1167,12 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<tr><td style='padding:0'><table class='inner bottom-split' cellspacing='0'><tr>");
             sb.AppendLine("<td class='bottom-left'><div style='text-align:center;margin-bottom:2px'><b>คำเตือน</b></div>ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร</td>");
             sb.AppendLine("<td class='bottom-right'><div style='margin-bottom:6px'>ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>");
-            sb.AppendLine($"<div class='sig-block'><div class='sig-line' style='text-align:right'>ลงชื่อ <span class='sig-dots'></span> ผู้จ่ายเงิน</div><div class='sig-date'><span class='sig-dots-sm'>{issuedDay}</span> / <span class='sig-dots-sm'>{issuedMonth}</span> / <span class='sig-dots-sm'>{issuedYear}</span></div><div style='text-align:center;font-size:11px;color:#444'>(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div></div>");
+            // ลายเซ็น: ฝังรูป + ชื่อผู้เซ็นถ้ามี (ให้ตรงกับไฟล์ที่ download); ไม่มี → เส้นจุด
+            var sigInner = !string.IsNullOrWhiteSpace(sigBase64)
+                ? $"<img src='data:image/png;base64,{WebUtility.HtmlEncode(sigBase64)}' style='height:34px;vertical-align:middle' alt='' />"
+                  + (string.IsNullOrWhiteSpace(sigName) ? "" : $" {WebUtility.HtmlEncode(sigName)}")
+                : "<span class='sig-dots'></span>";
+            sb.AppendLine($"<div class='sig-block'><div class='sig-line' style='text-align:right'>ลงชื่อ {sigInner} ผู้จ่ายเงิน</div><div class='sig-date'><span class='sig-dots-sm'>{issuedDay}</span> / <span class='sig-dots-sm'>{issuedMonth}</span> / <span class='sig-dots-sm'>{issuedYear}</span></div><div style='text-align:center;font-size:11px;color:#444'>(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div></div>");
             sb.AppendLine("<div class='stamp-area'>ประทับตรา<br>นิติบุคคล<br>(ถ้ามี)</div></td>");
             sb.AppendLine("</tr></table></td></tr>");
 

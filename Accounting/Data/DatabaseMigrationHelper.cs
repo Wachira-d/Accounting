@@ -204,6 +204,9 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxAutoSubmit" boolean NOT NULL DEFAULT false;
             """,
             """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "AutoAttachWhtCertPdf" boolean NOT NULL DEFAULT false;
+            """,
+            """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxServiceProvider" varchar(100) NULL;
             """,
             """

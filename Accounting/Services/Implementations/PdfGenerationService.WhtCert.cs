@@ -34,7 +34,11 @@ public partial class PdfGenerationService
         byte[]? signatureBytes = null, string? signerName = null)
     {
         EnsureThaiFontsRegistered();
-        var fontChain = GetFontFamilyChain(null);
+        // ใบหัก ณ ที่จ่าย — ให้ใช้ฟอนต์ตระกูล Sarabun ก่อน (ให้ตรงกับไฟล์ที่
+        // download จากเบราว์เซอร์ซึ่งใช้ Sarabun). ถ้าไม่มี Sarabun/TH Sarabun New
+        // ถูก register ค่อย fallback Loma → system. (เดิมใช้ chain รวมที่ขึ้นต้น
+        // Loma → Windows ไม่มี Loma เลย fallback Leelawadee หน้าตาต่างจาก download).
+        var fontChain = new[] { "Sarabun", "TH Sarabun New", "Loma", "Noto Sans Thai", Fonts.Calibri, Fonts.Arial };
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
         // Only use the signature if it actually decodes to an image QuestPDF
         // can embed — a corrupt base64 must never blank the whole page.
