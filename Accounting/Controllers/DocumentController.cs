@@ -114,15 +114,17 @@ public class DocumentController : ControllerBase
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, effTypes);
 
-        // No-type list path: drop rows the user's split doesn't allow.
-        // Post-filter (not pre-) keeps service signature untouched and
-        // matches the existing lifecycle filter pattern below.
-        if (!visibility.ShowsEverything)
+        // Visibility redaction — จำเป็นเฉพาะ list ที่ "ไม่ได้ระบุ type/types"
+        // (service คืนทุกประเภท). เมื่อมี type/types เราจำกัดด้วยสิทธิ์ server-side
+        // (effTypes) ไปแล้ว → กรองซ้ำที่นี่ไม่จำเป็น และการ recompute TotalPages
+        // จากแค่ "หน้าเดียว" จะทำให้ paging พัง(เหลือ 1 หน้า ปุ่มเปลี่ยนหน้าหาย)
+        // — bug ที่ผู้ใช้ที่ไม่ใช่ ShowsEverything เจอ. คงยอด TotalCount/TotalPages
+        // จาก server ไว้ (drop เฉพาะแถวที่ดูไม่ได้).
+        if (!visibility.ShowsEverything && !type.HasValue && (types == null || types.Count == 0))
         {
             var filtered = result.Items.Where(d => visibility.Allows(d.DocumentType)).ToList();
-            result = new PagedResponse<DocumentResponse>(filtered, filtered.Count,
-                result.Page, result.PageSize,
-                (int)Math.Ceiling(filtered.Count / (double)result.PageSize));
+            result = new PagedResponse<DocumentResponse>(filtered, result.TotalCount,
+                result.Page, result.PageSize, result.TotalPages);
         }
 
         if (!string.IsNullOrWhiteSpace(lifecycle))

@@ -13,19 +13,19 @@ namespace Accounting.Services.Implementations;
 ///   • SSO   — PayrollRun ที่ Paid + ยังไม่ settle (SsoSettledAt == null)
 ///   • ภงด.1 — PayrollRun.TotalWithholdingTax (ภาษีเงินเดือน)
 ///   • ภงด.3/53 — เอกสารที่มี WithholdingTaxAmount แยกตามชนิดผู้ติดต่อ
-///   • ภพ.30 — TaxService.ComputeVatReportAsync(.).NetVat (เฉพาะที่ > 0)
+///   • ภพ.30 — อ่านจาก TaxReports ที่ generate ไว้แล้ว (NetVat > 0) — ไม่คำนวณสด
+///     ในหน้านี้เพื่อกันหน้าค้างจากการคำนวณ VAT หลายเดือน
 /// ยอดค้าง = หนี้ − ที่นำส่งแล้ว (StatutoryRemittance; SSO ใช้ SsoSettledAt).</summary>
 public class StatutoryRemittanceService : IStatutoryRemittanceService
 {
     private readonly AccountingDbContext _db;
     private readonly IAccountingService _accounting;
-    private readonly ITaxService _tax;
     private readonly ILogger<StatutoryRemittanceService> _logger;
 
     public StatutoryRemittanceService(AccountingDbContext db, IAccountingService accounting,
-        ITaxService tax, ILogger<StatutoryRemittanceService> logger)
+        ILogger<StatutoryRemittanceService> logger)
     {
-        _db = db; _accounting = accounting; _tax = tax; _logger = logger;
+        _db = db; _accounting = accounting; _logger = logger;
     }
 
     // ===== ป้ายชื่อ + ผังหนี้ค้างจ่าย ต่อประเภท =====
@@ -60,85 +60,97 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
         var pending = new List<PendingRemittanceItem>();
 
-        // ── โหลด remittance ที่นำส่งแล้ว (สำหรับ netting WHT/VAT) ──
-        var remits = await _db.Set<StatutoryRemittance>().AsNoTracking()
-            .Where(r => r.CompanyId == companyId && !r.IsDeleted)
-            .ToListAsync();
+        // ── โหลด remittance ที่นำส่งแล้ว (สำหรับ netting) — กัน table ยังไม่ถูกสร้าง ──
+        var remits = new List<StatutoryRemittance>();
+        try
+        {
+            remits = await _db.Set<StatutoryRemittance>().AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted).ToListAsync();
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลด StatutoryRemittances ไม่สำเร็จ (table ยังไม่ถูกสร้าง?)"); }
         decimal Remitted(string type, int y, int m) =>
             remits.Where(r => r.RemittanceType == type && r.PeriodYear == y && r.PeriodMonth == m)
                   .Sum(r => r.Amount);
 
         // ── SSO + ภงด.1 จาก PayrollRun ──
-        var runs = await _db.Set<PayrollRun>().AsNoTracking()
-            .Where(r => r.CompanyId == companyId && r.Status == "Paid")
-            .Select(r => new { r.Id, r.Year, r.Month,
-                Emp = r.TotalSocialSecurityEmployee, Empr = r.TotalSocialSecurityEmployer,
-                Wht = r.TotalWithholdingTax, r.SsoSettledAt })
-            .ToListAsync();
-
-        // SSO — เฉพาะรอบที่ยังไม่ settle (SsoSettledAt == null)
-        foreach (var g in runs.Where(r => r.SsoSettledAt == null && InRange(r.Year, r.Month))
-                               .GroupBy(r => (r.Year, r.Month)))
+        try
         {
-            var emp = g.Sum(x => x.Emp); var empr = g.Sum(x => x.Empr);
-            var total = emp + empr;
-            if (total <= 0.009m) continue;
-            pending.Add(BuildItem("SsoSps110", g.Key.Year, g.Key.Month, total, today,
-                employee: emp, employer: empr, relatedRunId: g.First().Id));
-        }
-
-        // ภงด.1 — ภาษีเงินเดือน (netting ด้วย StatutoryRemittance)
-        foreach (var g in runs.Where(r => InRange(r.Year, r.Month)).GroupBy(r => (r.Year, r.Month)))
-        {
-            var liability = g.Sum(x => x.Wht);
-            var outstanding = liability - Remitted("WhtPnd1", g.Key.Year, g.Key.Month);
-            if (outstanding <= 0.009m) continue;
-            pending.Add(BuildItem("WhtPnd1", g.Key.Year, g.Key.Month, outstanding, today));
-        }
-
-        // ── ภงด.3 / 53 จากเอกสารหัก ณ ที่จ่าย ──
-        var whtDocs = await _db.Documents.AsNoTracking()
-            // เฉพาะเอกสารที่ post WHT payable เข้า GL แล้ว (อนุมัติขึ้นไป) —
-            // Draft/WaitingApproval ยังไม่ลง 21916/21917 จึงยังไม่ใช่หนี้ค้างนำส่ง
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.WithholdingTaxAmount > 0
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-            .Select(d => new { d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
-                CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual })
-            .ToListAsync();
-        foreach (var typ in new[] { "WhtPnd3", "WhtPnd53" })
-        {
-            bool juristic = typ == "WhtPnd53";
-            var grouped = whtDocs
-                .Where(d => juristic
-                    ? d.CType == ContactType.JuristicPerson
-                    : d.CType != ContactType.JuristicPerson)
-                .Select(d => new { Date = (d.PaymentDate ?? d.DocumentDate), d.WithholdingTaxAmount })
-                .Where(d => InRange(d.Date.Year, d.Date.Month))
-                .GroupBy(d => (d.Date.Year, d.Date.Month));
-            foreach (var g in grouped)
+            var runs = await _db.Set<PayrollRun>().AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.Status == "Paid")
+                .Select(r => new { r.Id, r.Year, r.Month,
+                    Emp = r.TotalSocialSecurityEmployee, Empr = r.TotalSocialSecurityEmployer,
+                    Wht = r.TotalWithholdingTax, r.SsoSettledAt })
+                .ToListAsync();
+            foreach (var g in runs.Where(r => r.SsoSettledAt == null && InRange(r.Year, r.Month))
+                                   .GroupBy(r => (r.Year, r.Month)))
             {
-                var outstanding = g.Sum(x => x.WithholdingTaxAmount) - Remitted(typ, g.Key.Year, g.Key.Month);
+                var emp = g.Sum(x => x.Emp); var empr = g.Sum(x => x.Empr);
+                var total = emp + empr;
+                if (total <= 0.009m) continue;
+                pending.Add(BuildItem("SsoSps110", g.Key.Year, g.Key.Month, total, today,
+                    employee: emp, employer: empr, relatedRunId: g.First().Id));
+            }
+            foreach (var g in runs.Where(r => InRange(r.Year, r.Month)).GroupBy(r => (r.Year, r.Month)))
+            {
+                var outstanding = g.Sum(x => x.Wht) - Remitted("WhtPnd1", g.Key.Year, g.Key.Month);
                 if (outstanding <= 0.009m) continue;
-                pending.Add(BuildItem(typ, g.Key.Year, g.Key.Month, outstanding, today,
-                    payeeCount: g.Count()));
+                pending.Add(BuildItem("WhtPnd1", g.Key.Year, g.Key.Month, outstanding, today));
             }
         }
+        catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ SSO/ภงด.1 ไม่สำเร็จ"); }
 
-        // ── ภพ.30 (เฉพาะย้อนหลังไม่เกิน 6 เดือน เพื่อจำกัดการคำนวณ) ──
-        var vatStart = new DateTime(today.Year, today.Month, 1).AddMonths(-Math.Min(6, Math.Max(1, monthsBack)));
-        for (var d = vatStart; d <= new DateTime(today.Year, today.Month, 1); d = d.AddMonths(1))
+        // ── ภงด.3 / 53 จากเอกสารหัก ณ ที่จ่าย (bound ช่วงวันที่ใน SQL) ──
+        try
         {
-            TaxReport rpt;
-            try { rpt = await _tax.ComputeVatReportAsync(companyId, d.Year, d.Month); }
-            catch { continue; }
-            var net = rpt.NetVat;
-            var outstanding = net - Remitted("VatPp30", d.Year, d.Month);
-            if (outstanding <= 0.009m) continue;
-            pending.Add(BuildItem("VatPp30", d.Year, d.Month, outstanding, today,
-                outputVat: rpt.OutputVat, inputVat: rpt.InputVat));
+            var whtDocs = await _db.Documents.AsNoTracking()
+                // เฉพาะเอกสารที่ post WHT payable เข้า GL แล้ว (อนุมัติขึ้นไป)
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.WithholdingTaxAmount > 0
+                    && (d.PaymentDate ?? d.DocumentDate) >= start
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .Select(d => new { d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
+                    CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual })
+                .ToListAsync();
+            foreach (var typ in new[] { "WhtPnd3", "WhtPnd53" })
+            {
+                bool juristic = typ == "WhtPnd53";
+                var grouped = whtDocs
+                    .Where(d => juristic ? d.CType == ContactType.JuristicPerson : d.CType != ContactType.JuristicPerson)
+                    .Select(d => new { Date = (d.PaymentDate ?? d.DocumentDate), d.WithholdingTaxAmount })
+                    .Where(d => InRange(d.Date.Year, d.Date.Month))
+                    .GroupBy(d => (d.Date.Year, d.Date.Month));
+                foreach (var g in grouped)
+                {
+                    var outstanding = g.Sum(x => x.WithholdingTaxAmount) - Remitted(typ, g.Key.Year, g.Key.Month);
+                    if (outstanding <= 0.009m) continue;
+                    pending.Add(BuildItem(typ, g.Key.Year, g.Key.Month, outstanding, today, payeeCount: g.Count()));
+                }
+            }
         }
+        catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ ภงด.3/53 ไม่สำเร็จ"); }
+
+        // ── ภพ.30 — ใช้รายงานที่ generate/บันทึกไว้แล้ว (เร็ว — ไม่คำนวณ VAT สดหลาย
+        //    เดือนในหน้านี้ ซึ่งเคยทำให้หน้าค้างโหลด). ผู้ใช้ generate ภ.พ.30 หน้า
+        //    "รายงานภาษี" ก่อน แล้วยอดสุทธิจะมาขึ้นที่นี่. ──
+        try
+        {
+            var vatReports = await _db.TaxReports.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.VAT
+                    && (t.Year > start.Year || (t.Year == start.Year && t.Month >= start.Month)))
+                .Select(t => new { t.Year, t.Month, t.NetVat, t.OutputVat, t.InputVat })
+                .ToListAsync();
+            // dedup กันเคสมีหลายรายงานต่อเดือน (draft + regenerate)
+            foreach (var v in vatReports.GroupBy(x => (x.Year, x.Month)).Select(grp => grp.First()))
+            {
+                if (!InRange(v.Year, v.Month)) continue;
+                var outstanding = v.NetVat - Remitted("VatPp30", v.Year, v.Month);
+                if (outstanding <= 0.009m) continue;
+                pending.Add(BuildItem("VatPp30", v.Year, v.Month, outstanding, today,
+                    outputVat: v.OutputVat, inputVat: v.InputVat));
+            }
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลด ภพ.30 ไม่สำเร็จ"); }
 
         // ── ประวัติที่นำส่งล่าสุด ──
         var history = remits.OrderByDescending(r => r.PayDate).Take(30)

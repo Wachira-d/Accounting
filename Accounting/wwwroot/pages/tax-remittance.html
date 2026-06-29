@@ -62,21 +62,27 @@
       },
 
       async load() {
-        const api = Layout.api(); if (!api) return;
+        const api = Layout.api();
         const pc = document.getElementById('pendingContent');
+        if (!api) { pc.innerHTML = '<div class="text-center text-danger" style="padding:40px">ยังไม่ได้เลือกบริษัท — โหลดหน้าใหม่อีกครั้ง</div>'; return; }
         pc.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>';
+        // โหลดบัญชีธนาคารแยก (ไม่บล็อก dashboard — กัน bank hang ทำหน้าค้าง)
+        api.getBankAccounts().then(r => { this._banks = (r && r.data) || []; }).catch(() => { this._banks = []; });
         try {
-          const [res, banks] = await Promise.all([
-            api.getRemittances(12),
-            api.getBankAccounts().catch(() => ({ data: [] })),
-          ]);
-          this._data = res.data || { pending: [], recentHistory: [], totalPending: 0, totalOverdue: 0, overdueCount: 0 };
-          this._banks = banks.data || [];
+          // timeout 25s กันค้างตลอดถ้าเซิร์ฟเวอร์ตอบช้า → ขึ้นปุ่มลองใหม่
+          const timeout = new Promise((_, rej) =>
+            setTimeout(() => rej(new Error('หมดเวลาโหลด — เซิร์ฟเวอร์ตอบช้าหรือยังไม่ได้อัปเดต กรุณาลองใหม่')), 25000));
+          const res = await Promise.race([api.getRemittances(12), timeout]);
+          this._data = (res && res.data) || { pending: [], recentHistory: [], totalPending: 0, totalOverdue: 0, overdueCount: 0 };
+          // กัน field หาย
+          this._data.pending = this._data.pending || [];
+          this._data.recentHistory = this._data.recentHistory || [];
           this.renderKpis();
           this.renderPending();
           this.renderHistory();
         } catch (e) {
-          pc.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+          pc.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}
+            <div style="margin-top:12px"><button class="btn btn-secondary" onclick="Page.load()">↻ ลองใหม่</button></div></div>`;
         }
       },
 

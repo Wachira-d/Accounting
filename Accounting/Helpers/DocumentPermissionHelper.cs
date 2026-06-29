@@ -68,7 +68,10 @@ public static class DocumentPermissionHelper
         var rev = await perms.HasPermissionAsync(companyId, userId, PermissionKeys.DocumentRevenueView);
         var pur = await perms.HasPermissionAsync(companyId, userId, PermissionKeys.DocumentPurchaseView);
         if (!rev && !pur) return DocumentVisibility.All;       // legacy / no split configured
-        return new DocumentVisibility(rev, pur, Other: false); // explicit split — hide "other" too? keep visible.
+        // ผู้ที่มีสิทธิ์ครบทั้ง 2 ฝั่ง = เห็นทุกอย่าง → Other=true ด้วย เพื่อให้
+        // ShowsEverything=true (เดิม hardcode Other=false ทำให้แม้เจ้าของก็โดน
+        // post-filter ที่ recompute TotalPages จากหน้าเดียว → ปุ่มเปลี่ยนหน้าหาย).
+        return new DocumentVisibility(rev, pur, Other: rev && pur);
     }
 
     private static async Task<bool> AnyAsync(IPermissionService perms, Guid companyId, Guid userId,
