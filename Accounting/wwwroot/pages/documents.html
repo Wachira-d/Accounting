@@ -163,8 +163,13 @@
 
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่เอกสาร / ชื่อลูกค้า..." id="searchInput" oninput="Page.load()">
+      <!-- quick date presets — รายการเรียงตามวันที่ เอกสารเดือนก่อนจึงอยู่หน้า 2;
+           ปุ่มลัดให้กรองดูเดือนนี้/เดือนก่อนได้ในคลิกเดียว -->
+      <button class="btn btn-sm btn-ghost" id="dpThis" onclick="Page.setDatePreset('thisMonth')" title="เอกสารเดือนนี้">เดือนนี้</button>
+      <button class="btn btn-sm btn-ghost" id="dpLast" onclick="Page.setDatePreset('lastMonth')" title="เอกสารเดือนก่อน">เดือนก่อน</button>
       <input type="date" class="form-input" id="dateFrom" onchange="Page.load()" title="ตั้งแต่วันที่" style="width:140px">
       <input type="date" class="form-input" id="dateTo" onchange="Page.load()" title="ถึงวันที่" style="width:140px">
+      <button class="btn btn-sm btn-ghost" onclick="Page.setDatePreset('clear')" title="ล้างตัวกรองวันที่">ล้าง</button>
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
@@ -3370,6 +3375,23 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+      // กรองด่วนตามเดือน (รายการเรียงตามวันที่ → เดือนก่อนอยู่หน้าถัด ๆ ไป;
+      // ปุ่มนี้ช่วยให้เห็นเอกสารที่เพิ่งสร้างย้อนหลังได้ทันที)
+      setDatePreset(which) {
+        const fromEl = document.getElementById('dateFrom');
+        const toEl = document.getElementById('dateTo');
+        if (which === 'clear') { fromEl.value = ''; toEl.value = ''; }
+        else {
+          const now = new Date();
+          const off = which === 'lastMonth' ? -1 : 0;
+          const first = new Date(now.getFullYear(), now.getMonth() + off, 1);
+          const last = new Date(now.getFullYear(), now.getMonth() + off + 1, 0);
+          fromEl.value = Layout.toDateInput(first);
+          toEl.value = Layout.toDateInput(last);
+        }
+        this.page = 1;
+        this.load();
+      },
       lineCount: 0,
       addLine() {
         const i = this.lineCount++;
