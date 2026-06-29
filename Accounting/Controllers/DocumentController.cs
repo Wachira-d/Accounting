@@ -83,6 +83,8 @@ public class DocumentController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<DocumentResponse>>>> GetDocuments(
         Guid companyId, [FromQuery] DocumentType? type = null,
+        // หลายประเภทพร้อมกัน (ฝั่งรายรับ/รายจ่าย) — กรองที่ server เพื่อ pagination ถูก
+        [FromQuery] List<DocumentType>? types = null,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
         [FromQuery] Guid? projectId = null, [FromQuery] Guid? contactId = null,
         [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
@@ -104,8 +106,13 @@ public class DocumentController : ControllerBase
             return Forbid403<PagedResponse<DocumentResponse>>(
                 $"คุณไม่มีสิทธิ์ดูเอกสารประเภท {type.Value} (ต้องการ Document.Revenue.View หรือ Document.Purchase.View)");
 
+        // จำกัด types[] ตามสิทธิ์ผู้ใช้ (drop ประเภทที่ดูไม่ได้) ก่อนส่งเข้า service
+        var effTypes = types;
+        if (types != null && types.Count > 0 && !visibility.ShowsEverything)
+            effTypes = types.Where(t => visibility.Allows(t)).ToList();
+
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search),
-            projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly);
+            projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, effTypes);
 
         // No-type list path: drop rows the user's split doesn't allow.
         // Post-filter (not pre-) keeps service signature untouched and
