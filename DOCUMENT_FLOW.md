@@ -701,6 +701,16 @@ SourceDocumentId → JE-only fallback ก็ข้าม). แก้: เพิ�
 (ใช้ §82/5 prohibited + §82/3 window เดิม). PV ที่ไม่ติ๊ก = ไม่เคลม (§82/5(1)).
 มีผลทั้งจอ + CSV ยื่น (ComputeVatReportAsync → GenerateVatReport ตัวเดียวกัน)._
 
+_รอบ 22: หน้านำส่งภาษี/ประกันสังคมรวม (StatutoryRemittance) — สปส.1-10 + ภงด.1/3/53
++ ภพ.30 ในที่เดียว (pattern QuickBooks Pay Liabilities). `StatutoryRemittanceService`
+.GetDashboardAsync รวมยอดค้าง (SSO=PayrollRun Paid ที่ยังไม่ settle; ภงด.1=Total
+WithholdingTax; ภงด.3/53=เอกสาร WHT แยกชนิดผู้ติดต่อ; ภพ.30=ComputeVatReportAsync
+.NetVat) + กำหนดยื่น/overdue/เงินเพิ่ม §49. .RemitAsync post JE ล้างหนี้ค้างจ่าย/Cr
+ธนาคาร (VAT: Dr 21911/Cr 11610/Cr ธนาคาร net), บันทึก remittance (unique/งวด กัน
+จ่ายซ้ำ), stamp PayrollRun.SsoSettledAt, แนบใบเสร็จ (FileAttachment "StatutoryRemittance").
+รองรับทั้งบริษัทรันเงินเดือนในระบบ (ตั้งค้างจ่าย 21815 อัตโนมัติ) + ทำข้างนอก.
+หน้า /pages/tax-remittance.html. Endpoints GET/POST /companies/{id}/remittances._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

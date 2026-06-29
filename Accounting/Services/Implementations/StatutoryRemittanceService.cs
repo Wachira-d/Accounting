@@ -105,15 +105,15 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
             .Select(d => new { d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
-                CType = d.Contact != null ? (int?)d.Contact.ContactType : null })
+                CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual })
             .ToListAsync();
         foreach (var typ in new[] { "WhtPnd3", "WhtPnd53" })
         {
             bool juristic = typ == "WhtPnd53";
             var grouped = whtDocs
                 .Where(d => juristic
-                    ? d.CType == (int)ContactType.JuristicPerson
-                    : d.CType != (int)ContactType.JuristicPerson)
+                    ? d.CType == ContactType.JuristicPerson
+                    : d.CType != ContactType.JuristicPerson)
                 .Select(d => new { Date = (d.PaymentDate ?? d.DocumentDate), d.WithholdingTaxAmount })
                 .Where(d => InRange(d.Date.Year, d.Date.Month))
                 .GroupBy(d => (d.Date.Year, d.Date.Month));

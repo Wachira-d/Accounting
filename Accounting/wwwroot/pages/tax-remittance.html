@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>นำส่งภาษี / ประกันสังคม - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">นำส่งภาษี / ประกันสังคม</h2>
+        <p class="page-subtitle">
+          ยอดรอนำส่งทุกประเภทในที่เดียว — ประกันสังคม (สปส.1-10) · ภาษีหัก ณ ที่จ่าย
+          (ภงด.1/3/53) · ภาษีมูลค่าเพิ่ม (ภพ.30) · พร้อมกำหนดชำระ/เลยกำหนด · กดจ่ายแล้ว
+          ระบบลง JE ล้างหนี้ค้างจ่าย/Cr ธนาคาร + แนบใบเสร็จได้
+        </p>
+      </div>
+    </div>
+
+    <div class="grid grid-4 gap-4" id="kpis" style="margin-bottom:24px"></div>
+
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header"><h3 class="card-title">รายการรอนำส่ง</h3></div>
+      <div id="pendingContent">
+        <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">ประวัติการนำส่งล่าสุด</h3></div>
+      <div id="historyContent"></div>
+    </div>
+  </div>
+
+  <!-- Pay modal -->
+  <div class="modal-overlay" id="remitModal">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <h3 class="modal-title" id="remitTitle">นำส่ง</h3>
+        <button class="modal-close" onclick="Layout.closeModal('remitModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="remitBody"></div>
+    </div>
+  </div>
+
+  <script>
+    const Page = {
+      _data: null,
+      _banks: [],
+      _sel: null,
+
+      MONTHS: ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
+      period(y, m) { return `${this.MONTHS[m]} ${y + 543}`; },
+
+      async init() {
+        if (!Layout.init('tax-remittance')) return;
+        Layout.setTitle('นำส่งภาษี / ประกันสังคม');
+        await this.load();
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const pc = document.getElementById('pendingContent');
+        pc.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>';
+        try {
+          const [res, banks] = await Promise.all([
+            api.getRemittances(12),
+            api.getBankAccounts().catch(() => ({ data: [] })),
+          ]);
+          this._data = res.data || { pending: [], recentHistory: [], totalPending: 0, totalOverdue: 0, overdueCount: 0 };
+          this._banks = banks.data || [];
+          this.renderKpis();
+          this.renderPending();
+          this.renderHistory();
+        } catch (e) {
+          pc.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
+      },
+
+      renderKpis() {
+        const d = this._data;
+        document.getElementById('kpis').innerHTML = `
+          <div class="kpi-card"><div class="kpi-label">รวมรอนำส่ง</div><div class="kpi-value">${Layout.money(d.totalPending)}</div><div class="text-xs text-gray-400">${d.pending.length} รายการ</div></div>
+          <div class="kpi-card"><div class="kpi-label">เลยกำหนด</div><div class="kpi-value" style="color:#dc2626">${d.overdueCount}</div><div class="text-xs text-gray-400">รายการ</div></div>
+          <div class="kpi-card"><div class="kpi-label">ยอดเลยกำหนด</div><div class="kpi-value" style="color:#dc2626">${Layout.money(d.totalOverdue)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">นำส่งแล้ว (ล่าสุด)</div><div class="kpi-value">${d.recentHistory.length}</div><div class="text-xs text-gray-400">รายการ</div></div>`;
+      },
+
+      renderPending() {
+        const c = document.getElementById('pendingContent');
+        const rows = this._data.pending || [];
+        if (!rows.length) {
+          c.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">✓ ไม่มียอดค้างนำส่ง</div>';
+          return;
+        }
+        c.innerHTML = `
+          <div class="table-container" style="border:none">
+            <table class="table">
+              <thead><tr>
+                <th>ประเภท</th><th>งวด</th><th class="text-right">ยอดรอนำส่ง</th>
+                <th class="text-center">กำหนดยื่น</th><th class="text-center">สถานะ</th><th></th>
+              </tr></thead>
+              <tbody>${rows.map((r, i) => {
+                const status = r.isOverdue
+                  ? `<span style="color:#dc2626;font-weight:700">เลยกำหนด</span>`
+                  : `<span style="color:#d97706;font-weight:600">รอนำส่ง</span>`;
+                const fee = r.lateFeePreview > 0
+                  ? `<div class="text-xs" style="color:#dc2626">+ เงินเพิ่ม ${Layout.money(r.lateFeePreview)}</div>` : '';
+                const sub = r.remittanceType === 'SsoSps110'
+                  ? `<div class="text-xs text-gray-400">ลูกจ้าง ${Layout.money(r.employeeAmount)} · นายจ้าง ${Layout.money(r.employerAmount)}</div>`
+                  : (r.remittanceType === 'VatPp30'
+                      ? `<div class="text-xs text-gray-400">ขาย ${Layout.money(r.outputVat)} − ซื้อ ${Layout.money(r.inputVat)}</div>`
+                      : (r.payeeCount ? `<div class="text-xs text-gray-400">${r.payeeCount} ราย</div>` : ''));
+                return `
+                <tr>
+                  <td class="font-medium">${Layout.esc(r.typeLabel)}<div class="text-xs text-gray-400">${Layout.esc(r.formCode)} · ${r.payableAccountCode}</div></td>
+                  <td>${this.period(r.periodYear, r.periodMonth)}</td>
+                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}</td>
+                  <td class="text-center">${Layout.date(r.eFilingDueDate)}<div class="text-xs text-gray-400">กระดาษ ${Layout.date(r.paperDueDate)}</div></td>
+                  <td class="text-center">${status}</td>
+                  <td class="text-right"><button class="btn btn-primary btn-sm" onclick="Page.openPay(${i})">💸 นำส่ง</button></td>
+                </tr>`;
+              }).join('')}</tbody>
+            </table>
+          </div>`;
+      },
+
+      renderHistory() {
+        const c = document.getElementById('historyContent');
+        const rows = this._data.recentHistory || [];
+        if (!rows.length) { c.innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีประวัติ</div>'; return; }
+        c.innerHTML = `
+          <div class="table-container" style="border:none">
+            <table class="table">
+              <thead><tr><th>ประเภท</th><th>งวด</th><th class="text-right">ยอด</th><th class="text-right">เงินเพิ่ม</th><th>วันที่จ่าย</th><th>เลขรับ</th><th class="text-center">ใบเสร็จ</th></tr></thead>
+              <tbody>${rows.map(r => `
+                <tr>
+                  <td>${Layout.esc(r.formCode)}</td>
+                  <td>${this.period(r.periodYear, r.periodMonth)}</td>
+                  <td class="text-right" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</td>
+                  <td class="text-right" style="font-variant-numeric:tabular-nums">${r.lateFee > 0 ? Layout.money(r.lateFee) : '-'}</td>
+                  <td>${Layout.date(r.payDate)}</td>
+                  <td>${Layout.esc(r.filingNumber || '-')}</td>
+                  <td class="text-center">${r.receiptAttachmentId ? '📎' : '-'}</td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>`;
+      },
+
+      openPay(i) {
+        const r = this._data.pending[i];
+        this._sel = r;
+        document.getElementById('remitTitle').textContent = `นำส่ง ${r.formCode} — ${this.period(r.periodYear, r.periodMonth)}`;
+        const today = new Date().toISOString().slice(0, 10);
+        const bankOpts = ['<option value="">— ใช้บัญชีเริ่มต้น —</option>']
+          .concat(this._banks.map(b => `<option value="${b.id}">${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')}</option>`)).join('');
+        const isSso = r.remittanceType === 'SsoSps110';
+        document.getElementById('remitBody').innerHTML = `
+          <div style="background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
+            <div style="display:flex;justify-content:space-between"><span class="text-gray-500">ยอดเงินสมทบ/ภาษี</span><b style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</b></div>
+            ${isSso ? `<div style="display:flex;justify-content:space-between;margin-top:4px"><span class="text-gray-500">เงินเพิ่มนำส่งช้า §49</span><b id="feeLbl" style="color:#dc2626;font-variant-numeric:tabular-nums">${Layout.money(r.lateFeePreview)}</b></div>` : ''}
+            <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px"><span>รวมจ่าย</span><b id="totLbl" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount + (isSso ? r.lateFeePreview : 0))}</b></div>
+          </div>
+          <div class="form-row"><label class="form-label">วันที่จ่าย</label>
+            <input type="date" id="rmPayDate" class="form-input" value="${today}" onchange="Page._recalc()"></div>
+          <div class="form-row"><label class="form-label">แหล่งเงิน (บัญชีจ่าย)</label>
+            <select id="rmBank" class="form-input">${bankOpts}</select></div>
+          <div class="form-row"><label class="form-label">เลขรับ / เลขอ้างอิงการยื่น (ถ้ามี)</label>
+            <input type="text" id="rmFiling" class="form-input" placeholder="เลขรับจากหน่วยงาน"></div>
+          <div id="rmMsg" style="font-size:12px;color:#dc2626;min-height:16px"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('remitModal')">ยกเลิก</button>
+            <button class="btn btn-primary" id="rmGo" onclick="Page._submit()">ยืนยันนำส่ง + ลง JE</button>
+          </div>`;
+        Layout.openModal('remitModal');
+      },
+
+      async _recalc() {
+        const r = this._sel; if (r.remittanceType !== 'SsoSps110') return;
+        const payDate = document.getElementById('rmPayDate').value;
+        try {
+          const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, payDate);
+          const fee = (res.data && res.data.lateFeePreview) || 0;
+          document.getElementById('feeLbl').textContent = Layout.money(fee);
+          document.getElementById('totLbl').textContent = Layout.money(r.amount + fee);
+        } catch { /* preview ล้มเหลว — คงค่าเดิม */ }
+      },
+
+      async _submit() {
+        const r = this._sel;
+        const btn = document.getElementById('rmGo');
+        const msg = document.getElementById('rmMsg');
+        msg.textContent = '';
+        btn.disabled = true; btn.textContent = 'กำลังลง JE…';
+        try {
+          const body = {
+            remittanceType: r.remittanceType,
+            periodYear: r.periodYear,
+            periodMonth: r.periodMonth,
+            payDate: document.getElementById('rmPayDate').value,
+            bankAccountId: document.getElementById('rmBank').value || null,
+            filingNumber: document.getElementById('rmFiling').value || null,
+            includeLateFee: true,
+          };
+          const res = await Layout.api().remit(body);
+          const rid = res.data && res.data.id;
+          this._showReceiptStep(rid, res.message || 'นำส่งสำเร็จ');
+        } catch (e) {
+          msg.textContent = e.message || 'นำส่งไม่สำเร็จ';
+          btn.disabled = false; btn.textContent = 'ยืนยันนำส่ง + ลง JE';
+        }
+      },
+
+      _showReceiptStep(rid, message) {
+        document.getElementById('remitBody').innerHTML = `
+          <div style="text-align:center;padding:8px 0 16px">
+            <div style="font-size:40px">✅</div>
+            <div style="font-weight:600;margin-top:6px">${Layout.esc(message)}</div>
+            <div class="text-xs text-gray-400" style="margin-top:4px">ลง JE ล้างหนี้ค้างจ่าย / Cr ธนาคาร เรียบร้อย</div>
+          </div>
+          <div class="form-row"><label class="form-label">แนบใบเสร็จ / หลักฐานการนำส่ง (optional)</label>
+            <input type="file" id="rmReceipt" class="form-input" accept="image/*,application/pdf"></div>
+          <div id="rmUpMsg" style="font-size:12px;min-height:16px"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('remitModal');Page.load()">เสร็จสิ้น</button>
+            <button class="btn btn-primary" onclick="Page._upload('${rid}')">แนบใบเสร็จ</button>
+          </div>`;
+      },
+
+      async _upload(rid) {
+        const f = document.getElementById('rmReceipt').files[0];
+        const m = document.getElementById('rmUpMsg');
+        if (!f) { m.style.color = '#dc2626'; m.textContent = 'กรุณาเลือกไฟล์'; return; }
+        const fd = new FormData(); fd.append('file', f);
+        m.style.color = '#475569'; m.textContent = 'กำลังอัปโหลด…';
+        try {
+          await Layout.api().uploadRemittanceReceipt(rid, fd);
+          Layout.closeModal('remitModal');
+          Layout.toast('แนบใบเสร็จแล้ว', 'success');
+          this.load();
+        } catch (e) {
+          m.style.color = '#dc2626'; m.textContent = e.message || 'อัปโหลดไม่สำเร็จ';
+        }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
