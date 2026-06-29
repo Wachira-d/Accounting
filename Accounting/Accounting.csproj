@@ -87,6 +87,10 @@
     <EmbeddedResource Include="Resources\ThaiAdmin.csv" />
     <!-- Tesseract language data files — copied to output so they ship with the app -->
     <None Include="wwwroot\tessdata\*.traineddata" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Bundled Thai fonts (Sarabun) — คุมหน้าตา PDF (ใบหัก ณ ที่จ่าย ฯลฯ) ให้
+         เหมือนกันทุก OS. วางไฟล์ .ttf ใน Fonts/ แล้วจะถูก copy ไป output +
+         register โดย EnsureThaiFontsRegistered (PdfGenerationService.PdfA3.cs). -->
+    <None Include="Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
