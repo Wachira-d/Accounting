@@ -89,6 +89,8 @@ public class SettingsService : ISettingsService
             settings.DefaultPaymentAccountId = request.DefaultPaymentAccountId.Value == Guid.Empty
                 ? null : request.DefaultPaymentAccountId.Value;
 
+        if (request.AutoAttachWhtCertPdf.HasValue)
+            settings.AutoAttachWhtCertPdf = request.AutoAttachWhtCertPdf.Value;
         // กองทุนเงินทดแทน (กท.20ก)
         if (request.WorkersCompensationEnabled.HasValue)
             settings.WorkersCompensationEnabled = request.WorkersCompensationEnabled.Value;
@@ -447,6 +449,7 @@ public class SettingsService : ISettingsService
         s.DefaultPaymentAccountId,
         s.WorkersCompensationEnabled,
         s.WorkersCompensationRatePercent,
+        s.AutoAttachWhtCertPdf,
         s.BookkeeperName,
         s.BookkeeperCpdNumber,
         // Print layout

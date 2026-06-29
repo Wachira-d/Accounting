@@ -711,6 +711,18 @@ WithholdingTax; ภงด.3/53=เอกสาร WHT แยกชนิดผ�
 รองรับทั้งบริษัทรันเงินเดือนในระบบ (ตั้งค้างจ่าย 21815 อัตโนมัติ) + ทำข้างนอก.
 หน้า /pages/tax-remittance.html. Endpoints GET/POST /companies/{id}/remittances._
 
+_รอบ 23 (ชุดแก้ + ปรับปรุง): (a) รายงานภาษีซื้อ/ขายบนจอ + พิมพ์ → ฟอร์มราชการ §87
+(ฉบับที่ 104): GetTaxReportAsync เติม InvoiceNumber/BranchCode/CompanyName-TaxId ต่อ
+บรรทัด; tax.html ตารางคอลัมน์ราชการ + ปุ่ม "พิมพ์ฟอร์มราชการ". (b) WHT cert 50ทวิ:
+GenerateWithholdingTaxCertPdfAsync ลอง render HTML (BuildWithholdingTaxCertHtml +
+ลายเซ็น) ผ่าน IHtmlPdfRenderer/Puppeteer ก่อน → fallback QuestPDF (font Sarabun:
+ThaiFontCandidatePaths เพิ่ม Windows/macOS/Fonts bundle); auto-attach เข้า PV ปิด
+default ผ่าน CompanySettings.AutoAttachWhtCertPdf. (c) StatutoryRemittance ภพ.30
+เปลี่ยนเป็นอ่าน TaxReports ที่ generate แล้ว (เลิกคำนวณสด — กันหน้าค้าง) + per-section
+try/catch. (d) documents list: server-side types[] filter + DocumentPermissionHelper
+Other=rev&&pur (กัน paging หายสำหรับ owner) + count bar. (e) OCR amount: external
+metadata override (เชื่อยอดที่ partner ส่ง) + headerSubTotal ผูก grand total._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
