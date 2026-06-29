@@ -3377,7 +3377,10 @@
           </tr>`;
           }).join('');
           this._updateDocSelectionBar();
-          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
+          // totalPages เป็นหลัก; ถ้าไม่มีให้คำนวณจาก totalCount/pageSize (กันเคส
+          // backend คืน totalPages ไม่ถูก → ปุ่มเปลี่ยนหน้าหาย)
+          const _pages = data.totalPages || Math.ceil((data.totalCount || 0) / (data.pageSize || 20)) || 1;
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, _pages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
