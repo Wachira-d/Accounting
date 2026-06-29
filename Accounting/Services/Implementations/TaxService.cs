@@ -1229,7 +1229,46 @@ public partial class TaxService : ITaxService
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
 
-        return MapToResponse(report);
+        var resp = MapToResponse(report);
+
+        // ── เติม เลขที่ใบกำกับ + สาขา + วันที่ใบกำกับ ต่อบรรทัด (ฟอร์ม §87
+        // ฉบับที่ 104) — ฝั่งซื้อใช้เลข/วันที่ "ใบกำกับของผู้ขาย", ฝั่งขายใช้เลข
+        // เอกสารของเรา. สาขา = snapshot SupplierBranchCode ชนะ Contact.BranchCode.
+        if (report.TaxType == TaxType.VAT)
+        {
+            var docIds = report.Lines.Where(l => l.DocumentId.HasValue)
+                .Select(l => l.DocumentId!.Value).Distinct().ToList();
+            if (docIds.Count > 0)
+            {
+                var docInfo = await (from d in _db.Documents.AsNoTracking()
+                    join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id into cj
+                    from c in cj.DefaultIfEmpty()
+                    where d.CompanyId == companyId && docIds.Contains(d.Id)
+                    select new
+                    {
+                        d.Id, d.DocumentNumber, d.SupplierInvoiceNumber,
+                        Branch = d.SupplierBranchCode ?? (c != null ? c.BranchCode : null),
+                        d.SupplierTaxInvoiceDate
+                    }).ToDictionaryAsync(x => x.Id);
+
+                var enriched = resp.Lines.Select(ln =>
+                {
+                    if (ln.DocumentId.HasValue && docInfo.TryGetValue(ln.DocumentId.Value, out var info))
+                    {
+                        var isInput = ln.IncomeTypeCode is "INPUT" or "JE_INPUT";
+                        var invNo = isInput
+                            ? (string.IsNullOrWhiteSpace(info.SupplierInvoiceNumber) ? info.DocumentNumber : info.SupplierInvoiceNumber)
+                            : info.DocumentNumber;
+                        var invDate = (isInput && info.SupplierTaxInvoiceDate.HasValue)
+                            ? info.SupplierTaxInvoiceDate.Value : ln.TransactionDate;
+                        return ln with { InvoiceNumber = invNo, BranchCode = info.Branch, TransactionDate = invDate };
+                    }
+                    return ln;
+                }).ToList();
+                resp = resp with { Lines = enriched };
+            }
+        }
+        return resp;
     }
 
     public async Task<List<TaxReportResponse>> GetTaxReportsAsync(Guid companyId, TaxType? taxType = null, int? year = null)
@@ -1628,6 +1667,7 @@ public partial class TaxService : ITaxService
         r.Lines.OrderBy(l => l.LineOrder).Select(l => new TaxReportLineResponse(
             l.Id, l.LineOrder, l.TaxPayerId, l.TaxPayerName,
             l.TransactionDate, l.Description, l.IncomeAmount,
-            l.TaxRate, l.TaxAmount, l.IncomeTypeCode, l.IsExcluded)).ToList(),
+            l.TaxRate, l.TaxAmount, l.IncomeTypeCode, l.IsExcluded,
+            l.DocumentId)).ToList(),
         r.Notes);
 }

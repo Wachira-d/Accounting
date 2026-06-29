@@ -395,6 +395,39 @@
                 <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="6" class="text-right">รวมภาษี (เฉพาะรายการที่เลือกใช้)</td><td class="text-right">${Layout.money(sub)}</td></tr></tfoot>
                 </table></div>`;
             };
+            // ── ฟอร์มราชการ §87 (ฉบับที่ 104): ลำดับ · วันที่ใบกำกับ · เลขที่ใบกำกับ ·
+            //    เลขผู้เสียภาษี · สาขา · ชื่อผู้ขาย/ผู้ซื้อ · มูลค่า · VAT ──
+            const dstr = (s) => { try { return s ? new Date(s).toLocaleDateString('th-TH') : '-'; } catch { return '-'; } };
+            const branchLabel = (b) => { const x = (b || '').replace(/\D/g, ''); if (!x) return 'สนญ.'; return (x === '00000' || x === '0') ? 'สนญ.' : 'สาขา ' + x; };
+            const renderVatRow = (ln) => {
+              const ex = !!ln.isExcluded;
+              const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
+              const chk = editable
+                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} title="ใช้รายการนี้ในรายงาน">`
+                : (ex ? '✗' : '✓');
+              return `<tr style="${rowStyle}">
+                <td class="text-center">${chk}</td>
+                <td>${ln.lineOrder}</td>
+                <td class="text-xs">${dstr(ln.transactionDate)}</td>
+                <td class="text-xs">${esc(ln.invoiceNumber || ln.description || '-')}</td>
+                <td class="text-xs">${esc(ln.taxPayerId || '-')}</td>
+                <td class="text-center text-xs">${branchLabel(ln.branchCode)}</td>
+                <td class="text-xs">${esc(ln.taxPayerName || '-')}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:96px">` : Layout.money(ln.incomeAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:96px">` : Layout.money(ln.taxAmount)}</td>
+              </tr>`;
+            };
+            const renderVatTable = (title, color, rows) => {
+              const used = rows.filter(r => !r.isExcluded);
+              const sumBase = used.reduce((s, r) => s + Number(r.incomeAmount || 0), 0);
+              const sumTax = used.reduce((s, r) => s + Number(r.taxAmount || 0), 0);
+              return `<div style="margin:14px 0 4px;font-weight:600;font-size:13px;color:${color}">${title} <span class="text-xs text-gray-400">(${rows.length} รายการ)</span></div>
+                <div class="table-container"><table class="table">
+                <thead><tr><th style="width:30px" title="เลือกใช้/ไม่ใช้">ใช้</th><th>ลำดับ</th><th>วันที่ใบกำกับ</th><th>เลขที่ใบกำกับ</th><th>เลขผู้เสียภาษี</th><th class="text-center">สาขา</th><th>ชื่อผู้ขาย/ผู้ซื้อ</th><th class="text-right">มูลค่า</th><th class="text-right">ภาษีมูลค่าเพิ่ม</th></tr></thead>
+                <tbody>${rows.map(renderVatRow).join('')}</tbody>
+                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="7" class="text-right">รวม (เฉพาะที่เลือกใช้)</td><td class="text-right">${Layout.money(sumBase)}</td><td class="text-right">${Layout.money(sumTax)}</td></tr></tfoot>
+                </table></div>`;
+            };
             html += '<h4 class="text-sm font-semibold" style="margin:14px 0 0">รายละเอียด</h4>';
             html += '<div class="text-xs text-gray-400" style="margin:2px 0 4px">ติ๊ก "ใช้" ออกเพื่อไม่นำรายการนั้นเข้ายอดรายงาน (รายการยังถูกเก็บไว้)</div>';
             if (isVat) {
@@ -405,7 +438,9 @@
               ];
               for (const [key, title, color] of groups) {
                 const rows = d.lines.filter(l => sideOf(l) === key);
-                if (rows.length) html += renderTable(title, color, rows);
+                if (!rows.length) continue;
+                // ภาษีขาย/ภาษีซื้อ → ฟอร์มราชการ §87; รายการยกเว้น/เครดิต → ตารางย่อ
+                html += (key === 'summary') ? renderTable(title, color, rows) : renderVatTable(title, color, rows);
               }
             } else {
               html += renderTable('รายการ', '#334155', d.lines);
