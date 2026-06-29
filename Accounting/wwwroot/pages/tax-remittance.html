@@ -55,6 +55,7 @@
     const Page = {
       _data: null,
       _banks: [],
+      _channels: [],
       _sel: null,
 
       MONTHS: ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
@@ -71,8 +72,11 @@
         const pc = document.getElementById('pendingContent');
         if (!api) { pc.innerHTML = '<div class="text-center text-danger" style="padding:40px">ยังไม่ได้เลือกบริษัท — โหลดหน้าใหม่อีกครั้ง</div>'; return; }
         pc.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">กำลังโหลด…</div>';
-        // โหลดบัญชีธนาคารแยก (ไม่บล็อก dashboard — กัน bank hang ทำหน้าค้าง)
+        // โหลดแหล่งเงินแยก (ไม่บล็อก dashboard — กัน hang ทำหน้าค้าง):
+        //   • bank accounts → ผูก LinkedAccountId
+        //   • payment channels → GL เงินสด/ธนาคาร/ช่องจ่ายอื่นทั้งหมด (แหล่งเงินครบ)
         api.getBankAccounts().then(r => { this._banks = (r && r.data) || []; }).catch(() => { this._banks = []; });
+        api.getPaymentChannels().then(r => { this._channels = (r && r.data) || []; }).catch(() => { this._channels = []; });
         try {
           // timeout 25s กันค้างตลอดถ้าเซิร์ฟเวอร์ตอบช้า → ขึ้นปุ่มลองใหม่
           const timeout = new Promise((_, rej) =>
@@ -169,8 +173,20 @@
         const titleEl = this._byId('remitTitle');
         if (titleEl) titleEl.textContent = `นำส่ง ${r.formCode} — ${this.period(r.periodYear, r.periodMonth)}`;
         const today = new Date().toISOString().slice(0, 10);
-        const bankOpts = ['<option value="">— ใช้บัญชีเริ่มต้น —</option>']
-          .concat(this._banks.map(b => `<option value="${b.id}">${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')}</option>`)).join('');
+        // แหล่งเงินครบ: บัญชีธนาคาร (map LinkedAccountId) + GL เงินสด/ช่องจ่ายอื่น
+        let bankOpts = '<option value="">— ใช้บัญชีเริ่มต้น —</option>';
+        if (this._banks.length) {
+          bankOpts += '<optgroup label="บัญชีธนาคาร">'
+            + this._banks.map(b => `<option value="bank:${b.id}">${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')}</option>`).join('')
+            + '</optgroup>';
+        }
+        // GL เงินสด/ธนาคาร/ช่องจ่ายอื่น (ตัด 1112 ที่ซ้ำกับ bank accounts ออก)
+        const glChannels = (this._channels || []).filter(a => !(a.accountCode || '').startsWith('1112'));
+        if (glChannels.length) {
+          bankOpts += '<optgroup label="เงินสด / ช่องทางจ่ายอื่น">'
+            + glChannels.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('')
+            + '</optgroup>';
+        }
         const isSso = r.remittanceType === 'SsoSps110';
         const bodyEl = this._byId('remitBody');
         if (!bodyEl) { Layout.toast('เปิดหน้าต่างนำส่งไม่ได้ — โหลดหน้าใหม่', 'error'); return; }
@@ -186,6 +202,9 @@
             <select id="rmBank" class="form-input">${bankOpts}</select></div>
           <div class="form-row"><label class="form-label">เลขรับ / เลขอ้างอิงการยื่น (ถ้ามี)</label>
             <input type="text" id="rmFiling" class="form-input" placeholder="เลขรับจากหน่วยงาน"></div>
+          <div class="form-row"><label class="form-label">แนบเอกสารที่จ่าย / ใบเสร็จ (optional)</label>
+            <input type="file" id="rmDoc" class="form-input" accept="image/*,application/pdf">
+            <div class="text-xs text-gray-400" style="margin-top:2px">เช่น slip โอนเงิน / ใบเสร็จรับเงินจากหน่วยงาน — แนบเข้าใบสำคัญจ่ายที่สร้างให้อัตโนมัติ</div></div>
           <div id="rmMsg" style="font-size:12px;color:#dc2626;min-height:16px"></div>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
             <button class="btn btn-secondary" onclick="Layout.closeModal('remitModal')">ยกเลิก</button>
@@ -212,17 +231,41 @@
         if (msg) msg.textContent = '';
         if (btn) { btn.disabled = true; btn.textContent = 'กำลังลง JE…'; }
         try {
+          // แหล่งเงิน: value = "bank:<id>" (BankAccount) หรือ "account:<id>" (GL ตรง ๆ)
+          const src = (this._byId('rmBank') && this._byId('rmBank').value) || '';
+          let bankAccountId = null, bankGlAccountId = null;
+          if (src.startsWith('bank:')) bankAccountId = src.slice(5);
+          else if (src.startsWith('account:')) bankGlAccountId = src.slice(8);
           const body = {
             remittanceType: r.remittanceType,
             periodYear: r.periodYear,
             periodMonth: r.periodMonth,
             payDate: this._byId('rmPayDate') ? this._byId('rmPayDate').value : null,
-            bankAccountId: (this._byId('rmBank') && this._byId('rmBank').value) || null,
+            bankAccountId,
+            bankGlAccountId,
             filingNumber: (this._byId('rmFiling') && this._byId('rmFiling').value) || null,
             includeLateFee: true,
           };
           const res = await Layout.api().remit(body);
           const rid = res.data && res.data.id;
+          // ถ้าเลือกไฟล์เอกสารที่จ่ายไว้ในฟอร์ม → แนบอัตโนมัติทันที (1 flow)
+          const fileEl = this._byId('rmDoc');
+          const f = fileEl && fileEl.files && fileEl.files[0];
+          if (f && rid) {
+            if (btn) btn.textContent = 'กำลังแนบเอกสาร…';
+            try {
+              const fd = new FormData(); fd.append('file', f);
+              await Layout.api().uploadRemittanceReceipt(rid, fd);
+              Layout.closeModal('remitModal');
+              Layout.toast((res && res.message) || 'นำส่ง + แนบเอกสารสำเร็จ', 'success');
+              this.load();
+              return;
+            } catch (upErr) {
+              // นำส่งสำเร็จแล้วแต่แนบไฟล์ไม่ผ่าน → เปิด step ให้ลองแนบใหม่
+              this._showReceiptStep(rid, 'นำส่งสำเร็จ — แต่แนบเอกสารไม่ผ่าน ลองแนบอีกครั้ง');
+              return;
+            }
+          }
           this._showReceiptStep(rid, (res && res.message) || 'นำส่งสำเร็จ');
         } catch (e) {
           if (msg) msg.textContent = e.message || 'นำส่งไม่สำเร็จ';

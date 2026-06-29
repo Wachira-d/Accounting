@@ -723,6 +723,16 @@ try/catch. (d) documents list: server-side types[] filter + DocumentPermissionHe
 Other=rev&&pur (กัน paging หายสำหรับ owner) + count bar. (e) OCR amount: external
 metadata override (เชื่อยอดที่ partner ส่ง) + headerSubTotal ผูก grand total._
 
+_รอบ 24 (UX หน้านำส่งภาษี/ประกันสังคม): (a) ถอด Floating Action Button "＋ Quick"
+ออกทั้งระบบ (layout.js — ปุ่มลอยมุมขวาล่างบังเนื้อหา; ทางลัดยังอยู่ใน sidebar +
+mobile bottom-nav). (b) "แหล่งเงิน (บัญชีจ่าย)" ในโมดัลนำส่ง: เพิ่ม payment channels
+ครบ — bank accounts (optgroup, value `bank:<id>` → LinkedAccountId) + GL เงินสด/
+ช่องจ่ายอื่น (getPaymentChannels, value `account:<id>` → ใช้เป็นผัง Cr ตรง ๆ).
+RemitRequest เพิ่ม `BankGlAccountId`; ResolveBankGlAsync validate GL เป็นผังบริษัทนี้
++ active + level≥4 ก่อนใช้. (c) แนบเอกสารที่จ่าย/ใบเสร็จได้ในโมดัลนำส่งเลย (input
+`rmDoc`) → หลัง RemitAsync สำเร็จ auto-upload เข้า FileAttachment "StatutoryRemittance"
+ใน flow เดียว (ไม่เลือกไฟล์ → แสดง step แนบภายหลังเหมือนเดิม)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
