@@ -3377,10 +3377,15 @@
           </tr>`;
           }).join('');
           this._updateDocSelectionBar();
-          // totalPages เป็นหลัก; ถ้าไม่มีให้คำนวณจาก totalCount/pageSize (กันเคส
-          // backend คืน totalPages ไม่ถูก → ปุ่มเปลี่ยนหน้าหาย)
-          const _pages = data.totalPages || Math.ceil((data.totalCount || 0) / (data.pageSize || 20)) || 1;
-          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, _pages, 'Page.goPage');
+          // แถบสรุป: จำนวนรวม + หน้า + ปุ่มเปลี่ยนหน้า. totalPages เป็นหลัก; ถ้าไม่มี
+          // คำนวณจาก totalCount/pageSize (กัน backend คืน totalPages ผิด → ปุ่มหาย).
+          const _total = (data.totalCount != null) ? data.totalCount : items.length;
+          const _pages = data.totalPages || Math.ceil(_total / (data.pageSize || 20)) || 1;
+          document.getElementById('pagination').innerHTML =
+            `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 2px">
+               <span class="text-xs text-gray-500">ทั้งหมด ${Number(_total).toLocaleString()} รายการ · หน้า ${this.page}/${_pages}</span>
+               <span>${Layout.renderPagination(this.page, _pages, 'Page.goPage')}</span>
+             </div>`;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
