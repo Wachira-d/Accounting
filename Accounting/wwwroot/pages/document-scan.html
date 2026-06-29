@@ -361,10 +361,12 @@
       </div>
     </div>
 
-    <!-- Upload Zone — <label for="fileInput"> means clicking anywhere inside the
-         zone opens the file picker via the browser's native label-input link.
-         No JS click handler needed → no "must click twice" bug. -->
-    <label class="upload-zone" id="uploadZone" for="fileInput"
+    <!-- Upload Zone — เป็น <div> (ไม่ใช่ <label for>) เพราะ <label> ที่ผูกกับ
+         file input จะ "ดักการลากวาง" (forward เป็น click → เปิด dialog) ทำให้
+         drag-drop ไม่ทำงาน ต้องกดเลือกไฟล์เอง. ใช้ <div> + click handler เปิด
+         picker เอง (bindUpload) — input มี pointer-events:none จึงไม่เกิดบั๊ก
+         "ต้องคลิกสองครั้ง". -->
+    <div class="upload-zone" id="uploadZone" style="cursor:pointer"
            data-tour-step="1"
            data-tour-text="ขั้นที่ 1 — ลากไฟล์ใบกำกับ/ใบเสร็จมาวาง หรือคลิกเลือกไฟล์ รองรับ JPG/PNG/PDF หลายไฟล์พร้อมกัน">
       <div class="upload-zone-icon">&#x1F4C4;</div>
@@ -377,7 +379,7 @@
         <span class="file-type-badge">PDF</span>
       </div>
       <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none">
-    </label>
+    </div>
     <div class="upload-queue" id="uploadQueue"
          data-tour-step="2"
          data-tour-text="ขั้นที่ 2 — ระบบ OCR จะอ่านข้อความและแสดงผลที่นี่ แต่ละการ์ดมีปุ่ม ✓ อนุมัติ / ✎ แก้ไข / 📦 นำเข้าสต็อก"></div>
@@ -737,9 +739,9 @@
       },
 
       // ==================== Upload ====================
-      // Click-to-pick is handled NATIVELY by <label for="fileInput"> wrapping
-      // the input — no JS click handler. We only wire drag-drop here, plus the
-      // input's change event for users who pick via dialog.
+      // โซนเป็น <div> — wire click เปิด picker เอง (input มี pointer-events:none
+      // จึงไม่เด้ง dialog ซ้ำ). ใช้ <div> แทน <label for> เพราะ label ดักการ
+      // ลากวางทำให้ drag-drop ใช้ไม่ได้.
       //
       // dragenter is preventDefault'd alongside dragover because Firefox needs
       // BOTH to allow the drop event to fire reliably; without it, the first
@@ -748,6 +750,11 @@
       bindUpload() {
         const zone = document.getElementById('uploadZone');
         const input = document.getElementById('fileInput');
+
+        // click ที่โซน → เปิด file picker (เว้น click ที่ตัว input เองกัน loop)
+        zone.addEventListener('click', e => {
+          if (e.target !== input) input.click();
+        });
 
         ['dragenter', 'dragover'].forEach(ev => {
           zone.addEventListener(ev, e => {

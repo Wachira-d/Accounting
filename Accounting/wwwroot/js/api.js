@@ -187,6 +187,7 @@ const API = {
       deleteFiscalPeriod: (id) => API.del(`${base}/accounting/fiscal-periods/${id}`),
       // Documents
       getDocuments: (q = '') => API.get(`${base}/document${q}`),
+      getDocumentPeriods: (q = '') => API.get(`${base}/document/periods${q}`),
       getDocument: (id) => API.get(`${base}/document/${id}`),
       getDocumentLinkedScan: (id) => API.get(`${base}/document/${id}/linked-scan`),
       createDocument: (d) => API.post(`${base}/document`, d),

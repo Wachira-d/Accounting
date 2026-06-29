@@ -163,8 +163,17 @@
 
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่เอกสาร / ชื่อลูกค้า..." id="searchInput" oninput="Page.load()">
+      <!-- quick date presets — รายการเรียงตามวันที่ เอกสารเดือนก่อนจึงอยู่หน้า 2;
+           ปุ่มลัดให้กรองดูเดือนนี้/เดือนก่อนได้ในคลิกเดียว -->
+      <button class="btn btn-sm btn-ghost" id="dpThis" onclick="Page.setDatePreset('thisMonth')" title="เอกสารเดือนนี้">เดือนนี้</button>
+      <button class="btn btn-sm btn-ghost" id="dpLast" onclick="Page.setDatePreset('lastMonth')" title="เอกสารเดือนก่อน">เดือนก่อน</button>
+      <!-- เลือกงวด (เดือน/ปี) จากเอกสารที่มีจริง -->
+      <select class="filter-select" id="periodFilter" onchange="Page.onPeriodChange()" title="เลือกเดือน/ปีจากเอกสารที่มี" style="min-width:150px">
+        <option value="">ทุกเดือน/ปี</option>
+      </select>
       <input type="date" class="form-input" id="dateFrom" onchange="Page.load()" title="ตั้งแต่วันที่" style="width:140px">
       <input type="date" class="form-input" id="dateTo" onchange="Page.load()" title="ถึงวันที่" style="width:140px">
+      <button class="btn btn-sm btn-ghost" onclick="Page.setDatePreset('clear')" title="ล้างตัวกรองวันที่">ล้าง</button>
       <select class="filter-select" id="statusFilter" onchange="Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Draft">ร่าง</option>
@@ -1103,7 +1112,7 @@
         } catch(e) { this._etaxConfig = null; }
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
-        else await this.load();
+        else { this.loadPeriods(); await this.load(); }
 
         // "ลูกค้าจ่ายเงินแล้ว" shortcut — reveal/hide the derived-method
         // hint when the checkbox toggles. Whole block visibility is
@@ -3235,6 +3244,7 @@
           else if (side === 'revenue') t.style.display = isRevenue ? '' : 'none';
           else if (side === 'expense') t.style.display = isExpense ? '' : 'none';
         });
+        this.loadPeriods();
         this.load();
       },
       setType(el) {
@@ -3242,6 +3252,7 @@
         el.classList.add('active');
         this.docType = el.dataset.type;
         this.page = 1;
+        this.loadPeriods();
         this.load();
       },
       async load() {
@@ -3370,6 +3381,61 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+      // กรองด่วนตามเดือน (รายการเรียงตามวันที่ → เดือนก่อนอยู่หน้าถัด ๆ ไป;
+      // ปุ่มนี้ช่วยให้เห็นเอกสารที่เพิ่งสร้างย้อนหลังได้ทันที)
+      setDatePreset(which) {
+        const fromEl = document.getElementById('dateFrom');
+        const toEl = document.getElementById('dateTo');
+        if (which === 'clear') { fromEl.value = ''; toEl.value = ''; }
+        else {
+          const now = new Date();
+          const off = which === 'lastMonth' ? -1 : 0;
+          const first = new Date(now.getFullYear(), now.getMonth() + off, 1);
+          const last = new Date(now.getFullYear(), now.getMonth() + off + 1, 0);
+          fromEl.value = Layout.toDateInput(first);
+          toEl.value = Layout.toDateInput(last);
+        }
+        document.getElementById('periodFilter').value = '';
+        this.page = 1;
+        this.load();
+      },
+      // query string ของประเภท (type เดียว หรือ types[] ตามฝั่ง) — ใช้ร่วมกับ periods
+      _typeQs() {
+        if (this.docType) return `?type=${this.docType}`;
+        if (this.side) {
+          const types = this.side === 'revenue' ? Layout._revenueDocTypes : Layout._expenseDocTypes;
+          return '?' + types.map(t => `types=${t}`).join('&');
+        }
+        return '';
+      },
+      MONTHS_TH: ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
+      async loadPeriods() {
+        const api = Layout.api(); if (!api) return;
+        const sel = document.getElementById('periodFilter');
+        if (!sel) return;
+        const keep = sel.value;
+        try {
+          const res = await api.getDocumentPeriods(this._typeQs());
+          const rows = res.data || [];
+          sel.innerHTML = '<option value="">ทุกเดือน/ปี</option>'
+            + rows.map(p => `<option value="${p.year}-${p.month}">${this.MONTHS_TH[p.month]} ${p.year + 543} (${p.count})</option>`).join('');
+          // คงค่าที่เลือกไว้ถ้ายังมีในรายการใหม่
+          if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+        } catch { /* ไม่ critical — ปล่อยให้ใช้ตัวกรองวันที่ปกติ */ }
+      },
+      onPeriodChange() {
+        const v = document.getElementById('periodFilter').value;
+        const fromEl = document.getElementById('dateFrom');
+        const toEl = document.getElementById('dateTo');
+        if (!v) { fromEl.value = ''; toEl.value = ''; }
+        else {
+          const [y, m] = v.split('-').map(Number);
+          fromEl.value = Layout.toDateInput(new Date(y, m - 1, 1));
+          toEl.value = Layout.toDateInput(new Date(y, m, 0));
+        }
+        this.page = 1;
+        this.load();
+      },
       lineCount: 0,
       addLine() {
         const i = this.lineCount++;

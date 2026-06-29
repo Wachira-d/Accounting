@@ -336,6 +336,48 @@
         this._updateTaxSelectionBar();
       },
       goPage(p) { Page.page = p; Page.load(); },
+      // พิมพ์/บันทึก PDF ตามฟอร์มราชการ §87 (ฉบับที่ 104) — รายงานภาษีขาย + ซื้อ
+      printOfficialForm() {
+        const d = this._currentReport;
+        if (!d) return;
+        const periodTH = `${this.monthNames[d.month]} ${d.year + 543}`;
+        const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const branch = b => { const x = String(b || '').replace(/\D/g, ''); return (!x || x === '00000' || x === '0') ? 'สำนักงานใหญ่' : 'สาขาที่ ' + x; };
+        const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const dstr = s => { try { return s ? new Date(s).toLocaleDateString('th-TH') : ''; } catch { return ''; } };
+        const sideOf = ln => { const c = ln.incomeTypeCode; if (c === 'INPUT' || c === 'JE_INPUT') return 'input'; if (c === 'EXEMPT' || c === 'VAT_CREDIT_CF') return 'summary'; return 'output'; };
+        const lines = (d.lines || []).filter(l => !l.isExcluded);
+        const formTable = (title, rows, partyLabel) => {
+          let i = 0, sumBase = 0, sumTax = 0;
+          const body = rows.map(ln => {
+            i++; sumBase += Number(ln.incomeAmount || 0); sumTax += Number(ln.taxAmount || 0);
+            return `<tr><td class="c">${i}</td><td class="c">${dstr(ln.transactionDate)}</td><td>${esc(ln.invoiceNumber || ln.description || '')}</td><td class="c">${esc(ln.taxPayerId || '')}</td><td class="c">${branch(ln.branchCode)}</td><td>${esc(ln.taxPayerName || '')}</td><td class="r">${money(ln.incomeAmount)}</td><td class="r">${money(ln.taxAmount)}</td></tr>`;
+          }).join('');
+          return `<div class="form"><div class="ftitle">${title}</div>
+            <div class="fsub">ตามประกาศอธิบดีกรมสรรพากร เกี่ยวกับภาษีมูลค่าเพิ่ม (ฉบับที่ 104)</div>
+            <table class="hdr"><tr><td>ชื่อผู้ประกอบการ <b>${esc(d.companyName || '')}</b></td><td>เลขประจำตัวผู้เสียภาษีอากร <b>${esc(d.companyTaxId || '')}</b></td></tr>
+            <tr><td>สถานประกอบการ <b>${branch(d.companyBranchCode)}</b></td><td>เดือนภาษี <b>${this.monthNames[d.month]}</b>  ปี <b>${d.year + 543}</b></td></tr></table>
+            <table class="grid"><thead><tr><th>ลำดับ</th><th>วัน เดือน ปี<br>ใบกำกับภาษี</th><th>เล่มที่/เลขที่<br>ใบกำกับภาษี</th><th>เลขประจำตัว<br>ผู้เสียภาษี</th><th>สาขา</th><th>${partyLabel}</th><th>มูลค่าสินค้า<br>หรือบริการ</th><th>จำนวนเงิน<br>ภาษีมูลค่าเพิ่ม</th></tr></thead>
+            <tbody>${body || '<tr><td colspan="8" class="c">— ไม่มีรายการ —</td></tr>'}</tbody>
+            <tfoot><tr><td colspan="6" class="r">รวม</td><td class="r">${money(sumBase)}</td><td class="r">${money(sumTax)}</td></tr></tfoot></table></div>`;
+        };
+        const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>รายงานภาษี ${periodTH}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+          <style>*{font-family:'Sarabun',sans-serif;box-sizing:border-box}body{margin:0;padding:16px;color:#000;font-size:12px}
+          .form{page-break-after:always;margin-bottom:20px}.ftitle{text-align:center;font-weight:700;font-size:16px}
+          .fsub{text-align:center;font-size:11px;margin-bottom:8px}table.hdr{width:100%;margin-bottom:6px}table.hdr td{padding:2px 4px}
+          table.grid{width:100%;border-collapse:collapse}table.grid th,table.grid td{border:1px solid #000;padding:3px 5px;font-size:11px;vertical-align:top}
+          table.grid th{text-align:center;background:#f0f0f0;font-weight:600}.c{text-align:center}.r{text-align:right}tfoot td{font-weight:700;background:#f7f7f7}
+          .print-btn{margin:10px 0;padding:8px 18px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px}
+          @media print{.noprint{display:none}}</style></head><body>
+          <div class="noprint"><button class="print-btn" onclick="window.print()">🖨 พิมพ์ / บันทึกเป็น PDF</button></div>
+          ${formTable('รายงานภาษีขาย', lines.filter(l => sideOf(l) === 'output'), 'ชื่อผู้ซื้อสินค้า/ผู้รับบริการ')}
+          ${formTable('รายงานภาษีซื้อ', lines.filter(l => sideOf(l) === 'input'), 'ชื่อผู้ขายสินค้า/ผู้ให้บริการ')}
+          <scr` + `ipt>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},400)}</scr` + `ipt></body></html>`;
+        const w = window.open('', '_blank');
+        if (!w) { Layout.toast('เปิดหน้าต่างพิมพ์ไม่ได้ — กรุณาอนุญาต popup', 'error'); return; }
+        w.document.write(html); w.document.close();
+      },
       _currentReport: null,
       async viewDetail(id) {
         const api = Layout.api(); if (!api) return;
@@ -344,6 +386,9 @@
           const d = res.data || {};
           this._currentReport = d;
           const editable = d.status !== 'Filed';
+          const _esc = s => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/"/g, '&quot;');
+          const _branch = b => { const x = String(b || '').replace(/\D/g, ''); return (!x || x === '00000' || x === '0') ? 'สำนักงานใหญ่' : 'สาขาที่ ' + x; };
+          const _periodTH = `${this.monthNames[d.month]} ${d.year + 543}`;
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
               <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div class="font-semibold">${this.typeMap[d.taxType] || d.taxType}</div></div>
@@ -358,6 +403,17 @@
                 <div><span class="text-gray-500 text-xs">ภาษีสุทธิ</span><div class="text-lg font-bold ${d.netVat > 0 ? 'text-danger' : 'text-success'}">${Layout.money(d.netVat)}</div><div class="text-xs text-gray-400">${d.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน'}</div></div>
               </div>
             </div>
+            ${d.taxType === 'VAT' ? `
+            <div class="card" style="border:1px solid var(--gray-300);margin-bottom:16px;font-size:13px;line-height:1.7">
+              <div style="font-weight:700;text-align:center;font-size:14px">รายงานภาษีซื้อ / รายงานภาษีขาย</div>
+              <div style="text-align:center;font-size:11px;color:#64748b;margin-bottom:8px">ตามประกาศอธิบดีกรมสรรพากร เกี่ยวกับภาษีมูลค่าเพิ่ม (ฉบับที่ 104)</div>
+              <div class="grid grid-2 gap-2">
+                <div><span class="text-gray-500 text-xs">ชื่อผู้ประกอบการ</span> <b>${_esc(d.companyName || '-')}</b></div>
+                <div><span class="text-gray-500 text-xs">เลขประจำตัวผู้เสียภาษี</span> <b>${_esc(d.companyTaxId || '-')}</b></div>
+                <div><span class="text-gray-500 text-xs">สถานประกอบการ</span> <b>${_branch(d.companyBranchCode)}</b></div>
+                <div><span class="text-gray-500 text-xs">เดือนภาษี / ปี</span> <b>${_periodTH}</b></div>
+              </div>
+            </div>` : ''}
             <div id="vatDebugBox"></div>`;
           if (d.lines && d.lines.length) {
             const isVat = d.taxType === 'VAT';
@@ -395,6 +451,39 @@
                 <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="6" class="text-right">รวมภาษี (เฉพาะรายการที่เลือกใช้)</td><td class="text-right">${Layout.money(sub)}</td></tr></tfoot>
                 </table></div>`;
             };
+            // ── ฟอร์มราชการ §87 (ฉบับที่ 104): ลำดับ · วันที่ใบกำกับ · เลขที่ใบกำกับ ·
+            //    เลขผู้เสียภาษี · สาขา · ชื่อผู้ขาย/ผู้ซื้อ · มูลค่า · VAT ──
+            const dstr = (s) => { try { return s ? new Date(s).toLocaleDateString('th-TH') : '-'; } catch { return '-'; } };
+            const branchLabel = (b) => { const x = (b || '').replace(/\D/g, ''); if (!x) return 'สนญ.'; return (x === '00000' || x === '0') ? 'สนญ.' : 'สาขา ' + x; };
+            const renderVatRow = (ln) => {
+              const ex = !!ln.isExcluded;
+              const rowStyle = ex ? 'opacity:.45;text-decoration:line-through' : '';
+              const chk = editable
+                ? `<input type="checkbox" data-line="${ln.id}" data-field="include" ${ex ? '' : 'checked'} title="ใช้รายการนี้ในรายงาน">`
+                : (ex ? '✗' : '✓');
+              return `<tr style="${rowStyle}">
+                <td class="text-center">${chk}</td>
+                <td>${ln.lineOrder}</td>
+                <td class="text-xs">${dstr(ln.transactionDate)}</td>
+                <td class="text-xs">${esc(ln.invoiceNumber || ln.description || '-')}</td>
+                <td class="text-xs">${esc(ln.taxPayerId || '-')}</td>
+                <td class="text-center text-xs">${branchLabel(ln.branchCode)}</td>
+                <td class="text-xs">${esc(ln.taxPayerName || '-')}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="incomeAmount" value="${ln.incomeAmount}" step="0.01" style="width:96px">` : Layout.money(ln.incomeAmount)}</td>
+                <td class="text-right">${editable ? `<input type="number" class="form-input form-input-sm text-right" data-line="${ln.id}" data-field="taxAmount" value="${ln.taxAmount}" step="0.01" style="width:96px">` : Layout.money(ln.taxAmount)}</td>
+              </tr>`;
+            };
+            const renderVatTable = (title, color, rows) => {
+              const used = rows.filter(r => !r.isExcluded);
+              const sumBase = used.reduce((s, r) => s + Number(r.incomeAmount || 0), 0);
+              const sumTax = used.reduce((s, r) => s + Number(r.taxAmount || 0), 0);
+              return `<div style="margin:14px 0 4px;font-weight:600;font-size:13px;color:${color}">${title} <span class="text-xs text-gray-400">(${rows.length} รายการ)</span></div>
+                <div class="table-container"><table class="table">
+                <thead><tr><th style="width:30px" title="เลือกใช้/ไม่ใช้">ใช้</th><th>ลำดับ</th><th>วันที่ใบกำกับ</th><th>เลขที่ใบกำกับ</th><th>เลขผู้เสียภาษี</th><th class="text-center">สาขา</th><th>ชื่อผู้ขาย/ผู้ซื้อ</th><th class="text-right">มูลค่า</th><th class="text-right">ภาษีมูลค่าเพิ่ม</th></tr></thead>
+                <tbody>${rows.map(renderVatRow).join('')}</tbody>
+                <tfoot><tr style="font-weight:700;background:var(--bg-secondary)"><td colspan="7" class="text-right">รวม (เฉพาะที่เลือกใช้)</td><td class="text-right">${Layout.money(sumBase)}</td><td class="text-right">${Layout.money(sumTax)}</td></tr></tfoot>
+                </table></div>`;
+            };
             html += '<h4 class="text-sm font-semibold" style="margin:14px 0 0">รายละเอียด</h4>';
             html += '<div class="text-xs text-gray-400" style="margin:2px 0 4px">ติ๊ก "ใช้" ออกเพื่อไม่นำรายการนั้นเข้ายอดรายงาน (รายการยังถูกเก็บไว้)</div>';
             if (isVat) {
@@ -405,7 +494,9 @@
               ];
               for (const [key, title, color] of groups) {
                 const rows = d.lines.filter(l => sideOf(l) === key);
-                if (rows.length) html += renderTable(title, color, rows);
+                if (!rows.length) continue;
+                // ภาษีขาย/ภาษีซื้อ → ฟอร์มราชการ §87; รายการยกเว้น/เครดิต → ตารางย่อ
+                html += (key === 'summary') ? renderTable(title, color, rows) : renderVatTable(title, color, rows);
               }
             } else {
               html += renderTable('รายการ', '#334155', d.lines);
@@ -417,6 +508,8 @@
           }
           document.getElementById('detailContent').innerHTML = html;
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+          if (d.taxType === 'VAT')
+            footer = `<button class="btn btn-secondary" style="margin-right:8px" onclick="Page.printOfficialForm()" title="พิมพ์/บันทึก PDF ตามฟอร์มราชการ §87 (ฉบับที่ 104)">🖨️ พิมพ์ฟอร์มราชการ</button>` + footer;
           if (editable) {
             const pullBtn = d.taxType === 'VAT' ? `<button class="btn btn-secondary" onclick="Page.openPullDoc('${d.id}')" style="margin-right:8px">➕ ดึงเอกสาร</button>` : '';
             footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px" data-i18n="common.delete">ลบ</button>${pullBtn}<button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px" data-i18n="common.save">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;

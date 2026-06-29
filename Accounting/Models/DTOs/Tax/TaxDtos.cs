@@ -20,7 +20,11 @@ public record TaxReportResponse(
     decimal TotalIncome,
     decimal TotalTaxWithheld,
     List<TaxReportLineResponse> Lines,
-    string? Notes = null);
+    string? Notes = null,
+    // ── ข้อมูลผู้ประกอบการ (สำหรับ header ฟอร์มราชการ §87) — เติมตอน GetTaxReportAsync ──
+    string? CompanyName = null,
+    string? CompanyTaxId = null,
+    string? CompanyBranchCode = null);
 
 public record UpdateTaxReportRequest(
     string? Notes,
@@ -57,4 +61,8 @@ public record TaxReportLineResponse(
     decimal TaxRate,
     decimal TaxAmount,
     string? IncomeTypeCode,
-    bool IsExcluded = false);
+    bool IsExcluded = false,
+    // ── ฟอร์มราชการ §87 (ฉบับที่ 104) — เติมตอน GetTaxReportAsync ──
+    Guid? DocumentId = null,
+    string? InvoiceNumber = null,   // เลขที่ใบกำกับ (ขาย=เลขเรา / ซื้อ=เลขผู้ขาย)
+    string? BranchCode = null);     // สาขาผู้ขาย/ผู้ซื้อ (00000=สนญ.)
