@@ -33,16 +33,16 @@
       <div class="card-header"><h3 class="card-title">ประวัติการนำส่งล่าสุด</h3></div>
       <div id="historyContent"></div>
     </div>
-  </div>
 
-  <!-- Pay modal -->
-  <div class="modal-overlay" id="remitModal">
-    <div class="modal" style="max-width:560px">
-      <div class="modal-header">
-        <h3 class="modal-title" id="remitTitle">นำส่ง</h3>
-        <button class="modal-close" onclick="Layout.closeModal('remitModal')">&times;</button>
+    <!-- Pay modal — วางใน #pageContent ให้แน่ใจว่าอยู่ใน DOM ทุกโหมดการโหลด -->
+    <div class="modal-overlay" id="remitModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="remitTitle">นำส่ง</h3>
+          <button class="modal-close" onclick="Layout.closeModal('remitModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="remitBody"></div>
       </div>
-      <div class="modal-body" id="remitBody"></div>
     </div>
   </div>
 
@@ -161,15 +161,20 @@
           </div>`;
       },
 
+      _byId(id) { return document.getElementById(id); },
       openPay(i) {
-        const r = this._data.pending[i];
+        const r = this._data && this._data.pending && this._data.pending[i];
+        if (!r) return;
         this._sel = r;
-        document.getElementById('remitTitle').textContent = `นำส่ง ${r.formCode} — ${this.period(r.periodYear, r.periodMonth)}`;
+        const titleEl = this._byId('remitTitle');
+        if (titleEl) titleEl.textContent = `นำส่ง ${r.formCode} — ${this.period(r.periodYear, r.periodMonth)}`;
         const today = new Date().toISOString().slice(0, 10);
         const bankOpts = ['<option value="">— ใช้บัญชีเริ่มต้น —</option>']
           .concat(this._banks.map(b => `<option value="${b.id}">${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')}</option>`)).join('');
         const isSso = r.remittanceType === 'SsoSps110';
-        document.getElementById('remitBody').innerHTML = `
+        const bodyEl = this._byId('remitBody');
+        if (!bodyEl) { Layout.toast('เปิดหน้าต่างนำส่งไม่ได้ — โหลดหน้าใหม่', 'error'); return; }
+        bodyEl.innerHTML = `
           <div style="background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
             <div style="display:flex;justify-content:space-between"><span class="text-gray-500">ยอดเงินสมทบ/ภาษี</span><b style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</b></div>
             ${isSso ? `<div style="display:flex;justify-content:space-between;margin-top:4px"><span class="text-gray-500">เงินเพิ่มนำส่งช้า §49</span><b id="feeLbl" style="color:#dc2626;font-variant-numeric:tabular-nums">${Layout.money(r.lateFeePreview)}</b></div>` : ''}
@@ -190,43 +195,45 @@
       },
 
       async _recalc() {
-        const r = this._sel; if (r.remittanceType !== 'SsoSps110') return;
-        const payDate = document.getElementById('rmPayDate').value;
+        const r = this._sel; if (!r || r.remittanceType !== 'SsoSps110') return;
+        const dateEl = this._byId('rmPayDate'); if (!dateEl) return;
         try {
-          const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, payDate);
+          const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, dateEl.value);
           const fee = (res.data && res.data.lateFeePreview) || 0;
-          document.getElementById('feeLbl').textContent = Layout.money(fee);
-          document.getElementById('totLbl').textContent = Layout.money(r.amount + fee);
+          const feeEl = this._byId('feeLbl'); if (feeEl) feeEl.textContent = Layout.money(fee);
+          const totEl = this._byId('totLbl'); if (totEl) totEl.textContent = Layout.money(r.amount + fee);
         } catch { /* preview ล้มเหลว — คงค่าเดิม */ }
       },
 
       async _submit() {
-        const r = this._sel;
-        const btn = document.getElementById('rmGo');
-        const msg = document.getElementById('rmMsg');
-        msg.textContent = '';
-        btn.disabled = true; btn.textContent = 'กำลังลง JE…';
+        const r = this._sel; if (!r) return;
+        const btn = this._byId('rmGo');
+        const msg = this._byId('rmMsg');
+        if (msg) msg.textContent = '';
+        if (btn) { btn.disabled = true; btn.textContent = 'กำลังลง JE…'; }
         try {
           const body = {
             remittanceType: r.remittanceType,
             periodYear: r.periodYear,
             periodMonth: r.periodMonth,
-            payDate: document.getElementById('rmPayDate').value,
-            bankAccountId: document.getElementById('rmBank').value || null,
-            filingNumber: document.getElementById('rmFiling').value || null,
+            payDate: this._byId('rmPayDate') ? this._byId('rmPayDate').value : null,
+            bankAccountId: (this._byId('rmBank') && this._byId('rmBank').value) || null,
+            filingNumber: (this._byId('rmFiling') && this._byId('rmFiling').value) || null,
             includeLateFee: true,
           };
           const res = await Layout.api().remit(body);
           const rid = res.data && res.data.id;
-          this._showReceiptStep(rid, res.message || 'นำส่งสำเร็จ');
+          this._showReceiptStep(rid, (res && res.message) || 'นำส่งสำเร็จ');
         } catch (e) {
-          msg.textContent = e.message || 'นำส่งไม่สำเร็จ';
-          btn.disabled = false; btn.textContent = 'ยืนยันนำส่ง + ลง JE';
+          if (msg) msg.textContent = e.message || 'นำส่งไม่สำเร็จ';
+          if (btn) { btn.disabled = false; btn.textContent = 'ยืนยันนำส่ง + ลง JE'; }
         }
       },
 
       _showReceiptStep(rid, message) {
-        document.getElementById('remitBody').innerHTML = `
+        const bodyEl = this._byId('remitBody');
+        if (!bodyEl) { Layout.closeModal('remitModal'); Layout.toast(message || 'นำส่งสำเร็จ', 'success'); this.load(); return; }
+        bodyEl.innerHTML = `
           <div style="text-align:center;padding:8px 0 16px">
             <div style="font-size:40px">✅</div>
             <div style="font-weight:600;margin-top:6px">${Layout.esc(message)}</div>
@@ -242,18 +249,19 @@
       },
 
       async _upload(rid) {
-        const f = document.getElementById('rmReceipt').files[0];
-        const m = document.getElementById('rmUpMsg');
-        if (!f) { m.style.color = '#dc2626'; m.textContent = 'กรุณาเลือกไฟล์'; return; }
+        const fileEl = this._byId('rmReceipt');
+        const f = fileEl && fileEl.files && fileEl.files[0];
+        const m = this._byId('rmUpMsg');
+        if (!f) { if (m) { m.style.color = '#dc2626'; m.textContent = 'กรุณาเลือกไฟล์'; } return; }
         const fd = new FormData(); fd.append('file', f);
-        m.style.color = '#475569'; m.textContent = 'กำลังอัปโหลด…';
+        if (m) { m.style.color = '#475569'; m.textContent = 'กำลังอัปโหลด…'; }
         try {
           await Layout.api().uploadRemittanceReceipt(rid, fd);
           Layout.closeModal('remitModal');
           Layout.toast('แนบใบเสร็จแล้ว', 'success');
           this.load();
         } catch (e) {
-          m.style.color = '#dc2626'; m.textContent = e.message || 'อัปโหลดไม่สำเร็จ';
+          if (m) { m.style.color = '#dc2626'; m.textContent = e.message || 'อัปโหลดไม่สำเร็จ'; }
         }
       },
     };
