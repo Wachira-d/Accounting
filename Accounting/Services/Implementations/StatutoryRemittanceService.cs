@@ -13,7 +13,8 @@ namespace Accounting.Services.Implementations;
 ///   • SSO   — PayrollRun ที่ Paid + ยังไม่ settle (SsoSettledAt == null)
 ///   • ภงด.1 — PayrollRun.TotalWithholdingTax (ภาษีเงินเดือน)
 ///   • ภงด.3/53 — เอกสารที่มี WithholdingTaxAmount แยกตามชนิดผู้ติดต่อ
-///   • ภพ.30 — TaxService.ComputeVatReportAsync(.).NetVat (เฉพาะที่ > 0)
+///   • ภพ.30 — อ่านจาก TaxReports ที่ generate ไว้แล้ว (NetVat > 0) — ไม่คำนวณสด
+///     ในหน้านี้เพื่อกันหน้าค้างจากการคำนวณ VAT หลายเดือน
 /// ยอดค้าง = หนี้ − ที่นำส่งแล้ว (StatutoryRemittance; SSO ใช้ SsoSettledAt).</summary>
 public class StatutoryRemittanceService : IStatutoryRemittanceService
 {
