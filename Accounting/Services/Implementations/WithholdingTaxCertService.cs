@@ -36,6 +36,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     {
         try
         {
+            // ปิด auto-attach โดย default — ผู้ใช้กด download/พิมพ์ใบ 50ทวิ เองจาก
+            // หน้า WHT (ไฟล์สวยกว่า). เปิดได้ที่ CompanySettings.AutoAttachWhtCertPdf.
+            var autoAttach = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => (bool?)c.AutoAttachWhtCertPdf).FirstOrDefaultAsync() ?? false;
+            if (!autoAttach) return;
+
             var cert = await _db.WithholdingTaxCerts.AsNoTracking()
                 .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId);
             if (cert?.DocumentId == null) return;   // not linked → nothing to attach to

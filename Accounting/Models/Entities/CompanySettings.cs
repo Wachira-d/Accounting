@@ -85,6 +85,11 @@ public class CompanySettings : TenantEntity
     public int MonthEndClosingDay { get; set; } = 15;    // วันสุดท้ายที่บันทึกเดือนก่อนได้
     public bool PreventPostToClosedPeriod { get; set; } = true;
 
+    /// <summary>แนบ PDF หนังสือรับรองหัก ณ ที่จ่าย (50ทวิ) เข้าใบสำคัญจ่าย
+    /// อัตโนมัติตอนออกใบ. default ปิด — ผู้ใช้กด download/พิมพ์เองจากหน้า WHT
+    /// (ไฟล์สวยกว่า). เปิดได้ถ้าต้องการให้แนบให้อัตโนมัติ.</summary>
+    public bool AutoAttachWhtCertPdf { get; set; } = false;
+
     // e-Tax Invoice Settings (per-company)
     public bool EtaxEnabled { get; set; } = false;
     public EtaxMode EtaxMode { get; set; } = EtaxMode.None;  // ByEmail, Direct, or Both
