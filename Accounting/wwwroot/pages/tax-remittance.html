@@ -46,6 +46,11 @@
     </div>
   </div>
 
+  <!-- โหลด core scripts ก่อน inline script (เดิมขาด → Layout is not defined) -->
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
   <script>
     const Page = {
       _data: null,
