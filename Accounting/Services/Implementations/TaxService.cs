@@ -1268,6 +1268,15 @@ public partial class TaxService : ITaxService
                 resp = resp with { Lines = enriched };
             }
         }
+
+        // ข้อมูลผู้ประกอบการสำหรับ header ฟอร์มราชการ
+        var co = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.Name, c.TaxId, c.BranchCode })
+            .FirstOrDefaultAsync();
+        if (co != null)
+            resp = resp with { CompanyName = co.Name, CompanyTaxId = co.TaxId, CompanyBranchCode = co.BranchCode };
+
         return resp;
     }
 
