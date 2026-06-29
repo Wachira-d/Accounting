@@ -918,6 +918,22 @@ public class DocumentService : IDocumentService
             CreditNoteReason: stub.CreditNoteReason);
     }
 
+    public async Task<List<DocumentPeriod>> GetDocumentPeriodsAsync(Guid companyId, IReadOnlyList<DocumentType>? types = null)
+    {
+        // global query filter ตัด IsDeleted ให้แล้ว
+        var q = _db.Documents.Where(d => d.CompanyId == companyId);
+        if (types != null && types.Count > 0)
+            q = q.Where(d => types.Contains(d.DocumentType));
+        var groups = await q
+            .GroupBy(d => new { d.DocumentDate.Year, d.DocumentDate.Month })
+            .Select(g => new { g.Key.Year, g.Key.Month, Count = g.Count() })
+            .ToListAsync();
+        return groups
+            .OrderByDescending(g => g.Year).ThenByDescending(g => g.Month)
+            .Select(g => new DocumentPeriod(g.Year, g.Month, g.Count))
+            .ToList();
+    }
+
     public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null)
     {
         var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, types);

@@ -137,6 +137,21 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<PagedResponse<DocumentResponse>>(true, result));
     }
 
+    /// <summary>เดือน/ปีที่มีเอกสารจริง — สำหรับ dropdown กรองตามงวด (เลือกจาก
+    /// ของที่มี). respect ฝั่ง (types[]) + สิทธิ์ผู้ใช้.</summary>
+    [HttpGet("periods")]
+    public async Task<ActionResult<ApiResponse<List<DocumentPeriod>>>> GetPeriods(
+        Guid companyId, [FromQuery] DocumentType? type = null, [FromQuery] List<DocumentType>? types = null)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var visibility = await DocumentPermissionHelper.VisibleDirectionsAsync(_permissions, companyId, userId);
+        var effTypes = type.HasValue ? new List<DocumentType> { type.Value } : types;
+        if (effTypes != null && effTypes.Count > 0 && !visibility.ShowsEverything)
+            effTypes = effTypes.Where(t => visibility.Allows(t)).ToList();
+        var periods = await _documentService.GetDocumentPeriodsAsync(companyId, effTypes);
+        return Ok(new ApiResponse<List<DocumentPeriod>>(true, periods));
+    }
+
     [HttpGet("{documentId:guid}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> GetDocument(Guid companyId, Guid documentId)
     {

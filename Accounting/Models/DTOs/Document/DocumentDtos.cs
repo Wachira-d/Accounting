@@ -298,6 +298,10 @@ public record UndueInputVatSummary(
     bool IsExpired,
     IReadOnlyList<string> MissingFields);
 
+/// <summary>เดือน/ปีที่มีเอกสารจริง (สำหรับ dropdown กรองตามงวด) + จำนวนเอกสาร.
+/// Year เก็บ ค.ศ. (UI แปลงเป็น พ.ศ. เอง).</summary>
+public record DocumentPeriod(int Year, int Month, int Count);
+
 public record DocumentResponse(
     Guid Id,
     string DocumentNumber,

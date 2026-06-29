@@ -13,6 +13,9 @@ public interface IDocumentService
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>
     Task<DocumentResponse> GetDocumentForUserAsync(Guid companyId, Guid documentId, Guid userId);
     Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null);
+    /// <summary>เดือน/ปีที่มีเอกสารจริง (distinct DocumentDate year+month) + จำนวน —
+    /// ใช้ทำ dropdown กรองตามงวดให้ผู้ใช้เลือกจากของที่มีจริง (ไม่ต้องเดา).</summary>
+    Task<List<DocumentPeriod>> GetDocumentPeriodsAsync(Guid companyId, IReadOnlyList<DocumentType>? types = null);
     /// <summary>Same as GetDocumentsAsync but redacts items the user lacks permission for.</summary>
     Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null);
     Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request);
