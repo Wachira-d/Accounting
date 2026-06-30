@@ -81,19 +81,25 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             OnMessageReceived = context =>
             {
+                // รับได้ทั้ง access_token (SignalR convention) และ token
+                // (ที่ frontend ใช้กับ iframe/รูป)
                 var accessToken = context.Request.Query["access_token"];
+                if (string.IsNullOrEmpty(accessToken)) accessToken = context.Request.Query["token"];
                 var path = context.HttpContext.Request.Path;
                 // SignalR hubs can't set the Authorization header, and neither
                 // can a browser embedding/opening a file URL directly
                 // (<img>/<iframe>/new tab) — the JWT lives in localStorage, not
-                // a cookie. Accept the token from the query string for those two
-                // cases only, so the OCR document-image endpoint stays behind
-                // [Authorize] but is still viewable inline.
+                // a cookie. Accept the token from the query string for those
+                // cases only, so the endpoints stay behind [Authorize] but are
+                // still viewable inline.
                 var isOcrImage = path.HasValue
                     && path.Value.Contains("/ocr/", StringComparison.OrdinalIgnoreCase)
                     && path.Value.EndsWith("/image", StringComparison.OrdinalIgnoreCase);
+                // สลิปเงินเดือน (PDF) เปิดใน iframe — ส่ง token ผ่าน query
+                var isPayslip = path.HasValue
+                    && path.Value.EndsWith("/payslip", StringComparison.OrdinalIgnoreCase);
                 if (!string.IsNullOrEmpty(accessToken)
-                    && (path.StartsWithSegments("/hubs") || isOcrImage))
+                    && (path.StartsWithSegments("/hubs") || isOcrImage || isPayslip))
                 {
                     context.Token = accessToken;
                 }
