@@ -3376,7 +3376,7 @@ public class PayrollService : IPayrollService
     // เดียวกัน. payDate ≤ deadline → late fee = 0.
     public async Task<PayrollRunResponse> SettleSocialSecurityAsync(
         Guid companyId, Guid payrollRunId,
-        DateTime payDate, Guid? bankAccountId, string? filingNumber, string performedBy)
+        DateTime payDate, Guid? bankAccountId, Guid? bankGlAccountId, string? filingNumber, string performedBy)
     {
         if (_accountingService == null)
             throw new InvalidOperationException("ระบบบัญชียังไม่พร้อม — ไม่สามารถลง JE นำส่งประกันสังคม");
@@ -3412,7 +3412,18 @@ public class PayrollService : IPayrollService
         // (2) ถ้าไม่ระบุ → ใช้ CompanySettings.DefaultPaymentAccountId
         // (3) สุดท้าย fallback บัญชี 111x ตัวแรก (auto-pick lowest)
         Guid? bankGlId = null;
-        if (bankAccountId.HasValue)
+        // (0) เลือก GL เงินสด/เงินทดรองกรรมการ/ช่องจ่ายอื่นโดยตรง (payment channel)
+        //     — validate ว่าเป็นผังของบริษัทนี้ + active + posting level
+        if (bankGlAccountId.HasValue && bankGlAccountId.Value != Guid.Empty)
+        {
+            bankGlId = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == bankGlAccountId.Value && a.CompanyId == companyId
+                    && a.IsActive && !a.IsDeleted && a.Level >= 4)
+                .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+            if (!bankGlId.HasValue)
+                throw new InvalidOperationException("บัญชีแหล่งจ่ายที่เลือกไม่ถูกต้อง — เลือกใหม่อีกครั้ง");
+        }
+        if (!bankGlId.HasValue && bankAccountId.HasValue)
         {
             bankGlId = await _db.BankAccounts.AsNoTracking()
                 .Where(b => b.Id == bankAccountId.Value && b.CompanyId == companyId)

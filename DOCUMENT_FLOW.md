@@ -811,6 +811,12 @@ PostJournalEntryAsync ตามหลัง Create → post ใบที่ Post
 PostJournalEntryAsync เป็น idempotent — entry Posted อยู่แล้ว → no-op สำเร็จ (คืน
 response เดิม); Draft → post ปกติ; สถานะอื่น (Voided/Reversed) → ยัง throw._
 
+_รอบ 34 (แหล่งจ่ายโมดัลนำส่ง สปส. ไม่ครบ): settleSsoBank โหลดแค่ getBankAccounts —
+เพิ่ม getPaymentChannels (เงินสด/เงินทดรองกรรมการ 1133/ช่องจ่าย 2123) แบบ optgroup
+(value bank:<id> / account:<id>). SettleSsoRequest + SettleSocialSecurityAsync เพิ่ม
+BankGlAccountId (validate ผังบริษัท+active+level≥4 ใช้เป็น Cr ตรง ๆ). pattern เดียวกับ
+รอบ 24 (หน้านำส่งภาษี) + payment-source รายคน._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
