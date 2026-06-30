@@ -240,12 +240,38 @@ public class PayrollController : ControllerBase
         }
     }
 
+    /// <summary>แก้ยอดรายคนในรอบ (ก่อนจ่าย) — อัปเดตเฉพาะ field ที่ส่งมา +
+    /// รวม Gross/หัก/สุทธิ และ run totals ใหม่.</summary>
+    [HttpPut("runs/{runId:guid}/employees/{employeeId:guid}/detail")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> UpdateDetail(
+        Guid companyId, Guid runId, Guid employeeId, [FromBody] UpdatePayrollDetailRequest request)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            var res = await _service.UpdatePayrollDetailAsync(companyId, runId, employeeId, request, User.Identity?.Name ?? "");
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "แก้ยอดรายคนแล้ว"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>สลิปเงินเดือน PDF. download=false (ค่าเริ่มต้น) → แสดง inline ใน
+    /// iframe; download=true → แนบไฟล์ให้โหลด (ชื่อไฟล์มีชื่อพนักงาน).</summary>
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}/payslip")]
-    public async Task<ActionResult> GetPayslip(Guid companyId, Guid runId, Guid employeeId)
+    public async Task<ActionResult> GetPayslip(Guid companyId, Guid runId, Guid employeeId,
+        [FromQuery] bool download = false)
     {
         var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
         var slip = await _service.GeneratePayslipAsync(companyId, runId, employeeId);
-        return File(slip.PdfData, "application/pdf", slip.FileName);
+        if (download)
+            // attachment + ชื่อไฟล์ไทย (File() เข้ารหัส filename* UTF-8 ให้เอง)
+            return File(slip.PdfData, "application/pdf", slip.FileName);
+        // inline — ให้เบราว์เซอร์ render ใน iframe แทนการดาวน์โหลด
+        Response.Headers["Content-Disposition"] = "inline";
+        return File(slip.PdfData, "application/pdf");
     }
 
     // Leave

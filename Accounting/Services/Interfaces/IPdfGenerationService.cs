@@ -29,6 +29,13 @@ public interface IPdfGenerationService
     /// <summary>Convert raw HTML string to PDF bytes (for use by other services)</summary>
     byte[] ConvertHtmlToPdfBytes(string html);
 
+    /// <summary>Render HTML → PDF ผ่าน Chromium ก่อน (CSS/โลโก้ครบ) → fallback
+    /// block parser; primaryColorHex ใช้กับหัวตารางตอน fallback.</summary>
+    Task<byte[]> RenderHtmlToPdfAsync(string html, string? primaryColorHex = null);
+
+    /// <summary>โลโก้บริษัทเป็น data-URI สำหรับฝังใน HTML (null = ไม่มี).</summary>
+    Task<string?> GetCompanyLogoDataUriAsync(Guid companyId);
+
     /// <summary>
     /// Build a PDF/A-3 (conformance level U) document with the eTax XML embedded as an Associated File.
     /// Required for Thai e-Tax Invoice by Email compliance per ETDA Recommendation 3-2560 v2.0.

@@ -349,6 +349,39 @@ public partial class PdfGenerationService : IPdfGenerationService
 
     public byte[] ConvertHtmlToPdfBytes(string html) => ConvertHtmlToPdf(html, null);
 
+    /// <summary>Render HTML → PDF ผ่าน headless Chromium (Puppeteer) ก่อนเพื่อ
+    /// ให้ CSS/layout/โลโก้แสดงครบ; fallback เป็น block parser (QuestPDF) เมื่อ
+    /// HTML renderer ปิด/ล้มเหลว — ส่ง primaryColorHex เพื่อให้ fallback ใช้สีธีม
+    /// บนหัวตาราง. ใช้กับเอกสารดีไซน์อิสระ (เช่น สลิปเงินเดือน).</summary>
+    public async Task<byte[]> RenderHtmlToPdfAsync(string html, string? primaryColorHex = null)
+    {
+        if (_htmlPdf is { Enabled: true })
+        {
+            try
+            {
+                var bytes = await _htmlPdf.TryRenderAsync(html);
+                if (bytes is { Length: > 0 }) return bytes;
+            }
+            catch { /* fallback ด้านล่าง */ }
+        }
+        var c = SanitizeHex(primaryColorHex);
+        var branding = c == null ? null : new PdfBranding(
+            AccentColor: c, PrimaryColor: c,
+            TableHeaderBg: c, TableHeaderText: "#FFFFFF");
+        return ConvertHtmlToPdf(html, null, branding);
+    }
+
+    /// <summary>โลโก้บริษัทเป็น data-URI (ฝังใน HTML ได้ตรง ๆ ทั้ง Chromium +
+    /// iframe) — อ่านจาก CompanySettings.LogoPath/LogoUrl. null = ไม่มีโลโก้.</summary>
+    public async Task<string?> GetCompanyLogoDataUriAsync(Guid companyId)
+    {
+        var s = await _db.CompanySettings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.LogoPath, x.LogoUrl })
+            .FirstOrDefaultAsync();
+        return TryLogoDataUri(s?.LogoPath) ?? TryLogoDataUri(s?.LogoUrl);
+    }
+
     // ===== HTML Builders =====
 
     /// <summary>

@@ -759,6 +759,31 @@ getBankAccounts แยก). payroll.html viewRun โหลด getBankAccounts �
 OCR image และอ่านคีย์ access_token เท่านั้น. Program.cs OnMessageReceived: รับทั้ง
 access_token+token และ allow path ที่ลงท้าย /payslip._
 
+_รอบ 28 (สลิปเงินเดือน — แสดง inline + ดีไซน์ใหม่): (a) เดิม GetPayslip ส่ง
+File(bytes,ct,fileName) → Content-Disposition: attachment → เบราว์เซอร์ดาวน์โหลด
+แทนที่จะ render. แก้: download=false (default) → set inline + File ไม่มีชื่อไฟล์ →
+iframe โชว์; download=true → attachment ชื่อไฟล์มีชื่อพนักงาน (สลิปเงินเดือน_<ชื่อ>_
+MM-YYYY.pdf). หน้า payslip modal เพิ่มปุ่ม "⬇️ ดาวน์โหลด". (b) GeneratePayslipAsync
+สร้าง HTML ดีไซน์ใหม่ (หัวแถบสีธีม PrimaryColor + โลโก้ data-URI, การ์ดข้อมูล,
+ตารางรายได้/หัก, กล่อง Net Pay เด่น) → render ผ่าน IPdfGenerationService.
+RenderHtmlToPdfAsync (Chromium ก่อน → fallback block parser พร้อมสีธีม) +
+GetCompanyLogoDataUriAsync._
+
+_รอบ 29 (ดู JE ของรอบเงินเดือน): การจ่ายเงินเดือนลงเป็น JournalEntry 1 ใบ/รอบ
+(ProcessPaymentAsync, ref "HR-PR-{year}-{month}", sensitivity=Payroll) ไม่ออกเอกสาร
+ใบสำคัญจ่ายแยก. เพิ่ม JournalEntryId ใน PayrollRunResponse + MapToPayrollRunResponse
+→ payroll.html run detail ปุ่ม "🧾 ดูรายการบัญชี (JE)" deep-link
+journals.html?entryId={id} (เปิด JE detail ตรง). สลิป = หลักฐานพนักงาน (HR), JE =
+บันทึกบัญชีการจ่าย — แยกหน้าที่กัน._
+
+_รอบ 30 (แก้ยอดรายคนก่อนจ่าย): เดิมไม่มีทางแก้ยอดรายคน (Calculate ทำเฉพาะ Draft +
+ลบ detail คำนวณใหม่; import เป็น Calculated). เพิ่ม UpdatePayrollDetailAsync +
+PUT /payroll/runs/{id}/employees/{empId}/detail (UpdatePayrollDetailRequest, field
+nullable แก้เฉพาะที่ส่ง) — อนุญาตเฉพาะ Calculated/Approved, รวม Gross/หัก/สุทธิ +
+run totals ใหม่, กันสุทธิติดลบ, ปัดค่าติดลบเป็น 0. PayrollRunLineDto ขยายเป็น raw
+fields ครบ (commission/otherIncome/PVD/loan/SSO นายจ้าง) เพื่อ pre-fill ตัวแก้.
+payroll.html run detail: ปุ่ม "✏️ แก้ยอด" ราย row → โมดัลแก้ทีละช่อง + รวมสุทธิ live._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

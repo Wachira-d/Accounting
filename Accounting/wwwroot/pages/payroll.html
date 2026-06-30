@@ -320,11 +320,22 @@
     </div>
 
     <!-- Payslip PDF Modal -->
+    <div class="modal-overlay" id="editDetailModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header"><h3 class="modal-title" id="editDetailTitle">แก้ยอดรายคน</h3><button class="modal-close" onclick="Layout.closeModal('editDetailModal')">&times;</button></div>
+        <div class="modal-body" id="editDetailBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('editDetailModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="edSave" onclick="Page.saveEditDetail()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="payslipModal">
       <div class="modal" style="max-width:800px">
         <div class="modal-header"><h3 class="modal-title">สลิปเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('payslipModal')">&times;</button></div>
         <div class="modal-body" style="padding:0"><iframe id="payslipFrame" style="width:100%;height:70vh;border:none"></iframe></div>
-        <div class="modal-footer"><button class="btn btn-primary" onclick="Page.printPayslip()" data-i18n="common.print">พิมพ์</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Page.downloadPayslip()">⬇️ ดาวน์โหลด</button><button class="btn btn-primary" onclick="Page.printPayslip()" data-i18n="common.print">พิมพ์</button></div>
       </div>
     </div>
   </div>
@@ -917,6 +928,7 @@ const Page = {
       }
       const res = await api.getPayrollRun(id);
       const r = res.data;
+      this._curRun = r;                 // เก็บไว้ให้ตัวแก้ยอดรายคนอ่านค่า
       document.getElementById('runDetailTitle').textContent = r.name || 'รายละเอียดรอบเงินเดือน';
       const details = r.details || r.employees || [];
       // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย (Calculated/Approved)
@@ -942,7 +954,7 @@ const Page = {
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">พนักงาน</div><div class="font-medium">${r.employeeCount||details.length} คน</div></div>
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ยอดจ่ายสุทธิ</div><div class="font-medium text-primary">${Layout.money(r.totalNetPay||r.totalAmount)}</div></div>
         </div>
-        <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th>สลิป</th></tr></thead>
+        <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th></th><th>สลิป</th></tr></thead>
         <tbody>${details.length ? details.map(d => {
           const empId = d.employeeId||d.id;
           const cur = d.netPaymentAccountCode || '';
@@ -953,16 +965,20 @@ const Page = {
                 : `<span class="text-xs text-gray-400">ค่าเริ่มต้น</span>`);
           return `<tr>
           <td>${d.employeeName || (d.firstName+' '+d.lastName) || '-'}</td>
-          <td class="text-right">${Layout.money(d.baseSalary||d.salary)}</td>
-          <td class="text-right">${Layout.money(d.otherIncome||d.allowances||0)}</td>
-          <td class="text-right">${Layout.money(d.tax||d.incomeTax||0)}</td>
-          <td class="text-right">${Layout.money(d.socialSecurity||d.sso||0)}</td>
-          <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary)}</td>
+          <td class="text-right">${Layout.money(d.baseSalary||d.salary||0)}</td>
+          <td class="text-right">${Layout.money((d.grossIncome||0) - (d.baseSalary||0))}</td>
+          <td class="text-right">${Layout.money(d.withholdingTax||d.tax||d.incomeTax||0)}</td>
+          <td class="text-right">${Layout.money(d.socialSecurityEmployee||d.socialSecurity||d.sso||0)}</td>
+          <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary||0)}</td>
           <td>${payCell}</td>
+          <td>${payEditable ? `<button class="btn btn-sm btn-secondary" onclick="Page.openEditDetail('${empId}')" title="แก้ยอดรายคน">✏️ แก้ยอด</button>` : ''}</td>
           <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${empId}')">ดูสลิป</button></td>
-        </tr>`;}).join('') : '<tr><td colspan="8" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
+        </tr>`;}).join('') : '<tr><td colspan="9" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
         ${payEditable && details.length ? '<div class="text-xs text-gray-400" style="margin-top:6px">💡 เลือกแหล่งจ่ายรายคนได้ — ตอนกด "จ่าย" ระบบจะแยกเครดิตเงินสด/ธนาคารตามบัญชีของแต่ละคน (ว่าง = ใช้บัญชีเริ่มต้นของบริษัท)</div>' : ''}`;
-      document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      const jeBtn = r.journalEntryId
+        ? `<a class="btn btn-secondary" href="/pages/journals.html?entryId=${r.journalEntryId}" title="ดู JE ที่ลงบัญชีตอนจ่ายเงินเดือน (Dr เงินเดือน / Cr ปกส.+ภงด.1+ธนาคาร)">🧾 ดูรายการบัญชี (JE)</a>`
+        : (r.status === 'Paid' ? '' : '<span class="text-xs text-gray-400" style="align-self:center">* JE จะลงเมื่อกด “จ่าย”</span>');
+      document.getElementById('runDetailFooter').innerHTML = `${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       // Comments + activity timeline (#23) — HR ทีมแชร์ note ระหว่าง run
       const commentsHost = document.createElement('div');
       commentsHost.id = `runComments-${id}`;
@@ -996,16 +1012,102 @@ const Page = {
     } finally { sel.disabled = false; }
   },
 
+  // ===== แก้ยอดรายคน (ก่อนจ่าย) =====
+  _edFields: [
+    { k: 'baseSalary', l: 'เงินเดือน', grp: 'in' },
+    { k: 'overtimePay', l: 'ค่าล่วงเวลา (OT)', grp: 'in' },
+    { k: 'allowances', l: 'เบี้ยเลี้ยง / ค่าครองชีพ', grp: 'in' },
+    { k: 'commission', l: 'คอมมิชชัน', grp: 'in' },
+    { k: 'bonus', l: 'โบนัส', grp: 'in' },
+    { k: 'otherIncome', l: 'รายได้อื่น', grp: 'in' },
+    { k: 'socialSecurityEmployee', l: 'ประกันสังคม (ลูกจ้าง)', grp: 'de' },
+    { k: 'withholdingTax', l: 'ภาษีหัก ณ ที่จ่าย', grp: 'de' },
+    { k: 'providentFundEmployee', l: 'กองทุนสำรองเลี้ยงชีพ', grp: 'de' },
+    { k: 'loanDeduction', l: 'หักเงินกู้', grp: 'de' },
+    { k: 'otherDeductions', l: 'หักอื่น ๆ', grp: 'de' },
+    { k: 'socialSecurityEmployer', l: 'ประกันสังคม (นายจ้าง)', grp: 'er' },
+  ],
+  openEditDetail(empId) {
+    const r = this._curRun; if (!r) return;
+    const details = r.details || [];
+    // map field DTO → ค่าใน line (DTO ส่ง incomeTax/socialSecurity ฯลฯ; ดึงจาก
+    // detail object ที่มี field ครบจาก backend PayrollRunLineDto)
+    const d = details.find(x => (x.employeeId || x.id) === empId);
+    if (!d) { Layout.toast('ไม่พบข้อมูลพนักงาน', 'error'); return; }
+    this._editEmp = empId;
+    document.getElementById('editDetailTitle').textContent = `แก้ยอด — ${d.employeeName || ''}`;
+    const num = v => Number(v || 0);
+    const inputRow = f => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <label style="flex:1;font-size:13px">${f.l}</label>
+        <input type="number" step="0.01" min="0" id="ed_${f.k}" value="${num(d[f.k]).toFixed(2)}"
+          oninput="Page._edRecalc()" style="width:140px;text-align:right" class="form-input"></div>`;
+    const body = document.getElementById('editDetailBody');
+    body.innerHTML = `
+      <div style="font-size:12px;color:#64748b;margin-bottom:8px">แก้ได้เฉพาะก่อนจ่าย · ระบบจะรวมยอด + ตรวจสุทธิให้</div>
+      <div style="font-weight:600;color:#16a34a;margin:4px 0">รายได้</div>
+      ${this._edFields.filter(f => f.grp === 'in').map(inputRow).join('')}
+      <div style="font-weight:600;color:#dc2626;margin:10px 0 4px">รายการหัก (ฝั่งลูกจ้าง)</div>
+      ${this._edFields.filter(f => f.grp === 'de').map(inputRow).join('')}
+      <div style="font-weight:600;color:#475569;margin:10px 0 4px">ส่วนนายจ้าง (ไม่หักจากสุทธิ — กระทบ GL/สปส.)</div>
+      ${this._edFields.filter(f => f.grp === 'er').map(inputRow).join('')}
+      <div style="border-top:1px solid #e2e8f0;margin-top:10px;padding-top:10px;font-size:14px">
+        <div style="display:flex;justify-content:space-between"><span>รวมรายได้</span><b id="edGross">-</b></div>
+        <div style="display:flex;justify-content:space-between"><span>รวมรายการหัก</span><b id="edDed">-</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:16px;margin-top:4px"><span>เงินได้สุทธิ</span><b id="edNet" style="color:#2563eb">-</b></div>
+      </div>`;
+    this._edRecalc();
+    Layout.openModal('editDetailModal');
+  },
+  _edVal(k) { const el = document.getElementById('ed_' + k); return el ? (Number(el.value) || 0) : 0; },
+  _edRecalc() {
+    const inc = ['baseSalary','overtimePay','allowances','commission','bonus','otherIncome'].reduce((s,k)=>s+this._edVal(k),0);
+    const ded = ['socialSecurityEmployee','withholdingTax','providentFundEmployee','loanDeduction','otherDeductions'].reduce((s,k)=>s+this._edVal(k),0);
+    const net = inc - ded;
+    document.getElementById('edGross').textContent = Layout.money(inc);
+    document.getElementById('edDed').textContent = Layout.money(ded);
+    const netEl = document.getElementById('edNet');
+    netEl.textContent = Layout.money(net);
+    netEl.style.color = net < 0 ? '#dc2626' : '#2563eb';
+  },
+  async saveEditDetail() {
+    const api = Layout.api(); if (!api || !this._curRun || !this._editEmp) return;
+    const btn = document.getElementById('edSave');
+    const body = {};
+    this._edFields.forEach(f => { body[f.k] = this._edVal(f.k); });
+    if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก…'; }
+    try {
+      await api.updatePayrollDetail(this._curRun.id, this._editEmp, body);
+      Layout.closeModal('editDetailModal');
+      Layout.toast('แก้ยอดแล้ว', 'success');
+      await this.viewRun(this._curRun.id);   // โหลด run detail ใหม่ให้ยอดอัปเดต
+      this.loadRuns();                        // อัปเดตยอดรวมในตารางรอบ
+    } catch (e) {
+      Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
+    } finally { if (btn) { btn.disabled = false; btn.textContent = 'บันทึก'; } }
+  },
+
   showPayslip(runId, empId) {
     const api = Layout.api(); if (!api) return;
-    const url = api.getPayslip(runId, empId);
+    this._slip = { runId, empId };
     const token = localStorage.getItem('token');
-    document.getElementById('payslipFrame').src = url + '?token=' + token;
+    // inline render (server ส่ง Content-Disposition: inline)
+    document.getElementById('payslipFrame').src = api.getPayslip(runId, empId) + '?token=' + token;
     Layout.openModal('payslipModal');
   },
 
+  downloadPayslip() {
+    const api = Layout.api(); if (!api || !this._slip) return;
+    const token = localStorage.getItem('token');
+    // ?download=1 → server แนบไฟล์ (ชื่อไฟล์มีชื่อพนักงาน)
+    const a = document.createElement('a');
+    a.href = api.getPayslipDownload(this._slip.runId, this._slip.empId) + '&token=' + token;
+    a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  },
+
   printPayslip() {
-    document.getElementById('payslipFrame').contentWindow.print();
+    try { document.getElementById('payslipFrame').contentWindow.print(); }
+    catch { Layout.toast('พิมพ์ไม่ได้ — ลองดาวน์โหลดแล้วเปิดพิมพ์แทน', 'error'); }
   },
 
   // ===== Leaves =====
