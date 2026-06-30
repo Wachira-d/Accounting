@@ -3253,7 +3253,8 @@ public class PayrollService : IPayrollService
             r.TotalSocialSecurityEmployer, r.EmployeeCount, r.CreatedAt,
             r.SsoSettledAt, r.SsoSettlementJournalEntryId, r.SsoFilingNumber,
             r.SsoLateFeeAmount, r.TotalWorkersCompensation,
-            Details: null, ExternalSystem: r.ExternalSystem, ExternalRunRef: r.ExternalRunRef);
+            Details: null, ExternalSystem: r.ExternalSystem, ExternalRunRef: r.ExternalRunRef,
+            JournalEntryId: r.JournalEntryId);
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",

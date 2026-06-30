@@ -962,7 +962,10 @@ const Page = {
           <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${empId}')">ดูสลิป</button></td>
         </tr>`;}).join('') : '<tr><td colspan="8" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
         ${payEditable && details.length ? '<div class="text-xs text-gray-400" style="margin-top:6px">💡 เลือกแหล่งจ่ายรายคนได้ — ตอนกด "จ่าย" ระบบจะแยกเครดิตเงินสด/ธนาคารตามบัญชีของแต่ละคน (ว่าง = ใช้บัญชีเริ่มต้นของบริษัท)</div>' : ''}`;
-      document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      const jeBtn = r.journalEntryId
+        ? `<a class="btn btn-secondary" href="/pages/journals.html?entryId=${r.journalEntryId}" title="ดู JE ที่ลงบัญชีตอนจ่ายเงินเดือน (Dr เงินเดือน / Cr ปกส.+ภงด.1+ธนาคาร)">🧾 ดูรายการบัญชี (JE)</a>`
+        : (r.status === 'Paid' ? '' : '<span class="text-xs text-gray-400" style="align-self:center">* JE จะลงเมื่อกด “จ่าย”</span>');
+      document.getElementById('runDetailFooter').innerHTML = `${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       // Comments + activity timeline (#23) — HR ทีมแชร์ note ระหว่าง run
       const commentsHost = document.createElement('div');
       commentsHost.id = `runComments-${id}`;

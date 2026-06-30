@@ -769,6 +769,13 @@ MM-YYYY.pdf). หน้า payslip modal เพิ่มปุ่ม "⬇️ ด
 RenderHtmlToPdfAsync (Chromium ก่อน → fallback block parser พร้อมสีธีม) +
 GetCompanyLogoDataUriAsync._
 
+_รอบ 29 (ดู JE ของรอบเงินเดือน): การจ่ายเงินเดือนลงเป็น JournalEntry 1 ใบ/รอบ
+(ProcessPaymentAsync, ref "HR-PR-{year}-{month}", sensitivity=Payroll) ไม่ออกเอกสาร
+ใบสำคัญจ่ายแยก. เพิ่ม JournalEntryId ใน PayrollRunResponse + MapToPayrollRunResponse
+→ payroll.html run detail ปุ่ม "🧾 ดูรายการบัญชี (JE)" deep-link
+journals.html?entryId={id} (เปิด JE detail ตรง). สลิป = หลักฐานพนักงาน (HR), JE =
+บันทึกบัญชีการจ่าย — แยกหน้าที่กัน._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

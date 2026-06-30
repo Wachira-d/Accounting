@@ -168,7 +168,10 @@ public record PayrollRunResponse(
     List<PayrollRunLineDto>? Details = null,
     // ป้ายแหล่งที่มา — แยก run ที่ import จากระบบนอกกับที่สร้างในระบบ
     string? ExternalSystem = null,
-    string? ExternalRunRef = null);
+    string? ExternalRunRef = null,
+    // JE ที่ post ตอนจ่าย (Dr เงินเดือน/Cr ปกส.+ภงด.1+ธนาคาร) — ใช้ deep-link
+    // ไปหน้าสมุดรายวันดูรายการบัญชีของรอบนี้
+    Guid? JournalEntryId = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/
