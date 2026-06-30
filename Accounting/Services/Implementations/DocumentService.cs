@@ -6987,7 +6987,7 @@ public class DocumentService : IDocumentService
                 var products = await _db.Products.AsNoTracking()
                     .Where(p => p.CompanyId == companyId && lineCodes.Contains(p.Code) && p.TrackStock && !p.IsDeleted)
                     .ToDictionaryAsync(p => p.Code);
-                foreach (var line in doc.Lines)
+                foreach (var line in doc.Lines ?? new List<DocumentLine>())
                 {
                     if (string.IsNullOrWhiteSpace(line.ProductCode)) continue;
                     if (!products.TryGetValue(line.ProductCode!, out var product)) continue;

@@ -367,7 +367,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var c = SanitizeHex(primaryColorHex);
         var branding = c == null ? null : new PdfBranding(
             AccentColor: c, PrimaryColor: c,
-            TableHeaderBg: c, TableHeaderText: "#FFFFFF");
+            TableHeaderBg: c, TableHeaderText: "#FFFFFF", WatermarkText: null);
         return ConvertHtmlToPdf(html, null, branding);
     }
 
