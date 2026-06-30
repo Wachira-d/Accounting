@@ -2649,20 +2649,19 @@ public class PayrollService : IPayrollService
         var deptDisplay = emp.DepartmentRef?.Name ?? emp.Department ?? "-";
         var posDisplay = emp.PositionRef?.Title ?? emp.Position ?? "-";
 
-        // โลโก้ + ธีมสีบริษัท (เอกสารตั้งค่า) — ใช้ทำหัวสลิปให้ตรง branding
-        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-        var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        var primary = string.IsNullOrWhiteSpace(settings?.PrimaryColor) ? "#2563eb" : settings!.PrimaryColor!;
-        string? logoDataUri = _pdfService != null
-            ? await _pdfService.GetCompanyLogoDataUriAsync(companyId) : null;
-
-        var htmlContent = BuildPayslipHtml(detail, emp, run, company, employeeName,
-            deptDisplay, posDisplay, primary, logoDataUri);
-
-        // Render ผ่าน Chromium ก่อน (ดีไซน์ครบ) → fallback block parser พร้อมสีธีม
+        // สลิป PDF — compose ด้วย QuestPDF โดยตรง (โลโก้ + สีธีมจากใบกำกับ)
+        // ให้สวยคงที่ทุก server โดยไม่ต้องเปิด Puppeteer
+        var payslipData = new PayslipPdfData(
+            employeeName, emp.EmployeeCode, deptDisplay, posDisplay,
+            run.Year, run.Month, run.PayDate,
+            detail.BaseSalary, detail.OvertimePay, detail.Allowances, detail.Commission,
+            detail.Bonus, detail.OtherIncome, detail.GrossIncome,
+            detail.SocialSecurityEmployee, detail.WithholdingTax, detail.ProvidentFundEmployee,
+            detail.LoanDeduction, detail.OtherDeductions, detail.TotalDeductions,
+            detail.NetPay, detail.CumulativeIncomeYTD, detail.CumulativeTaxYTD);
         byte[] pdfContent = _pdfService != null
-            ? await _pdfService.RenderHtmlToPdfAsync(htmlContent, primary)
-            : PdfGenerationService.ConvertHtmlToPdf(htmlContent, null);
+            ? await _pdfService.GeneratePayslipPdfAsync(companyId, payslipData)
+            : Array.Empty<byte>();
 
         // ชื่อไฟล์มีชื่อพนักงาน (ตามที่เจ้าของขอ) — sanitize อักขระต้องห้าม
         var safeName = SanitizeFileToken(employeeName);

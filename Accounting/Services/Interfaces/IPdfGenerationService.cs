@@ -1,5 +1,6 @@
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.DTOs.Etax;
+using Accounting.Models.DTOs.Payroll;
 
 namespace Accounting.Services.Interfaces;
 
@@ -35,6 +36,10 @@ public interface IPdfGenerationService
 
     /// <summary>โลโก้บริษัทเป็น data-URI สำหรับฝังใน HTML (null = ไม่มี).</summary>
     Task<string?> GetCompanyLogoDataUriAsync(Guid companyId);
+
+    /// <summary>สลิปเงินเดือน PDF — compose ด้วย QuestPDF โดยตรง (โลโก้ + สีธีม
+    /// จากเทมเพลตใบกำกับ/ตั้งค่า) ให้สวยคงที่ทุก server โดยไม่พึ่ง Chromium.</summary>
+    Task<byte[]> GeneratePayslipPdfAsync(Guid companyId, PayslipPdfData data);
 
     /// <summary>
     /// Build a PDF/A-3 (conformance level U) document with the eTax XML embedded as an Associated File.
