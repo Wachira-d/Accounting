@@ -817,6 +817,13 @@ _รอบ 34 (แหล่งจ่ายโมดัลนำส่ง สป�
 BankGlAccountId (validate ผังบริษัท+active+level≥4 ใช้เป็น Cr ตรง ๆ). pattern เดียวกับ
 รอบ 24 (หน้านำส่งภาษี) + payment-source รายคน._
 
+_รอบ 35 (reclassify ผังบัญชี "กดแล้วไม่เปลี่ยน"): ReclassifyLineAccountAsync ทำงาน
+ถูกต้อง (update line.AccountId + post JE คู่ Dr ใหม่/Cr เก่า ผ่าน JournalEntryBuilder
+status=Posted, ไม่มี nested-tx). บั๊กอยู่ที่ frontend: submitReclassifyLine สำเร็จแล้ว
+เรียก this.openDetail?.() ที่ "ไม่มี method นี้จริง" (ชื่อจริง detail()) → optional-chaining
+no-op เงียบ → detail ไม่ refresh → ดูเหมือนข้อมูลไม่เปลี่ยน. แก้: เรียก
+await this.detail(ctx.docId). (retry ไม่สร้าง JE ซ้ำ — backend guard line.AccountId==new → no-op)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
