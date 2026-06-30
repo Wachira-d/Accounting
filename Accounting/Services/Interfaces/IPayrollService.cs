@@ -58,7 +58,7 @@ public interface IPayrollService
     /// ใช้กับรอบที่ Status=Paid + ยังไม่ได้นำส่ง. คืน PayrollRunResponse ที่
     /// อัปเดต SsoSettledAt + SsoSettlementJournalEntryId + SsoLateFeeAmount.</summary>
     Task<PayrollRunResponse> SettleSocialSecurityAsync(Guid companyId, Guid payrollRunId,
-        DateTime payDate, Guid? bankAccountId, string? filingNumber, string performedBy);
+        DateTime payDate, Guid? bankAccountId, Guid? bankGlAccountId, string? filingNumber, string performedBy);
     /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1)) — รวบรวม WHT
     /// ทั้งปีต่อพนักงาน 1 ใบ คืน PDF เดียวเมื่อระบุ employee, คืน Zip
     /// เมื่อต้องการทุกคน.</summary>

@@ -222,7 +222,7 @@ public class PayrollController : ControllerBase
         Guid companyId, Guid runId, [FromBody] SettleSsoRequest request)
         => Ok(new ApiResponse<PayrollRunResponse>(true,
             await _service.SettleSocialSecurityAsync(companyId, runId,
-                request.PayDate, request.BankAccountId, request.FilingNumber,
+                request.PayDate, request.BankAccountId, request.BankGlAccountId, request.FilingNumber,
                 User.Identity?.Name ?? "")));
 
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]

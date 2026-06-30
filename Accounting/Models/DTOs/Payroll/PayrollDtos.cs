@@ -206,6 +206,7 @@ public record PayrollRunLineDto(
 public record SettleSsoRequest(
     DateTime PayDate,
     Guid? BankAccountId = null,
+    Guid? BankGlAccountId = null,   // ChartOfAccount.Id (เงินสด/เงินทดรองกรรมการ/ช่องจ่ายอื่น) → ใช้เป็นผัง Cr ตรง ๆ
     string? FilingNumber = null);
 
 /// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน — AccountCode = ผังเงินสด/ธนาคาร/ช่อง

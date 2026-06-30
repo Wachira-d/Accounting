@@ -1503,8 +1503,9 @@
           Layout.closeModal('reclassifyLineModal');
           this._reclassifyCtx = null;
           await this.load();
-          // เปิด detail ใหม่ให้เห็นผัง+JE ใหม่
-          this.openDetail?.(ctx.docId);
+          // เปิด detail ใหม่ให้เห็นผัง+JE ใหม่ (method ชื่อ detail() — เดิมเรียก
+          // openDetail() ที่ไม่มีจริง → ?. no-op เงียบ ทำให้ดูเหมือน "ไม่เปลี่ยน")
+          await this.detail(ctx.docId);
         } catch (e) {
           Layout.toast('เปลี่ยนผังไม่สำเร็จ: ' + e.message, 'error', 8000);
         }

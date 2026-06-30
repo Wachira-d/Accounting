@@ -852,12 +852,14 @@ const Page = {
   async openSettleSso(runId) {
     const api = Layout.api(); if (!api) return;
     try {
-      const [runRes, banksRes] = await Promise.all([
+      const [runRes, banksRes, chRes] = await Promise.all([
         api.getPayrollRun(runId),
-        api.getBankAccounts().catch(() => ({ data: [] }))
+        api.getBankAccounts().catch(() => ({ data: [] })),
+        api.getPaymentChannels().catch(() => ({ data: [] }))
       ]);
       const r = runRes.data;
       const banks = banksRes?.data || [];
+      const channels = chRes?.data || [];
       this._ssoCtx = { runId, year: r.year, month: r.month,
         total: Number(r.totalSocialSecurityEmployee || 0) + Number(r.totalSocialSecurityEmployer || 0) };
       // กำหนดส่ง = วันที่ 15 ของเดือนถัดไป (JS Date: month 0-indexed → r.month หมายถึง next month index)
@@ -875,8 +877,21 @@ const Page = {
       document.getElementById('settleSsoPayDate').value = defaultDate.toLocaleDateString('sv-SE');
       document.getElementById('settleSsoFilingNumber').value = '';
       const bsel = document.getElementById('settleSsoBank');
-      bsel.innerHTML = '<option value="">— ใช้บัญชีเริ่มต้นของบริษัท —</option>' +
-        banks.map(b => `<option value="${b.id}">${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)})</option>`).join('');
+      // แหล่งจ่ายครบ: ธนาคาร (value bank:<id>) + เงินสด/เงินทดรองกรรมการ/ช่องจ่ายอื่น
+      // (getPaymentChannels, value account:<id> = ChartOfAccount.Id)
+      let opts = '<option value="">— ใช้บัญชีเริ่มต้นของบริษัท —</option>';
+      if (banks.length) {
+        opts += '<optgroup label="บัญชีธนาคาร">'
+          + banks.map(b => `<option value="bank:${b.id}">${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)})</option>`).join('')
+          + '</optgroup>';
+      }
+      const glCh = channels.filter(a => !(a.accountCode || '').startsWith('1112'));
+      if (glCh.length) {
+        opts += '<optgroup label="เงินสด / เงินทดรองกรรมการ / ช่องจ่ายอื่น">'
+          + glCh.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('')
+          + '</optgroup>';
+      }
+      bsel.innerHTML = opts;
       // late-fee preview
       const refreshLate = () => {
         const pd = new Date(document.getElementById('settleSsoPayDate').value);
@@ -900,9 +915,15 @@ const Page = {
     if (!payDate) { Layout.toast('กรุณาเลือกวันที่นำส่ง', 'error'); return; }
     const api = Layout.api(); if (!api) return;
     try {
+      // แหล่งจ่าย: "bank:<id>" (BankAccount) หรือ "account:<id>" (GL ตรง ๆ)
+      const src = document.getElementById('settleSsoBank').value || '';
+      let bankAccountId = null, bankGlAccountId = null;
+      if (src.startsWith('bank:')) bankAccountId = src.slice(5);
+      else if (src.startsWith('account:')) bankGlAccountId = src.slice(8);
       await api.settleSso(ctx.runId, {
         payDate,
-        bankAccountId: document.getElementById('settleSsoBank').value || null,
+        bankAccountId,
+        bankGlAccountId,
         filingNumber: document.getElementById('settleSsoFilingNumber').value.trim() || null,
       });
       Layout.toast('นำส่งประกันสังคมสำเร็จ — JE Dr 21815 / Cr Bank ลงแล้ว', 'success');
