@@ -240,6 +240,17 @@ public record PayslipResponse(
     Guid EmployeeId, string EmployeeName,
     int Year, int Month, byte[] PdfData, string FileName);
 
+/// <summary>ข้อมูลสำหรับ render สลิปเงินเดือน PDF (QuestPDF) — PdfGenerationService
+/// โหลด branding (โลโก้/สีธีมจากใบกำกับ) เองจาก companyId.</summary>
+public record PayslipPdfData(
+    string EmployeeName, string EmployeeCode, string Department, string Position,
+    int Year, int Month, DateTime PayDate,
+    decimal BaseSalary, decimal OvertimePay, decimal Allowances, decimal Commission,
+    decimal Bonus, decimal OtherIncome, decimal GrossIncome,
+    decimal SocialSecurityEmployee, decimal WithholdingTax, decimal ProvidentFundEmployee,
+    decimal LoanDeduction, decimal OtherDeductions, decimal TotalDeductions,
+    decimal NetPay, decimal YtdIncome, decimal YtdTax);
+
 public record CreateLeaveRequest(
     Guid EmployeeId, string LeaveType,
     DateTime StartDate, DateTime EndDate,
