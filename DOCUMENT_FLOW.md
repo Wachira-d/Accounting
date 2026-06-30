@@ -794,6 +794,16 @@ DispatchPostPaymentArtifactsAsync → GeneratePostPaymentArtifactsAsync (IPayrol
 response กลับทันทีหลัง commit + notifications. ไม่มี scopeFactory (test) → inline เดิม.
 เอกสาร best-effort + สร้าง on-demand ได้._
 
+_รอบ 32 (กดจ่ายแล้ว error จริง — nested transaction): log ชี้ "The connection is
+already in a transaction and cannot participate in another transaction". ต้นเหตุ:
+ProcessPaymentAsync/SettleSocialSecurityAsync เปิด tx เอง แล้วเรียก
+AccountingService.CreateJournalEntryAsync ที่ก็เปิด tx ใหม่แบบ unconditional →
+Npgsql ห้าม nested tx. แก้: CreateJournalEntryAsync ใช้ ambient-tx pattern เดียวกับ
+ReverseJournalEntryAsync (เช็ค _db.Database.CurrentTransaction — เปิด/commit เฉพาะ
+ตอนไม่มี ambient tx) → JE creation เข้าร่วม tx ของ caller. PayrollController.Pay
+ครอบ try/catch คืน 400 + ข้อความจริง (เดิม propagate ดิบ). แก้ทั้ง payroll pay +
+settle SSO + ทุก caller ที่ครอบ JE ด้วย tx._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

@@ -323,7 +323,14 @@ public partial class AccountingService : IAccountingService
         if (totalDebit == 0)
             throw new InvalidOperationException("ต้องมียอดเดบิต/เครดิตอย่างน้อย 1 รายการ");
 
-        await using var transaction = await _db.Database.BeginTransactionAsync();
+        // เข้าร่วม transaction ที่ caller เปิดไว้ (ProcessPaymentAsync/Settle SSO
+        // ฯลฯ ครอบ JE creation ด้วย tx ของตัวเอง) — ถ้ามี ambient tx อยู่แล้ว
+        // ห้ามเปิดใหม่ (Npgsql: "connection is already in a transaction"). เปิด
+        // เองเฉพาะตอนถูกเรียกเดี่ยว ๆ. commit เฉพาะ tx ที่เราเปิดเอง.
+        var existingTransaction = _db.Database.CurrentTransaction;
+        await using var transaction = existingTransaction == null
+            ? await _db.Database.BeginTransactionAsync()
+            : null;
         try
         {
             // Generate entry number with journal type prefix
@@ -445,13 +452,13 @@ public partial class AccountingService : IAccountingService
             }
 
             await _db.SaveChangesAsync();
-            await transaction.CommitAsync();
+            if (transaction != null) await transaction.CommitAsync();
 
             return await GetJournalEntryAsync(companyId, entry.Id);
         }
         catch
         {
-            await transaction.RollbackAsync();
+            if (transaction != null) await transaction.RollbackAsync();
             throw;
         }
     }
