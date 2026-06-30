@@ -49,6 +49,9 @@ public interface IPayrollService
     Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId);
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);
     Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy);
+    /// <summary>สร้างเอกสารหลังจ่าย (ภงด.1 cert + filings + สลิปทุกคน + อีเมล) —
+    /// รันใน background scope หลัง pay เพื่อกัน request timeout. best-effort.</summary>
+    Task GeneratePostPaymentArtifactsAsync(Guid companyId, Guid runId, string actor);
     Task VoidPayrollAsync(Guid companyId, Guid payrollRunId);
     /// <summary>นำส่งประกันสังคมให้ สปส. (สปส.1-10) — post JE คู่ที่สอง
     /// Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank (+ เงินเพิ่ม §49 2%/เดือนถ้านำส่งช้า).

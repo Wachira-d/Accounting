@@ -202,7 +202,17 @@ public class PayrollController : ControllerBase
 
     [HttpPost("runs/{runId:guid}/pay")]
     public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> Pay(Guid companyId, Guid runId)
-        => Ok(new ApiResponse<PayrollRunResponse>(true, await _service.ProcessPaymentAsync(companyId, runId, User.Identity?.Name ?? "")));
+    {
+        try
+        {
+            var res = await _service.ProcessPaymentAsync(companyId, runId, User.Identity?.Name ?? "");
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "จ่ายเงินเดือนสำเร็จ"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
 
     /// <summary>นำส่งประกันสังคมให้ สปส. (สปส.1-10) — post JE คู่ที่สอง
     /// Dr 21815 / Cr Bank. คำนวณเงินเพิ่ม §49 อัตโนมัติ. ใช้กับรอบ Paid +
