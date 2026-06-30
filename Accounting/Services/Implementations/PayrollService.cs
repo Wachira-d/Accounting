@@ -1146,7 +1146,32 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        return MapToPayrollRunResponse(run);
+        // เติมรายการรายคน (ทั้ง run ที่สร้างในระบบและ import จากระบบนอก) เพื่อให้
+        // หน้าจอ run detail แสดงตารางรายคน + ปุ่มสลิป/50ทวิ ได้
+        var details = await _db.Set<PayrollDetail>().AsNoTracking()
+            .Where(d => d.PayrollRunId == run.Id)
+            .ToListAsync();
+        List<PayrollRunLineDto>? lines = null;
+        if (details.Count > 0)
+        {
+            var empIds = details.Select(d => d.EmployeeId).Distinct().ToList();
+            var emps = await _db.Set<Employee>().AsNoTracking()
+                .Where(e => e.CompanyId == companyId && empIds.Contains(e.Id))
+                .ToDictionaryAsync(e => e.Id);
+            lines = details.Select(d =>
+            {
+                emps.TryGetValue(d.EmployeeId, out var e);
+                var name = e != null ? $"{e.FirstNameTh} {e.LastNameTh}".Trim() : "(ไม่พบพนักงาน)";
+                return new PayrollRunLineDto(
+                    d.EmployeeId, string.IsNullOrWhiteSpace(name) ? "(ไม่ระบุชื่อ)" : name,
+                    e?.EmployeeCode,
+                    d.BaseSalary, d.Allowances + d.OtherIncome + d.Commission, d.OvertimePay, d.Bonus,
+                    d.GrossIncome, d.WithholdingTax, d.SocialSecurityEmployee,
+                    d.WithholdingTax, d.OtherDeductions, d.NetPay);
+            }).ToList();
+        }
+
+        return MapToPayrollRunResponse(run) with { Details = lines };
     }
 
     public async Task<PagedResponse<PayrollRunResponse>> GetPayrollRunsAsync(Guid companyId, PagedRequest request)
@@ -3065,7 +3090,8 @@ public class PayrollService : IPayrollService
             r.TotalWithholdingTax, r.TotalSocialSecurityEmployee,
             r.TotalSocialSecurityEmployer, r.EmployeeCount, r.CreatedAt,
             r.SsoSettledAt, r.SsoSettlementJournalEntryId, r.SsoFilingNumber,
-            r.SsoLateFeeAmount, r.TotalWorkersCompensation);
+            r.SsoLateFeeAmount, r.TotalWorkersCompensation,
+            Details: null, ExternalSystem: r.ExternalSystem, ExternalRunRef: r.ExternalRunRef);
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",

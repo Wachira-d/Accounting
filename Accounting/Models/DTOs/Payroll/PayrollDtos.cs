@@ -161,7 +161,32 @@ public record PayrollRunResponse(
     Guid? SsoSettlementJournalEntryId = null,
     string? SsoFilingNumber = null,
     decimal SsoLateFeeAmount = 0,
-    decimal TotalWorkersCompensation = 0);
+    decimal TotalWorkersCompensation = 0,
+    // รายการรายคนในรอบ (เติมเฉพาะตอนดึง run เดี่ยว GetPayrollRunAsync — list
+    // ปล่อย null เพื่อให้ payload เบา). ใช้แสดงตารางรายคน + ปุ่มสลิป/50ทวิ
+    // บนหน้าจอ รวมถึง run ที่ import มาจากระบบนอก (TakeTime).
+    List<PayrollRunLineDto>? Details = null,
+    // ป้ายแหล่งที่มา — แยก run ที่ import จากระบบนอกกับที่สร้างในระบบ
+    string? ExternalSystem = null,
+    string? ExternalRunRef = null);
+
+/// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
+/// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/
+/// allowances/incomeTax/socialSecurity/netPay).</summary>
+public record PayrollRunLineDto(
+    Guid EmployeeId,
+    string EmployeeName,
+    string? EmployeeCode,
+    decimal BaseSalary,
+    decimal Allowances,
+    decimal OvertimePay,
+    decimal Bonus,
+    decimal GrossIncome,
+    decimal IncomeTax,
+    decimal SocialSecurity,
+    decimal WithholdingTax,
+    decimal OtherDeductions,
+    decimal NetPay);
 
 /// <summary>นำส่งประกันสังคมให้ สปส. — เลือกวันที่จ่าย + บัญชีธนาคาร +
 /// เลขรับใบ สปส.1-10 (optional). ระบบ post JE Dr 21815 / Cr Bank

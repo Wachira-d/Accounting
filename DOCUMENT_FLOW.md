@@ -733,6 +733,15 @@ RemitRequest เพิ่ม `BankGlAccountId`; ResolveBankGlAsync validate GL �
 `rmDoc`) → หลัง RemitAsync สำเร็จ auto-upload เข้า FileAttachment "StatutoryRemittance"
 ใน flow เดียว (ไม่เลือกไฟล์ → แสดง step แนบภายหลังเหมือนเดิม)._
 
+_รอบ 25 (payroll import loop — เห็นรายคน): POST /payroll/runs/import (ระบบนอก เช่น
+TakeTime ส่งยอดสำเร็จรูป recalculate=false → run สถานะ Calculated) เดิมหน้า "ดู" รอบ
+เงินเดือนตารางรายคนว่าง เพราะ GetPayrollRunAsync (PayrollRunResponse) ไม่คืน detail
+lines. แก้: PayrollRunResponse เพิ่ม `Details` (List<PayrollRunLineDto>) — เติมเฉพาะตอน
+ดึง run เดี่ยว (list ปล่อย null) + `ExternalSystem`/`ExternalRunRef`. payroll.html
+viewRun แสดงรายคน + ปุ่มดูสลิป/50ทวิ ได้ครบทั้ง run ที่สร้างในระบบและ import; runs
+list ติด badge "↧ <ระบบนอก>". ลูปต่อ (approve → pay → settle-sso → payslip → ภงด.1 →
+50ทวิรายปี) ครบเหมือน run ปกติ — import ไม่ auto-post ต้องกด approve/pay ในระบบเอง._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

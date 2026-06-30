@@ -755,9 +755,12 @@ const Page = {
             ssoTag = `<span style="font-size:10px;color:${overdue?'#dc2626':'#d97706'};display:block;margin-top:2px">⏳ ยังไม่นำส่ง สปส. ${Layout.money(ssoTotal)} (กำหนด ${deadline.toLocaleDateString('th-TH')})${overdue?' • <b>เกินกำหนด!</b>':''}</span>`;
           }
         }
+        const extTag = r.externalSystem
+          ? `<span style="font-size:10px;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:4px;padding:1px 5px;margin-left:6px" title="import จากระบบนอก${r.externalRunRef ? ' • ref '+Layout.esc(r.externalRunRef) : ''}">↧ ${Layout.esc(r.externalSystem)}</span>`
+          : '';
         return `<tr>
         <td>${i+1}</td>
-        <td><span class="font-medium">${r.name || r.title || '-'}</span>${ssoTag}</td>
+        <td><span class="font-medium">${r.name || r.title || '-'}</span>${extTag}${ssoTag}</td>
         <td>${r.month || '-'}/${r.year || '-'}</td>
         <td>${Layout.date(r.payDate || r.paymentDate)}</td>
         <td class="text-right">${r.employeeCount || r.totalEmployees || 0}</td>
