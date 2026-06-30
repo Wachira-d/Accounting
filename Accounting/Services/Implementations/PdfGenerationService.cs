@@ -414,26 +414,38 @@ public partial class PdfGenerationService : IPdfGenerationService
         // (กลับ Dr↔Cr → Cr 12210/Cr 11610) ซึ่ง ReversedByEntryId ก็ == null
         // เหมือนกัน + ใหม่กว่า → query เดิมหยิบ reversal มาแสดงผิด (footer ขึ้น
         // Cr 12210 แทน Dr). เพิ่มเงื่อนไข OriginalEntryId == null ตัด reversal ออก.
-        var je = await _db.JournalEntries.AsNoTracking()
+        // รวม "JE forward" ทั้งหมดของเอกสาร — JE ต้นทาง + JE คู่แก้ไข (reclassify
+        // Dr ผังใหม่/Cr ผังเก่า) ที่ SourceDocumentId เดียวกัน + OriginalEntryId==null.
+        // net ตามผัง (Dr−Cr): ผังที่ถูกแก้ไป (Cr) หักล้างของเดิม (Dr) เหลือ 0 →
+        // หายไป, เหลือผังใหม่ → footer สะท้อนการ reclassify ล่าสุด. ตัด JE ที่ถูก
+        // reverse (void) ออก.
+        var jes = await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
-                        && !j.IsDeleted && j.OriginalEntryId == null)
-            .OrderByDescending(j => j.Status == JournalEntryStatus.Posted)
-            .ThenBy(j => j.EntryDate)
-            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.TotalCredit })
-            .FirstOrDefaultAsync();
-        if (je != null)
+                        && !j.IsDeleted && j.OriginalEntryId == null
+                        && j.Status == JournalEntryStatus.Posted
+                        && j.ReversedByEntryId == null)
+            .OrderBy(j => j.EntryDate).ThenBy(j => j.EntryNumber)
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate })
+            .ToListAsync();
+        if (jes.Count > 0)
         {
+            var jeIds = jes.Select(j => j.Id).ToList();
             var rawLines = await _db.JournalEntryLines.AsNoTracking()
-                .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted)
+                .Where(l => jeIds.Contains(l.JournalEntryId) && !l.IsDeleted)
                 .OrderBy(l => l.LineOrder)
                 .Select(l => new GlPostingLine(
                     l.Account != null ? l.Account.AccountCode : "",
                     l.Account != null ? l.Account.AccountName : (l.Description ?? ""),
                     l.DebitAmount, l.CreditAmount))
                 .ToListAsync();
-            if (rawLines.Count > 0)
-                return new GlPostingSummary(je.EntryNumber, je.EntryDate,
-                    ConsolidateGlLines(rawLines), je.TotalDebit, je.TotalCredit);
+            var netted = NetGlLinesByAccount(rawLines);
+            if (netted.Count > 0)
+            {
+                var head = jes[0];
+                var label = jes.Count > 1 ? $"{head.EntryNumber} (สุทธิรวมแก้ไข {jes.Count - 1})" : head.EntryNumber;
+                return new GlPostingSummary(label, head.EntryDate, netted,
+                    netted.Sum(l => l.Debit), netted.Sum(l => l.Credit));
+            }
         }
 
         // ยังไม่มี JE จริง (Draft/ยังไม่อนุมัติ) → "ประมาณการ" จากข้อมูลเอกสาร
@@ -445,6 +457,37 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// เดียว — footer ตรวจสอบจะ tie กับยอดบนเอกสารชัด (เช่น ค่าสินค้า+ค่าขนส่ง
     /// ที่ capitalize เข้า 12210 ทั้งคู่ → รวมเป็น Dr 12210 ยอดเดียว = ยอดรวม
     /// ก่อน VAT). คง LineOrder แรกของแต่ละกลุ่มเป็นลำดับ.</summary>
+    /// <summary>Net ตามผังบัญชี (Dr−Cr ต่อผัง) ข้าม Dr/Cr — ผังที่ถูก
+    /// reclassify (เดิม Dr / คู่แก้ไข Cr) หักล้างกันเป็น 0 หายไป เหลือเฉพาะ
+    /// ผังที่มีผลสุทธิจริง → footer "การบันทึกบัญชี" สะท้อนสถานะหลังแก้ผัง.
+    /// คงลำดับตามที่ผังปรากฏครั้งแรก. ใช้แทน ConsolidateGlLines เมื่อรวมหลาย JE
+    /// (ต้นทาง + reclassify) — สำหรับ JE เดียวให้ผลเหมือนเดิม (ผังละทิศ).</summary>
+    private static List<GlPostingLine> NetGlLinesByAccount(List<GlPostingLine> lines)
+    {
+        var order = new List<string>();
+        var byAccount = new Dictionary<string, (string Code, string Name, decimal Net)>();
+        foreach (var l in lines)
+        {
+            var key = $"{l.AccountCode}|{l.AccountName}";
+            if (!byAccount.TryGetValue(key, out var ex))
+            {
+                order.Add(key);
+                ex = (l.AccountCode, l.AccountName, 0m);
+            }
+            byAccount[key] = (ex.Code, ex.Name, ex.Net + l.Debit - l.Credit);
+        }
+        var result = new List<GlPostingLine>();
+        foreach (var key in order)
+        {
+            var (code, name, net) = byAccount[key];
+            if (Math.Abs(net) < 0.005m) continue;   // หักล้างเป็น 0 → ตัดออก
+            result.Add(net > 0
+                ? new GlPostingLine(code, name, net, 0)
+                : new GlPostingLine(code, name, 0, -net));
+        }
+        return result;
+    }
+
     private static List<GlPostingLine> ConsolidateGlLines(List<GlPostingLine> lines)
     {
         var result = new List<GlPostingLine>();

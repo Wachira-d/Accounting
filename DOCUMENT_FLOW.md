@@ -824,6 +824,15 @@ status=Posted, ไม่มี nested-tx). บั๊กอยู่ที่ fro
 no-op เงียบ → detail ไม่ refresh → ดูเหมือนข้อมูลไม่เปลี่ยน. แก้: เรียก
 await this.detail(ctx.docId). (retry ไม่สร้าง JE ซ้ำ — backend guard line.AccountId==new → no-op)._
 
+_รอบ 36 (PDF footer "การบันทึกบัญชี" สะท้อน reclassify): เดิม LoadGlPostingAsync หยิบ
+JE ต้นทางใบเดียว (FirstOrDefault) → footer ยังโชว์ผังเดิม (516) แม้ reclassify แล้ว.
+แก้: รวม JE forward ทั้งหมดของเอกสาร (SourceDocumentId เดียวกัน + OriginalEntryId==null
++ Posted + ReversedByEntryId==null = JE ต้นทาง + คู่แก้ไข reclassify) → NetGlLinesByAccount
+net Dr−Cr ต่อผัง (ผังที่ reclassify หักล้างเป็น 0 หายไป เหลือผังใหม่) → footer แสดงยอด
+สุทธิ Dr ผังใหม่ / Cr เงินสด ตรงกับที่แก้. label เพิ่ม "(สุทธิรวมแก้ไข N)" เมื่อมี >1 JE.
+footer นี้ opt-in ผ่าน CompanySettings.ShowGlEntryOnDocument (default ปิด); เอกสารปกติ
+ไม่แสดงผังบัญชีบนหน้า (ไม่ใช่ field §86/4)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
