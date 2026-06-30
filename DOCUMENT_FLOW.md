@@ -765,9 +765,10 @@ File(bytes,ct,fileName) → Content-Disposition: attachment → เบราว�
 iframe โชว์; download=true → attachment ชื่อไฟล์มีชื่อพนักงาน (สลิปเงินเดือน_<ชื่อ>_
 MM-YYYY.pdf). หน้า payslip modal เพิ่มปุ่ม "⬇️ ดาวน์โหลด". (b) GeneratePayslipAsync
 สร้าง HTML ดีไซน์ใหม่ (หัวแถบสีธีม PrimaryColor + โลโก้ data-URI, การ์ดข้อมูล,
-ตารางรายได้/หัก, กล่อง Net Pay เด่น) → render ผ่าน IPdfGenerationService.
-RenderHtmlToPdfAsync (Chromium ก่อน → fallback block parser พร้อมสีธีม) +
-GetCompanyLogoDataUriAsync._
+ตารางรายได้/หัก, กล่อง Net Pay เด่น). **render ด้วย QuestPDF โดยตรง**
+(PdfGenerationService.Payslip.cs → GeneratePayslipPdfAsync) ไม่ผ่าน HTML→Chromium
+จึงสวยคงที่ทุก server แม้ไม่เปิด Puppeteer; สีธีมดึงจากเทมเพลตใบกำกับ
+(AccentColor/TableHeaderColor) + โลโก้จาก CompanySettings.LogoPath._
 
 _รอบ 29 (ดู JE ของรอบเงินเดือน): การจ่ายเงินเดือนลงเป็น JournalEntry 1 ใบ/รอบ
 (ProcessPaymentAsync, ref "HR-PR-{year}-{month}", sensitivity=Payroll) ไม่ออกเอกสาร
