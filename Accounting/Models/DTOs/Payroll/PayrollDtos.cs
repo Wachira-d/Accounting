@@ -186,7 +186,9 @@ public record PayrollRunLineDto(
     decimal SocialSecurity,
     decimal WithholdingTax,
     decimal OtherDeductions,
-    decimal NetPay);
+    decimal NetPay,
+    // แหล่งจ่ายเงินสุทธิรายคน (AccountCode; null = ใช้ค่าระดับ run/default)
+    string? NetPaymentAccountCode = null);
 
 /// <summary>นำส่งประกันสังคมให้ สปส. — เลือกวันที่จ่าย + บัญชีธนาคาร +
 /// เลขรับใบ สปส.1-10 (optional). ระบบ post JE Dr 21815 / Cr Bank
@@ -195,6 +197,10 @@ public record SettleSsoRequest(
     DateTime PayDate,
     Guid? BankAccountId = null,
     string? FilingNumber = null);
+
+/// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน — AccountCode = ผังเงินสด/ธนาคาร/ช่อง
+/// จ่าย (null/ว่าง = ใช้ค่าระดับ run/default).</summary>
+public record SetPaymentAccountRequest(string? AccountCode);
 
 public record PayrollDetailResponse(
     Guid EmployeeId, string EmployeeCode, string EmployeeName,

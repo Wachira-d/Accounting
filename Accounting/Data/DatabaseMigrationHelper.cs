@@ -4313,6 +4313,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "IsExternalImport" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SalaryExpenseAccountCode" varchar(50) NULL;""",
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "NetPaymentAccountCode" varchar(50) NULL;""",
+            // แหล่งจ่ายเงินสุทธิรายคน (split Cr เงินสด/ธนาคารตอน Pay) — null=ใช้ค่าระดับ run
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "NetPaymentAccountCode" varchar(50) NULL;""",
             // idempotency — unique partial index บน (CompanyId, ExternalRunRef)
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PayrollRuns_ExternalRunRef" ON "PayrollRuns" ("CompanyId", "ExternalRunRef") WHERE "ExternalRunRef" IS NOT NULL;""",
 

@@ -904,10 +904,20 @@ const Page = {
   async viewRun(id) {
     const api = Layout.api(); if (!api) return;
     try {
+      // โหลดช่องทางจ่าย (เงินสด/ธนาคาร/อื่นๆ) ครั้งเดียว — ใช้ทำ dropdown แหล่งจ่ายรายคน
+      if (!this._payChannels) {
+        try { const pc = await api.getPaymentChannels(); this._payChannels = (pc && pc.data) || []; }
+        catch { this._payChannels = []; }
+      }
       const res = await api.getPayrollRun(id);
       const r = res.data;
       document.getElementById('runDetailTitle').textContent = r.name || 'รายละเอียดรอบเงินเดือน';
       const details = r.details || r.employees || [];
+      // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย (Calculated/Approved)
+      const payEditable = r.status === 'Calculated' || r.status === 'Approved';
+      const payOpts = (cur) => ['<option value="">— ค่าเริ่มต้น (บัญชีบริษัท) —</option>']
+        .concat((this._payChannels || []).filter(a => !(a.accountCode || '').startsWith('1112'))
+          .map(a => `<option value="${Layout.esc(a.accountCode)}" ${cur === a.accountCode ? 'selected' : ''}>${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`)).join('');
       document.getElementById('runDetailContent').innerHTML = `
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:16px;margin-bottom:20px">
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">งวด</div><div class="font-medium">${r.month}/${r.year}</div></div>
@@ -915,16 +925,26 @@ const Page = {
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">พนักงาน</div><div class="font-medium">${r.employeeCount||details.length} คน</div></div>
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ยอดจ่ายสุทธิ</div><div class="font-medium text-primary">${Layout.money(r.totalNetPay||r.totalAmount)}</div></div>
         </div>
-        <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>สลิป</th></tr></thead>
-        <tbody>${details.length ? details.map(d => `<tr>
+        <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th>สลิป</th></tr></thead>
+        <tbody>${details.length ? details.map(d => {
+          const empId = d.employeeId||d.id;
+          const cur = d.netPaymentAccountCode || '';
+          const payCell = payEditable
+            ? `<select class="form-input" style="font-size:12px;padding:4px 6px;min-width:170px" data-prev="${Layout.esc(cur)}" onchange="Page.setPayAccount('${id}','${empId}',this)">${payOpts(cur)}</select>`
+            : (cur
+                ? `<span class="text-xs">${Layout.esc(cur)}</span>`
+                : `<span class="text-xs text-gray-400">ค่าเริ่มต้น</span>`);
+          return `<tr>
           <td>${d.employeeName || (d.firstName+' '+d.lastName) || '-'}</td>
           <td class="text-right">${Layout.money(d.baseSalary||d.salary)}</td>
           <td class="text-right">${Layout.money(d.otherIncome||d.allowances||0)}</td>
           <td class="text-right">${Layout.money(d.tax||d.incomeTax||0)}</td>
           <td class="text-right">${Layout.money(d.socialSecurity||d.sso||0)}</td>
           <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary)}</td>
-          <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${d.employeeId||d.id}')">ดูสลิป</button></td>
-        </tr>`).join('') : '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>`;
+          <td>${payCell}</td>
+          <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${empId}')">ดูสลิป</button></td>
+        </tr>`;}).join('') : '<tr><td colspan="8" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
+        ${payEditable && details.length ? '<div class="text-xs text-gray-400" style="margin-top:6px">💡 เลือกแหล่งจ่ายรายคนได้ — ตอนกด "จ่าย" ระบบจะแยกเครดิตเงินสด/ธนาคารตามบัญชีของแต่ละคน (ว่าง = ใช้บัญชีเริ่มต้นของบริษัท)</div>' : ''}`;
       document.getElementById('runDetailFooter').innerHTML = `<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       // Comments + activity timeline (#23) — HR ทีมแชร์ note ระหว่าง run
       const commentsHost = document.createElement('div');
@@ -942,6 +962,21 @@ const Page = {
       }
       Layout.openModal('runDetailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async setPayAccount(runId, empId, sel) {
+    const api = Layout.api(); if (!api) return;
+    const code = sel.value || null;
+    const prev = sel.getAttribute('data-prev') || '';
+    sel.disabled = true;
+    try {
+      await api.setPayrollPaymentAccount(runId, empId, code);
+      sel.setAttribute('data-prev', sel.value);
+      Layout.toast('อัปเดตแหล่งจ่ายแล้ว', 'success');
+    } catch (e) {
+      sel.value = prev;                 // revert ถ้าไม่ผ่าน validate
+      Layout.toast(e.message || 'อัปเดตแหล่งจ่ายไม่สำเร็จ', 'error');
+    } finally { sel.disabled = false; }
   },
 
   showPayslip(runId, empId) {

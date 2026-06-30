@@ -742,6 +742,15 @@ viewRun แสดงรายคน + ปุ่มดูสลิป/50ทวิ
 list ติด badge "↧ <ระบบนอก>". ลูปต่อ (approve → pay → settle-sso → payslip → ภงด.1 →
 50ทวิรายปี) ครบเหมือน run ปกติ — import ไม่ auto-post ต้องกด approve/pay ในระบบเอง._
 
+_รอบ 26 (แหล่งจ่ายเงินรายคน): เดิม ProcessPaymentAsync ลง Cr เงินสด/ธนาคารบรรทัด
+เดียวรวมทั้ง run (run.NetPaymentAccountCode → default 11122/111x) — จ่ายทุกคนจากบัญชี
+เดียว. แก้ให้แยกรายคน: PayrollDetail เพิ่ม `NetPaymentAccountCode` (migration). import
+เก็บ PaymentAccountCode รายคนลง detail (เลิกยุบเป็นค่าเดียว). Pay → group ยอดสุทธิ
+(NetPay − AdvanceRecovered) ตามบัญชีจ่ายของแต่ละคน (fallback detail → run → default)
+→ ลง Cr หลายบรรทัดตามบัญชี. ผู้ใช้แก้แหล่งจ่ายรายคนได้ก่อนจ่าย (Calculated/Approved)
+ผ่าน PUT /payroll/runs/{id}/employees/{empId}/payment-account (validate 111x/1133/2123)
+→ หน้า run detail dropdown ราย row. PayrollRunLineDto เพิ่ม NetPaymentAccountCode._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
