@@ -11,6 +11,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Accounting.Services.Implementations;
 
@@ -66,15 +67,20 @@ public class PayrollService : IPayrollService
     private readonly ILogger<PayrollService>? _logger;
 
     private readonly IEmailScheduleService? _emailSchedule;
+    // ใช้สร้าง DI scope ใหม่สำหรับงาน background หลังจ่ายเงินเดือน (สร้าง PDF
+    // สลิป/ภงด.1/สปส. นอก request เพื่อกัน proxy timeout จากงานหนัก)
+    private readonly IServiceScopeFactory? _scopeFactory;
 
     public PayrollService(AccountingDbContext db, IPdfGenerationService? pdfService = null,
         IAccountingService? accountingService = null, ISalaryAdvanceService? salaryAdvanceService = null,
         IOrganizationService? organizationService = null, IPermissionService? permissionService = null,
         INotificationEngine? notify = null, IWebhookService? webhooks = null,
         ITaxFilingExportService? taxFilingExport = null, IFileAttachmentService? attachments = null,
-        ILogger<PayrollService>? logger = null, IEmailScheduleService? emailSchedule = null)
+        ILogger<PayrollService>? logger = null, IEmailScheduleService? emailSchedule = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _db = db;
+        _scopeFactory = scopeFactory;
         _pdfService = pdfService;
         _accountingService = accountingService;
         _salaryAdvanceService = salaryAdvanceService;
@@ -2167,24 +2173,11 @@ public class PayrollService : IPayrollService
                 actionUrl: $"/pages/payroll.html?run={run.Id}&emp={det.EmployeeId}");
         }
 
-        // ออก ภ.ง.ด.1 cert ต่อพนักงาน (idempotent) — ก่อน auto-generate
-        // filings เพื่อให้ ภ.ง.ด.1 txt export อ่านค่า cert ที่เพิ่งออก
-        // ได้ถ้าต้องการในอนาคต.
-        await IssueMonthlyPnd1CertsAsync(companyId, run);
-
-        // ── Auto-generate the month's government filings + every payslip and
-        // attach them to the run so HR has a single download point instead of
-        // hunting through three export endpoints. Best-effort — a generation
-        // failure must NOT roll back the already-committed payment.
-        await AutoGenerateFilingsAsync(companyId, run, processedBy);
-
-        // Auto-email schedule hook — เช็คกฎ PayrollPaid + enqueue payslip
-        // ส่งให้พนักงานแต่ละคน (ตามอีเมล Employee.Email/PersonalEmail).
-        if (_emailSchedule != null)
-        {
-            try { await _emailSchedule.OnPayrollPaidAsync(companyId, run.Id); }
-            catch (Exception ex) { _logger?.LogWarning(ex, "Payslip email enqueue failed Run={Run}", run.Id); }
-        }
+        // งานหนักหลังจ่าย (สร้าง PDF ภงด.1 cert + ภงด.1/สปส. filings + สลิปทุกคน
+        // + อีเมล) — ย้ายออกนอก request ผ่าน DI scope ใหม่ เพื่อกัน proxy/connection
+        // timeout จากการ render PDF หลายไฟล์. การจ่ายเงิน commit แล้ว → response
+        // ต้องกลับทันที. เอกสารพวกนี้ best-effort + สร้าง on-demand ได้อยู่แล้ว.
+        await DispatchPostPaymentArtifactsAsync(companyId, run.Id, processedBy);
 
         // Notify each employee whose advance was fully repaid by this run.
         foreach (var adv in clearedAdvances)
@@ -2527,6 +2520,53 @@ public class PayrollService : IPayrollService
         catch (Exception ex)
         {
             _logger?.LogWarning(ex, "IssueMonthlyPnd1CertsAsync failed run={Run}", run.Id);
+        }
+    }
+
+    /// <summary>ยิงงานสร้างเอกสารหลังจ่าย — ถ้ามี IServiceScopeFactory ทำใน
+    /// background scope (response กลับทันที กัน timeout); ไม่มี (เช่น test) →
+    /// ทำ inline ใน request scope เดิม.</summary>
+    private async Task DispatchPostPaymentArtifactsAsync(Guid companyId, Guid runId, string actor)
+    {
+        if (_scopeFactory == null)
+        {
+            await GeneratePostPaymentArtifactsAsync(companyId, runId, actor);
+            return;
+        }
+        var sf = _scopeFactory;
+        // fire-and-forget — scope ใหม่มี DbContext ของตัวเอง (request scope เดิม
+        // ถูก dispose หลัง response). best-effort: error = log + ปล่อย (สร้าง
+        // เอกสาร on-demand ได้)
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = sf.CreateScope();
+                var svc = scope.ServiceProvider.GetRequiredService<IPayrollService>();
+                await svc.GeneratePostPaymentArtifactsAsync(companyId, runId, actor);
+            }
+            catch { /* swallowed — เอกสาร best-effort */ }
+        });
+    }
+
+    public async Task GeneratePostPaymentArtifactsAsync(Guid companyId, Guid runId, string actor)
+    {
+        var run = await _db.Set<PayrollRun>()
+            .FirstOrDefaultAsync(r => r.Id == runId && r.CompanyId == companyId && !r.IsDeleted);
+        if (run == null) return;
+
+        // ออก ภ.ง.ด.1 cert ต่อพนักงาน (idempotent)
+        await IssueMonthlyPnd1CertsAsync(companyId, run);
+
+        // Auto-generate government filings + payslip ทุกคน แนบเข้า run (จุด
+        // ดาวน์โหลดเดียวให้ HR). Best-effort.
+        await AutoGenerateFilingsAsync(companyId, run, actor);
+
+        // Auto-email schedule hook — enqueue payslip ส่งพนักงานแต่ละคน
+        if (_emailSchedule != null)
+        {
+            try { await _emailSchedule.OnPayrollPaidAsync(companyId, run.Id); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Payslip email enqueue failed Run={Run}", run.Id); }
         }
     }
 
