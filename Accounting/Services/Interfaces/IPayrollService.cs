@@ -39,6 +39,9 @@ public interface IPayrollService
     /// Idempotent ผ่าน ExternalRunRef.</summary>
     Task<ImportPayrollRunResult> ImportPayrollRunAsync(Guid companyId, ImportPayrollRunRequest request, string createdBy);
     Task<PayrollRunResponse> GetPayrollRunAsync(Guid companyId, Guid payrollRunId);
+    /// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน (ก่อนจ่าย) — accountCode=null = กลับไปใช้
+    /// ค่าระดับ run/default. คืน run ที่อัปเดตแล้ว (พร้อม Details).</summary>
+    Task<PayrollRunResponse> SetEmployeePaymentAccountAsync(Guid companyId, Guid payrollRunId, Guid employeeId, string? accountCode);
     Task<PagedResponse<PayrollRunResponse>> GetPayrollRunsAsync(Guid companyId, PagedRequest request);
     Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId);
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);

@@ -723,6 +723,34 @@ try/catch. (d) documents list: server-side types[] filter + DocumentPermissionHe
 Other=rev&&pur (กัน paging หายสำหรับ owner) + count bar. (e) OCR amount: external
 metadata override (เชื่อยอดที่ partner ส่ง) + headerSubTotal ผูก grand total._
 
+_รอบ 24 (UX หน้านำส่งภาษี/ประกันสังคม): (a) ถอด Floating Action Button "＋ Quick"
+ออกทั้งระบบ (layout.js — ปุ่มลอยมุมขวาล่างบังเนื้อหา; ทางลัดยังอยู่ใน sidebar +
+mobile bottom-nav). (b) "แหล่งเงิน (บัญชีจ่าย)" ในโมดัลนำส่ง: เพิ่ม payment channels
+ครบ — bank accounts (optgroup, value `bank:<id>` → LinkedAccountId) + GL เงินสด/
+ช่องจ่ายอื่น (getPaymentChannels, value `account:<id>` → ใช้เป็นผัง Cr ตรง ๆ).
+RemitRequest เพิ่ม `BankGlAccountId`; ResolveBankGlAsync validate GL เป็นผังบริษัทนี้
++ active + level≥4 ก่อนใช้. (c) แนบเอกสารที่จ่าย/ใบเสร็จได้ในโมดัลนำส่งเลย (input
+`rmDoc`) → หลัง RemitAsync สำเร็จ auto-upload เข้า FileAttachment "StatutoryRemittance"
+ใน flow เดียว (ไม่เลือกไฟล์ → แสดง step แนบภายหลังเหมือนเดิม)._
+
+_รอบ 25 (payroll import loop — เห็นรายคน): POST /payroll/runs/import (ระบบนอก เช่น
+TakeTime ส่งยอดสำเร็จรูป recalculate=false → run สถานะ Calculated) เดิมหน้า "ดู" รอบ
+เงินเดือนตารางรายคนว่าง เพราะ GetPayrollRunAsync (PayrollRunResponse) ไม่คืน detail
+lines. แก้: PayrollRunResponse เพิ่ม `Details` (List<PayrollRunLineDto>) — เติมเฉพาะตอน
+ดึง run เดี่ยว (list ปล่อย null) + `ExternalSystem`/`ExternalRunRef`. payroll.html
+viewRun แสดงรายคน + ปุ่มดูสลิป/50ทวิ ได้ครบทั้ง run ที่สร้างในระบบและ import; runs
+list ติด badge "↧ <ระบบนอก>". ลูปต่อ (approve → pay → settle-sso → payslip → ภงด.1 →
+50ทวิรายปี) ครบเหมือน run ปกติ — import ไม่ auto-post ต้องกด approve/pay ในระบบเอง._
+
+_รอบ 26 (แหล่งจ่ายเงินรายคน): เดิม ProcessPaymentAsync ลง Cr เงินสด/ธนาคารบรรทัด
+เดียวรวมทั้ง run (run.NetPaymentAccountCode → default 11122/111x) — จ่ายทุกคนจากบัญชี
+เดียว. แก้ให้แยกรายคน: PayrollDetail เพิ่ม `NetPaymentAccountCode` (migration). import
+เก็บ PaymentAccountCode รายคนลง detail (เลิกยุบเป็นค่าเดียว). Pay → group ยอดสุทธิ
+(NetPay − AdvanceRecovered) ตามบัญชีจ่ายของแต่ละคน (fallback detail → run → default)
+→ ลง Cr หลายบรรทัดตามบัญชี. ผู้ใช้แก้แหล่งจ่ายรายคนได้ก่อนจ่าย (Calculated/Approved)
+ผ่าน PUT /payroll/runs/{id}/employees/{empId}/payment-account (validate 111x/1133/2123)
+→ หน้า run detail dropdown ราย row. PayrollRunLineDto เพิ่ม NetPaymentAccountCode._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

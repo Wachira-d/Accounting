@@ -230,7 +230,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             : 0m;
 
         // ผัง Cr (แหล่งเงิน)
-        var bankGlId = await ResolveBankGlAsync(companyId, req.BankAccountId);
+        var bankGlId = await ResolveBankGlAsync(companyId, req.BankAccountId, req.BankGlAccountId);
         var payable = await ResolveAccountAsync(companyId, payableCode)
             ?? throw new InvalidOperationException($"ไม่พบผังบัญชี {payableCode} ({label}) — กรุณาสร้างก่อน");
 
@@ -353,10 +353,22 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
             && a.AccountCode.StartsWith("58"));
 
-    private async Task<Guid> ResolveBankGlAsync(Guid companyId, Guid? bankAccountId)
+    private async Task<Guid> ResolveBankGlAsync(Guid companyId, Guid? bankAccountId, Guid? bankGlAccountId = null)
     {
         Guid? bankGlId = null;
-        if (bankAccountId.HasValue)
+        // 1) เลือก GL เงินสด/ธนาคาร/ช่องจ่ายอื่นโดยตรง (payment channel) — ต้องเป็น
+        //    ผังของบริษัทนี้ + active + posting level (anti-spoof: validate ตัวตน)
+        if (bankGlAccountId.HasValue && bankGlAccountId.Value != Guid.Empty)
+        {
+            bankGlId = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == bankGlAccountId.Value && a.CompanyId == companyId
+                    && a.IsActive && !a.IsDeleted && a.Level >= 4)
+                .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+            if (!bankGlId.HasValue)
+                throw new InvalidOperationException("บัญชีแหล่งเงินที่เลือกไม่ถูกต้อง — เลือกใหม่อีกครั้ง");
+        }
+        // 2) เลือกผ่าน BankAccount (map → LinkedAccountId)
+        if (!bankGlId.HasValue && bankAccountId.HasValue)
         {
             bankGlId = await _db.BankAccounts.AsNoTracking()
                 .Where(b => b.Id == bankAccountId.Value && b.CompanyId == companyId)

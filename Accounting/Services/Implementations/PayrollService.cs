@@ -1094,6 +1094,9 @@ public class PayrollService : IPayrollService
                 OtherDeductions = line.OtherDeductions + line.SalaryAdvance,
                 TotalDeductions = line.TotalDeductions,
                 NetPay = line.NetPay,
+                // แหล่งจ่ายรายคน — เก็บ per-line เพื่อ split Cr เงินสด/ธนาคารตอน Pay
+                NetPaymentAccountCode = string.IsNullOrWhiteSpace(line.PaymentAccountCode)
+                    ? null : line.PaymentAccountCode,
             });
         }
 
@@ -1146,7 +1149,68 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        return MapToPayrollRunResponse(run);
+        // เติมรายการรายคน (ทั้ง run ที่สร้างในระบบและ import จากระบบนอก) เพื่อให้
+        // หน้าจอ run detail แสดงตารางรายคน + ปุ่มสลิป/50ทวิ ได้
+        var details = await _db.Set<PayrollDetail>().AsNoTracking()
+            .Where(d => d.PayrollRunId == run.Id)
+            .ToListAsync();
+        List<PayrollRunLineDto>? lines = null;
+        if (details.Count > 0)
+        {
+            var empIds = details.Select(d => d.EmployeeId).Distinct().ToList();
+            var emps = await _db.Set<Employee>().AsNoTracking()
+                .Where(e => e.CompanyId == companyId && empIds.Contains(e.Id))
+                .ToDictionaryAsync(e => e.Id);
+            lines = details.Select(d =>
+            {
+                emps.TryGetValue(d.EmployeeId, out var e);
+                var name = e != null ? $"{e.FirstNameTh} {e.LastNameTh}".Trim() : "(ไม่พบพนักงาน)";
+                return new PayrollRunLineDto(
+                    d.EmployeeId, string.IsNullOrWhiteSpace(name) ? "(ไม่ระบุชื่อ)" : name,
+                    e?.EmployeeCode,
+                    d.BaseSalary, d.Allowances + d.OtherIncome + d.Commission, d.OvertimePay, d.Bonus,
+                    d.GrossIncome, d.WithholdingTax, d.SocialSecurityEmployee,
+                    d.WithholdingTax, d.OtherDeductions, d.NetPay,
+                    d.NetPaymentAccountCode);
+            }).ToList();
+        }
+
+        return MapToPayrollRunResponse(run) with { Details = lines };
+    }
+
+    public async Task<PayrollRunResponse> SetEmployeePaymentAccountAsync(
+        Guid companyId, Guid payrollRunId, Guid employeeId, string? accountCode)
+    {
+        var run = await _db.Set<PayrollRun>()
+            .Include(r => r.Details)
+            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
+        // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย — Paid แล้ว JE ออกไปแล้ว ห้ามแก้ย้อนหลัง
+        if (run.Status != "Calculated" && run.Status != "Approved")
+            throw new InvalidOperationException(
+                "แก้แหล่งจ่ายได้เฉพาะรอบที่ยังไม่จ่าย (Calculated/Approved) เท่านั้น");
+
+        var detail = run.Details.FirstOrDefault(d => d.EmployeeId == employeeId)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
+
+        var code = string.IsNullOrWhiteSpace(accountCode) ? null : accountCode.Trim();
+        if (code != null)
+        {
+            // validate: ต้องเป็นผังเงินสด/ธนาคาร/ช่องจ่าย (111x/1133/2123) ของบริษัทนี้
+            var ok = await _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId
+                && a.AccountCode == code && a.IsActive && !a.IsDeleted && a.Level >= 4
+                && (a.AccountCode.StartsWith("111") || a.AccountCode.StartsWith("1133")
+                    || a.AccountCode.StartsWith("2123")));
+            if (!ok)
+                throw new InvalidOperationException($"ผังบัญชีแหล่งจ่าย '{code}' ไม่ถูกต้อง (ต้องเป็นเงินสด/ธนาคาร/ช่องจ่าย)");
+        }
+
+        detail.NetPaymentAccountCode = code;
+        detail.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return await GetPayrollRunAsync(companyId, payrollRunId);
     }
 
     public async Task<PagedResponse<PayrollRunResponse>> GetPayrollRunsAsync(Guid companyId, PagedRequest request)
@@ -1914,10 +1978,12 @@ public class PayrollService : IPayrollService
                         advanceAccount.Id, 0, totalAdvanceRecovered, "หักคืนเงินทดรองจ่ายพนักงาน"));
                 }
 
-                // Cr: เงินสด/ธนาคาร (111) — เงินเดือนสุทธิ หักเงินทดรองที่เรียกคืน
-                // External import override → prefer run.NetPaymentAccountCode
+                // Cr: เงินสด/ธนาคาร (111) — เงินเดือนสุทธิ หักเงินทดรองที่เรียกคืน.
+                // แหล่งจ่ายรายคน: group ยอดสุทธิตาม PayrollDetail.NetPaymentAccountCode
+                // (fallback → run.NetPaymentAccountCode → default 11122/111x) →
+                // จ่ายแต่ละคนจากบัญชีของตัวเองได้ (ลง Cr หลายบรรทัดตามบัญชี).
                 var cashPaid = run.TotalNetPay - totalAdvanceRecovered;
-                var cashAccount = (!string.IsNullOrWhiteSpace(run.NetPaymentAccountCode)
+                var defaultCashAccount = (!string.IsNullOrWhiteSpace(run.NetPaymentAccountCode)
                         ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                             a.CompanyId == companyId && a.AccountCode == run.NetPaymentAccountCode
                             && a.IsActive && !a.IsDeleted)
@@ -1926,9 +1992,43 @@ public class PayrollService : IPayrollService
                     a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
                     ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
-                if (cashAccount != null)
-                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        cashAccount.Id, 0, cashPaid, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
+                if (defaultCashAccount != null)
+                {
+                    // resolve โค้ดแหล่งจ่ายรายคนทั้งหมด (cache ต่อโค้ด) — เฉพาะผังที่ใช้ได้
+                    var codeToAccount = new Dictionary<string, ChartOfAccount>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var code in run.Details
+                        .Select(d => d.NetPaymentAccountCode)
+                        .Where(c => !string.IsNullOrWhiteSpace(c))
+                        .Distinct(StringComparer.OrdinalIgnoreCase))
+                    {
+                        var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode == code
+                            && a.IsActive && !a.IsDeleted && a.Level >= 4);
+                        if (acc != null) codeToAccount[code!] = acc;
+                    }
+                    // จับยอดสุทธิรายคน (หลังหักเงินทดรอง) เข้าบัญชีจ่ายของแต่ละคน
+                    var byPayAccount = new Dictionary<Guid, (ChartOfAccount Acc, decimal Amt)>();
+                    foreach (var d in run.Details)
+                    {
+                        var net = d.NetPay - d.AdvanceRecovered;
+                        if (net == 0) continue;
+                        var acc = (!string.IsNullOrWhiteSpace(d.NetPaymentAccountCode)
+                                    && codeToAccount.TryGetValue(d.NetPaymentAccountCode!, out var a))
+                            ? a : defaultCashAccount;
+                        byPayAccount[acc.Id] = byPayAccount.TryGetValue(acc.Id, out var cur)
+                            ? (acc, cur.Amt + net) : (acc, net);
+                    }
+                    if (byPayAccount.Count == 0)
+                        // data เก่าไม่มี detail → ลงรวมบรรทัดเดียวเหมือนเดิม
+                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                            defaultCashAccount.Id, 0, cashPaid, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
+                    else
+                        foreach (var kv in byPayAccount.Values)
+                            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                                kv.Acc.Id, 0, kv.Amt,
+                                $"จ่ายเงินเดือน {run.Month}/{run.Year}"
+                                    + (byPayAccount.Count > 1 ? $" ({kv.Acc.AccountCode})" : "")));
+                }
 
                 if (lines.Count >= 2)
                 {
@@ -3065,7 +3165,8 @@ public class PayrollService : IPayrollService
             r.TotalWithholdingTax, r.TotalSocialSecurityEmployee,
             r.TotalSocialSecurityEmployer, r.EmployeeCount, r.CreatedAt,
             r.SsoSettledAt, r.SsoSettlementJournalEntryId, r.SsoFilingNumber,
-            r.SsoLateFeeAmount, r.TotalWorkersCompensation);
+            r.SsoLateFeeAmount, r.TotalWorkersCompensation,
+            Details: null, ExternalSystem: r.ExternalSystem, ExternalRunRef: r.ExternalRunRef);
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
         new(l.Id, l.EmployeeId, $"{e.FirstNameTh} {e.LastNameTh}",

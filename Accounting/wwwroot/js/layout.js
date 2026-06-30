@@ -984,32 +984,11 @@ const Layout = {
     tc.id = 'toastContainer';
     document.body.appendChild(tc);
 
-    // Floating Action Button (FAB) — universal shortcut to the two most
-    // common tasks (sell, expense) from any page. Sits in the bottom-right
-    // corner; expands into a small radial menu on tap. Hidden on the POS
-    // page (which has its own primary action) and on the auth pages.
-    const noFabPages = ['pos', 'pos-kds', 'login', 'register'];
-    if (!noFabPages.includes(this.currentPage)) {
-      const fab = document.createElement('div');
-      fab.id = 'globalFab';
-      fab.innerHTML = `
-        <div class="fab-menu" id="fabMenu" style="display:none">
-          <a class="fab-item" href="/pages/quick-sale.html" title="ขายเร็ว">
-            <span class="fab-ic">💰</span><span class="fab-lbl">ขายเร็ว</span>
-          </a>
-          <a class="fab-item" href="/pages/expense.html?noReceipt=1" title="เบิกค่าใช้จ่ายไม่มีใบเสร็จ">
-            <span class="fab-ic">📝</span><span class="fab-lbl">เบิกไม่มีบิล</span>
-          </a>
-          <a class="fab-item" href="/pages/expense.html" title="เบิกค่าใช้จ่ายมีใบเสร็จ">
-            <span class="fab-ic">🧾</span><span class="fab-lbl">เบิก (มีบิล)</span>
-          </a>
-          <a class="fab-item" href="/pages/document-scan.html" title="ถ่ายรูปบิล">
-            <span class="fab-ic">📸</span><span class="fab-lbl">ถ่ายรูปบิล</span>
-          </a>
-        </div>
-        <button class="fab-main" onclick="Layout._toggleFab()" title="ทำรายการเร็ว">＋</button>`;
-      document.body.appendChild(fab);
-
+    // Floating Action Button (FAB) ถูกถอดออกตามคำขอเจ้าของโปรเจกต์ —
+    // ปุ่ม "＋ Quick" ลอยมุมขวาล่างบังเนื้อหา/ปุ่มในหน้า. ทางลัดสร้างรายการ
+    // ยังเข้าถึงได้จาก sidebar + mobile bottom-nav ด้านล่าง. (_toggleFab()
+    // null-safe อยู่แล้วเมื่อไม่มี #fabMenu)
+    {
       // Mobile bottom-nav for Simple Mode — provides thumb-reachable nav on
       // phones where the sidebar is hidden behind the hamburger. Only renders
       // when uiMode=simple so power users keep their full sidebar UX.

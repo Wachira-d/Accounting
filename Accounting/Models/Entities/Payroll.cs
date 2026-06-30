@@ -254,6 +254,13 @@ public class PayrollDetail : TenantEntity
 
     public string? Remarks { get; set; }
     public string? BreakdownJson { get; set; }           // JSON of detailed breakdown
+
+    /// <summary>แหล่งจ่ายเงินสุทธิรายคน (AccountCode ของ ChartOfAccount เงินสด/
+    /// ธนาคาร/ช่องจ่ายอื่น). null = ใช้ค่าระดับ run (PayrollRun.NetPaymentAccountCode)
+    /// → fallback default 11122/111x. รับจาก import (PaymentAccountCode รายคน)
+    /// หรือผู้ใช้แก้ในหน้า run detail ก่อนจ่าย. ตอน Pay ระบบ group Cr เงินสด/
+    /// ธนาคารตามบัญชีนี้ → จ่ายแต่ละคนจากบัญชีของตัวเองได้.</summary>
+    public string? NetPaymentAccountCode { get; set; }
 }
 
 /// <summary>

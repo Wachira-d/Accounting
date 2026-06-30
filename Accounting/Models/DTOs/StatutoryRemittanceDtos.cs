@@ -53,6 +53,7 @@ public record RemitRequest(
     int PeriodMonth,
     DateTime PayDate,
     Guid? BankAccountId = null,   // BankAccount.Id → ใช้ LinkedAccountId เป็นผัง Cr
+    Guid? BankGlAccountId = null, // ChartOfAccount.Id (เงินสด/ธนาคาร/ช่องจ่ายอื่น) → ใช้เป็นผัง Cr ตรง ๆ
     string? FilingNumber = null,
     Guid? ReceiptAttachmentId = null,
     bool IncludeLateFee = true,   // ปกส. — รวมเงินเพิ่ม §49

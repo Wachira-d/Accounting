@@ -222,6 +222,24 @@ public class PayrollController : ControllerBase
         return Ok(new ApiResponse<PayrollDetailResponse>(true, await _service.GetPayrollDetailAsync(companyId, runId, employeeId)));
     }
 
+    /// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน (ก่อนจ่าย). accountCode=null/ว่าง =
+    /// กลับไปใช้ค่าระดับ run/default.</summary>
+    [HttpPut("runs/{runId:guid}/employees/{employeeId:guid}/payment-account")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> SetEmployeePaymentAccount(
+        Guid companyId, Guid runId, Guid employeeId, [FromBody] SetPaymentAccountRequest request)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            var res = await _service.SetEmployeePaymentAccountAsync(companyId, runId, employeeId, request.AccountCode);
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "อัปเดตแหล่งจ่ายรายคนแล้ว"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
+
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}/payslip")]
     public async Task<ActionResult> GetPayslip(Guid companyId, Guid runId, Guid employeeId)
     {
