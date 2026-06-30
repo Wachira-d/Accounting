@@ -1515,7 +1515,12 @@
        * แล้ว — คู่กับ openReclassifyLine (ฝั่ง Dr). ใช้แก้เคส OCR เลือกธนาคาร
        * ผิด. ระบบ post correcting-JE (Dr ผังเก่า / Cr ผังใหม่) ใต้ฉาก. */
       async openReclassifyPaymentSource(docId) {
-        const d = this.docs?.find(x => x.id === docId);
+        // ใช้เอกสารที่เปิด detail อยู่ (_currentDoc มี bankAccountId/paidAmount ครบ)
+        // ก่อน — list (this.docs) เป็น projection ที่อาจไม่มี field พวกนี้/ไม่มี
+        // doc นี้ → เดิม hard-return "ไม่พบเอกสาร" ทำให้แก้แหล่งเงินไม่ได้
+        const d = (this._currentDoc && this._currentDoc.id === docId)
+          ? this._currentDoc
+          : this.docs?.find(x => x.id === docId);
         if (!d) { Layout.toast('ไม่พบเอกสาร', 'error'); return; }
         this._rpsCtx = { docId };
         const api = Layout.api();
