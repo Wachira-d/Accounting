@@ -2584,55 +2584,142 @@ public class PayrollService : IPayrollService
 
         var emp = detail.Employee;
         var run = detail.PayrollRun;
-        var employeeName = $"{emp.TitleTh}{emp.FirstNameTh} {emp.LastNameTh}";
-        var fileName = $"Payslip_{emp.EmployeeCode}_{run.Year}{run.Month:D2}.pdf";
-
-        // Generate HTML payslip content
-        var sb = new StringBuilder();
-        sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'/>");
-        sb.AppendLine("<style>body{font-family:'THSarabunNew',sans-serif;font-size:14px;margin:20px;} table{width:100%;border-collapse:collapse;margin:10px 0;} td,th{border:1px solid #ccc;padding:6px 8px;} th{background:#4472C4;color:#fff;} .right{text-align:right;} .title{text-align:center;font-size:20px;font-weight:bold;margin-bottom:10px;} .section{font-weight:bold;background:#f0f0f0;} .total{font-weight:bold;background:#e8f0fe;}</style>");
-        sb.AppendLine("</head><body>");
-        sb.AppendLine($"<div class='title'>ใบสลิปเงินเดือน / Payslip</div>");
-        sb.AppendLine($"<div style='text-align:center;margin-bottom:15px;'>งวดเดือน {run.Month:D2}/{run.Year} | วันจ่าย {run.PayDate:dd/MM/yyyy}</div>");
-
-        // Employee info
-        sb.AppendLine("<table><tr><td><strong>รหัส:</strong> " + emp.EmployeeCode + "</td>");
-        sb.AppendLine($"<td><strong>ชื่อ:</strong> {employeeName}</td></tr>");
-        // Prefer the org-structure FK names; fall back to the legacy
-        // string fields so old employees without a Department/Position
-        // reference still print correctly.
+        var employeeName = $"{emp.TitleTh}{emp.FirstNameTh} {emp.LastNameTh}".Trim();
         var deptDisplay = emp.DepartmentRef?.Name ?? emp.Department ?? "-";
         var posDisplay = emp.PositionRef?.Title ?? emp.Position ?? "-";
-        sb.AppendLine($"<tr><td><strong>แผนก:</strong> {deptDisplay}</td>");
-        sb.AppendLine($"<td><strong>ตำแหน่ง:</strong> {posDisplay}</td></tr></table>");
 
-        // Earnings & Deductions side by side
-        sb.AppendLine("<table><thead><tr><th colspan='2'>รายได้ (Earnings)</th><th colspan='2'>รายการหัก (Deductions)</th></tr></thead><tbody>");
-        sb.AppendLine($"<tr><td>เงินเดือน</td><td class='right'>{detail.BaseSalary:N2}</td><td>ประกันสังคม</td><td class='right'>{detail.SocialSecurityEmployee:N2}</td></tr>");
-        sb.AppendLine($"<tr><td>ค่าล่วงเวลา</td><td class='right'>{detail.OvertimePay:N2}</td><td>ภาษีหัก ณ ที่จ่าย</td><td class='right'>{detail.WithholdingTax:N2}</td></tr>");
-        sb.AppendLine($"<tr><td>เบี้ยเลี้ยง</td><td class='right'>{detail.Allowances:N2}</td><td>กองทุนสำรองเลี้ยงชีพ</td><td class='right'>{detail.ProvidentFundEmployee:N2}</td></tr>");
-        sb.AppendLine($"<tr><td>คอมมิชชั่น</td><td class='right'>{detail.Commission:N2}</td><td>หักเงินกู้</td><td class='right'>{detail.LoanDeduction:N2}</td></tr>");
-        sb.AppendLine($"<tr><td>โบนัส</td><td class='right'>{detail.Bonus:N2}</td><td>หักอื่นๆ</td><td class='right'>{detail.OtherDeductions:N2}</td></tr>");
-        sb.AppendLine($"<tr class='total'><td>รวมรายได้</td><td class='right'>{detail.GrossIncome:N2}</td><td>รวมรายการหัก</td><td class='right'>{detail.TotalDeductions:N2}</td></tr>");
-        sb.AppendLine("</tbody></table>");
+        // โลโก้ + ธีมสีบริษัท (เอกสารตั้งค่า) — ใช้ทำหัวสลิปให้ตรง branding
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var primary = string.IsNullOrWhiteSpace(settings?.PrimaryColor) ? "#2563eb" : settings!.PrimaryColor!;
+        string? logoDataUri = _pdfService != null
+            ? await _pdfService.GetCompanyLogoDataUriAsync(companyId) : null;
 
-        // Net pay
-        sb.AppendLine($"<table><tr class='total'><td style='text-align:center;font-size:18px;'>เงินได้สุทธิ (Net Pay): {detail.NetPay:N2} บาท</td></tr></table>");
+        var htmlContent = BuildPayslipHtml(detail, emp, run, company, employeeName,
+            deptDisplay, posDisplay, primary, logoDataUri);
 
-        // YTD info
-        sb.AppendLine($"<table><tr><td>รายได้สะสม (YTD)</td><td class='right'>{detail.CumulativeIncomeYTD:N2}</td>");
-        sb.AppendLine($"<td>ภาษีสะสม (YTD)</td><td class='right'>{detail.CumulativeTaxYTD:N2}</td></tr></table>");
-
-        sb.AppendLine("</body></html>");
-
-        var htmlContent = sb.ToString();
-        var pdfContent = _pdfService != null
-            ? _pdfService.ConvertHtmlToPdfBytes(htmlContent)
+        // Render ผ่าน Chromium ก่อน (ดีไซน์ครบ) → fallback block parser พร้อมสีธีม
+        byte[] pdfContent = _pdfService != null
+            ? await _pdfService.RenderHtmlToPdfAsync(htmlContent, primary)
             : PdfGenerationService.ConvertHtmlToPdf(htmlContent, null);
 
+        // ชื่อไฟล์มีชื่อพนักงาน (ตามที่เจ้าของขอ) — sanitize อักขระต้องห้าม
+        var safeName = SanitizeFileToken(employeeName);
+        var fileName = $"สลิปเงินเดือน_{safeName}_{run.Month:D2}-{run.Year}.pdf";
+
         return new PayslipResponse(
-            employeeId, $"{emp.FirstNameTh} {emp.LastNameTh}",
-            run.Year, run.Month, pdfContent, fileName);
+            employeeId, employeeName, run.Year, run.Month, pdfContent, fileName);
+    }
+
+    private static readonly string[] _thMonthsFull = { "", "มกราคม", "กุมภาพันธ์", "มีนาคม",
+        "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม" };
+
+    /// <summary>ตัดอักขระที่ใช้เป็นชื่อไฟล์ไม่ได้ออก (กัน path traversal/HTTP header).</summary>
+    private static string SanitizeFileToken(string s)
+    {
+        var cleaned = new string((s ?? "").Select(ch =>
+            char.IsLetterOrDigit(ch) || ch == ' ' || ch == '-' || ch == '_'
+            || (ch >= '฀' && ch <= '๿') ? ch : '_').ToArray()).Trim();
+        cleaned = cleaned.Replace(' ', '-');
+        return string.IsNullOrWhiteSpace(cleaned) ? "employee" : cleaned;
+    }
+
+    /// <summary>สลิปเงินเดือนดีไซน์ใหม่ — หัวแถบสีธีม + โลโก้บริษัท, การ์ดข้อมูล
+    /// พนักงาน, ตารางรายได้/รายการหักชัดเจน, กล่องเงินสุทธิเด่น. ออกแบบสำหรับ
+    /// headless Chromium (CSS เต็ม) และยัง degrade ได้บน block parser.</summary>
+    private static string BuildPayslipHtml(PayrollDetail d, Employee emp, PayrollRun run,
+        Company? company, string employeeName, string dept, string position,
+        string primary, string? logoDataUri)
+    {
+        string M(decimal v) => v.ToString("N2");
+        string Esc(string? s) => System.Net.WebUtility.HtmlEncode(s ?? "");
+        var periodTh = $"{_thMonthsFull[Math.Clamp(run.Month, 1, 12)]} {run.Year + 543}";
+        var coName = Esc(company?.Name ?? "บริษัท");
+        var coTax = string.IsNullOrWhiteSpace(company?.TaxId) ? "" : $"เลขประจำตัวผู้เสียภาษี {Esc(company!.TaxId)}";
+        var coAddr = Esc(company?.Address ?? "");
+
+        // แถวรายได้ (ซ่อนรายการที่เป็น 0 ยกเว้นเงินเดือนฐาน)
+        var earn = new List<(string, decimal)>
+        {
+            ("เงินเดือน", d.BaseSalary), ("ค่าล่วงเวลา", d.OvertimePay),
+            ("เบี้ยเลี้ยง / ค่าครองชีพ", d.Allowances), ("คอมมิชชัน", d.Commission),
+            ("โบนัส", d.Bonus), ("รายได้อื่น", d.OtherIncome),
+        };
+        var ded = new List<(string, decimal)>
+        {
+            ("ประกันสังคม", d.SocialSecurityEmployee), ("ภาษีหัก ณ ที่จ่าย", d.WithholdingTax),
+            ("กองทุนสำรองเลี้ยงชีพ", d.ProvidentFundEmployee), ("หักเงินกู้", d.LoanDeduction),
+            ("หักอื่น ๆ", d.OtherDeductions),
+        };
+        string Rows(List<(string Label, decimal Val)> items) => string.Concat(
+            items.Where((x, i) => i == 0 || x.Val != 0).Select(x =>
+                $"<tr><td class='lbl'>{Esc(x.Label)}</td><td class='amt'>{M(x.Val)}</td></tr>"));
+
+        return $@"<!DOCTYPE html><html lang='th'><head><meta charset='utf-8'/>
+<style>
+  *{{box-sizing:border-box;}}
+  body{{font-family:'Sarabun','TH Sarabun New','Noto Sans Thai',sans-serif;font-size:13px;color:#1e293b;margin:0;padding:24px;}}
+  .doc{{max-width:720px;margin:0 auto;}}
+  .hdr{{display:flex;justify-content:space-between;align-items:center;background:{primary};color:#fff;border-radius:12px 12px 0 0;padding:18px 24px;}}
+  .hdr .co{{display:flex;align-items:center;gap:14px;}}
+  .hdr img{{height:46px;width:auto;background:#fff;border-radius:8px;padding:4px;}}
+  .hdr .co-name{{font-size:18px;font-weight:700;line-height:1.25;}}
+  .hdr .co-sub{{font-size:11px;opacity:.9;font-weight:400;}}
+  .hdr .slip-t{{text-align:right;}}
+  .hdr .slip-t .t1{{font-size:17px;font-weight:700;}}
+  .hdr .slip-t .t2{{font-size:12px;opacity:.92;}}
+  .meta{{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#e2e8f0;border:1px solid #e2e8f0;}}
+  .meta .cell{{background:#f8fafc;padding:10px 14px;}}
+  .meta .k{{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;}}
+  .meta .v{{font-size:13px;font-weight:600;color:#0f172a;margin-top:2px;}}
+  .cols{{display:flex;gap:0;border:1px solid #e2e8f0;border-top:none;}}
+  .col{{flex:1;}}
+  .col + .col{{border-left:1px solid #e2e8f0;}}
+  .col h3{{margin:0;font-size:13px;font-weight:700;padding:10px 16px;background:#f1f5f9;color:#0f172a;border-bottom:1px solid #e2e8f0;}}
+  .col h3.earn{{color:{primary};}}
+  table.lines{{width:100%;border-collapse:collapse;}}
+  table.lines td{{padding:7px 16px;border-bottom:1px solid #f1f5f9;font-size:13px;}}
+  table.lines td.amt{{text-align:right;font-variant-numeric:tabular-nums;}}
+  .sub{{display:flex;justify-content:space-between;padding:10px 16px;font-weight:700;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:13px;}}
+  .sub .amt{{font-variant-numeric:tabular-nums;}}
+  .net{{display:flex;justify-content:space-between;align-items:center;background:{primary};color:#fff;
+        padding:16px 24px;border-radius:0 0 12px 12px;margin-top:0;}}
+  .net .lbl{{font-size:14px;font-weight:600;}}
+  .net .val{{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;}}
+  .ytd{{display:flex;gap:24px;justify-content:flex-end;margin-top:12px;font-size:11px;color:#64748b;}}
+  .ytd b{{color:#0f172a;font-variant-numeric:tabular-nums;}}
+  .foot{{margin-top:18px;text-align:center;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px;}}
+</style></head>
+<body><div class='doc'>
+  <div class='hdr'>
+    <div class='co'>
+      {(string.IsNullOrEmpty(logoDataUri) ? "" : $"<img src='{logoDataUri}' alt='logo'/>")}
+      <div><div class='co-name'>{coName}</div><div class='co-sub'>{coTax}{(string.IsNullOrEmpty(coAddr) ? "" : (string.IsNullOrEmpty(coTax) ? "" : " · ") + coAddr)}</div></div>
+    </div>
+    <div class='slip-t'><div class='t1'>สลิปเงินเดือน</div><div class='t2'>Payslip · {Esc(periodTh)}</div></div>
+  </div>
+  <div class='meta'>
+    <div class='cell'><div class='k'>พนักงาน</div><div class='v'>{Esc(employeeName)}</div></div>
+    <div class='cell'><div class='k'>รหัส</div><div class='v'>{Esc(emp.EmployeeCode)}</div></div>
+    <div class='cell'><div class='k'>แผนก / ตำแหน่ง</div><div class='v'>{Esc(dept)} · {Esc(position)}</div></div>
+    <div class='cell'><div class='k'>วันที่จ่าย</div><div class='v'>{run.PayDate:dd/MM/}{run.PayDate.Year + 543}</div></div>
+  </div>
+  <div class='cols'>
+    <div class='col'>
+      <h3 class='earn'>รายได้ (Earnings)</h3>
+      <table class='lines'>{Rows(earn)}</table>
+      <div class='sub'><span>รวมรายได้</span><span class='amt'>{M(d.GrossIncome)}</span></div>
+    </div>
+    <div class='col'>
+      <h3>รายการหัก (Deductions)</h3>
+      <table class='lines'>{Rows(ded)}</table>
+      <div class='sub'><span>รวมรายการหัก</span><span class='amt'>{M(d.TotalDeductions)}</span></div>
+    </div>
+  </div>
+  <div class='net'><span class='lbl'>เงินได้สุทธิ (Net Pay)</span><span class='val'>{M(d.NetPay)} ฿</span></div>
+  <div class='ytd'><span>รายได้สะสมทั้งปี (YTD): <b>{M(d.CumulativeIncomeYTD)}</b></span><span>ภาษีสะสมทั้งปี (YTD): <b>{M(d.CumulativeTaxYTD)}</b></span></div>
+  <div class='foot'>เอกสารนี้ออกโดยระบบ NextAcc · งวด {Esc(periodTh)} · พิมพ์เพื่อเก็บเป็นหลักฐานการรับเงินเดือน</div>
+</div></body></html>";
     }
 
     // ===== Leave =====

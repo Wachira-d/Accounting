@@ -759,6 +759,16 @@ getBankAccounts แยก). payroll.html viewRun โหลด getBankAccounts �
 OCR image และอ่านคีย์ access_token เท่านั้น. Program.cs OnMessageReceived: รับทั้ง
 access_token+token และ allow path ที่ลงท้าย /payslip._
 
+_รอบ 28 (สลิปเงินเดือน — แสดง inline + ดีไซน์ใหม่): (a) เดิม GetPayslip ส่ง
+File(bytes,ct,fileName) → Content-Disposition: attachment → เบราว์เซอร์ดาวน์โหลด
+แทนที่จะ render. แก้: download=false (default) → set inline + File ไม่มีชื่อไฟล์ →
+iframe โชว์; download=true → attachment ชื่อไฟล์มีชื่อพนักงาน (สลิปเงินเดือน_<ชื่อ>_
+MM-YYYY.pdf). หน้า payslip modal เพิ่มปุ่ม "⬇️ ดาวน์โหลด". (b) GeneratePayslipAsync
+สร้าง HTML ดีไซน์ใหม่ (หัวแถบสีธีม PrimaryColor + โลโก้ data-URI, การ์ดข้อมูล,
+ตารางรายได้/หัก, กล่อง Net Pay เด่น) → render ผ่าน IPdfGenerationService.
+RenderHtmlToPdfAsync (Chromium ก่อน → fallback block parser พร้อมสีธีม) +
+GetCompanyLogoDataUriAsync._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

@@ -324,7 +324,7 @@
       <div class="modal" style="max-width:800px">
         <div class="modal-header"><h3 class="modal-title">สลิปเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('payslipModal')">&times;</button></div>
         <div class="modal-body" style="padding:0"><iframe id="payslipFrame" style="width:100%;height:70vh;border:none"></iframe></div>
-        <div class="modal-footer"><button class="btn btn-primary" onclick="Page.printPayslip()" data-i18n="common.print">พิมพ์</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Page.downloadPayslip()">⬇️ ดาวน์โหลด</button><button class="btn btn-primary" onclick="Page.printPayslip()" data-i18n="common.print">พิมพ์</button></div>
       </div>
     </div>
   </div>
@@ -998,14 +998,26 @@ const Page = {
 
   showPayslip(runId, empId) {
     const api = Layout.api(); if (!api) return;
-    const url = api.getPayslip(runId, empId);
+    this._slip = { runId, empId };
     const token = localStorage.getItem('token');
-    document.getElementById('payslipFrame').src = url + '?token=' + token;
+    // inline render (server ส่ง Content-Disposition: inline)
+    document.getElementById('payslipFrame').src = api.getPayslip(runId, empId) + '?token=' + token;
     Layout.openModal('payslipModal');
   },
 
+  downloadPayslip() {
+    const api = Layout.api(); if (!api || !this._slip) return;
+    const token = localStorage.getItem('token');
+    // ?download=1 → server แนบไฟล์ (ชื่อไฟล์มีชื่อพนักงาน)
+    const a = document.createElement('a');
+    a.href = api.getPayslipDownload(this._slip.runId, this._slip.empId) + '&token=' + token;
+    a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  },
+
   printPayslip() {
-    document.getElementById('payslipFrame').contentWindow.print();
+    try { document.getElementById('payslipFrame').contentWindow.print(); }
+    catch { Layout.toast('พิมพ์ไม่ได้ — ลองดาวน์โหลดแล้วเปิดพิมพ์แทน', 'error'); }
   },
 
   // ===== Leaves =====
