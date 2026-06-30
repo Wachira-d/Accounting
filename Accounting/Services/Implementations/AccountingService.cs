@@ -605,6 +605,13 @@ public partial class AccountingService : IAccountingService
             .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
 
+        // Idempotent: CreateJournalEntryAsync สร้าง JE เป็น Posted ตั้งแต่แรกแล้ว
+        // (ไม่มีขั้น Draft แยก) — ผู้เรียกหลายที่ (payroll pay / settle SSO /
+        // severance / นำส่งภาษี) เรียก Post ตามหลัง Create เป็น pattern เดิม.
+        // ถ้า Posted อยู่แล้ว → no-op สำเร็จ (ไม่ throw) เพื่อให้ pattern นั้นทำงาน
+        // ได้. ยังคงโยน error สำหรับสถานะอื่น (Voided/Reversed) ที่ post ไม่ได้.
+        if (entry.Status == JournalEntryStatus.Posted)
+            return MapJournalEntryToResponse(entry);
         if (entry.Status != JournalEntryStatus.Draft)
             throw new InvalidOperationException("สามารถ post ได้เฉพาะใบสำคัญที่เป็น Draft เท่านั้น");
 

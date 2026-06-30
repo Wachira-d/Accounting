@@ -804,6 +804,13 @@ ReverseJournalEntryAsync (เช็ค _db.Database.CurrentTransaction — เ�
 ครอบ try/catch คืน 400 + ข้อความจริง (เดิม propagate ดิบ). แก้ทั้ง payroll pay +
 settle SSO + ทุก caller ที่ครอบ JE ด้วย tx._
 
+_รอบ 33 (post JE ซ้ำ — "post ได้เฉพาะ Draft"): หลังแก้ nested-tx (รอบ 32) โผล่บั๊ก
+ถัดมา — CreateJournalEntryAsync สร้าง JE เป็น Posted ตั้งแต่แรก (ไม่มีขั้น Draft) แต่
+ผู้เรียก 4 ที่ (payroll pay / settle SSO / severance / RemitAsync นำส่งภาษี) เรียก
+PostJournalEntryAsync ตามหลัง Create → post ใบที่ Posted แล้ว → throw. แก้:
+PostJournalEntryAsync เป็น idempotent — entry Posted อยู่แล้ว → no-op สำเร็จ (คืน
+response เดิม); Draft → post ปกติ; สถานะอื่น (Voided/Reversed) → ยัง throw._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
