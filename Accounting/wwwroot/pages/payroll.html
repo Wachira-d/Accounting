@@ -904,10 +904,16 @@ const Page = {
   async viewRun(id) {
     const api = Layout.api(); if (!api) return;
     try {
-      // โหลดช่องทางจ่าย (เงินสด/ธนาคาร/อื่นๆ) ครั้งเดียว — ใช้ทำ dropdown แหล่งจ่ายรายคน
+      // โหลดแหล่งจ่ายครั้งเดียว — ธนาคาร (getBankAccounts, value=LinkedAccountCode)
+      // + เงินสด/ช่องทางอื่น (getPaymentChannels ซึ่ง "ตัด 1112x ออก" จึงต้องใช้
+      // bank accounts มาเติมบัญชีธนาคารเอง)
       if (!this._payChannels) {
-        try { const pc = await api.getPaymentChannels(); this._payChannels = (pc && pc.data) || []; }
-        catch { this._payChannels = []; }
+        const [pc, ba] = await Promise.all([
+          api.getPaymentChannels().catch(() => ({ data: [] })),
+          api.getBankAccounts().catch(() => ({ data: [] })),
+        ]);
+        this._payChannels = (pc && pc.data) || [];
+        this._bankAccts = (ba && ba.data) || [];
       }
       const res = await api.getPayrollRun(id);
       const r = res.data;
@@ -915,9 +921,20 @@ const Page = {
       const details = r.details || r.employees || [];
       // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย (Calculated/Approved)
       const payEditable = r.status === 'Calculated' || r.status === 'Approved';
-      const payOpts = (cur) => ['<option value="">— ค่าเริ่มต้น (บัญชีบริษัท) —</option>']
-        .concat((this._payChannels || []).filter(a => !(a.accountCode || '').startsWith('1112'))
-          .map(a => `<option value="${Layout.esc(a.accountCode)}" ${cur === a.accountCode ? 'selected' : ''}>${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`)).join('');
+      const payOpts = (cur) => {
+        let h = '<option value="">— ค่าเริ่มต้น (บัญชีบริษัท) —</option>';
+        const banks = (this._bankAccts || []).filter(b => b.linkedAccountCode);
+        if (banks.length) {
+          h += '<optgroup label="บัญชีธนาคาร">' + banks.map(b =>
+            `<option value="${Layout.esc(b.linkedAccountCode)}" ${cur === b.linkedAccountCode ? 'selected' : ''}>${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')} (${Layout.esc(b.linkedAccountCode)})</option>`).join('') + '</optgroup>';
+        }
+        const ch = this._payChannels || [];
+        if (ch.length) {
+          h += '<optgroup label="เงินสด / ช่องทางอื่น">' + ch.map(a =>
+            `<option value="${Layout.esc(a.accountCode)}" ${cur === a.accountCode ? 'selected' : ''}>${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') + '</optgroup>';
+        }
+        return h;
+      };
       document.getElementById('runDetailContent').innerHTML = `
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:16px;margin-bottom:20px">
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">งวด</div><div class="font-medium">${r.month}/${r.year}</div></div>

@@ -751,6 +751,14 @@ _รอบ 26 (แหล่งจ่ายเงินรายคน): เด�
 ผ่าน PUT /payroll/runs/{id}/employees/{empId}/payment-account (validate 111x/1133/2123)
 → หน้า run detail dropdown ราย row. PayrollRunLineDto เพิ่ม NetPaymentAccountCode._
 
+_รอบ 27 (แก้ 2 จุดหน้า run detail): (a) dropdown แหล่งจ่ายรายคน "ไม่มีบัญชีธนาคาร" —
+GetPaymentChannelAccountsAsync ตัด 1112x (ธนาคาร) ออกโดยตั้งใจ (ธนาคารมาจาก
+getBankAccounts แยก). payroll.html viewRun โหลด getBankAccounts ด้วย → optgroup
+"บัญชีธนาคาร" (value = LinkedAccountCode) + "เงินสด/ช่องทางอื่น" (payment channels).
+(b) ดูสลิปไม่ขึ้น — iframe payslip ส่ง ?token= แต่ JWT รับ query-token เฉพาะ /hubs +
+OCR image และอ่านคีย์ access_token เท่านั้น. Program.cs OnMessageReceived: รับทั้ง
+access_token+token และ allow path ที่ลงท้าย /payslip._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
