@@ -776,6 +776,14 @@ _รอบ 29 (ดู JE ของรอบเงินเดือน): กา�
 journals.html?entryId={id} (เปิด JE detail ตรง). สลิป = หลักฐานพนักงาน (HR), JE =
 บันทึกบัญชีการจ่าย — แยกหน้าที่กัน._
 
+_รอบ 30 (แก้ยอดรายคนก่อนจ่าย): เดิมไม่มีทางแก้ยอดรายคน (Calculate ทำเฉพาะ Draft +
+ลบ detail คำนวณใหม่; import เป็น Calculated). เพิ่ม UpdatePayrollDetailAsync +
+PUT /payroll/runs/{id}/employees/{empId}/detail (UpdatePayrollDetailRequest, field
+nullable แก้เฉพาะที่ส่ง) — อนุญาตเฉพาะ Calculated/Approved, รวม Gross/หัก/สุทธิ +
+run totals ใหม่, กันสุทธิติดลบ, ปัดค่าติดลบเป็น 0. PayrollRunLineDto ขยายเป็น raw
+fields ครบ (commission/otherIncome/PVD/loan/SSO นายจ้าง) เพื่อ pre-fill ตัวแก้.
+payroll.html run detail: ปุ่ม "✏️ แก้ยอด" ราย row → โมดัลแก้ทีละช่อง + รวมสุทธิ live._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

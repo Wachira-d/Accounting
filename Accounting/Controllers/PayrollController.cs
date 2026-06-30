@@ -240,6 +240,24 @@ public class PayrollController : ControllerBase
         }
     }
 
+    /// <summary>แก้ยอดรายคนในรอบ (ก่อนจ่าย) — อัปเดตเฉพาะ field ที่ส่งมา +
+    /// รวม Gross/หัก/สุทธิ และ run totals ใหม่.</summary>
+    [HttpPut("runs/{runId:guid}/employees/{employeeId:guid}/detail")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> UpdateDetail(
+        Guid companyId, Guid runId, Guid employeeId, [FromBody] UpdatePayrollDetailRequest request)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        try
+        {
+            var res = await _service.UpdatePayrollDetailAsync(companyId, runId, employeeId, request, User.Identity?.Name ?? "");
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "แก้ยอดรายคนแล้ว"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
+
     /// <summary>สลิปเงินเดือน PDF. download=false (ค่าเริ่มต้น) → แสดง inline ใน
     /// iframe; download=true → แนบไฟล์ให้โหลด (ชื่อไฟล์มีชื่อพนักงาน).</summary>
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}/payslip")]

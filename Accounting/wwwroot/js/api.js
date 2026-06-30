@@ -585,6 +585,7 @@ const API = {
       getPayslip: (runId, empId) => `${base}/payroll/runs/${runId}/employees/${empId}/payslip`,
       getPayslipDownload: (runId, empId) => `${base}/payroll/runs/${runId}/employees/${empId}/payslip?download=1`,
       setPayrollPaymentAccount: (runId, empId, accountCode) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/payment-account`, { accountCode }),
+      updatePayrollDetail: (runId, empId, body) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/detail`, body),
       getPayrollItems: () => API.get(`${base}/payroll/items`),
       createPayrollItem: (d) => API.post(`${base}/payroll/items`, d),
       getLeaves: (q = '') => API.get(`${base}/payroll/leaves${q}`),

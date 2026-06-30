@@ -1168,9 +1168,11 @@ public class PayrollService : IPayrollService
                 return new PayrollRunLineDto(
                     d.EmployeeId, string.IsNullOrWhiteSpace(name) ? "(ไม่ระบุชื่อ)" : name,
                     e?.EmployeeCode,
-                    d.BaseSalary, d.Allowances + d.OtherIncome + d.Commission, d.OvertimePay, d.Bonus,
-                    d.GrossIncome, d.WithholdingTax, d.SocialSecurityEmployee,
-                    d.WithholdingTax, d.OtherDeductions, d.NetPay,
+                    d.BaseSalary, d.OvertimePay, d.Allowances, d.Commission, d.Bonus, d.OtherIncome,
+                    d.GrossIncome,
+                    d.SocialSecurityEmployee, d.SocialSecurityEmployer, d.WithholdingTax,
+                    d.ProvidentFundEmployee, d.LoanDeduction, d.OtherDeductions,
+                    d.TotalDeductions, d.NetPay,
                     d.NetPaymentAccountCode);
             }).ToList();
         }
@@ -1210,6 +1212,65 @@ public class PayrollService : IPayrollService
         detail.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
+        return await GetPayrollRunAsync(companyId, payrollRunId);
+    }
+
+    public async Task<PayrollRunResponse> UpdatePayrollDetailAsync(Guid companyId,
+        Guid payrollRunId, Guid employeeId, UpdatePayrollDetailRequest req, string updatedBy)
+    {
+        var run = await _db.Set<PayrollRun>()
+            .Include(r => r.Details)
+            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
+        // แก้ยอดได้เฉพาะก่อนจ่าย — Paid แล้ว JE ออกไปแล้ว ต้อง void ก่อนถึงแก้
+        if (run.Status != "Calculated" && run.Status != "Approved")
+            throw new InvalidOperationException(
+                "แก้ยอดได้เฉพาะรอบที่ยังไม่จ่าย (Calculated/Approved) — ถ้าจ่ายแล้วต้อง void ก่อน");
+
+        var d = run.Details.FirstOrDefault(x => x.EmployeeId == employeeId)
+            ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
+
+        static decimal Pos(decimal v) => v < 0 ? 0 : v;
+        if (req.BaseSalary.HasValue) d.BaseSalary = Pos(req.BaseSalary.Value);
+        if (req.OvertimePay.HasValue) d.OvertimePay = Pos(req.OvertimePay.Value);
+        if (req.Allowances.HasValue) d.Allowances = Pos(req.Allowances.Value);
+        if (req.Commission.HasValue) d.Commission = Pos(req.Commission.Value);
+        if (req.Bonus.HasValue) d.Bonus = Pos(req.Bonus.Value);
+        if (req.OtherIncome.HasValue) d.OtherIncome = Pos(req.OtherIncome.Value);
+        if (req.SocialSecurityEmployee.HasValue) d.SocialSecurityEmployee = Pos(req.SocialSecurityEmployee.Value);
+        if (req.SocialSecurityEmployer.HasValue) d.SocialSecurityEmployer = Pos(req.SocialSecurityEmployer.Value);
+        if (req.WithholdingTax.HasValue) d.WithholdingTax = Pos(req.WithholdingTax.Value);
+        if (req.ProvidentFundEmployee.HasValue) d.ProvidentFundEmployee = Pos(req.ProvidentFundEmployee.Value);
+        if (req.LoanDeduction.HasValue) d.LoanDeduction = Pos(req.LoanDeduction.Value);
+        if (req.OtherDeductions.HasValue) d.OtherDeductions = Pos(req.OtherDeductions.Value);
+
+        // รวมยอดใหม่ — หักฝั่งลูกจ้างเท่านั้นที่กระทบ net (ปกส./PVD นายจ้าง = cost บริษัท)
+        d.GrossIncome = d.BaseSalary + d.OvertimePay + d.Allowances + d.Commission + d.Bonus + d.OtherIncome;
+        d.TaxableGross = d.GrossIncome;
+        d.TotalDeductions = d.SocialSecurityEmployee + d.WithholdingTax + d.ProvidentFundEmployee
+            + d.LoanDeduction + d.OtherDeductions;
+        d.NetPay = d.GrossIncome - d.TotalDeductions;
+        if (d.NetPay < 0)
+            throw new InvalidOperationException(
+                $"ยอดสุทธิติดลบ ({d.NetPay:N2}) — รายการหักรวมมากกว่ารายได้ ตรวจสอบยอดอีกครั้ง");
+        d.UpdatedAt = DateTime.UtcNow;
+
+        // รวม run totals ใหม่จาก details ทั้งหมด
+        run.TotalGrossSalary = run.Details.Sum(x => x.GrossIncome);
+        run.TotalWithholdingTax = run.Details.Sum(x => x.WithholdingTax);
+        run.TotalSocialSecurityEmployee = run.Details.Sum(x => x.SocialSecurityEmployee);
+        run.TotalSocialSecurityEmployer = run.Details.Sum(x => x.SocialSecurityEmployer);
+        run.TotalProvidentFundEmployee = run.Details.Sum(x => x.ProvidentFundEmployee);
+        run.TotalProvidentFundEmployer = run.Details.Sum(x => x.ProvidentFundEmployer);
+        run.TotalNetPay = run.Details.Sum(x => x.NetPay);
+        run.TotalDeductions = run.Details.Sum(x => x.TotalDeductions);
+        run.UpdatedBy = updatedBy;
+        run.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        _logger?.LogInformation("แก้ยอด payroll detail run {Run} emp {Emp} โดย {By} → net {Net}",
+            payrollRunId, employeeId, updatedBy, d.NetPay);
         return await GetPayrollRunAsync(companyId, payrollRunId);
     }
 

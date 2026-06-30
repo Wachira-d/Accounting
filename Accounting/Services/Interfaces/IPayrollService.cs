@@ -42,6 +42,9 @@ public interface IPayrollService
     /// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน (ก่อนจ่าย) — accountCode=null = กลับไปใช้
     /// ค่าระดับ run/default. คืน run ที่อัปเดตแล้ว (พร้อม Details).</summary>
     Task<PayrollRunResponse> SetEmployeePaymentAccountAsync(Guid companyId, Guid payrollRunId, Guid employeeId, string? accountCode);
+    /// <summary>แก้ยอดรายคน (ก่อนจ่าย) — อัปเดตเฉพาะ field ที่ส่งมา + รวม
+    /// Gross/หัก/สุทธิ และ run totals ใหม่. คืน run ที่อัปเดตแล้ว (พร้อม Details).</summary>
+    Task<PayrollRunResponse> UpdatePayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId, UpdatePayrollDetailRequest request, string updatedBy);
     Task<PagedResponse<PayrollRunResponse>> GetPayrollRunsAsync(Guid companyId, PagedRequest request);
     Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId);
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);

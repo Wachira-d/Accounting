@@ -180,15 +180,22 @@ public record PayrollRunLineDto(
     Guid EmployeeId,
     string EmployeeName,
     string? EmployeeCode,
+    // รายได้ (raw — ใช้ pre-fill ตัวแก้ยอด)
     decimal BaseSalary,
-    decimal Allowances,
     decimal OvertimePay,
+    decimal Allowances,
+    decimal Commission,
     decimal Bonus,
+    decimal OtherIncome,
     decimal GrossIncome,
-    decimal IncomeTax,
-    decimal SocialSecurity,
+    // รายการหัก
+    decimal SocialSecurityEmployee,
+    decimal SocialSecurityEmployer,
     decimal WithholdingTax,
+    decimal ProvidentFundEmployee,
+    decimal LoanDeduction,
     decimal OtherDeductions,
+    decimal TotalDeductions,
     decimal NetPay,
     // แหล่งจ่ายเงินสุทธิรายคน (AccountCode; null = ใช้ค่าระดับ run/default)
     string? NetPaymentAccountCode = null);
@@ -204,6 +211,22 @@ public record SettleSsoRequest(
 /// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน — AccountCode = ผังเงินสด/ธนาคาร/ช่อง
 /// จ่าย (null/ว่าง = ใช้ค่าระดับ run/default).</summary>
 public record SetPaymentAccountRequest(string? AccountCode);
+
+/// <summary>แก้ยอดรายคนในรอบ (ก่อนจ่าย). field ที่ส่งมา (HasValue) เท่านั้น
+/// ที่อัปเดต; ระบบรวม Gross/หัก/สุทธิ + run totals ใหม่ให้. ค่าติดลบถูกปัดเป็น 0.</summary>
+public record UpdatePayrollDetailRequest(
+    decimal? BaseSalary = null,
+    decimal? OvertimePay = null,
+    decimal? Allowances = null,
+    decimal? Commission = null,
+    decimal? Bonus = null,
+    decimal? OtherIncome = null,
+    decimal? SocialSecurityEmployee = null,
+    decimal? SocialSecurityEmployer = null,
+    decimal? WithholdingTax = null,
+    decimal? ProvidentFundEmployee = null,
+    decimal? LoanDeduction = null,
+    decimal? OtherDeductions = null);
 
 public record PayrollDetailResponse(
     Guid EmployeeId, string EmployeeCode, string EmployeeName,
