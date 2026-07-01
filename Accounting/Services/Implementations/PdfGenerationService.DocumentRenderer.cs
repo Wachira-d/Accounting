@@ -654,6 +654,16 @@ public partial class PdfGenerationService
                 tt.Span(t.BankDetailsText!).FontSize(10);
             });
 
+        // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — เดิมไม่ถูก
+        // render บน PDF (แสดงแต่ CustomFooterNotes). QuestPDF Text รองรับ \n →
+        // หมายเหตุหลายบรรทัดแสดงครบ.
+        if (!string.IsNullOrWhiteSpace(doc.Notes))
+            col.Item().PaddingTop(8).Text(tt =>
+            {
+                tt.Span("หมายเหตุ: ").Bold().FontSize(10).FontColor("#555");
+                tt.Span(doc.Notes!.Trim()).FontSize(10).FontColor("#555");
+            });
+
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes) ? doc.CustomFooterNotes : t.FooterNotes;
         if (!string.IsNullOrWhiteSpace(footerNotes))
             col.Item().PaddingTop(8).Text(footerNotes).FontSize(10).FontColor("#555");

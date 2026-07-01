@@ -847,6 +847,14 @@ reset). documents.html onContactChange → maybePreselectTaxInvoice: ลูก�
 + ชนิดปัจจุบัน Invoice → เปลี่ยนเป็น TaxInvoice อัตโนมัติ + เตือน §86/4 (TaxId/สาขา/
 ที่อยู่) ไม่ครบ. ไม่บังคับ — ยังเลือกชนิดเองได้/convert ได้เหมือนเดิม._
 
+_รอบ 39 (หมายเหตุขึ้น PDF + รายละเอียดหลายบรรทัด): (a) doc.Notes (หมายเหตุที่กรอกตอน
+สร้าง) เดิมไม่ถูก render บน PDF (โชว์แต่ CustomFooterNotes) — เพิ่ม render ทั้ง 2 path:
+RenderDocumentPdfNative (QuestPDF Text รองรับ \n) + BuildDocumentHtml (white-space:
+pre-line). (b) รายละเอียดรายการรองรับหลายบรรทัด: line desc input เปลี่ยนจาก <input>
+เป็น <textarea rows=1 auto-grow> (Enter=เว้นบรรทัด; ProductLookup ยัง select ด้วย Enter
+เมื่อ arrow-highlight เท่านั้น idx≥0 จึงไม่ชน); PDF cell + on-screen td ใช้ pre-line/Td
+.Text() render \n ครบ._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

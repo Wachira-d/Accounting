@@ -22,7 +22,7 @@
       display: flex; align-items: center; justify-content: center; margin-top: 6px;
     }
     .line-card .lc-desc-wrap { flex: 1 1 auto; min-width: 0; }
-    .line-card input.lc-desc { width: 100%; font-size: 15px; padding: 10px 12px; }
+    .line-card .lc-desc { width: 100%; font-size: 15px; padding: 10px 12px; resize: none; overflow: hidden; line-height: 1.4; font-family: inherit; }
     .line-card .lc-del {
       flex: 0 0 auto; background: none; border: 0; color: #ef4444;
       font-size: 18px; cursor: pointer; padding: 6px; line-height: 1;
@@ -56,7 +56,7 @@
     @media (max-width: 640px) {
       .line-card .lc-fields { grid-template-columns: repeat(2, 1fr); gap: 10px; }
       .line-card .lc-field input, .line-card .lc-field select { font-size: 16px; padding: 11px 12px; }
-      .line-card input.lc-desc { font-size: 16px; padding: 12px; }
+      .line-card .lc-desc { font-size: 16px; padding: 12px; }
       .line-card .lc-field > label { font-size: 12px; }
     }
     /* Desktop: claim + wht slightly narrower */
@@ -1400,7 +1400,9 @@
         (payload.lines || []).forEach(l => {
           this.addLine();
           const row = document.getElementById('linesBody').lastElementChild;
-          row.querySelector('[data-f="desc"]').value = l.description || '';
+          const descEl = row.querySelector('[data-f="desc"]');
+          descEl.value = l.description || '';
+          descEl.__grow?.();   // ขยายความสูง textarea ตามเนื้อหาที่โหลดมา
           row.querySelector('[data-f="qty"]').value = l.quantity ?? 1;
           const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
           row.querySelector('[data-f="price"]').value = l.unitPrice ?? 0;
@@ -1611,7 +1613,7 @@
                   <td><span style="font-family:ui-monospace,monospace;font-size:11px">${acc ? '<b>'+this.escapeHtml(acc.accountCode)+'</b> '+this.escapeHtml(acc.accountName.substring(0,30)) : r.accountId.substring(0,8)}</span></td>
                   <td class="text-right">${Number(r.debitAmount) > 0 ? Layout.money(r.debitAmount) : '-'}</td>
                   <td class="text-right">${Number(r.creditAmount) > 0 ? Layout.money(r.creditAmount) : '-'}</td>
-                  <td>${this.escapeHtml(r.description || '')}</td>
+                  <td style="white-space:pre-line">${this.escapeHtml(r.description || '')}</td>
                 </tr>`;
               }).join('')}</tbody>
               <tfoot><tr style="background:var(--gray-50);font-weight:700">
@@ -3494,7 +3496,7 @@
           <div class="lc-desc-row">
             <div class="lc-num">${i + 1}</div>
             <div class="lc-desc-wrap">
-              <input type="text" class="form-input lc-desc" data-f="desc" placeholder="พิมพ์ชื่อสินค้า/บริการ… (≥2 ตัวอักษรเพื่อค้นหา)">
+              <textarea class="form-input lc-desc" data-f="desc" rows="1" placeholder="พิมพ์ชื่อสินค้า/บริการ… (Enter เว้นบรรทัดได้, ≥2 ตัวอักษรเพื่อค้นหา)"></textarea>
             </div>
             <button type="button" class="lc-del" title="ลบรายการนี้" onclick="this.closest('.line-card').remove();Page.calcSum()">✕</button>
           </div>
@@ -3543,6 +3545,11 @@
           </div>`;
         document.getElementById('linesBody').appendChild(row);
         const descInput = row.querySelector('[data-f="desc"]');
+        // auto-grow textarea (รองรับรายละเอียดหลายบรรทัด) — ขยายสูงตามเนื้อหา
+        const _growDesc = () => { descInput.style.height = 'auto'; descInput.style.height = descInput.scrollHeight + 'px'; };
+        descInput.addEventListener('input', _growDesc);
+        descInput.__grow = _growDesc;   // ให้ fillRow เรียกได้หลังเซ็ตค่า
+        setTimeout(_growDesc, 0);
         // VAT-claimability heuristic: ตรวจจากคำในรายการ → ติ๊ก
         // 🚫 อัตโนมัติเมื่อมีคำที่บ่งบอกค่าใช้จ่ายต้องห้าม
         // §82/5 (น้ำมัน / รถยนต์ / รับรอง / ฯลฯ). ใช้กับ doc ฝั่งซื้อ

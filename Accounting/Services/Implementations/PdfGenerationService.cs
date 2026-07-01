@@ -915,7 +915,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 : line.Amount;
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
-            sb.AppendLine($"<td>{line.Description}</td>");
+            sb.AppendLine($"<td style='white-space:pre-line'>{line.Description}</td>");
             sb.AppendLine($"<td class='right'>{line.Quantity:N2}</td>");
             if (template.ShowUnit) sb.AppendLine($"<td class='center'>{line.Unit}</td>");
             sb.AppendLine($"<td class='right'>{line.UnitPrice:N2}</td>");
@@ -975,6 +975,11 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         if (template.ShowBankDetails && template.BankDetailsText != null)
             sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{template.BankDetailsText}</div>");
+
+        // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — white-space:
+        // pre-line ให้ \n แสดงเป็นหลายบรรทัด
+        if (!string.IsNullOrWhiteSpace(doc.Notes))
+            sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>หมายเหตุ:</strong> {System.Net.WebUtility.HtmlEncode(doc.Notes.Trim())}</div>");
 
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes
