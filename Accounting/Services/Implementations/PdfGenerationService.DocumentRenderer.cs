@@ -53,6 +53,17 @@ public partial class PdfGenerationService
         }
         if (doc.IsDeposit)
             titleText += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
+        // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบกำกับ/ใบเสร็จภาษี. สำเนา
+        // ใช้ WatermarkOverride ("สำเนา") ตอนสั่งพิมพ์สำเนา → ไม่ต้องมีป้ายซ้อน.
+        var isRd864Doc = doc.DocumentType is Accounting.Models.Enums.DocumentType.TaxInvoice
+                or Accounting.Models.Enums.DocumentType.DebitNote
+                or Accounting.Models.Enums.DocumentType.CreditNote
+            || ((doc.DocumentType is Accounting.Models.Enums.DocumentType.Receipt
+                    or Accounting.Models.Enums.DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
+        var isCopyPrint = !string.IsNullOrWhiteSpace(b.WatermarkText)
+            && (b.WatermarkText!.Contains("สำเนา") || b.WatermarkText.Contains("COPY", StringComparison.OrdinalIgnoreCase));
+        if (isRd864Doc && template.CustomTitle == null && !isCopyPrint)
+            titleText += lang == "en" ? "  (Original)" : "  (ต้นฉบับ)";
 
         try
         {

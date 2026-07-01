@@ -1794,12 +1794,17 @@ public class DocumentService : IDocumentService
         // ใบกำกับที่ไม่ครบ §86/4 หลุดเข้า GL → ลูกค้ารับใบไปใช้ภาษีซื้อไม่ได้.
         var rd864Types = new[] { DocumentType.TaxInvoice, DocumentType.Receipt,
             DocumentType.DebitNote, DocumentType.CreditNote };
+        // default = บังคับ (เดิม opt-in default off → ใบกำกับไม่ครบหลุดเข้า GL).
         var enforce864 = await _db.CompanySettings.AsNoTracking()
             .Where(c => c.CompanyId == companyId && !c.IsDeleted)
             .Select(c => (bool?)c.EnforceFullTaxInvoiceFields)
-            .FirstOrDefaultAsync() ?? false;
-        if (enforce864 && rd864Types.Contains(doc.DocumentType) && doc.VatAmount > 0
-            && doc.Contact != null)
+            .FirstOrDefaultAsync() ?? true;
+        // ใบกำกับภาษี (TaxInvoice) เป็นเอกสาร §86/4 ตามกฎหมาย → บังคับ field ผู้ซื้อ
+        // เสมอ ไม่ว่า flag (opt-out ได้เฉพาะ Receipt/CN/DN). ใบที่ไม่ครบ = ลูกค้า
+        // เคลมภาษีซื้อไม่ได้.
+        var mustEnforce864 = doc.DocumentType == DocumentType.TaxInvoice
+            || (enforce864 && rd864Types.Contains(doc.DocumentType));
+        if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null)
         {
             var missing = new List<string>();
             var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();

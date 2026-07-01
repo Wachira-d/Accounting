@@ -861,6 +861,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (doc.IsDeposit)
             title += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
+        // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
+        var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
+                or DocumentType.DebitNote or DocumentType.CreditNote
+            || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
+        var isCopyPrint = !string.IsNullOrWhiteSpace(watermark)
+            && (watermark!.Contains("สำเนา") || watermark.Contains("COPY", StringComparison.OrdinalIgnoreCase));
+        if (isRd864Doc && template.CustomTitle == null && !isCopyPrint)
+            title += lang == "en" ? " (Original)" : " (ต้นฉบับ)";
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
 
         // Document Info
