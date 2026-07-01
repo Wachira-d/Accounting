@@ -872,6 +872,15 @@ QuestPDF background) + isCopyPrint ตัดป้าย "(ต้นฉบับ
 สำเนา=ผู้ขายเก็บ (retention 5 ปี §87/3). จำเป็นเฉพาะเอกสารภาษี (ใบกำกับ/ใบเสร็จ
 VAT/CN/DN); เอกสารทั่วไป (ใบแจ้งหนี้/เสนอราคา/ส่งของ) ไม่บังคับ._
 
+_รอบ 42 (audit เชิงลึก convert/void/CN — verify แล้วแก้ 5 จุด): (a) ConvertCoreAsync
+คงสกุลเงิน+เรตต้นทาง (เดิม default THB). (b) ValidateConversionAsync กันแปลงซ้ำเป็น
+Invoice/TaxInvoice (1 ต้นทาง=1 ใบรับรู้รายได้ กัน double VAT/ภพ.30). (c) VoidDocumentAsync
+block เมื่อมีเอกสารลูก active อ้างอยู่ (กัน orphan + ครอบเคสลูกมี e-Tax ยื่น RD).
+(d) Void เพิ่ม FOR UPDATE lock + re-read สถานะ (กัน double-void race → reverse JE ซ้ำ).
+(e) §86/10 CN cumulative cap: SUM(CN)≤source.TotalAmount (โหมดคืนเงินสดเดิมไม่ cap).
+หมายเหตุ: ภพ.30 สร้างแบบ on-demand จาก documents (อ่านสด ตาม TaxPointDate) —
+สะท้อน CN/DN/void ถูกต้องอยู่แล้ว ไม่ต้องมี TaxReportLine incremental._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
