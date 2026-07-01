@@ -2037,6 +2037,12 @@ public class DocumentService : IDocumentService
                 await ApplyProjectBillingAsync(companyId, doc, +1);
                 await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
 
+                // supersede ใบแจ้งหนี้ต้นทาง: TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved,
+                // ยังไม่ชำระ) เมื่ออนุมัติ → ล้างใบแจ้งหนี้เดิม (reverse JE + คืน stock +
+                // กลับ project) กัน GL/รายได้/สต๊อกซ้ำ (ภพ.30 นับเฉพาะ TaxInvoice อยู่แล้ว).
+                if (doc.DocumentType == DocumentType.TaxInvoice && doc.RelatedDocumentId.HasValue)
+                    await SupersedeSourceInvoiceAsync(companyId, doc, approvedBy);
+
                 // บังคับลงทะเบียนสินทรัพย์ — บรรทัดที่ลงผัง PPE (12xxx) ต้องมี
                 // ทะเบียนสินทรัพย์ + ตารางค่าเสื่อม (TFRS บทที่ 10 + §65 ตรี (5)).
                 // auto-create ด้วยค่า default (อายุ/วิธีตามประเภท) NeedsReview=true
@@ -5568,6 +5574,44 @@ public class DocumentService : IDocumentService
     /// rolls back both the document state and the stock delta. Without
     /// this, sale Invoices left stock untouched and reconciling inventory
     /// to GL revenue required manual stock adjustments every period.</summary>
+    /// <summary>เมื่อ TaxInvoice ที่แปลงมาจากใบแจ้งหนี้ (Invoice) ถูกอนุมัติ →
+    /// supersede ใบแจ้งหนี้ต้นทาง: reverse JE + คืน stock + กลับ project billing +
+    /// set Voided กัน GL/รายได้/สต๊อกซ้ำ. เฉพาะใบแจ้งหนี้ approved + ยังไม่ชำระ +
+    /// ไม่มีลูก active อื่น. ทำใน transaction ของ ApproveDocumentAsync (reversal
+    /// ambient-safe). ภพ.30 นับเฉพาะ TaxInvoice อยู่แล้ว → ไม่กระทบ.</summary>
+    private async Task SupersedeSourceInvoiceAsync(Guid companyId, Document taxInvoice, string actor)
+    {
+        var src = await _db.Documents.Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == taxInvoice.RelatedDocumentId!.Value && d.CompanyId == companyId);
+        if (src == null || src.DocumentType != DocumentType.Invoice) return;
+        if (src.Status != DocumentStatus.Approved && src.Status != DocumentStatus.Sent) return;
+        if (src.PaidAmount > 0.01m) return;   // ชำระแล้ว → ไม่ auto-supersede (กัน settlement หลุด)
+        // มีลูก active อื่นนอกจาก TaxInvoice นี้ → ไม่ supersede (ซับซ้อน)
+        var otherActiveChild = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == src.Id && d.Id != taxInvoice.Id
+            && !d.IsDeleted && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
+        if (otherActiveChild) return;
+
+        var jeIds = await _db.JournalEntries
+            .Where(j => j.SourceDocumentId == src.Id && j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null)
+            .Select(j => j.Id).ToListAsync();
+        foreach (var jeId in jeIds)
+            await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                reversalDate: DateTime.UtcNow.Date,
+                description: $"แทนที่ด้วยใบกำกับภาษี {taxInvoice.DocumentNumber}", systemTriggered: true);
+        // กลับ stock (sale OUT → คืนเข้า) + project billing (ลด)
+        await ApplyStockMovementsAsync(companyId, src, -1, actor);
+        await ApplyProjectBillingAsync(companyId, src, -1);
+
+        src.Status = DocumentStatus.Voided;
+        src.Notes = ((src.Notes ?? "") + $" [แทนที่ด้วยใบกำกับภาษี {taxInvoice.DocumentNumber}]").Trim();
+        src.UpdatedAt = DateTime.UtcNow;
+        src.UpdatedBy = actor;
+        _logger.LogInformation("Superseded Invoice {Src} by TaxInvoice {Tax} (reverse JE+stock+project)",
+            src.DocumentNumber, taxInvoice.DocumentNumber);
+    }
+
     private async Task ApplyStockMovementsAsync(Guid companyId, Document doc, int sign, string actor)
     {
         if (sign == 0) return;
