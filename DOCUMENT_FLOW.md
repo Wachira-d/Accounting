@@ -855,6 +855,16 @@ pre-line). (b) รายละเอียดรายการรองรั�
 เมื่อ arrow-highlight เท่านั้น idx≥0 จึงไม่ชน); PDF cell + on-screen td ใช้ pre-line/Td
 .Text() render \n ครบ._
 
+_รอบ 40 (ชุด invoice/tax-invoice ครบวงจร): (a) เครดิตเทอมต่อลูกค้า —
+Contact.PaymentDueDays/PaymentTerms → เติมวันครบกำหนดอัตโนมัติตอนสร้างเอกสารขาย.
+(b) §86/4 บังคับตอนอนุมัติ — enforce864 default true; TaxInvoice บังคับ field ผู้ซื้อ
+เสมอ (เลขภาษี13/ที่อยู่/สาขา5) ไม่ว่า flag → ใบไม่ครบ block. (c) ป้าย "ต้นฉบับ" บน PDF
+— ใบกำกับ/ใบเสร็จภาษี/CN/DN เติม "(ต้นฉบับ)" (สำเนา=WatermarkOverride) ทั้ง
+QuestPDF+HTML. (d) หัว PDF ต่อชนิด GetDocumentTitle ถูกต้องอยู่แล้ว. (e) auto-receipt:
+ชำระครบบน Invoice/TaxInvoice → prompt "ออกใบเสร็จรับเงิน" → convertDocument→Receipt
+(VAT รับรู้ที่ใบเดิม ไม่คิดซ้ำ). (f) e-Tax email 1-คลิก: ปุ่ม sendEtaxEmailOneClick =
+/etax/generate → sendEtaxByEmail (PDF/A-3+XML+CC สรรพากร)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

@@ -4711,6 +4711,7 @@
               && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')
               && !hasEtaxId) {
             actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
+            actions += ` <button class="btn btn-secondary" onclick="Page.sendEtaxEmailOneClick('${d.id}')" title="สร้าง e-Tax + ส่งอีเมลให้ลูกค้า (แนบ PDF/A-3 ฝัง XML + CC สรรพากร) ในคลิกเดียว">📧 ส่ง e-Tax อีเมล</button>`;
           }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
@@ -5008,6 +5009,25 @@
        * Useful when company-level auto-generation is off, or when the auto-run
        * failed (e.g. cert misconfigured) and the user fixed the issue.
        */
+      /** 1 คลิก: สร้าง e-Tax (XML ฝัง PDF/A-3) → ส่งอีเมลลูกค้า + CC สรรพากร */
+      async sendEtaxEmailOneClick(id) {
+        const d = this._currentDoc;
+        const defaultTo = d?.contactEmail || d?.contact?.email || d?.emailTo || '';
+        const to = window.prompt('ส่ง e-Tax ทางอีเมลไปยัง (อีเมลลูกค้า):', defaultTo);
+        if (!to) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังสร้าง e-Tax + ส่งอีเมล ...', 'info');
+          const companyId = Layout.getCompanyId();
+          const gen = await API.post(`/api/companies/${companyId}/etax/generate`, { documentId: id, signDigitally: false });
+          const etaxId = gen?.data?.id;
+          if (!etaxId) throw new Error(gen?.message || 'สร้าง e-Tax ไม่สำเร็จ');
+          await api.sendEtaxByEmail(etaxId, { to, includePdf: true, includeXml: true, includeRdTimestamp: true });
+          Layout.toast('ส่ง e-Tax ทางอีเมลสำเร็จ (แนบ PDF/A-3 + XML · CC สรรพากร)', 'success', 7000);
+          await this.detail(id);
+          await this.load();
+        } catch (e) { Layout.toast('ส่ง e-Tax อีเมลไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
+      },
       async generateEtax(id) {
         if (!confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้')) return;
         try {
@@ -5366,10 +5386,16 @@
                 ? (parseFloat(document.getElementById('rpWht').value || '0') || 0)
                 : null,
             });
-            Layout.toast('บันทึกชำระเงินสำเร็จ — ระบบออกใบเสร็จและอัพเดทยอดคงค้างให้แล้ว', 'success');
+            Layout.toast('บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success');
             wrap.classList.remove('active');
             Layout.closeModal('detailModal');
             await this.load();
+            // ชำระครบ + เป็น Invoice/TaxInvoice → เสนอออกใบเสร็จรับเงิน (Receipt)
+            // ให้ลูกค้า (VAT รับรู้แล้วที่ใบเดิม — Receipt เป็นหลักฐานรับเงิน)
+            const _dt = this._currentDoc?.documentType;
+            if (amount >= (balanceDue - 0.01) && (_dt === 'Invoice' || _dt === 'TaxInvoice')) {
+              this._offerIssueReceipt(docId, _dt);
+            }
           } catch (e) {
             Layout.toast(e.message, 'error');
           } finally {
@@ -5378,6 +5404,20 @@
         };
         wrap.classList.add('active');
         setTimeout(() => amountEl.focus(), 50);
+      },
+      /** เสนอออกใบเสร็จรับเงิน (Receipt) หลังชำระครบ — แปลง Invoice/TaxInvoice
+       *  → Receipt อ้างอิงเอกสารเดิม. VAT รับรู้ที่ใบกำกับแล้ว ไม่คิดซ้ำ. */
+      async _offerIssueReceipt(docId, dt) {
+        const label = dt === 'TaxInvoice' ? 'ใบกำกับภาษี' : 'ใบแจ้งหนี้';
+        if (!window.confirm(`${label}นี้ชำระครบแล้ว\n\nต้องการออก “ใบเสร็จรับเงิน” ให้ลูกค้าเลยไหม?\n(ระบบจะสร้าง Receipt อ้างอิงเอกสารนี้ — VAT รับรู้แล้วที่ใบเดิม ไม่คิดซ้ำ)`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.convertDocument(docId, 'Receipt');
+          Layout.toast('ออกใบเสร็จรับเงินแล้ว (ฉบับร่าง) — ตรวจสอบแล้วกดอนุมัติเพื่อส่งลูกค้า', 'success', 7000);
+          const newId = r?.data?.id;
+          await this.load();
+          if (newId) this.detail(newId);
+        } catch (e) { Layout.toast('ออกใบเสร็จไม่สำเร็จ: ' + e.message, 'error', 8000); }
       },
       async writeOffBadDebt(id) {
         const api = Layout.api(); if (!api) return;
