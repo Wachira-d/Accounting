@@ -3439,6 +3439,20 @@ public class DocumentService : IDocumentService
         }
         else if (isCreditNote)
         {
+            // §86/10: SUM(ใบลดหนี้ทั้งหมดที่อ้างใบเดิม) ≤ ยอดใบกำกับต้นฉบับ — กัน
+            // ลดหนี้เกินยอดเดิม (โดยเฉพาะโหมดคืนเงินสดตอนใบเดิมชำระครบ ซึ่งเดิม
+            // ไม่มี cap เลย → ออก CN ทับกันเกินยอดขายได้).
+            var cnSiblingSum = await _db.Documents.AsNoTracking()
+                .Where(c => c.RelatedDocumentId == source.Id && c.Id != doc.Id
+                    && c.DocumentType == DocumentType.CreditNote
+                    && c.Status != DocumentStatus.Voided && c.Status != DocumentStatus.Rejected
+                    && c.Status != DocumentStatus.Draft && !c.IsDeleted)
+                .SumAsync(c => (decimal?)c.TotalAmount) ?? 0m;
+            if (cnSiblingSum + doc.TotalAmount > source.TotalAmount + 0.01m)
+                throw new InvalidOperationException(
+                    $"ยอดใบลดหนี้รวม ({cnSiblingSum + doc.TotalAmount:N2}) เกินยอดเอกสารต้นฉบับ " +
+                    $"{source.DocumentNumber} ({source.TotalAmount:N2}) — §86/10 ลดหนี้เกินยอดเดิมไม่ได้");
+
             // CN: validation depends on source state.
             // - If source still has BalanceDue > 0: CN reduces AR/AP, capped by BalanceDue
             // - If source fully paid (BalanceDue = 0): CN becomes cash refund — JE
