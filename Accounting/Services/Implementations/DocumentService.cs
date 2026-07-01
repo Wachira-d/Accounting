@@ -4151,6 +4151,8 @@ public class DocumentService : IDocumentService
             DefaultIrGrAccountId = request.DefaultIrGrAccountId,
             CreditLimit = request.CreditLimit,
             DefaultIssueTaxInvoice = request.DefaultIssueTaxInvoice,
+            PaymentDueDays = request.PaymentDueDays,
+            PaymentTerms = request.PaymentTerms,
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -4329,6 +4331,10 @@ public class DocumentService : IDocumentService
             contact.CreditLimit = request.CreditLimit.Value <= 0 ? null : request.CreditLimit.Value;
         if (request.DefaultIssueTaxInvoice.HasValue)
             contact.DefaultIssueTaxInvoice = request.DefaultIssueTaxInvoice.Value;
+        if (request.PaymentDueDays.HasValue)
+            contact.PaymentDueDays = request.PaymentDueDays.Value < 0 ? null : request.PaymentDueDays.Value;
+        if (request.PaymentTerms != null)
+            contact.PaymentTerms = string.IsNullOrWhiteSpace(request.PaymentTerms) ? null : request.PaymentTerms.Trim();
 
         await _db.SaveChangesAsync();
         // Reload with nav properties so MapContactToResponse can emit
@@ -6727,7 +6733,9 @@ public class DocumentService : IDocumentService
         DefaultIrGrAccountCode: c.DefaultIrGrAccount?.AccountCode,
         DefaultIrGrAccountName: c.DefaultIrGrAccount?.AccountName,
         CreditLimit: c.CreditLimit,
-        DefaultIssueTaxInvoice: c.DefaultIssueTaxInvoice);
+        DefaultIssueTaxInvoice: c.DefaultIssueTaxInvoice,
+        PaymentDueDays: c.PaymentDueDays,
+        PaymentTerms: c.PaymentTerms);
 
     // ==================== Smart Defaults ====================
 

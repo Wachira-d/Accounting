@@ -627,7 +627,10 @@ public record CreateContactRequest(
     Guid? DefaultIrGrAccountId = null,
     decimal? CreditLimit = null,
     // ลูกค้ารายนี้ออกใบกำกับภาษีเสมอ → pre-select TaxInvoice ตอนสร้างเอกสาร
-    bool DefaultIssueTaxInvoice = false);
+    bool DefaultIssueTaxInvoice = false,
+    // เครดิตเทอมต่อลูกค้า (วันเครดิต + ป้ายกำกับ)
+    int? PaymentDueDays = null,
+    string? PaymentTerms = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -655,7 +658,9 @@ public record UpdateContactRequest(
     Guid? DefaultApAccountId = null,
     Guid? DefaultIrGrAccountId = null,
     decimal? CreditLimit = null,
-    bool? DefaultIssueTaxInvoice = null);
+    bool? DefaultIssueTaxInvoice = null,
+    int? PaymentDueDays = null,
+    string? PaymentTerms = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -706,7 +711,9 @@ public record ContactResponse(
     string? DefaultIrGrAccountCode = null,
     string? DefaultIrGrAccountName = null,
     decimal? CreditLimit = null,
-    bool DefaultIssueTaxInvoice = false);
+    bool DefaultIssueTaxInvoice = false,
+    int? PaymentDueDays = null,
+    string? PaymentTerms = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);

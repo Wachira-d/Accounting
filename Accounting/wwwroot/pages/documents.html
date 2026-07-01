@@ -1838,12 +1838,27 @@
        *  ปัจจุบันเป็น "ใบแจ้งหนี้" ให้เปลี่ยนเป็น "ใบกำกับภาษี" อัตโนมัติ +
        *  เตือนถ้าข้อมูล §86/4 (เลขภาษี/สาขา/ที่อยู่) ไม่ครบ. */
       async maybePreselectTaxInvoice(contactId, c) {
-        let contact = c, flag = c?.defaultIssueTaxInvoice;
-        if (flag === undefined && contactId) {
-          try { const r = await Layout.api()?.getContact(contactId); contact = r?.data; flag = contact?.defaultIssueTaxInvoice; }
-          catch { return; }
+        let contact = c;
+        // ต้องมี field ครบ (defaultIssueTaxInvoice + paymentDueDays) — ถ้า cache
+        // ไม่มี ให้ fetch contact เต็ม 1 ครั้ง
+        if ((contact?.defaultIssueTaxInvoice === undefined || contact?.paymentDueDays === undefined) && contactId) {
+          try { const r = await Layout.api()?.getContact(contactId); contact = r?.data || contact; }
+          catch { contact = c; }
         }
-        if (!flag) return;
+        // เครดิตเทอมต่อลูกค้า → เติมวันครบกำหนด = วันที่เอกสาร + PaymentDueDays
+        // (ไม่ override ถ้า user แก้เองแล้ว — เติมเฉพาะตอนช่องยังว่าง)
+        const days = contact?.paymentDueDays;
+        if (typeof days === 'number' && days >= 0) {
+          const dueEl = document.getElementById('fDueDate');
+          const dateEl = document.getElementById('fDate');
+          const termsEl = document.getElementById('fPaymentTerms');
+          if (dueEl && !dueEl.value && dateEl?.value) {
+            const d = new Date(dateEl.value); d.setDate(d.getDate() + days);
+            if (!isNaN(d.getTime())) dueEl.value = d.toISOString().slice(0, 10);
+          }
+          if (termsEl && !termsEl.value) termsEl.value = contact?.paymentTerms || `Net ${days}`;
+        }
+        if (!contact?.defaultIssueTaxInvoice) return;
         const sel = document.getElementById('fDocType');
         if (sel && sel.value === 'Invoice') {
           sel.value = 'TaxInvoice';

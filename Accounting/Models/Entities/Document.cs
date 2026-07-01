@@ -519,6 +519,15 @@ public class Contact : TenantEntity
     /// ไม่ครบ. Default false = เลือกชนิดเอกสารเองตามปกติ.</summary>
     public bool DefaultIssueTaxInvoice { get; set; } = false;
 
+    /// <summary>เครดิตเทอมของลูกค้ารายนี้ — จำนวนวันเครดิต (เช่น 30 = Net 30).
+    /// null = ใช้ค่าเริ่มต้นบริษัท (CompanySettings.DefaultPaymentDueDays). เมื่อ
+    /// เลือก contact นี้ตอนสร้างเอกสารขาย ระบบเติม "วันครบกำหนด" = วันที่เอกสาร +
+    /// PaymentDueDays และ label เครดิตเทอมให้อัตโนมัติ.</summary>
+    public int? PaymentDueDays { get; set; }
+    /// <summary>ป้ายเครดิตเทอม (เช่น "Net 30", "เงินสด", "60 วัน") — free-text
+    /// override; ถ้าว่างระบบสร้างจาก PaymentDueDays ("Net {n}").</summary>
+    public string? PaymentTerms { get; set; }
+
     /// <summary>Loyalty points balance — earned per POS sale, redeemable next visit.
     /// Default earn rate = 1 point per ฿100, set on the company config later.</summary>
     public int LoyaltyPoints { get; set; } = 0;

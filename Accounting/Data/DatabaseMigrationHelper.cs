@@ -107,6 +107,9 @@ public static class DatabaseMigrationHelper
             """,
             // ลูกค้ารายนี้ออกใบกำกับภาษีเสมอ (pre-select TaxInvoice ตอนสร้างเอกสาร)
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultIssueTaxInvoice" boolean NOT NULL DEFAULT false;""",
+            // เครดิตเทอมต่อลูกค้า — เติมวันครบกำหนดอัตโนมัติตอนสร้างเอกสารขาย
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PaymentDueDays" integer NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PaymentTerms" varchar(100) NULL;""",
 
             // ===== Companies: structured address — add missing BuildingNumber/Name/StreetName =====
             """
