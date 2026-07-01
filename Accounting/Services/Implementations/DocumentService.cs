@@ -2621,12 +2621,41 @@ public class DocumentService : IDocumentService
                 $"ไม่สามารถยกเลิกเอกสารนี้ได้ เนื่องจาก e-Tax เลขที่ {lockedEtax.EtaxRefNumber} " +
                 "ถูกส่งหรืออนุมัติโดยกรมสรรพากรแล้ว ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
 
+        // กันยกเลิกเอกสารต้นทางที่มี "เอกสารลูก" active อ้างอยู่ (แปลงไปแล้ว เช่น
+        // Invoice→TaxInvoice/Receipt) — ยกเลิกต้นทางจะทำให้ลูกลอย (orphan): ภพ.30/
+        // e-Tax/ลูกหนี้อ้างเอกสารที่หายไป (รวมถึงเคสลูกมี e-Tax ยื่น RD แล้ว).
+        // ต้องยกเลิกลูกก่อน.
+        var activeChild = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == documentId
+                && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .Select(d => new { d.DocumentNumber, d.DocumentType })
+            .FirstOrDefaultAsync();
+        if (activeChild != null)
+            throw new InvalidOperationException(
+                $"ยกเลิกไม่ได้ — เอกสารนี้มีเอกสารลูก {activeChild.DocumentType} ({activeChild.DocumentNumber}) " +
+                "อ้างอิงอยู่ (เช่นใบกำกับภาษี/ใบเสร็จที่แปลงไป). กรุณายกเลิกเอกสารลูกก่อน");
+
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
+                // Row lock + re-read สถานะใต้ล็อก — กัน double-void race (2 คลิกพร้อมกัน
+                // → reverse JE ซ้ำ). ถ้าอีก request ยกเลิกไปแล้ว → no-op (idempotent).
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                    documentId, companyId);
+                var lockedStatus = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                    .Select(d => d.Status).FirstAsync();
+                if (lockedStatus == DocumentStatus.Voided)
+                {
+                    await transaction.RollbackAsync();
+                    return;
+                }
+
                 // 1) Void linked Payments first — each reverses its own JE + restores doc balance
                 //    (We void *all* payments inside this transaction; the document gets voided
                 //    after, so payment-balance recalculation here is intermediate only.)
@@ -3736,6 +3765,25 @@ public class DocumentService : IDocumentService
                     $"ตรวจพบวงกลมการแปลง: เอกสาร {ancestorMatch.DocumentNumber} ({(DocumentType)ancestorMatch.DocumentType}) เป็นบรรพบุรุษของเอกสารต้นทางอยู่แล้ว");
         }
 
+        // กันแปลงซ้ำเป็นเอกสารรับรู้รายได้ (Invoice/TaxInvoice) — 1 ต้นทางออกใบ
+        // รับรู้รายได้ได้ใบเดียว (เดิมไม่กัน → Invoice→TaxInvoice 2 ครั้ง = รายได้
+        // + ภาษีขายซ้ำ 2 เท่า, ภพ.30 นับซ้ำ). ยกเว้นใบที่ถูกยกเลิก/ปฏิเสธไปแล้ว.
+        if (targetType is DocumentType.Invoice or DocumentType.TaxInvoice)
+        {
+            var existingRevenueChild = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id
+                    && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .Select(d => new { d.DocumentNumber, d.DocumentType })
+                .FirstOrDefaultAsync();
+            if (existingRevenueChild != null)
+                throw new InvalidOperationException(
+                    $"เอกสารต้นทาง {source.DocumentNumber} แปลงเป็น {existingRevenueChild.DocumentType} " +
+                    $"({existingRevenueChild.DocumentNumber}) ไปแล้ว — แปลงซ้ำจะรับรู้รายได้/ภาษีขายซ้ำ. " +
+                    "ถ้าต้องการออกใหม่ ให้ยกเลิกใบเดิมก่อน");
+        }
+
         // For derivative types that adjust source's balance, source must be approved
         // and have outstanding balance.
         var derivativeTypes = new[] {
@@ -3780,7 +3828,11 @@ public class DocumentService : IDocumentService
             ProjectId: source.ProjectId,
             BankAccountId: source.BankAccountId,
             PaymentAccountId: source.PaymentAccountId,
-            ExpenseCategoryId: source.ExpenseCategoryId), createdBy);
+            ExpenseCategoryId: source.ExpenseCategoryId,
+            // คงสกุลเงิน + เรตของเอกสารต้นทาง (เดิมไม่ส่ง → default THB ทำให้เอกสาร
+            // ต่างสกุลเงินแปลงแล้วกลายเป็นบาท)
+            Currency: source.Currency,
+            ExchangeRate: source.ExchangeRate), createdBy);
 
         // Link new document to source + propagate appendix/contract metadata
         var created = await _db.Documents.FindAsync(newDoc.Id);
