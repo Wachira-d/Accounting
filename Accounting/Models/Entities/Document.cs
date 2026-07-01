@@ -53,6 +53,11 @@ public class Document : TenantEntity
     /// เมื่อ InputVatPostedAsUndue = true (เพื่อให้ตรงกับ JE จริง).</summary>
     public DateTime? InputVatBecameClaimableAt { get; set; }
 
+    /// <summary>§82/3: ภาษีซื้อที่ค้าง 11640 พ้น 6 เดือนโดยใบกำกับไม่ครบ → เคลม
+    /// ไม่ได้แล้ว ถูก reclassify เป็นค่าใช้จ่าย (Dr ค่าใช้จ่าย / Cr 11640) เมื่อ
+    /// timestamp นี้ถูกตั้ง. คู่กับ ReclassifyExpiredUndueInputVatAsync.</summary>
+    public DateTime? InputVatExpiredAt { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense
