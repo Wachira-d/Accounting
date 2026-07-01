@@ -840,6 +840,13 @@ openReclassifyPaymentSource หา doc จาก this.docs (list projection ท�
 openReclassifyLine ที่รับ args inline จึงไม่กระทบ. แก้: ใช้ this._currentDoc (เอกสารที่
 detail() เพิ่ง fetch มี field ครบ) ก่อน fallback this.docs._
 
+_รอบ 38 (ตั้งค่าต่อลูกค้า "ออกใบกำกับภาษีเสมอ"): Contact เพิ่ม
+DefaultIssueTaxInvoice (bool, migration) + Create/Update/ContactResponse DTO +
+MapContactToResponse. contacts.html เพิ่ม checkbox ในส่วนตั้งค่าบันทึกบัญชี (save/load/
+reset). documents.html onContactChange → maybePreselectTaxInvoice: ลูกค้าที่ flag=true
++ ชนิดปัจจุบัน Invoice → เปลี่ยนเป็น TaxInvoice อัตโนมัติ + เตือน §86/4 (TaxId/สาขา/
+ที่อยู่) ไม่ครบ. ไม่บังคับ — ยังเลือกชนิดเองได้/convert ได้เหมือนเดิม._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

@@ -1832,6 +1832,30 @@
        * either field; we only overwrite when the field is empty or matches the
        * previously generated template (so editing isn't clobbered).
        */
+      /** ลูกค้าที่ตั้งค่า Contact.DefaultIssueTaxInvoice=true → ถ้าชนิดเอกสาร
+       *  ปัจจุบันเป็น "ใบแจ้งหนี้" ให้เปลี่ยนเป็น "ใบกำกับภาษี" อัตโนมัติ +
+       *  เตือนถ้าข้อมูล §86/4 (เลขภาษี/สาขา/ที่อยู่) ไม่ครบ. */
+      async maybePreselectTaxInvoice(contactId, c) {
+        let contact = c, flag = c?.defaultIssueTaxInvoice;
+        if (flag === undefined && contactId) {
+          try { const r = await Layout.api()?.getContact(contactId); contact = r?.data; flag = contact?.defaultIssueTaxInvoice; }
+          catch { return; }
+        }
+        if (!flag) return;
+        const sel = document.getElementById('fDocType');
+        if (sel && sel.value === 'Invoice') {
+          sel.value = 'TaxInvoice';
+          this.onDocTypeChange?.();
+          Layout.toast('ลูกค้ารายนี้ตั้งค่า "ออกใบกำกับภาษีเสมอ" → เปลี่ยนเป็นใบกำกับภาษีให้แล้ว', 'success');
+        }
+        const missing = [];
+        if (!contact?.taxId) missing.push('เลขผู้เสียภาษี 13 หลัก');
+        if (!contact?.branchCode) missing.push('รหัสสาขา (00000=สนญ.)');
+        if (!(contact?.address || contact?.subDistrict || contact?.province)) missing.push('ที่อยู่');
+        if (missing.length)
+          Layout.toast('⚠️ ใบกำกับภาษี §86/4 ต้องมี: ' + missing.join(' · ') + ' — เติมข้อมูลลูกค้าก่อนอนุมัติ', 'error', 9000);
+      },
+
       onContactChange() {
         const contactId = document.getElementById('fContactId').value;
         const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
@@ -1868,6 +1892,8 @@
           if (isSales) {
             this.checkBadDebtRisk(contactId);
             this.suggestDiscount(contactId);
+            // ลูกค้าที่ตั้งค่า "ออกใบกำกับภาษีเสมอ" → เปลี่ยนชนิดเป็น TaxInvoice + เตือน §86/4
+            this.maybePreselectTaxInvoice(contactId, c);
             // เช็คมัดจำคงค้างของลูกค้านี้ — TaxInvoice/Invoice ดึงมาหักได้
             // (ApplyDepositToInvoiceAsync ใน backend) ก่อนหน้านี้มี endpoint
             // พร้อมแต่ UI ไม่เคยใช้ ผู้ใช้ต้องไปหน้า deposits manually

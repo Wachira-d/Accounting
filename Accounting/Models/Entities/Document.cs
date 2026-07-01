@@ -513,6 +513,12 @@ public class Contact : TenantEntity
     public Guid? DefaultIrGrAccountId { get; set; }
     public ChartOfAccount? DefaultIrGrAccount { get; set; }
 
+    /// <summary>ลูกค้ารายนี้ต้องออกเป็น "ใบกำกับภาษี" เสมอ (ลูกค้าจด VAT ที่ต้อง
+    /// เคลมภาษีซื้อ) — เมื่อเลือก contact นี้ตอนสร้างเอกสารขาย ระบบ pre-select
+    /// ชนิด TaxInvoice แทน Invoice + เตือนถ้าข้อมูล §86/4 (TaxId/สาขา/ที่อยู่)
+    /// ไม่ครบ. Default false = เลือกชนิดเอกสารเองตามปกติ.</summary>
+    public bool DefaultIssueTaxInvoice { get; set; } = false;
+
     /// <summary>Loyalty points balance — earned per POS sale, redeemable next visit.
     /// Default earn rate = 1 point per ฿100, set on the company config later.</summary>
     public int LoyaltyPoints { get; set; } = 0;

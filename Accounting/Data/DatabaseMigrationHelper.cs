@@ -105,6 +105,8 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "CountryCode" varchar(3) NOT NULL DEFAULT 'TH';
             """,
+            // ลูกค้ารายนี้ออกใบกำกับภาษีเสมอ (pre-select TaxInvoice ตอนสร้างเอกสาร)
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultIssueTaxInvoice" boolean NOT NULL DEFAULT false;""",
 
             // ===== Companies: structured address — add missing BuildingNumber/Name/StreetName =====
             """

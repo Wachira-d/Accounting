@@ -150,6 +150,14 @@
                keep system behaviour. -->
           <div style="margin-top:16px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
             <div style="font-weight:600;color:#1e293b;margin-bottom:10px">⚙️ ตั้งค่าการบันทึกบัญชี</div>
+            <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:12px;cursor:pointer">
+              <input type="checkbox" id="fDefaultIssueTaxInvoice" style="margin-top:3px">
+              <span style="font-size:13px;line-height:1.4">
+                <b>ออกใบกำกับภาษีเสมอ</b> — เมื่อเลือกลูกค้ารายนี้ตอนสร้างเอกสารขาย ระบบจะตั้งชนิดเป็น
+                <b>ใบกำกับภาษี</b> ให้อัตโนมัติ (แทนใบแจ้งหนี้) และเตือนถ้าข้อมูล §86/4 (เลขภาษี/สาขา/ที่อยู่) ไม่ครบ
+                <span style="display:block;color:#64748b;font-size:11px;margin-top:2px">เหมาะกับลูกค้าจด VAT ที่ต้องใช้ใบกำกับเคลมภาษีซื้อ</span>
+              </span>
+            </label>
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
@@ -588,6 +596,7 @@
         ['fDefaultArAccount','fDefaultApAccount','fDefaultIrGrAccount'].forEach(id => {
           const el = document.getElementById(id); if (el) el.value = '';
         });
+        const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice'); if (taxInvChk) taxInvChk.checked = false;
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = 'none';
         this.onContactTypeChange();
         Layout.openModal('formModal');
@@ -642,6 +651,8 @@
         if (apSel) apSel.value = c.defaultApAccountId || '';
         const grirSel = document.getElementById('fDefaultIrGrAccount');
         if (grirSel) grirSel.value = c.defaultIrGrAccountId || '';
+        const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice');
+        if (taxInvChk) taxInvChk.checked = !!c.defaultIssueTaxInvoice;
         document.getElementById('fJuristicId').value = '';
         document.getElementById('fJuristicType').value = '';
         document.getElementById('fRegisteredCapital').value = '';
@@ -752,6 +763,7 @@
           defaultArAccountId: document.getElementById('fDefaultArAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
           defaultApAccountId: document.getElementById('fDefaultApAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
           defaultIrGrAccountId: document.getElementById('fDefaultIrGrAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
+          defaultIssueTaxInvoice: !!document.getElementById('fDefaultIssueTaxInvoice')?.checked,
         };
         try {
           let savedId = id;
