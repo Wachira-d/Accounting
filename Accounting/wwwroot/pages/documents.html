@@ -870,6 +870,10 @@
         <div class="modal-header" style="flex-shrink:0">
           <h3 class="modal-title" id="pdfTitle">ดูตัวอย่างเอกสาร</h3>
           <div class="flex gap-2" id="pdfModalActions" style="flex-wrap:wrap">
+            <select id="pdfCopyMode" class="form-select" style="height:32px;font-size:12px;width:auto" onchange="Page._refreshPdfPreview()" title="ต้นฉบับ = ให้ลูกค้า · สำเนา = ผู้ขายเก็บเข้าแฟ้ม (พิมพ์คำว่า 'สำเนา' บนเอกสาร)">
+              <option value="">ต้นฉบับ (Original)</option>
+              <option value="สำเนา (COPY)">สำเนา (Copy)</option>
+            </select>
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
             <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — เอกสารที่ผ่าน e-Tax flow แล้วจะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที), เอกสารอื่นได้ PDF ปกติ">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
@@ -5889,12 +5893,30 @@
       },
 
       _currentPdfDoc: null,
+      /** ต้นฉบับ (null) หรือ สำเนา (watermark "สำเนา (COPY)") — จาก dropdown ใน
+       *  pdfModal. server พิมพ์ลายน้ำ "สำเนา" + ตัดป้าย "(ต้นฉบับ)" ออกให้ */
+      _pdfWatermark() { return document.getElementById('pdfCopyMode')?.value || null; },
+      async _refreshPdfPreview() {
+        const d = this._currentPdfDoc; if (!d) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const res = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documentId: d.id, templateId: null,
+              watermarkOverride: this._pdfWatermark(), copyNumber: null, language: null }),
+          });
+          if (res.ok) document.getElementById('pdfContent').innerHTML = await res.text();
+        } catch (_) { /* keep current preview */ }
+      },
       async showPdf(id) {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getDocument(id);
           const d = res.data;
           this._currentPdfDoc = d;
+          const _cm = document.getElementById('pdfCopyMode'); if (_cm) _cm.value = '';   // เปิดใหม่ = ต้นฉบับ
           const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
           // Try to get full company info
           let companyInfo = company;
@@ -5937,7 +5959,7 @@
               method: 'POST',
               headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ documentId: d.id, templateId: null,
-                watermarkOverride: null, copyNumber: null, language: null }),
+                watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null }),
             });
             if (res.ok) renderedHtml = await res.text();
           } catch (_) { /* fall through to client render */ }
@@ -6194,7 +6216,7 @@
           const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null })
           });
           if (!resp.ok) {
             let msg = '';
@@ -6236,7 +6258,7 @@
           const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null })
           });
           if (!resp.ok) {
             let msg = '';

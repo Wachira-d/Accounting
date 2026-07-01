@@ -865,6 +865,13 @@ QuestPDF+HTML. (d) หัว PDF ต่อชนิด GetDocumentTitle ถู�
 (VAT รับรู้ที่ใบเดิม ไม่คิดซ้ำ). (f) e-Tax email 1-คลิก: ปุ่ม sendEtaxEmailOneClick =
 /etax/generate → sendEtaxByEmail (PDF/A-3+XML+CC สรรพากร)._
 
+_รอบ 41 (ดาวน์โหลดสำเนา): pdfModal เพิ่ม dropdown "ต้นฉบับ/สำเนา" (pdfCopyMode) →
+_refreshPdfPreview re-render + printPdf/downloadServerPdf/generate-html ส่ง
+watermarkOverride="สำเนา (COPY)". server พิมพ์ลายน้ำ "สำเนา" (HTML div.watermark +
+QuestPDF background) + isCopyPrint ตัดป้าย "(ต้นฉบับ)" ออก. ต้นฉบับ=ให้ลูกค้า,
+สำเนา=ผู้ขายเก็บ (retention 5 ปี §87/3). จำเป็นเฉพาะเอกสารภาษี (ใบกำกับ/ใบเสร็จ
+VAT/CN/DN); เอกสารทั่วไป (ใบแจ้งหนี้/เสนอราคา/ส่งของ) ไม่บังคับ._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
