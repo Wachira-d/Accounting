@@ -151,6 +151,12 @@
               <div><label>ประเภทเอกสาร</label><select id="tplDocType" onchange="Page.markDirty()" disabled></select></div>
               <div><label>ชื่อเทมเพลต</label><input id="tplName" onchange="Page.markDirty()"></div>
             </div>
+            <div class="editor-row">
+              <div><label>หัวเอกสารบน PDF (TH) <span style="color:#64748b;font-weight:400;font-size:11px">— ว่าง = ใช้ชื่อมาตรฐาน</span></label>
+                <input id="customTitle" onchange="Page.markDirty()" placeholder="เช่น ใบแจ้งหนี้/ใบกำกับภาษี"></div>
+              <div><label>หัวเอกสาร (EN)</label>
+                <input id="customTitleEn" onchange="Page.markDirty()" placeholder="e.g. Invoice / Tax Invoice"></div>
+            </div>
             <div class="editor-row single">
               <label class="check-row"><input type="checkbox" id="tplIsDefault" onchange="Page.markDirty()"> ตั้งเป็นค่าเริ่มต้นสำหรับประเภทนี้</label>
             </div>
@@ -788,6 +794,7 @@
          'signatureLabel2','signatureLabel2En','signatureLabel3','signatureLabel3En',
          'stampImagePath',
          'watermarkText','watermarkOpacity',
+         'customTitle','customTitleEn',
          'footerNotes','footerNotesEn','bankDetailsText',
          'paperSize','orientation','marginTop','marginBottom','marginLeft','marginRight',
         ].forEach(spec => {
@@ -913,6 +920,8 @@
           showWatermark: getCheck('showWatermark'),
           watermarkText: get('watermarkText') || null,
           watermarkOpacity: Number(get('watermarkOpacity') || 0.15),
+          customTitle: get('customTitle') || null,
+          customTitleEn: get('customTitleEn') || null,
           footerNotes: get('footerNotes') || null,
           footerNotesEn: get('footerNotesEn') || null,
           showPaymentTerms: getCheck('showPaymentTerms'),

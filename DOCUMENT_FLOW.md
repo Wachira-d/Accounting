@@ -881,6 +881,16 @@ block เมื่อมีเอกสารลูก active อ้างอย
 หมายเหตุ: ภพ.30 สร้างแบบ on-demand จาก documents (อ่านสด ตาม TaxPointDate) —
 สะท้อน CN/DN/void ถูกต้องอยู่แล้ว ไม่ต้องมี TaxReportLine incremental._
 
+_รอบ 43 (supersede + หัวเอกสารรวม): (a) แปลง Invoice→TaxInvoice: เมื่ออนุมัติ
+TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved/ยังไม่ชำระ/ไม่มีลูกอื่น) →
+SupersedeSourceInvoiceAsync ล้างใบแจ้งหนี้เดิม (reverse JE + stock -1 + project -1
++ Voided) กัน GL/รายได้/สต๊อกซ้ำ (ภพ.30 นับ TaxInvoice ใบเดียวอยู่แล้ว). (b) หัว
+PDF ต่อชนิด GetDocumentTitle ถูกต้อง (Invoice→ใบแจ้งหนี้, TaxInvoice→ใบกำกับภาษี+
+ต้นฉบับ, Receipt+VAT→ใบกำกับภาษี/ใบเสร็จรับเงิน) — แต่ไม่มี "ใบแจ้งหนี้/ใบกำกับภาษี"
+รวม. เปิดช่อง CustomTitle/CustomTitleEn ในหน้า document-templates (เดิมมี field
+แต่ UI ไม่โชว์) → ตั้งหัวเอกสารเองต่อเทมเพลตได้ (เช่น "ใบแจ้งหนี้/ใบกำกับภาษี").
+เมื่อตั้ง CustomTitle → "(ต้นฉบับ)" auto ไม่ต่อท้าย (ใส่เองในหัวได้)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
