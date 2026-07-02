@@ -374,6 +374,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ### 3.4 Pay / Partial Pay
 - **Methods**: `CreatePaymentAsync` / `CreateMultiDocPaymentAsync`
   (`:534–541`)
+- **Allowlist ประเภทที่ชำระตรงได้** (`PayableDocumentTypes`): Invoice /
+  TaxInvoice / DebitNote / PurchaseInvoice / Expense เท่านั้น — ประเภทอื่น
+  block พร้อมเหตุผล:
+  - ใบวางบิล/ใบเสนอราคา/PO ฯลฯ (operational, ไม่มี JE ตอนอนุมัติ) → ชำระ
+    แล้ว Cr AR ที่ไม่เคยถูก Dr / เข้า branch ผิดฝั่ง — ต้องแปลงเป็น
+    Invoice/TaxInvoice/Receipt ก่อน
+  - Receipt / ReceiptVoucher / PaymentVoucher / CertificateInLieu = เอกสาร
+    เงินเข้า-ออก "จริงแล้ว" ตอนอนุมัติ → ชำระซ้ำ = เงินสดเบิ้ล
+- **Receipt/ReceiptVoucher force `PaymentType=Cash` ตอน create** — ใบเสร็จ
+  คือหลักฐานรับเงินแล้ว "เครดิต" ไม่มีความหมาย (เดิมปล่อย Credit ได้ →
+  BalanceDue ค้างทั้งที่เงินเข้า GL แล้ว → โผล่ aging ผิด + ถูกชำระซ้ำได้)
+- **DebitNote สองฝั่ง**: การชำระ + bank balance + void reversal ดูฝั่งจาก
+  เอกสารต้นทาง (`IsCashInflowDocAsync`) — ฝั่งซื้อ (source = PI/Expense/CIL)
+  = เงินออก Dr AP / Cr Cash (เดิมลงฝั่งเงินเข้าเสมอ — ผิดฝั่ง)
 - คำนวณ `BalanceDue = TotalAmount − TotalPaid`
 - → `PartiallyPaid` หรือ `Paid` อัตโนมัติ
 - post JE: Dr Cash/Bank / Cr AR (sales) หรือ Dr AP / Cr Cash/Bank (purchase)

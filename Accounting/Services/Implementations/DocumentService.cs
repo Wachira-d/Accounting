@@ -625,6 +625,16 @@ public class DocumentService : IDocumentService
                 // payable, no outstanding balance (its JE credits Cash).
                 doc.PaymentType = Models.Enums.PaymentType.Cash;
             }
+            else if (request.DocumentType == DocumentType.Receipt
+                     || request.DocumentType == DocumentType.ReceiptVoucher)
+            {
+                // ใบเสร็จ/ใบสำคัญรับ = หลักฐาน "รับเงินแล้วจริง" — JE ตอนอนุมัติ
+                // Dr เงินสด/ธนาคารเสมอ. "เครดิต" ไม่มีความหมายกับเอกสารนี้:
+                // ถ้าปล่อยเป็น Credit เอกสารจะค้าง BalanceDue ทั้งที่เงินเข้า GL
+                // ไปแล้ว → โผล่ใน aging ผิด ๆ และถูก "รับชำระ" ซ้ำได้ (เงินสด
+                // เบิ้ลสองรอบ). ยังไม่รับเงิน → ใช้ใบแจ้งหนี้/ใบกำกับแทน
+                doc.PaymentType = Models.Enums.PaymentType.Cash;
+            }
             else
             {
                 doc.PaymentType = request.PaymentType;
@@ -3455,9 +3465,7 @@ public class DocumentService : IDocumentService
         // before adjusting. Mirrors the conversion in CreatePaymentJournalAsync.
         if (payment.BankAccountId.HasValue)
         {
-            var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
-                or DocumentType.Receipt or DocumentType.ReceiptVoucher
-                or DocumentType.DebitNote or DocumentType.BillingNote;
+            var isInflow = await IsCashInflowDocAsync(companyId, doc);
             var thbAmount = doc.ExchangeRate == 1m
                 ? payment.Amount
                 : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
@@ -4560,6 +4568,38 @@ public class DocumentService : IDocumentService
 
     // ==================== Payments ====================
 
+    /// <summary>ประเภทเอกสาร "ตั้งหนี้" ที่รับ/จ่ายชำระตรงได้ — ฝั่งขาย Dr AR
+    /// ตอนอนุมัติ (Invoice/TaxInvoice/DebitNote ฝั่งขาย), ฝั่งซื้อ Cr AP
+    /// (PurchaseInvoice/Expense/DebitNote ฝั่งซื้อ). ประเภทอื่นห้ามชำระตรง:
+    /// เอกสาร operational ไม่มี JE, เอกสารเงินสด (Receipt/RV/PV/CIL) เงิน
+    /// เข้า-ออกจริงไปแล้วตอนอนุมัติ</summary>
+    private static readonly DocumentType[] PayableDocumentTypes =
+    {
+        DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote,
+        DocumentType.PurchaseInvoice, DocumentType.Expense,
+    };
+
+    /// <summary>เงินของการชำระเอกสารนี้ "เข้า" (ลูกค้าจ่ายเรา) หรือ "ออก"
+    /// (เราจ่าย vendor) — DebitNote ต้องดูฝั่งจากเอกสารต้นทาง: ฝั่งซื้อ
+    /// (source = PI/Expense/CIL) คือเงินออก ไม่ใช่เงินเข้า</summary>
+    private async Task<bool> IsCashInflowDocAsync(Guid companyId, Document doc)
+    {
+        var inflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
+            or DocumentType.Receipt or DocumentType.ReceiptVoucher
+            or DocumentType.DebitNote or DocumentType.BillingNote;
+        if (inflow && doc.DocumentType == DocumentType.DebitNote && doc.RelatedDocumentId.HasValue)
+        {
+            var srcType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            if (srcType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.CertificateInLieu)
+                inflow = false;
+        }
+        return inflow;
+    }
+
     public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
     {
         // Validate Amount > 0
@@ -4587,6 +4627,17 @@ public class DocumentService : IDocumentService
         // Validate document status allows payment
         if (doc.Status != DocumentStatus.Approved && doc.Status != DocumentStatus.PartiallyPaid && doc.Status != DocumentStatus.Sent)
             throw new InvalidOperationException("สามารถชำระเงินได้เฉพาะเอกสารที่อนุมัติแล้ว, ชำระบางส่วน หรือส่งแล้วเท่านั้น");
+
+        // เฉพาะเอกสาร "ตั้งหนี้" เท่านั้นที่รับ/จ่ายชำระได้ — เอกสารอื่นทำ GL พัง:
+        //   • ใบวางบิล/ใบเสนอราคา/PO ฯลฯ ไม่ลง JE ตอนอนุมัติ → ชำระแล้ว Cr AR
+        //     ที่ไม่เคยถูก Dr (AR ติดลบ) หรือเข้า branch ผิดฝั่ง
+        //   • ใบเสร็จ/ใบสำคัญรับ/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จ = เงินเข้า/ออก
+        //     จริงไปแล้วตอนอนุมัติ → ชำระซ้ำ = เงินสดเบิ้ล
+        if (!PayableDocumentTypes.Contains(doc.DocumentType))
+            throw new InvalidOperationException(
+                $"เอกสารประเภท {doc.DocumentType} รับ/จ่ายชำระตรง ๆ ไม่ได้ — " +
+                "ใบวางบิล/ใบเสนอราคาให้แปลงเป็นใบแจ้งหนี้/ใบกำกับ/ใบเสร็จก่อน; " +
+                "ใบเสร็จ/ใบสำคัญรับ-จ่ายคือหลักฐานเงินเข้า-ออกที่เกิดแล้ว ไม่ต้องชำระซ้ำ");
 
         if (request.Amount > doc.BalanceDue)
             throw new InvalidOperationException($"จำนวนเงินชำระ ({request.Amount:N2}) มากกว่ายอดค้างชำระ ({doc.BalanceDue:N2})");
@@ -4736,9 +4787,7 @@ public class DocumentService : IDocumentService
             // always THB in this iteration). Same conversion as the GL posting.
             if (payment.BankAccountId.HasValue)
             {
-                var isInflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
-                    or DocumentType.Receipt or DocumentType.ReceiptVoucher
-                    or DocumentType.DebitNote or DocumentType.BillingNote;
+                var isInflow = await IsCashInflowDocAsync(companyId, doc);
                 var thbAmount = doc.ExchangeRate == 1m
                     ? payment.Amount
                     : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
@@ -4881,6 +4930,10 @@ public class DocumentService : IDocumentService
                 if (d.Status != DocumentStatus.Approved && d.Status != DocumentStatus.PartiallyPaid && d.Status != DocumentStatus.Sent)
                     throw new InvalidOperationException(
                         $"เอกสาร {d.DocumentNumber} สถานะ {d.Status} ไม่สามารถชำระได้");
+                if (!PayableDocumentTypes.Contains(d.DocumentType))
+                    throw new InvalidOperationException(
+                        $"เอกสาร {d.DocumentNumber} ({d.DocumentType}) รับ/จ่ายชำระตรง ๆ ไม่ได้ — " +
+                        "แปลงเป็นใบแจ้งหนี้/ใบกำกับก่อน หรือชำระที่เอกสารตั้งหนี้ต้นทาง");
                 if (alloc.AllocatedAmount > d.BalanceDue + 0.01m)
                     throw new InvalidOperationException(
                         $"จัดสรร {alloc.AllocatedAmount:N2} ของ {d.DocumentNumber} เกินยอดค้าง ({d.BalanceDue:N2})");
@@ -5022,9 +5075,7 @@ public class DocumentService : IDocumentService
                 // ถ้าไม่ book ส่วนต่าง GL เงินสดจะน้อยกว่ายอดธนาคารถาวร:
                 //   ฝั่งรับ → Dr เงินสด/ธนาคาร  Cr เงินรับล่วงหน้าจากลูกค้า (217xx)
                 //   ฝั่งจ่าย → Dr เงินจ่ายล่วงหน้า (114xx)  Cr เงินสด/ธนาคาร
-                var isInflowDoc = firstDoc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
-                    or DocumentType.Receipt or DocumentType.ReceiptVoucher
-                    or DocumentType.DebitNote or DocumentType.BillingNote;
+                var isInflowDoc = await IsCashInflowDocAsync(companyId, firstDoc);
                 var unapplied = request.Amount - allocSum;
                 if (unapplied > 0.005m)
                 {
@@ -7034,6 +7085,18 @@ public class DocumentService : IDocumentService
         var revenueTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
             DocumentType.DebitNote, DocumentType.BillingNote, DocumentType.ReceiptVoucher };
         var isRevenue = revenueTypes.Contains(doc.DocumentType);
+        // DebitNote มีสองฝั่ง — ฝั่งซื้อ (vendor เรียกเก็บเพิ่ม, source = PI/Expense/CIL)
+        // การชำระคือเงินออก: Dr AP / Cr เงินสด — ไม่ใช่เงินเข้าแบบฝั่งขาย
+        if (doc.DocumentType == DocumentType.DebitNote && doc.RelatedDocumentId.HasValue)
+        {
+            var dnSrcType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            if (dnSrcType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.CertificateInLieu)
+                isRevenue = false;
+        }
         var journalType = isRevenue ? JournalType.CashReceipts : JournalType.CashPayments;
 
         // Resolve the CASH/BANK side of the entry. Priority:
