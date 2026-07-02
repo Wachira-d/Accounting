@@ -105,7 +105,19 @@
               </select>
             </div>
           </div>
-          <div class="form-group"><label class="form-label" data-i18n="common.detail">รายละเอียด</label><textarea class="form-input" id="fDescription" rows="2" placeholder="รายละเอียดที่จะปรากฏในเอกสาร"></textarea></div>
+          <div class="form-group"><label class="form-label" data-i18n="common.detail">รายละเอียด</label><textarea class="form-input" id="fDescription" rows="2" placeholder="เช่น ค่าบริการทำบัญชีเดือน &lt;&lt;month&gt;&gt;"></textarea>
+            <div style="margin-top:6px;padding:8px 12px;background:#f0f9ff;border-left:3px solid #0ea5e9;border-radius:6px;font-size:11px;color:#0369a1;line-height:1.7">
+              💡 ใส่ <b>ตัวแปร</b> ให้ระบบเติมค่าอัตโนมัติตอนออกเอกสารแต่ละงวด (พิมพ์ในรายละเอียด/หมายเหตุได้):
+              <div style="margin-top:4px">
+                <code>&lt;&lt;month&gt;&gt;</code> = เดือนนี้ (เช่น กรกฎาคม) ·
+                <code>&lt;&lt;month_prev&gt;&gt;</code> = เดือนก่อน ·
+                <code>&lt;&lt;year&gt;&gt;</code> = ปี พ.ศ. ·
+                <code>&lt;&lt;quarter_th&gt;&gt;</code> = ไตรมาส ·
+                <code>&lt;&lt;date&gt;&gt;</code> = วันที่ออก
+              </div>
+              <div style="margin-top:2px;color:#64748b">ตัวอย่าง: "ค่าบริการทำบัญชีเดือน &lt;&lt;month&gt;&gt; &lt;&lt;year&gt;&gt;" → "ค่าบริการทำบัญชีเดือน กรกฎาคม 2569"</div>
+            </div>
+          </div>
           <div class="form-row">
             <div class="form-group">
               <label class="form-label"><input type="checkbox" id="fAutoApprove"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
