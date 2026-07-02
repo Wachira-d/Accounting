@@ -1336,30 +1336,32 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // If mapping produced lines, add VAT line if missing
+            // Mapped lines อยู่ที่ NET (ไม่รวม VAT) และ balanced net อยู่แล้ว →
+            // เดิมเช็ค totalDr!=totalCr (ไม่มีวันจริง) → VAT ถูกตกทิ้งเสมอ →
+            // ลูกหนี้/เจ้าหนี้ต่ำกว่า gross + ภาษีขาย/ซื้อ (21911/11610) ไม่ถูกลง
+            // (ภ.พ.30 ขาด). แก้: gross up ฝั่ง "เงิน" (ลูกหนี้ฝั่งขาย/เจ้าหนี้ฝั่งซื้อ)
+            // ด้วยยอด VAT + เพิ่มบรรทัด VAT ให้ JE = gross ของเอกสาร.
             if (journalLines.Any() && document.VatAmount > 0)
             {
-                var hasVatLine = journalLines.Any(l =>
-                    l.CreditAmount > 0 || l.DebitAmount > 0); // simplified check
-                // Check if VAT total is balanced — if not, auto-add VAT account
-                var totalDr = journalLines.Sum(l => l.DebitAmount);
-                var totalCr = journalLines.Sum(l => l.CreditAmount);
-                if (totalDr != totalCr)
+                var vatAccount = await ResolveVatAccountAsync(companyId, isInput: !isRevenue);
+                var moneyAccountId = isRevenue
+                    ? journalLines.FirstOrDefault(l => l.DebitAmount > 0)?.AccountId   // ลูกหนี้
+                    : journalLines.FirstOrDefault(l => l.CreditAmount > 0)?.AccountId; // เจ้าหนี้
+                if (vatAccount != null && moneyAccountId.HasValue)
                 {
-                    // Type-validated: output VAT (21911) for revenue, input VAT
-                    // (11610) for purchase — never the old 2151/1140 prefixes.
-                    var vatAccount = await ResolveVatAccountAsync(companyId, isInput: !isRevenue);
-                    if (vatAccount != null)
+                    if (isRevenue)
                     {
-                        var diff = totalDr - totalCr;
-                        journalLines.Add(new JournalEntryLine
-                        {
-                            AccountId = vatAccount.Id,
-                            DebitAmount = diff < 0 ? Math.Abs(diff) : 0,
-                            CreditAmount = diff > 0 ? diff : 0,
-                            Description = isRevenue ? "ภาษีขาย" : "ภาษีซื้อ",
-                            LineOrder = lineOrder++
-                        });
+                        journalLines.Add(new JournalEntryLine { AccountId = moneyAccountId.Value,
+                            DebitAmount = document.VatAmount, Description = "ปรับลูกหนี้รวมภาษี", LineOrder = lineOrder++ });
+                        journalLines.Add(new JournalEntryLine { AccountId = vatAccount.Id,
+                            CreditAmount = document.VatAmount, Description = "ภาษีขาย", LineOrder = lineOrder++ });
+                    }
+                    else
+                    {
+                        journalLines.Add(new JournalEntryLine { AccountId = vatAccount.Id,
+                            DebitAmount = document.VatAmount, Description = "ภาษีซื้อ", LineOrder = lineOrder++ });
+                        journalLines.Add(new JournalEntryLine { AccountId = moneyAccountId.Value,
+                            CreditAmount = document.VatAmount, Description = "ปรับเจ้าหนี้รวมภาษี", LineOrder = lineOrder++ });
                     }
                 }
             }
@@ -1512,7 +1514,7 @@ public class IntegrationService : IIntegrationService
                     });
                 }
 
-                // Cr: เจ้าหนี้การค้า
+                // Cr: เจ้าหนี้การค้า (= TotalAmount = SubTotal+VAT−WHT)
                 journalLines.Add(new JournalEntryLine
                 {
                     AccountId = apAccount.Id,
@@ -1520,6 +1522,28 @@ public class IntegrationService : IIntegrationService
                     Description = $"เจ้าหนี้ - {document.DocumentNumber}",
                     LineOrder = lineOrder++
                 });
+
+                // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย — เดิมไม่มีบรรทัดนี้ → Dr (SubTotal+VAT)
+                // > Cr เจ้าหนี้ (SubTotal+VAT−WHT) → JE ไม่ balance → return null →
+                // ค่าใช้จ่ายที่มี WHT "ไม่ลง GL เลย" (ไม่มีทั้งค่าใช้จ่าย/ภาษีซื้อ/
+                // เจ้าหนี้/WHT payable). 21917 นิติบุคคล / 21916 บุคคล.
+                if (document.WithholdingTaxAmount > 0)
+                {
+                    var juristic = expenseContact?.ContactType == Models.Enums.ContactType.JuristicPerson;
+                    var whtAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && a.AccountCode == (juristic ? "21917" : "21916"))
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && a.AccountCode == (juristic ? "21916" : "21917"));
+                    if (whtAcc != null)
+                        journalLines.Add(new JournalEntryLine
+                        {
+                            AccountId = whtAcc.Id,
+                            CreditAmount = document.WithholdingTaxAmount,
+                            Description = $"ภาษีหัก ณ ที่จ่ายค้างจ่าย - {document.DocumentNumber}",
+                            LineOrder = lineOrder++
+                        });
+                    else
+                        _logger.LogWarning("ไม่พบบัญชี WHT payable (21916/21917) company {Cid} — เอกสาร {Doc} มี WHT แต่ลง JE ไม่ได้",
+                            companyId, document.DocumentNumber);
+                }
             }
             else
             {
