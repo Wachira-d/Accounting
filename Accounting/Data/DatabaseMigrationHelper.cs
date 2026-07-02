@@ -4269,6 +4269,13 @@ public static class DatabaseMigrationHelper
             // ===== ECL — ค่าเผื่อหนี้สงสัยจะสูญอัตโนมัติ (TFRS NPAEs บทที่ 9) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclLossRatesJson" text NULL;""",
+
+            // ===== Quotation online accept (ลิงก์ลูกค้ากดยอมรับใบเสนอราคา) =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptToken" varchar(80) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptTokenExpiresAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedBy" varchar(200) NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_QuotationAcceptToken" ON "Documents" ("QuotationAcceptToken") WHERE "QuotationAcceptToken" IS NOT NULL;""",
             // รหัสผูก LINE ระดับพนักงาน (6 หลัก, หมดอายุ 24 ชม.)
             """
             CREATE TABLE IF NOT EXISTS "EmployeeLineBindCodes" (

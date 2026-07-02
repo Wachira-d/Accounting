@@ -249,7 +249,19 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - `AutoApprove=true` → ใบที่ generate ขึ้นจะถูก approve อัตโนมัติ (ทำตาม flow
   approve ปกติทุกขั้น — tax point, JE, stock, fixed asset)
 
-### 2.8 Consignment (ฝากขาย)
+### 2.8 Quotation online accept (ลูกค้ากดยอมรับใบเสนอราคา)
+- **สร้างลิงก์** (ต้อง login): `POST /document/{id}/quotation-accept-link` —
+  เฉพาะ Quotation ที่อนุมัติแล้ว; token 64 hex อายุ 30 วัน เก็บบน
+  `Document.QuotationAcceptToken(+ExpiresAt)`; เรียกซ้ำ = revoke ลิงก์เก่า
+- **ฝั่งลูกค้า** (`PublicQuotationController`, AllowAnonymous):
+  `GET /api/public/quotation/{token}` ดูรายการ+ยอด (sanitized) และ
+  `POST .../accept` บันทึก `QuotationAcceptedAt/By` + stamp หลักฐานลง Notes
+  (append-only) — **ไม่ auto-convert** เป็น invoice (ผู้ขายกดแปลงเองหลังเห็น
+  การยอมรับ — กันเอกสารการเงินเกิดจาก anonymous click)
+- **หน้า**: `pages/quotation-accept.html` (standalone, ไม่ใช้ Layout)
+- ปุ่ม "🔗 ลิงก์ยอมรับ" ในหน้ารายการเอกสาร (Quotation Approved/Sent)
+
+### 2.9 Consignment (ฝากขาย)
 - **Service**: `Services/Implementations/Consignment/ConsignmentService.cs`
 - **Outbound dispatch** (`DispatchOutboundAsync`): ลด `CurrentStock` ทันที
   (ของอยู่ที่ลูกค้า กรรมสิทธิ์ยังเป็นเรา — ไม่มี GL) + **เขียน `StockMovement`

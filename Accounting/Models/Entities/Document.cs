@@ -65,6 +65,17 @@ public class Document : TenantEntity
     /// เป็นทั้งใบแจ้งหนี้ (เรียกเก็บเงิน + เครดิตเทอม) และใบกำกับภาษีในใบเดียว.</summary>
     public bool CombinedInvoiceTaxInvoice { get; set; }
 
+    /// <summary>Capability token สำหรับลิงก์ "ลูกค้ากดยอมรับใบเสนอราคาออนไลน์"
+    /// — random hex 64 ตัว สร้างเมื่อผู้ใช้ขอลิงก์ (POST accept-link). ผู้ถือ
+    /// ลิงก์ดู/ยอมรับใบเสนอราคาได้โดยไม่ต้อง login (read-only + accept เท่านั้น).</summary>
+    public string? QuotationAcceptToken { get; set; }
+    /// <summary>วันหมดอายุของลิงก์ยอมรับ (default +30 วันจากที่สร้าง).</summary>
+    public DateTime? QuotationAcceptTokenExpiresAt { get; set; }
+    /// <summary>เวลาที่ลูกค้ากดยอมรับ (null = ยังไม่ยอมรับ).</summary>
+    public DateTime? QuotationAcceptedAt { get; set; }
+    /// <summary>ชื่อผู้กดยอมรับ (ลูกค้าพิมพ์เอง — บันทึกเป็นหลักฐาน).</summary>
+    public string? QuotationAcceptedBy { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense

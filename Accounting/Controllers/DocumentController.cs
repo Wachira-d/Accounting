@@ -61,6 +61,39 @@ public class DocumentController : ControllerBase
             logs.Select(MapEmailLog).ToList()));
     }
 
+    /// <summary>สร้าง/ต่ออายุลิงก์ให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ —
+    /// คืน URL สาธารณะ (token 64 hex, อายุ 30 วัน). เรียกซ้ำ = ออก token
+    /// ใหม่ (ลิงก์เดิมใช้ไม่ได้ — ทำหน้าที่ revoke ไปในตัว).</summary>
+    [HttpPost("{documentId:guid}/quotation-accept-link")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateQuotationAcceptLink(
+        Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents.FirstOrDefaultAsync(d =>
+            d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
+        if (doc == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        if (doc.DocumentType != Models.Enums.DocumentType.Quotation)
+            return BadRequest(new ApiResponse<object>(false, null,
+                "ลิงก์ยอมรับออนไลน์ใช้ได้เฉพาะใบเสนอราคา"));
+        if (doc.Status is Models.Enums.DocumentStatus.Draft or Models.Enums.DocumentStatus.Voided
+            or Models.Enums.DocumentStatus.Rejected)
+            return BadRequest(new ApiResponse<object>(false, null,
+                "ต้องอนุมัติใบเสนอราคาก่อนจึงส่งลิงก์ให้ลูกค้าได้"));
+
+        doc.QuotationAcceptToken = PublicQuotationController.NewToken();
+        doc.QuotationAcceptTokenExpiresAt = DateTime.UtcNow.AddDays(30);
+        await _db.SaveChangesAsync();
+
+        var url = $"{Request.Scheme}://{Request.Host}/pages/quotation-accept.html?token={doc.QuotationAcceptToken}";
+        return Ok(new ApiResponse<object>(true, new
+        {
+            url,
+            token = doc.QuotationAcceptToken,
+            expiresAt = doc.QuotationAcceptTokenExpiresAt,
+            acceptedAt = doc.QuotationAcceptedAt,
+        }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้ากดยอมรับได้เลย (อายุ 30 วัน)"));
+    }
+
     private static DocumentEmailLogResponse MapEmailLog(Models.Entities.DocumentEmailLog l) => new(
         Id: l.Id,
         DocumentId: l.DocumentId,
