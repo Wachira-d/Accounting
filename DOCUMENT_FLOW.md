@@ -239,6 +239,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - `AutoApprove=true` → ใบที่ generate ขึ้นจะถูก approve อัตโนมัติ (ทำตาม flow
   approve ปกติทุกขั้น — tax point, JE, stock, fixed asset)
 
+### 2.8 Consignment (ฝากขาย)
+- **Service**: `Services/Implementations/Consignment/ConsignmentService.cs`
+- **Outbound dispatch** (`DispatchOutboundAsync`): ลด `CurrentStock` ทันที
+  (ของอยู่ที่ลูกค้า กรรมสิทธิ์ยังเป็นเรา — ไม่มี GL) + **เขียน `StockMovement`
+  คู่เสมอ** (เพิ่งแก้ — เดิมขยับ stock เปล่า ทำ stock card drift)
+- **Consumption** (`RecordConsumptionAsync`): Inbound → สร้าง Draft
+  `PurchaseInvoice`, Outbound → Draft `Invoice`; เอกสารใช้ **`DRAFT-{guid}`
+  placeholder** ตาม convention กลาง (เดิมใช้เลข `CON-...` เองซึ่งหลุด series
+  gap-free §86/4) + มี `Lines` + `SubTotal` ครบให้ approve ผ่าน gate ปกติ;
+  ref consignment เก็บใน `Reference` (`CON-{id8}`)
+
 ---
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
