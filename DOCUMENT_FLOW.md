@@ -840,6 +840,57 @@ openReclassifyPaymentSource หา doc จาก this.docs (list projection ท�
 openReclassifyLine ที่รับ args inline จึงไม่กระทบ. แก้: ใช้ this._currentDoc (เอกสารที่
 detail() เพิ่ง fetch มี field ครบ) ก่อน fallback this.docs._
 
+_รอบ 38 (ตั้งค่าต่อลูกค้า "ออกใบกำกับภาษีเสมอ"): Contact เพิ่ม
+DefaultIssueTaxInvoice (bool, migration) + Create/Update/ContactResponse DTO +
+MapContactToResponse. contacts.html เพิ่ม checkbox ในส่วนตั้งค่าบันทึกบัญชี (save/load/
+reset). documents.html onContactChange → maybePreselectTaxInvoice: ลูกค้าที่ flag=true
++ ชนิดปัจจุบัน Invoice → เปลี่ยนเป็น TaxInvoice อัตโนมัติ + เตือน §86/4 (TaxId/สาขา/
+ที่อยู่) ไม่ครบ. ไม่บังคับ — ยังเลือกชนิดเองได้/convert ได้เหมือนเดิม._
+
+_รอบ 39 (หมายเหตุขึ้น PDF + รายละเอียดหลายบรรทัด): (a) doc.Notes (หมายเหตุที่กรอกตอน
+สร้าง) เดิมไม่ถูก render บน PDF (โชว์แต่ CustomFooterNotes) — เพิ่ม render ทั้ง 2 path:
+RenderDocumentPdfNative (QuestPDF Text รองรับ \n) + BuildDocumentHtml (white-space:
+pre-line). (b) รายละเอียดรายการรองรับหลายบรรทัด: line desc input เปลี่ยนจาก <input>
+เป็น <textarea rows=1 auto-grow> (Enter=เว้นบรรทัด; ProductLookup ยัง select ด้วย Enter
+เมื่อ arrow-highlight เท่านั้น idx≥0 จึงไม่ชน); PDF cell + on-screen td ใช้ pre-line/Td
+.Text() render \n ครบ._
+
+_รอบ 40 (ชุด invoice/tax-invoice ครบวงจร): (a) เครดิตเทอมต่อลูกค้า —
+Contact.PaymentDueDays/PaymentTerms → เติมวันครบกำหนดอัตโนมัติตอนสร้างเอกสารขาย.
+(b) §86/4 บังคับตอนอนุมัติ — enforce864 default true; TaxInvoice บังคับ field ผู้ซื้อ
+เสมอ (เลขภาษี13/ที่อยู่/สาขา5) ไม่ว่า flag → ใบไม่ครบ block. (c) ป้าย "ต้นฉบับ" บน PDF
+— ใบกำกับ/ใบเสร็จภาษี/CN/DN เติม "(ต้นฉบับ)" (สำเนา=WatermarkOverride) ทั้ง
+QuestPDF+HTML. (d) หัว PDF ต่อชนิด GetDocumentTitle ถูกต้องอยู่แล้ว. (e) auto-receipt:
+ชำระครบบน Invoice/TaxInvoice → prompt "ออกใบเสร็จรับเงิน" → convertDocument→Receipt
+(VAT รับรู้ที่ใบเดิม ไม่คิดซ้ำ). (f) e-Tax email 1-คลิก: ปุ่ม sendEtaxEmailOneClick =
+/etax/generate → sendEtaxByEmail (PDF/A-3+XML+CC สรรพากร)._
+
+_รอบ 41 (ดาวน์โหลดสำเนา): pdfModal เพิ่ม dropdown "ต้นฉบับ/สำเนา" (pdfCopyMode) →
+_refreshPdfPreview re-render + printPdf/downloadServerPdf/generate-html ส่ง
+watermarkOverride="สำเนา (COPY)". server พิมพ์ลายน้ำ "สำเนา" (HTML div.watermark +
+QuestPDF background) + isCopyPrint ตัดป้าย "(ต้นฉบับ)" ออก. ต้นฉบับ=ให้ลูกค้า,
+สำเนา=ผู้ขายเก็บ (retention 5 ปี §87/3). จำเป็นเฉพาะเอกสารภาษี (ใบกำกับ/ใบเสร็จ
+VAT/CN/DN); เอกสารทั่วไป (ใบแจ้งหนี้/เสนอราคา/ส่งของ) ไม่บังคับ._
+
+_รอบ 42 (audit เชิงลึก convert/void/CN — verify แล้วแก้ 5 จุด): (a) ConvertCoreAsync
+คงสกุลเงิน+เรตต้นทาง (เดิม default THB). (b) ValidateConversionAsync กันแปลงซ้ำเป็น
+Invoice/TaxInvoice (1 ต้นทาง=1 ใบรับรู้รายได้ กัน double VAT/ภพ.30). (c) VoidDocumentAsync
+block เมื่อมีเอกสารลูก active อ้างอยู่ (กัน orphan + ครอบเคสลูกมี e-Tax ยื่น RD).
+(d) Void เพิ่ม FOR UPDATE lock + re-read สถานะ (กัน double-void race → reverse JE ซ้ำ).
+(e) §86/10 CN cumulative cap: SUM(CN)≤source.TotalAmount (โหมดคืนเงินสดเดิมไม่ cap).
+หมายเหตุ: ภพ.30 สร้างแบบ on-demand จาก documents (อ่านสด ตาม TaxPointDate) —
+สะท้อน CN/DN/void ถูกต้องอยู่แล้ว ไม่ต้องมี TaxReportLine incremental._
+
+_รอบ 43 (supersede + หัวเอกสารรวม): (a) แปลง Invoice→TaxInvoice: เมื่ออนุมัติ
+TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved/ยังไม่ชำระ/ไม่มีลูกอื่น) →
+SupersedeSourceInvoiceAsync ล้างใบแจ้งหนี้เดิม (reverse JE + stock -1 + project -1
++ Voided) กัน GL/รายได้/สต๊อกซ้ำ (ภพ.30 นับ TaxInvoice ใบเดียวอยู่แล้ว). (b) หัว
+PDF ต่อชนิด GetDocumentTitle ถูกต้อง (Invoice→ใบแจ้งหนี้, TaxInvoice→ใบกำกับภาษี+
+ต้นฉบับ, Receipt+VAT→ใบกำกับภาษี/ใบเสร็จรับเงิน) — แต่ไม่มี "ใบแจ้งหนี้/ใบกำกับภาษี"
+รวม. เปิดช่อง CustomTitle/CustomTitleEn ในหน้า document-templates (เดิมมี field
+แต่ UI ไม่โชว์) → ตั้งหัวเอกสารเองต่อเทมเพลตได้ (เช่น "ใบแจ้งหนี้/ใบกำกับภาษี").
+เมื่อตั้ง CustomTitle → "(ต้นฉบับ)" auto ไม่ต่อท้าย (ใส่เองในหัวได้)._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

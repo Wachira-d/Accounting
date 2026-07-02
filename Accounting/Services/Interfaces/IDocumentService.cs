@@ -45,6 +45,8 @@ public interface IDocumentService
     /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ
     /// dashboard ภาษีซื้อยังไม่ถึงกำหนด) + 6-month aging §82/3.</summary>
     Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId);
+    /// <summary>§82/3: reclassify ภาษีซื้อ 11640 ที่พ้น 6 เดือน → ค่าใช้จ่าย. คืนจำนวนที่จัดการ.</summary>
+    Task<int> ReclassifyExpiredUndueInputVatAsync(Guid companyId, string actor);
     /// <summary>ถาม AI ให้แนะนำผังบัญชี GL สำหรับทุกบรรทัดของใบสำคัญจ่าย (PV)
     /// ที่กำลังสร้างจากใบกำกับภาษีซื้อต้นทาง — student-first ผ่าน
     /// GlAccountDistillationModel + teacher fallback ผ่าน orchestrator ตามกฎ

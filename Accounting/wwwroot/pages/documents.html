@@ -22,7 +22,7 @@
       display: flex; align-items: center; justify-content: center; margin-top: 6px;
     }
     .line-card .lc-desc-wrap { flex: 1 1 auto; min-width: 0; }
-    .line-card input.lc-desc { width: 100%; font-size: 15px; padding: 10px 12px; }
+    .line-card .lc-desc { width: 100%; font-size: 15px; padding: 10px 12px; resize: none; overflow: hidden; line-height: 1.4; font-family: inherit; }
     .line-card .lc-del {
       flex: 0 0 auto; background: none; border: 0; color: #ef4444;
       font-size: 18px; cursor: pointer; padding: 6px; line-height: 1;
@@ -56,7 +56,7 @@
     @media (max-width: 640px) {
       .line-card .lc-fields { grid-template-columns: repeat(2, 1fr); gap: 10px; }
       .line-card .lc-field input, .line-card .lc-field select { font-size: 16px; padding: 11px 12px; }
-      .line-card input.lc-desc { font-size: 16px; padding: 12px; }
+      .line-card .lc-desc { font-size: 16px; padding: 12px; }
       .line-card .lc-field > label { font-size: 12px; }
     }
     /* Desktop: claim + wht slightly narrower */
@@ -870,6 +870,10 @@
         <div class="modal-header" style="flex-shrink:0">
           <h3 class="modal-title" id="pdfTitle">ดูตัวอย่างเอกสาร</h3>
           <div class="flex gap-2" id="pdfModalActions" style="flex-wrap:wrap">
+            <select id="pdfCopyMode" class="form-select" style="height:32px;font-size:12px;width:auto" onchange="Page._refreshPdfPreview()" title="ต้นฉบับ = ให้ลูกค้า · สำเนา = ผู้ขายเก็บเข้าแฟ้ม (พิมพ์คำว่า 'สำเนา' บนเอกสาร)">
+              <option value="">ต้นฉบับ (Original)</option>
+              <option value="สำเนา (COPY)">สำเนา (Copy)</option>
+            </select>
             <button class="btn btn-sm btn-primary" onclick="Page.printPdf()" title="พิมพ์ PDF ตัวเดียวกับปุ่ม 'ดาวน์โหลด PDF' (QuestPDF) — หน้าตาเหมือนกันเป๊ะ">🖨️ พิมพ์</button>
             <button class="btn btn-sm btn-success" onclick="Page.downloadServerPdf()" title="ดาวน์โหลด PDF — เอกสารที่ผ่าน e-Tax flow แล้วจะได้ PDF/A-3 ฝัง XML สรรพากรอัตโนมัติ (ใช้ยื่นภาษีได้ทันที), เอกสารอื่นได้ PDF ปกติ">📥 ดาวน์โหลด PDF</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.downloadHtmlPdf()" title="ดาวน์โหลดเป็น HTML (เปิดแล้วกดพิมพ์เลือก 'Save as PDF')">📄 ดาวน์โหลด HTML</button>
@@ -1400,7 +1404,9 @@
         (payload.lines || []).forEach(l => {
           this.addLine();
           const row = document.getElementById('linesBody').lastElementChild;
-          row.querySelector('[data-f="desc"]').value = l.description || '';
+          const descEl = row.querySelector('[data-f="desc"]');
+          descEl.value = l.description || '';
+          descEl.__grow?.();   // ขยายความสูง textarea ตามเนื้อหาที่โหลดมา
           row.querySelector('[data-f="qty"]').value = l.quantity ?? 1;
           const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
           row.querySelector('[data-f="price"]').value = l.unitPrice ?? 0;
@@ -1611,7 +1617,7 @@
                   <td><span style="font-family:ui-monospace,monospace;font-size:11px">${acc ? '<b>'+this.escapeHtml(acc.accountCode)+'</b> '+this.escapeHtml(acc.accountName.substring(0,30)) : r.accountId.substring(0,8)}</span></td>
                   <td class="text-right">${Number(r.debitAmount) > 0 ? Layout.money(r.debitAmount) : '-'}</td>
                   <td class="text-right">${Number(r.creditAmount) > 0 ? Layout.money(r.creditAmount) : '-'}</td>
-                  <td>${this.escapeHtml(r.description || '')}</td>
+                  <td style="white-space:pre-line">${this.escapeHtml(r.description || '')}</td>
                 </tr>`;
               }).join('')}</tbody>
               <tfoot><tr style="background:var(--gray-50);font-weight:700">
@@ -1832,6 +1838,45 @@
        * either field; we only overwrite when the field is empty or matches the
        * previously generated template (so editing isn't clobbered).
        */
+      /** ลูกค้าที่ตั้งค่า Contact.DefaultIssueTaxInvoice=true → ถ้าชนิดเอกสาร
+       *  ปัจจุบันเป็น "ใบแจ้งหนี้" ให้เปลี่ยนเป็น "ใบกำกับภาษี" อัตโนมัติ +
+       *  เตือนถ้าข้อมูล §86/4 (เลขภาษี/สาขา/ที่อยู่) ไม่ครบ. */
+      async maybePreselectTaxInvoice(contactId, c) {
+        let contact = c;
+        // ต้องมี field ครบ (defaultIssueTaxInvoice + paymentDueDays) — ถ้า cache
+        // ไม่มี ให้ fetch contact เต็ม 1 ครั้ง
+        if ((contact?.defaultIssueTaxInvoice === undefined || contact?.paymentDueDays === undefined) && contactId) {
+          try { const r = await Layout.api()?.getContact(contactId); contact = r?.data || contact; }
+          catch { contact = c; }
+        }
+        // เครดิตเทอมต่อลูกค้า → เติมวันครบกำหนด = วันที่เอกสาร + PaymentDueDays
+        // (ไม่ override ถ้า user แก้เองแล้ว — เติมเฉพาะตอนช่องยังว่าง)
+        const days = contact?.paymentDueDays;
+        if (typeof days === 'number' && days >= 0) {
+          const dueEl = document.getElementById('fDueDate');
+          const dateEl = document.getElementById('fDate');
+          const termsEl = document.getElementById('fPaymentTerms');
+          if (dueEl && !dueEl.value && dateEl?.value) {
+            const d = new Date(dateEl.value); d.setDate(d.getDate() + days);
+            if (!isNaN(d.getTime())) dueEl.value = d.toISOString().slice(0, 10);
+          }
+          if (termsEl && !termsEl.value) termsEl.value = contact?.paymentTerms || `Net ${days}`;
+        }
+        if (!contact?.defaultIssueTaxInvoice) return;
+        const sel = document.getElementById('fDocType');
+        if (sel && sel.value === 'Invoice') {
+          sel.value = 'TaxInvoice';
+          this.onDocTypeChange?.();
+          Layout.toast('ลูกค้ารายนี้ตั้งค่า "ออกใบกำกับภาษีเสมอ" → เปลี่ยนเป็นใบกำกับภาษีให้แล้ว', 'success');
+        }
+        const missing = [];
+        if (!contact?.taxId) missing.push('เลขผู้เสียภาษี 13 หลัก');
+        if (!contact?.branchCode) missing.push('รหัสสาขา (00000=สนญ.)');
+        if (!(contact?.address || contact?.subDistrict || contact?.province)) missing.push('ที่อยู่');
+        if (missing.length)
+          Layout.toast('⚠️ ใบกำกับภาษี §86/4 ต้องมี: ' + missing.join(' · ') + ' — เติมข้อมูลลูกค้าก่อนอนุมัติ', 'error', 9000);
+      },
+
       onContactChange() {
         const contactId = document.getElementById('fContactId').value;
         const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
@@ -1868,6 +1913,8 @@
           if (isSales) {
             this.checkBadDebtRisk(contactId);
             this.suggestDiscount(contactId);
+            // ลูกค้าที่ตั้งค่า "ออกใบกำกับภาษีเสมอ" → เปลี่ยนชนิดเป็น TaxInvoice + เตือน §86/4
+            this.maybePreselectTaxInvoice(contactId, c);
             // เช็คมัดจำคงค้างของลูกค้านี้ — TaxInvoice/Invoice ดึงมาหักได้
             // (ApplyDepositToInvoiceAsync ใน backend) ก่อนหน้านี้มี endpoint
             // พร้อมแต่ UI ไม่เคยใช้ ผู้ใช้ต้องไปหน้า deposits manually
@@ -3468,7 +3515,7 @@
           <div class="lc-desc-row">
             <div class="lc-num">${i + 1}</div>
             <div class="lc-desc-wrap">
-              <input type="text" class="form-input lc-desc" data-f="desc" placeholder="พิมพ์ชื่อสินค้า/บริการ… (≥2 ตัวอักษรเพื่อค้นหา)">
+              <textarea class="form-input lc-desc" data-f="desc" rows="1" placeholder="พิมพ์ชื่อสินค้า/บริการ… (Enter เว้นบรรทัดได้, ≥2 ตัวอักษรเพื่อค้นหา)"></textarea>
             </div>
             <button type="button" class="lc-del" title="ลบรายการนี้" onclick="this.closest('.line-card').remove();Page.calcSum()">✕</button>
           </div>
@@ -3517,6 +3564,11 @@
           </div>`;
         document.getElementById('linesBody').appendChild(row);
         const descInput = row.querySelector('[data-f="desc"]');
+        // auto-grow textarea (รองรับรายละเอียดหลายบรรทัด) — ขยายสูงตามเนื้อหา
+        const _growDesc = () => { descInput.style.height = 'auto'; descInput.style.height = descInput.scrollHeight + 'px'; };
+        descInput.addEventListener('input', _growDesc);
+        descInput.__grow = _growDesc;   // ให้ fillRow เรียกได้หลังเซ็ตค่า
+        setTimeout(_growDesc, 0);
         // VAT-claimability heuristic: ตรวจจากคำในรายการ → ติ๊ก
         // 🚫 อัตโนมัติเมื่อมีคำที่บ่งบอกค่าใช้จ่ายต้องห้าม
         // §82/5 (น้ำมัน / รถยนต์ / รับรอง / ฯลฯ). ใช้กับ doc ฝั่งซื้อ
@@ -4663,6 +4715,7 @@
               && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')
               && !hasEtaxId) {
             actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
+            actions += ` <button class="btn btn-secondary" onclick="Page.sendEtaxEmailOneClick('${d.id}')" title="สร้าง e-Tax + ส่งอีเมลให้ลูกค้า (แนบ PDF/A-3 ฝัง XML + CC สรรพากร) ในคลิกเดียว">📧 ส่ง e-Tax อีเมล</button>`;
           }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
@@ -4960,6 +5013,25 @@
        * Useful when company-level auto-generation is off, or when the auto-run
        * failed (e.g. cert misconfigured) and the user fixed the issue.
        */
+      /** 1 คลิก: สร้าง e-Tax (XML ฝัง PDF/A-3) → ส่งอีเมลลูกค้า + CC สรรพากร */
+      async sendEtaxEmailOneClick(id) {
+        const d = this._currentDoc;
+        const defaultTo = d?.contactEmail || d?.contact?.email || d?.emailTo || '';
+        const to = window.prompt('ส่ง e-Tax ทางอีเมลไปยัง (อีเมลลูกค้า):', defaultTo);
+        if (!to) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังสร้าง e-Tax + ส่งอีเมล ...', 'info');
+          const companyId = Layout.getCompanyId();
+          const gen = await API.post(`/api/companies/${companyId}/etax/generate`, { documentId: id, signDigitally: false });
+          const etaxId = gen?.data?.id;
+          if (!etaxId) throw new Error(gen?.message || 'สร้าง e-Tax ไม่สำเร็จ');
+          await api.sendEtaxByEmail(etaxId, { to, includePdf: true, includeXml: true, includeRdTimestamp: true });
+          Layout.toast('ส่ง e-Tax ทางอีเมลสำเร็จ (แนบ PDF/A-3 + XML · CC สรรพากร)', 'success', 7000);
+          await this.detail(id);
+          await this.load();
+        } catch (e) { Layout.toast('ส่ง e-Tax อีเมลไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
+      },
       async generateEtax(id) {
         if (!confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้')) return;
         try {
@@ -5318,10 +5390,16 @@
                 ? (parseFloat(document.getElementById('rpWht').value || '0') || 0)
                 : null,
             });
-            Layout.toast('บันทึกชำระเงินสำเร็จ — ระบบออกใบเสร็จและอัพเดทยอดคงค้างให้แล้ว', 'success');
+            Layout.toast('บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success');
             wrap.classList.remove('active');
             Layout.closeModal('detailModal');
             await this.load();
+            // ชำระครบ + เป็น Invoice/TaxInvoice → เสนอออกใบเสร็จรับเงิน (Receipt)
+            // ให้ลูกค้า (VAT รับรู้แล้วที่ใบเดิม — Receipt เป็นหลักฐานรับเงิน)
+            const _dt = this._currentDoc?.documentType;
+            if (amount >= (balanceDue - 0.01) && (_dt === 'Invoice' || _dt === 'TaxInvoice')) {
+              this._offerIssueReceipt(docId, _dt);
+            }
           } catch (e) {
             Layout.toast(e.message, 'error');
           } finally {
@@ -5330,6 +5408,20 @@
         };
         wrap.classList.add('active');
         setTimeout(() => amountEl.focus(), 50);
+      },
+      /** เสนอออกใบเสร็จรับเงิน (Receipt) หลังชำระครบ — แปลง Invoice/TaxInvoice
+       *  → Receipt อ้างอิงเอกสารเดิม. VAT รับรู้ที่ใบกำกับแล้ว ไม่คิดซ้ำ. */
+      async _offerIssueReceipt(docId, dt) {
+        const label = dt === 'TaxInvoice' ? 'ใบกำกับภาษี' : 'ใบแจ้งหนี้';
+        if (!window.confirm(`${label}นี้ชำระครบแล้ว\n\nต้องการออก “ใบเสร็จรับเงิน” ให้ลูกค้าเลยไหม?\n(ระบบจะสร้าง Receipt อ้างอิงเอกสารนี้ — VAT รับรู้แล้วที่ใบเดิม ไม่คิดซ้ำ)`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.convertDocument(docId, 'Receipt');
+          Layout.toast('ออกใบเสร็จรับเงินแล้ว (ฉบับร่าง) — ตรวจสอบแล้วกดอนุมัติเพื่อส่งลูกค้า', 'success', 7000);
+          const newId = r?.data?.id;
+          await this.load();
+          if (newId) this.detail(newId);
+        } catch (e) { Layout.toast('ออกใบเสร็จไม่สำเร็จ: ' + e.message, 'error', 8000); }
       },
       async writeOffBadDebt(id) {
         const api = Layout.api(); if (!api) return;
@@ -5801,12 +5893,30 @@
       },
 
       _currentPdfDoc: null,
+      /** ต้นฉบับ (null) หรือ สำเนา (watermark "สำเนา (COPY)") — จาก dropdown ใน
+       *  pdfModal. server พิมพ์ลายน้ำ "สำเนา" + ตัดป้าย "(ต้นฉบับ)" ออกให้ */
+      _pdfWatermark() { return document.getElementById('pdfCopyMode')?.value || null; },
+      async _refreshPdfPreview() {
+        const d = this._currentPdfDoc; if (!d) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const token = localStorage.getItem('token');
+          const res = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documentId: d.id, templateId: null,
+              watermarkOverride: this._pdfWatermark(), copyNumber: null, language: null }),
+          });
+          if (res.ok) document.getElementById('pdfContent').innerHTML = await res.text();
+        } catch (_) { /* keep current preview */ }
+      },
       async showPdf(id) {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getDocument(id);
           const d = res.data;
           this._currentPdfDoc = d;
+          const _cm = document.getElementById('pdfCopyMode'); if (_cm) _cm.value = '';   // เปิดใหม่ = ต้นฉบับ
           const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
           // Try to get full company info
           let companyInfo = company;
@@ -5849,7 +5959,7 @@
               method: 'POST',
               headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ documentId: d.id, templateId: null,
-                watermarkOverride: null, copyNumber: null, language: null }),
+                watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null }),
             });
             if (res.ok) renderedHtml = await res.text();
           } catch (_) { /* fall through to client render */ }
@@ -6106,7 +6216,7 @@
           const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null })
           });
           if (!resp.ok) {
             let msg = '';
@@ -6148,7 +6258,7 @@
           const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+            body: JSON.stringify({ documentId: d.id, templateId: null, watermarkOverride: Page._pdfWatermark(), copyNumber: null, language: null })
           });
           if (!resp.ok) {
             let msg = '';

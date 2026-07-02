@@ -861,6 +861,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (doc.IsDeposit)
             title += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
+        // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
+        var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
+                or DocumentType.DebitNote or DocumentType.CreditNote
+            || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
+        var isCopyPrint = !string.IsNullOrWhiteSpace(watermark)
+            && (watermark!.Contains("สำเนา") || watermark.Contains("COPY", StringComparison.OrdinalIgnoreCase));
+        if (isRd864Doc && template.CustomTitle == null && !isCopyPrint)
+            title += lang == "en" ? " (Original)" : " (ต้นฉบับ)";
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
 
         // Document Info
@@ -915,7 +923,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 : line.Amount;
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
-            sb.AppendLine($"<td>{line.Description}</td>");
+            sb.AppendLine($"<td style='white-space:pre-line'>{line.Description}</td>");
             sb.AppendLine($"<td class='right'>{line.Quantity:N2}</td>");
             if (template.ShowUnit) sb.AppendLine($"<td class='center'>{line.Unit}</td>");
             sb.AppendLine($"<td class='right'>{line.UnitPrice:N2}</td>");
@@ -975,6 +983,11 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         if (template.ShowBankDetails && template.BankDetailsText != null)
             sb.AppendLine($"<div class='bank-details'><strong>ข้อมูลชำระเงิน:</strong><br/>{template.BankDetailsText}</div>");
+
+        // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — white-space:
+        // pre-line ให้ \n แสดงเป็นหลายบรรทัด
+        if (!string.IsNullOrWhiteSpace(doc.Notes))
+            sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>หมายเหตุ:</strong> {System.Net.WebUtility.HtmlEncode(doc.Notes.Trim())}</div>");
 
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes

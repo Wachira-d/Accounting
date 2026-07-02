@@ -241,6 +241,16 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<UndueInputVatSummary>>(true, result));
     }
 
+    /// <summary>§82/3: reclassify ภาษีซื้อ 11640 ที่พ้น 6 เดือน (ใบกำกับไม่ครบ) →
+    /// ค่าใช้จ่าย. ล้าง 11640 ที่ค้างเป็น asset ลอย. คืนจำนวนเอกสารที่จัดการ.</summary>
+    [HttpPost("undue-input-vat/reclassify-expired")]
+    public async Task<ActionResult<ApiResponse<object>>> ReclassifyExpiredUndueInputVat(Guid companyId)
+    {
+        var n = await _documentService.ReclassifyExpiredUndueInputVatAsync(companyId, User.Identity?.Name ?? "");
+        return Ok(new ApiResponse<object>(true, new { reclassified = n },
+            n > 0 ? $"reclassify ภาษีซื้อพ้น 6 เดือน {n} รายการ → ค่าใช้จ่าย" : "ไม่มีภาษีซื้อที่พ้น 6 เดือน"));
+    }
+
     /// <summary>รายการเงินมัดจำคงค้าง/รับรู้แล้ว สำหรับหน้าจัดการมัดจำ
     /// (ขึ้นงบดุลเป็นหนี้สิน ไม่ใช่เจ้าหนี้การค้า).</summary>
     [HttpGet("deposits")]

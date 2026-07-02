@@ -105,6 +105,11 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "CountryCode" varchar(3) NOT NULL DEFAULT 'TH';
             """,
+            // ลูกค้ารายนี้ออกใบกำกับภาษีเสมอ (pre-select TaxInvoice ตอนสร้างเอกสาร)
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "DefaultIssueTaxInvoice" boolean NOT NULL DEFAULT false;""",
+            // เครดิตเทอมต่อลูกค้า — เติมวันครบกำหนดอัตโนมัติตอนสร้างเอกสารขาย
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PaymentDueDays" integer NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PaymentTerms" varchar(100) NULL;""",
 
             // ===== Companies: structured address — add missing BuildingNumber/Name/StreetName =====
             """
@@ -1163,6 +1168,8 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatBecameClaimableAt" timestamp with time zone NULL;
             """,
+            // §82/3: ภาษีซื้อ 11640 พ้น 6 เดือน → reclassify เป็นค่าใช้จ่าย
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatExpiredAt" timestamp with time zone NULL;""",
             // User override ผัง VAT ปลายทาง (เช่น "51000" = ลงต้นทุนขายแทน)
             // — ใช้ AccountCode (string) เพื่อ portable, validator แปลงเป็น Id ตอน post
             """

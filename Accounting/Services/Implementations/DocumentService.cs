@@ -1685,6 +1685,7 @@ public class DocumentService : IDocumentService
             .Where(d => d.CompanyId == companyId
                 && d.InputVatPostedAsUndue
                 && d.InputVatBecameClaimableAt == null
+                && d.InputVatExpiredAt == null
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
@@ -1794,12 +1795,17 @@ public class DocumentService : IDocumentService
         // ใบกำกับที่ไม่ครบ §86/4 หลุดเข้า GL → ลูกค้ารับใบไปใช้ภาษีซื้อไม่ได้.
         var rd864Types = new[] { DocumentType.TaxInvoice, DocumentType.Receipt,
             DocumentType.DebitNote, DocumentType.CreditNote };
+        // default = บังคับ (เดิม opt-in default off → ใบกำกับไม่ครบหลุดเข้า GL).
         var enforce864 = await _db.CompanySettings.AsNoTracking()
             .Where(c => c.CompanyId == companyId && !c.IsDeleted)
             .Select(c => (bool?)c.EnforceFullTaxInvoiceFields)
-            .FirstOrDefaultAsync() ?? false;
-        if (enforce864 && rd864Types.Contains(doc.DocumentType) && doc.VatAmount > 0
-            && doc.Contact != null)
+            .FirstOrDefaultAsync() ?? true;
+        // ใบกำกับภาษี (TaxInvoice) เป็นเอกสาร §86/4 ตามกฎหมาย → บังคับ field ผู้ซื้อ
+        // เสมอ ไม่ว่า flag (opt-out ได้เฉพาะ Receipt/CN/DN). ใบที่ไม่ครบ = ลูกค้า
+        // เคลมภาษีซื้อไม่ได้.
+        var mustEnforce864 = doc.DocumentType == DocumentType.TaxInvoice
+            || (enforce864 && rd864Types.Contains(doc.DocumentType));
+        if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null)
         {
             var missing = new List<string>();
             var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();
@@ -2030,6 +2036,12 @@ public class DocumentService : IDocumentService
                 await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
                 await ApplyProjectBillingAsync(companyId, doc, +1);
                 await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
+
+                // supersede ใบแจ้งหนี้ต้นทาง: TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved,
+                // ยังไม่ชำระ) เมื่ออนุมัติ → ล้างใบแจ้งหนี้เดิม (reverse JE + คืน stock +
+                // กลับ project) กัน GL/รายได้/สต๊อกซ้ำ (ภพ.30 นับเฉพาะ TaxInvoice อยู่แล้ว).
+                if (doc.DocumentType == DocumentType.TaxInvoice && doc.RelatedDocumentId.HasValue)
+                    await SupersedeSourceInvoiceAsync(companyId, doc, approvedBy);
 
                 // บังคับลงทะเบียนสินทรัพย์ — บรรทัดที่ลงผัง PPE (12xxx) ต้องมี
                 // ทะเบียนสินทรัพย์ + ตารางค่าเสื่อม (TFRS บทที่ 10 + §65 ตรี (5)).
@@ -2616,12 +2628,41 @@ public class DocumentService : IDocumentService
                 $"ไม่สามารถยกเลิกเอกสารนี้ได้ เนื่องจาก e-Tax เลขที่ {lockedEtax.EtaxRefNumber} " +
                 "ถูกส่งหรืออนุมัติโดยกรมสรรพากรแล้ว ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
 
+        // กันยกเลิกเอกสารต้นทางที่มี "เอกสารลูก" active อ้างอยู่ (แปลงไปแล้ว เช่น
+        // Invoice→TaxInvoice/Receipt) — ยกเลิกต้นทางจะทำให้ลูกลอย (orphan): ภพ.30/
+        // e-Tax/ลูกหนี้อ้างเอกสารที่หายไป (รวมถึงเคสลูกมี e-Tax ยื่น RD แล้ว).
+        // ต้องยกเลิกลูกก่อน.
+        var activeChild = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == documentId
+                && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .Select(d => new { d.DocumentNumber, d.DocumentType })
+            .FirstOrDefaultAsync();
+        if (activeChild != null)
+            throw new InvalidOperationException(
+                $"ยกเลิกไม่ได้ — เอกสารนี้มีเอกสารลูก {activeChild.DocumentType} ({activeChild.DocumentNumber}) " +
+                "อ้างอิงอยู่ (เช่นใบกำกับภาษี/ใบเสร็จที่แปลงไป). กรุณายกเลิกเอกสารลูกก่อน");
+
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
+                // Row lock + re-read สถานะใต้ล็อก — กัน double-void race (2 คลิกพร้อมกัน
+                // → reverse JE ซ้ำ). ถ้าอีก request ยกเลิกไปแล้ว → no-op (idempotent).
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                    documentId, companyId);
+                var lockedStatus = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                    .Select(d => d.Status).FirstAsync();
+                if (lockedStatus == DocumentStatus.Voided)
+                {
+                    await transaction.RollbackAsync();
+                    return;
+                }
+
                 // 1) Void linked Payments first — each reverses its own JE + restores doc balance
                 //    (We void *all* payments inside this transaction; the document gets voided
                 //    after, so payment-balance recalculation here is intermediate only.)
@@ -3405,6 +3446,20 @@ public class DocumentService : IDocumentService
         }
         else if (isCreditNote)
         {
+            // §86/10: SUM(ใบลดหนี้ทั้งหมดที่อ้างใบเดิม) ≤ ยอดใบกำกับต้นฉบับ — กัน
+            // ลดหนี้เกินยอดเดิม (โดยเฉพาะโหมดคืนเงินสดตอนใบเดิมชำระครบ ซึ่งเดิม
+            // ไม่มี cap เลย → ออก CN ทับกันเกินยอดขายได้).
+            var cnSiblingSum = await _db.Documents.AsNoTracking()
+                .Where(c => c.RelatedDocumentId == source.Id && c.Id != doc.Id
+                    && c.DocumentType == DocumentType.CreditNote
+                    && c.Status != DocumentStatus.Voided && c.Status != DocumentStatus.Rejected
+                    && c.Status != DocumentStatus.Draft && !c.IsDeleted)
+                .SumAsync(c => (decimal?)c.TotalAmount) ?? 0m;
+            if (cnSiblingSum + doc.TotalAmount > source.TotalAmount + 0.01m)
+                throw new InvalidOperationException(
+                    $"ยอดใบลดหนี้รวม ({cnSiblingSum + doc.TotalAmount:N2}) เกินยอดเอกสารต้นฉบับ " +
+                    $"{source.DocumentNumber} ({source.TotalAmount:N2}) — §86/10 ลดหนี้เกินยอดเดิมไม่ได้");
+
             // CN: validation depends on source state.
             // - If source still has BalanceDue > 0: CN reduces AR/AP, capped by BalanceDue
             // - If source fully paid (BalanceDue = 0): CN becomes cash refund — JE
@@ -3731,6 +3786,25 @@ public class DocumentService : IDocumentService
                     $"ตรวจพบวงกลมการแปลง: เอกสาร {ancestorMatch.DocumentNumber} ({(DocumentType)ancestorMatch.DocumentType}) เป็นบรรพบุรุษของเอกสารต้นทางอยู่แล้ว");
         }
 
+        // กันแปลงซ้ำเป็นเอกสารรับรู้รายได้ (Invoice/TaxInvoice) — 1 ต้นทางออกใบ
+        // รับรู้รายได้ได้ใบเดียว (เดิมไม่กัน → Invoice→TaxInvoice 2 ครั้ง = รายได้
+        // + ภาษีขายซ้ำ 2 เท่า, ภพ.30 นับซ้ำ). ยกเว้นใบที่ถูกยกเลิก/ปฏิเสธไปแล้ว.
+        if (targetType is DocumentType.Invoice or DocumentType.TaxInvoice)
+        {
+            var existingRevenueChild = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id
+                    && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .Select(d => new { d.DocumentNumber, d.DocumentType })
+                .FirstOrDefaultAsync();
+            if (existingRevenueChild != null)
+                throw new InvalidOperationException(
+                    $"เอกสารต้นทาง {source.DocumentNumber} แปลงเป็น {existingRevenueChild.DocumentType} " +
+                    $"({existingRevenueChild.DocumentNumber}) ไปแล้ว — แปลงซ้ำจะรับรู้รายได้/ภาษีขายซ้ำ. " +
+                    "ถ้าต้องการออกใหม่ ให้ยกเลิกใบเดิมก่อน");
+        }
+
         // For derivative types that adjust source's balance, source must be approved
         // and have outstanding balance.
         var derivativeTypes = new[] {
@@ -3775,7 +3849,11 @@ public class DocumentService : IDocumentService
             ProjectId: source.ProjectId,
             BankAccountId: source.BankAccountId,
             PaymentAccountId: source.PaymentAccountId,
-            ExpenseCategoryId: source.ExpenseCategoryId), createdBy);
+            ExpenseCategoryId: source.ExpenseCategoryId,
+            // คงสกุลเงิน + เรตของเอกสารต้นทาง (เดิมไม่ส่ง → default THB ทำให้เอกสาร
+            // ต่างสกุลเงินแปลงแล้วกลายเป็นบาท)
+            Currency: source.Currency,
+            ExchangeRate: source.ExchangeRate), createdBy);
 
         // Link new document to source + propagate appendix/contract metadata
         var created = await _db.Documents.FindAsync(newDoc.Id);
@@ -4150,6 +4228,9 @@ public class DocumentService : IDocumentService
             DefaultApAccountId = request.DefaultApAccountId,
             DefaultIrGrAccountId = request.DefaultIrGrAccountId,
             CreditLimit = request.CreditLimit,
+            DefaultIssueTaxInvoice = request.DefaultIssueTaxInvoice,
+            PaymentDueDays = request.PaymentDueDays,
+            PaymentTerms = request.PaymentTerms,
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -4326,6 +4407,12 @@ public class DocumentService : IDocumentService
             contact.DefaultIrGrAccountId = request.DefaultIrGrAccountId == Guid.Empty ? null : request.DefaultIrGrAccountId;
         if (request.CreditLimit.HasValue)
             contact.CreditLimit = request.CreditLimit.Value <= 0 ? null : request.CreditLimit.Value;
+        if (request.DefaultIssueTaxInvoice.HasValue)
+            contact.DefaultIssueTaxInvoice = request.DefaultIssueTaxInvoice.Value;
+        if (request.PaymentDueDays.HasValue)
+            contact.PaymentDueDays = request.PaymentDueDays.Value < 0 ? null : request.PaymentDueDays.Value;
+        if (request.PaymentTerms != null)
+            contact.PaymentTerms = string.IsNullOrWhiteSpace(request.PaymentTerms) ? null : request.PaymentTerms.Trim();
 
         await _db.SaveChangesAsync();
         // Reload with nav properties so MapContactToResponse can emit
@@ -5111,6 +5198,72 @@ public class DocumentService : IDocumentService
         return true;
     }
 
+    /// <summary>§82/3: ภาษีซื้อที่ค้าง 11640 พ้น 6 เดือนโดยใบกำกับไม่ครบ → เคลม
+    /// ไม่ได้แล้ว ต้อง reclassify เป็นค่าใช้จ่าย (Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" /
+    /// Cr 11640) ล้าง 11640 ที่ค้างเป็น asset ลอย. Idempotent (ตั้ง InputVatExpiredAt).
+    /// เรียกจาก endpoint / nightly job. คืนจำนวนเอกสารที่จัดการ.</summary>
+    public async Task<int> ReclassifyExpiredUndueInputVatAsync(Guid companyId, string actor)
+    {
+        var today = DateTime.UtcNow.Date;
+        var rows = await _db.Documents.Include(d => d.Lines)
+            .Where(d => d.CompanyId == companyId && d.InputVatPostedAsUndue
+                && d.InputVatBecameClaimableAt == null && d.InputVatExpiredAt == null
+                && (d.InputVatAccountCodeOverride == null || d.InputVatAccountCodeOverride == "")
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+            .ToListAsync();
+
+        var undueAcc = await FindAccountAsync(companyId, "11640") ?? await FindAccountAsync(companyId, "11630");
+        if (undueAcc == null) return 0;
+        // ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" — หา 5xxx ตามชื่อ ไม่งั้น fallback 5xxx ตัวแรก
+        var expenseAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+                && a.AccountCode.StartsWith("5")
+                && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")))
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+                && a.AccountCode.StartsWith("53"))
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+                && a.AccountType == AccountType.Expense);
+        if (expenseAcc == null) return 0;
+
+        var count = 0;
+        foreach (var doc in rows)
+        {
+            var baseDate = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
+            var windowEnd = new DateTime(baseDate.Year, baseDate.Month, 1).AddMonths(7).AddDays(-1);
+            if (today <= windowEnd) continue;   // ยังไม่หมดสิทธิ์
+            var vatAmount = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
+            if (vatAmount <= 0) { doc.InputVatExpiredAt = DateTime.UtcNow; count++; continue; }
+
+            var now = DateTime.UtcNow;
+            var je = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV"),
+                EntryDate = now, JournalType = JournalType.General,
+                Description = $"ภาษีซื้อขอคืนไม่ได้ (§82/3 พ้น 6 เดือน) - {doc.DocumentNumber}",
+                Reference = doc.DocumentNumber, Status = JournalEntryStatus.Posted,
+                TotalDebit = vatAmount, TotalCredit = vatAmount, CreatedBy = actor,
+                IsAutoGenerated = true, SourceDocumentId = doc.Id,
+                FiscalPeriodId = (await ResolveFiscalPeriodAsync(companyId, now))?.Id,
+                ProjectId = doc.ProjectId,
+            };
+            _db.JournalEntries.Add(je);
+            _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id,
+                AccountId = expenseAcc.Id, DebitAmount = vatAmount, CreditAmount = 0,
+                Description = "ภาษีซื้อขอคืนไม่ได้ (พ้น 6 เดือน §82/3)", LineOrder = 1 });
+            _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id,
+                AccountId = undueAcc.Id, DebitAmount = 0, CreditAmount = vatAmount,
+                Description = "ล้างภาษีซื้อยังไม่ถึงกำหนด (หมดสิทธิ์เคลม)", LineOrder = 2 });
+            doc.InputVatExpiredAt = now;
+            count++;
+        }
+        if (count > 0) await _db.SaveChangesAsync();
+        _logger.LogInformation("Reclassified {Count} expired undue input-VAT docs → expense (§82/3), company {Cid}", count, companyId);
+        return count;
+    }
+
     /// <summary>Resolve AccountCode → AccountId ใน CoA ของบริษัท. คืน null ถ้า
     /// ไม่พบ / inactive (ป้องกัน AI hallucinate ผังที่ไม่มีจริง). cache
     /// ใน-call ผ่าน lookup map ที่ caller เตรียมไว้.</summary>
@@ -5421,6 +5574,44 @@ public class DocumentService : IDocumentService
     /// rolls back both the document state and the stock delta. Without
     /// this, sale Invoices left stock untouched and reconciling inventory
     /// to GL revenue required manual stock adjustments every period.</summary>
+    /// <summary>เมื่อ TaxInvoice ที่แปลงมาจากใบแจ้งหนี้ (Invoice) ถูกอนุมัติ →
+    /// supersede ใบแจ้งหนี้ต้นทาง: reverse JE + คืน stock + กลับ project billing +
+    /// set Voided กัน GL/รายได้/สต๊อกซ้ำ. เฉพาะใบแจ้งหนี้ approved + ยังไม่ชำระ +
+    /// ไม่มีลูก active อื่น. ทำใน transaction ของ ApproveDocumentAsync (reversal
+    /// ambient-safe). ภพ.30 นับเฉพาะ TaxInvoice อยู่แล้ว → ไม่กระทบ.</summary>
+    private async Task SupersedeSourceInvoiceAsync(Guid companyId, Document taxInvoice, string actor)
+    {
+        var src = await _db.Documents.Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == taxInvoice.RelatedDocumentId!.Value && d.CompanyId == companyId);
+        if (src == null || src.DocumentType != DocumentType.Invoice) return;
+        if (src.Status != DocumentStatus.Approved && src.Status != DocumentStatus.Sent) return;
+        if (src.PaidAmount > 0.01m) return;   // ชำระแล้ว → ไม่ auto-supersede (กัน settlement หลุด)
+        // มีลูก active อื่นนอกจาก TaxInvoice นี้ → ไม่ supersede (ซับซ้อน)
+        var otherActiveChild = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == src.Id && d.Id != taxInvoice.Id
+            && !d.IsDeleted && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
+        if (otherActiveChild) return;
+
+        var jeIds = await _db.JournalEntries
+            .Where(j => j.SourceDocumentId == src.Id && j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null)
+            .Select(j => j.Id).ToListAsync();
+        foreach (var jeId in jeIds)
+            await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                reversalDate: DateTime.UtcNow.Date,
+                description: $"แทนที่ด้วยใบกำกับภาษี {taxInvoice.DocumentNumber}", systemTriggered: true);
+        // กลับ stock (sale OUT → คืนเข้า) + project billing (ลด)
+        await ApplyStockMovementsAsync(companyId, src, -1, actor);
+        await ApplyProjectBillingAsync(companyId, src, -1);
+
+        src.Status = DocumentStatus.Voided;
+        src.Notes = ((src.Notes ?? "") + $" [แทนที่ด้วยใบกำกับภาษี {taxInvoice.DocumentNumber}]").Trim();
+        src.UpdatedAt = DateTime.UtcNow;
+        src.UpdatedBy = actor;
+        _logger.LogInformation("Superseded Invoice {Src} by TaxInvoice {Tax} (reverse JE+stock+project)",
+            src.DocumentNumber, taxInvoice.DocumentNumber);
+    }
+
     private async Task ApplyStockMovementsAsync(Guid companyId, Document doc, int sign, string actor)
     {
         if (sign == 0) return;
@@ -6723,7 +6914,10 @@ public class DocumentService : IDocumentService
         DefaultIrGrAccountId: c.DefaultIrGrAccountId,
         DefaultIrGrAccountCode: c.DefaultIrGrAccount?.AccountCode,
         DefaultIrGrAccountName: c.DefaultIrGrAccount?.AccountName,
-        CreditLimit: c.CreditLimit);
+        CreditLimit: c.CreditLimit,
+        DefaultIssueTaxInvoice: c.DefaultIssueTaxInvoice,
+        PaymentDueDays: c.PaymentDueDays,
+        PaymentTerms: c.PaymentTerms);
 
     // ==================== Smart Defaults ====================
 

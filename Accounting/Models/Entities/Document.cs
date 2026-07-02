@@ -53,6 +53,11 @@ public class Document : TenantEntity
     /// เมื่อ InputVatPostedAsUndue = true (เพื่อให้ตรงกับ JE จริง).</summary>
     public DateTime? InputVatBecameClaimableAt { get; set; }
 
+    /// <summary>§82/3: ภาษีซื้อที่ค้าง 11640 พ้น 6 เดือนโดยใบกำกับไม่ครบ → เคลม
+    /// ไม่ได้แล้ว ถูก reclassify เป็นค่าใช้จ่าย (Dr ค่าใช้จ่าย / Cr 11640) เมื่อ
+    /// timestamp นี้ถูกตั้ง. คู่กับ ReclassifyExpiredUndueInputVatAsync.</summary>
+    public DateTime? InputVatExpiredAt { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense
@@ -512,6 +517,21 @@ public class Contact : TenantEntity
     /// "ค่าใช้จ่ายค้างจ่ายอื่น" in the Thai SME template.</summary>
     public Guid? DefaultIrGrAccountId { get; set; }
     public ChartOfAccount? DefaultIrGrAccount { get; set; }
+
+    /// <summary>ลูกค้ารายนี้ต้องออกเป็น "ใบกำกับภาษี" เสมอ (ลูกค้าจด VAT ที่ต้อง
+    /// เคลมภาษีซื้อ) — เมื่อเลือก contact นี้ตอนสร้างเอกสารขาย ระบบ pre-select
+    /// ชนิด TaxInvoice แทน Invoice + เตือนถ้าข้อมูล §86/4 (TaxId/สาขา/ที่อยู่)
+    /// ไม่ครบ. Default false = เลือกชนิดเอกสารเองตามปกติ.</summary>
+    public bool DefaultIssueTaxInvoice { get; set; } = false;
+
+    /// <summary>เครดิตเทอมของลูกค้ารายนี้ — จำนวนวันเครดิต (เช่น 30 = Net 30).
+    /// null = ใช้ค่าเริ่มต้นบริษัท (CompanySettings.DefaultPaymentDueDays). เมื่อ
+    /// เลือก contact นี้ตอนสร้างเอกสารขาย ระบบเติม "วันครบกำหนด" = วันที่เอกสาร +
+    /// PaymentDueDays และ label เครดิตเทอมให้อัตโนมัติ.</summary>
+    public int? PaymentDueDays { get; set; }
+    /// <summary>ป้ายเครดิตเทอม (เช่น "Net 30", "เงินสด", "60 วัน") — free-text
+    /// override; ถ้าว่างระบบสร้างจาก PaymentDueDays ("Net {n}").</summary>
+    public string? PaymentTerms { get; set; }
 
     /// <summary>Loyalty points balance — earned per POS sale, redeemable next visit.
     /// Default earn rate = 1 point per ฿100, set on the company config later.</summary>
