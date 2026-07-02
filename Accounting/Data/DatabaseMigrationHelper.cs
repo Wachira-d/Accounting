@@ -4276,6 +4276,14 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedAt" timestamptz NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedBy" varchar(200) NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_QuotationAcceptToken" ON "Documents" ("QuotationAcceptToken") WHERE "QuotationAcceptToken" IS NOT NULL;""",
+
+            // ===== Delivery e-sign (ลูกค้าเซ็นรับสินค้าออนไลน์ — Proof of Delivery) =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignToken" varchar(80) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignTokenExpiresAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignedAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignedBy" varchar(200) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignatureBase64" text NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_DeliverySignToken" ON "Documents" ("DeliverySignToken") WHERE "DeliverySignToken" IS NOT NULL;""",
             // รหัสผูก LINE ระดับพนักงาน (6 หลัก, หมดอายุ 24 ชม.)
             """
             CREATE TABLE IF NOT EXISTS "EmployeeLineBindCodes" (

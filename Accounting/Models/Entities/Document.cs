@@ -76,6 +76,17 @@ public class Document : TenantEntity
     /// <summary>ชื่อผู้กดยอมรับ (ลูกค้าพิมพ์เอง — บันทึกเป็นหลักฐาน).</summary>
     public string? QuotationAcceptedBy { get; set; }
 
+    /// <summary>Capability token ลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (Proof of
+    /// Delivery) — ใช้กับใบส่งของ (DeliveryNote): ลูกค้าเปิดลิงก์บนมือถือ
+    /// วาดลายเซ็น + พิมพ์ชื่อ → ประทับลงช่อง "ผู้รับของ" บน PDF อัตโนมัติ.</summary>
+    public string? DeliverySignToken { get; set; }
+    public DateTime? DeliverySignTokenExpiresAt { get; set; }
+    public DateTime? DeliverySignedAt { get; set; }
+    public string? DeliverySignedBy { get; set; }
+    /// <summary>ภาพลายเซ็นผู้รับของ (data-url PNG จาก canvas) — render ลง
+    /// slot "ผู้รับของ" ของ PDF ใบส่งของ.</summary>
+    public string? DeliverySignatureBase64 { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense

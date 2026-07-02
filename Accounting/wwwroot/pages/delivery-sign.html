@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>เซ็นรับสินค้า</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans Thai', sans-serif; background: #f1f5f9; color: #0f172a;
+           min-height: 100vh; display: flex; justify-content: center; padding: 20px 12px; }
+    .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 24px rgba(15,23,42,.08);
+            max-width: 560px; width: 100%; padding: 24px; height: fit-content; }
+    h1 { font-size: 19px; margin-bottom: 4px; }
+    .sub { color: #64748b; font-size: 13px; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 14px; }
+    th { text-align: left; color: #64748b; font-weight: 500; font-size: 12px;
+         border-bottom: 1px solid #e2e8f0; padding: 6px 4px; }
+    td { padding: 7px 4px; border-bottom: 1px solid #f1f5f9; }
+    .num { text-align: right; }
+    .pad-wrap { border: 2px dashed #94a3b8; border-radius: 10px; background: #fafafa;
+                position: relative; margin: 8px 0; touch-action: none; }
+    canvas { display: block; width: 100%; height: 180px; border-radius: 8px; }
+    .pad-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                color: #cbd5e1; font-size: 15px; pointer-events: none; }
+    .clear-btn { background: none; border: 0; color: #64748b; font-size: 13px; cursor: pointer;
+                 font-family: inherit; text-decoration: underline; padding: 4px; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px;
+            font-family: inherit; font-size: 14px; margin: 6px 0 10px; }
+    button.primary { width: 100%; background: #2563eb; color: #fff; border: 0; border-radius: 10px;
+             padding: 13px; font-size: 16px; font-weight: 600; font-family: inherit; cursor: pointer; margin-top: 6px; }
+    button.primary:disabled { background: #94a3b8; cursor: default; }
+    .done { text-align: center; padding: 26px 10px; }
+    .done .big { font-size: 44px; }
+    .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
+    .badge { display: inline-block; background: #dcfce7; color: #166534; border-radius: 999px;
+             padding: 3px 12px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card"><div class="err" id="loading">กำลังโหลด...</div></div>
+  <script>
+    const token = new URLSearchParams(location.search).get('token');
+    const card = document.getElementById('card');
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    let drawn = false;
+
+    async function load() {
+      if (!token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
+      let r;
+      try { r = await fetch(`/api/public/delivery/${encodeURIComponent(token)}`); }
+      catch { card.innerHTML = '<div class="err">เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง</div>'; return; }
+      if (!r.ok) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว<br>กรุณาติดต่อผู้ส่งสินค้า</div>'; return; }
+      const j = await r.json();
+      const q = j.data;
+      if (q.signedAt) {
+        card.innerHTML = `<div class="done"><div class="big">✅</div>
+          <h1>ใบส่งของ ${esc(q.documentNumber)}</h1>
+          <div class="badge">เซ็นรับแล้วโดย ${esc(q.signedBy)} เมื่อ ${new Date(q.signedAt).toLocaleString('th-TH')}</div></div>`;
+        return;
+      }
+      card.innerHTML = `
+        <h1>เซ็นรับสินค้า — ${esc(q.documentNumber)}</h1>
+        <div class="sub">จาก <strong>${esc(q.companyName || '')}</strong>
+          · ถึง ${esc(q.contactName || '-')}
+          · วันที่ ${new Date(q.documentDate).toLocaleDateString('th-TH')}</div>
+        <table>
+          <thead><tr><th>รายการ</th><th class="num">จำนวน</th></tr></thead>
+          <tbody>${(q.lines || []).map(l => `<tr>
+            <td>${esc(l.description)}</td>
+            <td class="num">${Number(l.quantity).toLocaleString('th-TH')} ${esc(l.unit || '')}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+        <strong style="font-size:14px">ลายเซ็นผู้รับสินค้า</strong>
+        <div class="pad-wrap">
+          <canvas id="pad"></canvas>
+          <div class="pad-hint" id="padHint">✍️ เซ็นชื่อตรงนี้</div>
+        </div>
+        <div style="text-align:right"><button class="clear-btn" onclick="clearPad()">ล้างลายเซ็น</button></div>
+        <input id="signName" placeholder="ชื่อ-นามสกุลผู้รับสินค้า *" maxlength="200">
+        <input id="signNote" placeholder="หมายเหตุ เช่น ของครบ/กล่องบุบ (ถ้ามี)" maxlength="500">
+        <button class="primary" id="signBtn" onclick="submitSign()">✓ ยืนยันรับสินค้า</button>`;
+      initPad();
+    }
+
+    let ctx, canvas;
+    function initPad() {
+      canvas = document.getElementById('pad');
+      const scale = window.devicePixelRatio || 1;
+      canvas.width = canvas.offsetWidth * scale;
+      canvas.height = canvas.offsetHeight * scale;
+      ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
+      ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1e293b';
+      let last = null;
+      const pos = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const p = e.touches ? e.touches[0] : e;
+        return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+      };
+      const start = (e) => { e.preventDefault(); last = pos(e); };
+      const move = (e) => {
+        if (!last) return;
+        e.preventDefault();
+        const p = pos(e);
+        ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+        last = p; drawn = true;
+        document.getElementById('padHint').style.display = 'none';
+      };
+      const end = () => { last = null; };
+      canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', end);
+      canvas.addEventListener('touchstart', start, { passive: false });
+      canvas.addEventListener('touchmove', move, { passive: false });
+      canvas.addEventListener('touchend', end);
+    }
+    function clearPad() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawn = false;
+      document.getElementById('padHint').style.display = 'flex';
+    }
+
+    async function submitSign() {
+      const name = (document.getElementById('signName').value || '').trim();
+      if (!name) { alert('กรุณาระบุชื่อผู้รับสินค้า'); return; }
+      if (!drawn) { alert('กรุณาวาดลายเซ็นก่อน'); return; }
+      const btn = document.getElementById('signBtn');
+      btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+      try {
+        const r = await fetch(`/api/public/delivery/${encodeURIComponent(token)}/sign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signedBy: name,
+            signatureBase64: canvas.toDataURL('image/png'),
+            note: (document.getElementById('signNote').value || '').trim() || null,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+        card.innerHTML = `<div class="done"><div class="big">🎉</div>
+          <h1>เซ็นรับสินค้าเรียบร้อย</h1>
+          <div class="sub" style="margin-top:8px">ลายเซ็นถูกประทับลงใบส่งของแล้ว — ขอบคุณครับ</div></div>`;
+      } catch (e) {
+        alert(e.message);
+        btn.disabled = false; btn.textContent = '✓ ยืนยันรับสินค้า';
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

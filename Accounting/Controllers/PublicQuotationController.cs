@@ -112,6 +112,93 @@ public class PublicQuotationController : ControllerBase
         return doc;
     }
 
+    // ==================== Delivery e-sign (Proof of Delivery) ====================
+
+    [HttpGet("~/api/public/delivery/{token}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ViewDelivery(string token)
+    {
+        var doc = await FindDeliveryByTokenAsync(token);
+        if (doc == null) return NotFound(new ApiResponse<string>(false, null, "ลิงก์ไม่ถูกต้องหรือหมดอายุ"));
+
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == doc.CompanyId)
+            .Select(c => new { c.Name })
+            .FirstOrDefaultAsync();
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            companyName = company?.Name,
+            documentNumber = doc.DocumentNumber,
+            documentDate = doc.DocumentDate,
+            contactName = doc.Contact?.Name,
+            signedAt = doc.DeliverySignedAt,
+            signedBy = doc.DeliverySignedBy,
+            lines = doc.Lines
+                .OrderBy(l => l.LineOrder)
+                .Select(l => new { l.Description, l.Quantity, l.Unit })
+                .ToList(),
+        }));
+    }
+
+    public record DeliverySignRequest(string SignedBy, string SignatureBase64, string? Note = null);
+
+    [HttpPost("~/api/public/delivery/{token}/sign")]
+    [AllowAnonymous]
+    public async Task<IActionResult> SignDelivery(string token, [FromBody] DeliverySignRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.SignedBy))
+            return BadRequest(new ApiResponse<string>(false, null, "กรุณาระบุชื่อผู้รับสินค้า"));
+        if (string.IsNullOrWhiteSpace(request.SignatureBase64))
+            return BadRequest(new ApiResponse<string>(false, null, "กรุณาวาดลายเซ็น"));
+        // cap ~512KB base64 (ภาพ canvas PNG ปกติ < 50KB) กัน payload บวม
+        if (request.SignatureBase64.Length > 700_000)
+            return BadRequest(new ApiResponse<string>(false, null, "ภาพลายเซ็นใหญ่เกินไป"));
+
+        var doc = await FindDeliveryByTokenAsync(token, track: true);
+        if (doc == null) return NotFound(new ApiResponse<string>(false, null, "ลิงก์ไม่ถูกต้องหรือหมดอายุ"));
+        if (doc.DeliverySignedAt != null)
+            return Ok(new ApiResponse<object>(true,
+                new { signedAt = doc.DeliverySignedAt, signedBy = doc.DeliverySignedBy },
+                "ใบส่งของนี้ถูกเซ็นรับไปแล้ว"));
+
+        doc.DeliverySignedAt = DateTime.UtcNow;
+        doc.DeliverySignedBy = request.SignedBy.Trim().Length > 200
+            ? request.SignedBy.Trim()[..200] : request.SignedBy.Trim();
+        doc.DeliverySignatureBase64 = request.SignatureBase64.Trim();
+        var stamp = $"\n[ลูกค้าเซ็นรับสินค้าออนไลน์] {doc.DeliverySignedBy} — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC"
+            + (string.IsNullOrWhiteSpace(request.Note) ? "" : $" · หมายเหตุ: {request.Note.Trim()}");
+        doc.Notes = (doc.Notes ?? "") + stamp;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("DeliveryNote {DocNo} signed online by {By} (company {Cid})",
+            doc.DocumentNumber, doc.DeliverySignedBy, doc.CompanyId);
+
+        return Ok(new ApiResponse<object>(true,
+            new { signedAt = doc.DeliverySignedAt, signedBy = doc.DeliverySignedBy },
+            "เซ็นรับสินค้าเรียบร้อย — ลายเซ็นถูกประทับลงเอกสารแล้ว"));
+    }
+
+    private async Task<Models.Entities.Document?> FindDeliveryByTokenAsync(string token, bool track = false)
+    {
+        if (string.IsNullOrWhiteSpace(token) || token.Length is < 32 or > 80
+            || !token.All(Uri.IsHexDigit))
+            return null;
+
+        var q = track ? _db.Documents.AsQueryable() : _db.Documents.AsNoTracking();
+        var doc = await q
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .FirstOrDefaultAsync(d => d.DeliverySignToken == token
+                && d.DocumentType == DocumentType.DeliveryNote
+                && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Draft);
+        if (doc == null) return null;
+        if (doc.DeliverySignTokenExpiresAt is { } exp && exp < DateTime.UtcNow) return null;
+        return doc;
+    }
+
     /// <summary>สร้าง token แบบ crypto-random (helper กลางให้ DocumentController ใช้)</summary>
     public static string NewToken() =>
         Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();

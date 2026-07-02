@@ -261,6 +261,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **หน้า**: `pages/quotation-accept.html` (standalone, ไม่ใช้ Layout)
 - ปุ่ม "🔗 ลิงก์ยอมรับ" ในหน้ารายการเอกสาร (Quotation Approved/Sent)
 
+### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
+- **สร้างลิงก์**: `POST /document/{id}/delivery-sign-link` — เฉพาะ DeliveryNote
+  ที่อนุมัติแล้ว; token 64 hex อายุ 14 วัน (`Document.DeliverySignToken`)
+- **ฝั่งลูกค้า**: `GET/POST /api/public/delivery/{token}(/sign)` — วาดลายเซ็น
+  บน canvas (มือถือ) + ชื่อผู้รับ → เก็บ `DeliverySignatureBase64/SignedAt/By`
+  + stamp Notes; ลายเซ็น**ประทับลงช่อง "ผู้รับของ" (slot 1) บน PDF อัตโนมัติ**
+  (`ResolveSignersAsync` override) พร้อมเวลาเซ็น (+07:00)
+- **หน้า**: `pages/delivery-sign.html` (standalone signature pad)
+- ปุ่ม "✍️ ลิงก์เซ็นรับ" ในหน้ารายการเอกสาร (DeliveryNote Approved/Sent)
+
 ### 2.9 Consignment (ฝากขาย)
 - **Service**: `Services/Implementations/Consignment/ConsignmentService.cs`
 - **Outbound dispatch** (`DispatchOutboundAsync`): ลด `CurrentStock` ทันที

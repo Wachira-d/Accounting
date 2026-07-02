@@ -4799,6 +4799,9 @@
             if (d.documentType === 'Quotation') {
               actions += ` <button class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
             }
+            if (d.documentType === 'DeliveryNote') {
+              actions += ` <button class="btn btn-secondary" onclick="Page.deliverySignLink('${d.id}')" title="สร้างลิงก์ให้ลูกค้าเซ็นรับสินค้าออนไลน์ (POD — อายุ 14 วัน) ลายเซ็นประทับลงช่อง ผู้รับของ บน PDF อัตโนมัติ">✍️ ลิงก์เซ็นรับ</button>`;
+            }
           }
           // e-Tax generation: shown for VAT-eligible types (TaxInvoice / Receipt /
           // DebitNote / CreditNote) once approved, when no e-Tax record exists yet.
@@ -5328,6 +5331,27 @@
           await this.load();
         } catch (e2) { Layout.toast(e2.message || 'ลบไม่สำเร็จ', 'error'); }
       },
+      // สร้างลิงก์ลูกค้าเซ็นรับสินค้าออนไลน์ (POD) → คัดลอกเข้า clipboard
+      async deliverySignLink(docId) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/document/${docId}/delivery-sign-link`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'สร้างลิงก์ไม่สำเร็จ');
+          const url = j.data.url;
+          try { await navigator.clipboard.writeText(url); } catch {}
+          if (j.data.signedAt) {
+            Layout.toast(`ลูกค้าเซ็นรับไปแล้วโดย ${j.data.signedBy} — ลิงก์ใหม่คัดลอกแล้ว`, 'info');
+          } else {
+            Layout.toast('คัดลอกลิงก์แล้ว — ส่งให้ลูกค้าเซ็นรับสินค้าได้เลย (อายุ 14 วัน)', 'success');
+          }
+          prompt('ลิงก์เซ็นรับสินค้า (คัดลอกแล้ว):', url);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       // สร้างลิงก์ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ → คัดลอกเข้า clipboard
       async quotationAcceptLink(docId) {
         const cid = Layout.getCompanyId(); if (!cid) return;
