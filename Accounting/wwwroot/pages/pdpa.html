@@ -114,7 +114,7 @@
     <!-- ===== Modals ===== -->
 
     <!-- DSR Modal -->
-    <div id="dsrModal" class="modal-overlay" style="display:none">
+    <div id="dsrModal" class="modal-overlay">
       <div class="modal" style="max-width:560px;width:90%">
         <h3 style="margin-top:0">รับคำขอ PDPA</h3>
         <label>อีเมล/เบอร์โทร ผู้ขอ</label>
@@ -140,7 +140,7 @@
     </div>
 
     <!-- RoPA Modal -->
-    <div id="ropaModal" class="modal-overlay" style="display:none">
+    <div id="ropaModal" class="modal-overlay">
       <div class="modal" style="max-width:680px;width:90%">
         <h3 id="ropaModalTitle" style="margin-top:0">เพิ่มกิจกรรมประมวลผล (RoPA)</h3>
         <input type="hidden" id="ropaId">
@@ -252,8 +252,10 @@
         if (name === 'breach') this.loadBreachAlerts();
       },
 
-      closeModal(id) { document.getElementById(id).style.display = 'none'; },
-      _openModal(id) { document.getElementById(id).style.display = 'flex'; },
+      // ใช้ระบบ .active ของ .modal-overlay (opacity/pointer-events) —
+      // toggle display ตรง ๆ จะได้ modal โปร่งใสคลิกไม่ได้ (opacity ค้าง 0)
+      closeModal(id) { document.getElementById(id).classList.remove('active'); },
+      _openModal(id) { document.getElementById(id).classList.add('active'); },
 
       // ===== DSR =====
       async loadOverdue() {

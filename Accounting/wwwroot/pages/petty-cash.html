@@ -19,7 +19,7 @@
 
     <div id="funds"></div>
 
-    <div id="createModal" class="modal-overlay" style="display:none">
+    <div id="createModal" class="modal-overlay">
       <div class="modal" style="max-width:560px;width:90%">
         <h3 style="margin-top:0">เปิดเงินสดย่อยใหม่</h3>
         <label>ชื่อกองทุน</label>
@@ -33,7 +33,7 @@
       </div>
     </div>
 
-    <div id="disburseModal" class="modal-overlay" style="display:none">
+    <div id="disburseModal" class="modal-overlay">
       <div class="modal" style="max-width:560px;width:90%">
         <h3 style="margin-top:0">เบิกเงินสดย่อย</h3>
         <label>จำนวนเงิน</label>
@@ -155,8 +155,8 @@
           el.innerHTML = `<div class="card" style="padding:40px;text-align:center;color:#dc2626">${e.message}</div>`;
         }
       },
-      openCreate() { document.getElementById('createModal').style.display = 'flex'; },
-      closeCreate() { document.getElementById('createModal').style.display = 'none'; },
+      openCreate() { document.getElementById('createModal').classList.add('active'); },
+      closeCreate() { document.getElementById('createModal').classList.remove('active'); },
       async createFund() {
         const name = document.getElementById('fName').value.trim();
         const imprest = +document.getElementById('fImprest').value;
@@ -176,9 +176,9 @@
         document.getElementById('dReceipt').value = '';
         document.getElementById('dExpense').value = '';
         document.getElementById('dProject').value = '';
-        document.getElementById('disburseModal').style.display = 'flex';
+        document.getElementById('disburseModal').classList.add('active');
       },
-      closeDisburse() { document.getElementById('disburseModal').style.display = 'none'; },
+      closeDisburse() { document.getElementById('disburseModal').classList.remove('active'); },
       async submitDisburse() {
         const amount = +document.getElementById('dAmount').value;
         const desc = document.getElementById('dDesc').value.trim();

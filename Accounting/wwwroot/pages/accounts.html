@@ -134,7 +134,7 @@
     </div>
 
     <!-- Import Modal -->
-    <div id="importModal" class="modal-overlay" style="display:none">
+    <div id="importModal" class="modal-overlay">
       <div class="modal" style="max-width:640px">
         <div class="modal-header">
           <h3 id="importTitle">นำเข้าผังบัญชี</h3>
@@ -494,9 +494,9 @@
         btn.disabled = true;
         btn.onclick = Import.compare;
         document.getElementById('importFooter').style.display = '';
-        document.getElementById('importModal').style.display = 'flex';
+        document.getElementById('importModal').classList.add('active');
       },
-      close() { document.getElementById('importModal').style.display = 'none'; },
+      close() { document.getElementById('importModal').classList.remove('active'); },
       handleDrop(e) {
         e.preventDefault();
         e.currentTarget.style.borderColor = 'var(--gray-300)'; e.currentTarget.style.background = '';
