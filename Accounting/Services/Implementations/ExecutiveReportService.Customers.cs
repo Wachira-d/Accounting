@@ -11,8 +11,11 @@ public partial class ExecutiveReportService
         var docs = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
+            // ใบเสร็จ/ใบสำคัญรับที่อ้างใบแจ้งหนี้ (RelatedDocumentId) = การตัดชำระ
+            // ไม่ใช่รายได้ใหม่ → นับเฉพาะขายสด standalone กันรายได้ต่อลูกค้าเบิ้ล 2
             .Where(d => d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                     || ((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                         && d.RelatedDocumentId == null))
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new
@@ -78,8 +81,11 @@ public partial class ExecutiveReportService
         var allHistory = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
+            // ใบเสร็จ/ใบสำคัญรับที่อ้างใบแจ้งหนี้ (RelatedDocumentId) = การตัดชำระ
+            // ไม่ใช่รายได้ใหม่ → นับเฉพาะขายสด standalone กันรายได้ต่อลูกค้าเบิ้ล 2
             .Where(d => d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                     || ((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                         && d.RelatedDocumentId == null))
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= historicCutoff && d.DocumentDate <= toDate)
             .Select(d => new { d.ContactId, ContactName = d.Contact.Name, d.DocumentDate, d.TotalAmount })
@@ -112,8 +118,11 @@ public partial class ExecutiveReportService
         var docs = await _db.Documents
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
+            // ใบเสร็จ/ใบสำคัญรับที่อ้างใบแจ้งหนี้ (RelatedDocumentId) = การตัดชำระ
+            // ไม่ใช่รายได้ใหม่ → นับเฉพาะขายสด standalone กันรายได้ต่อลูกค้าเบิ้ล 2
             .Where(d => d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                     || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                     || ((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                         && d.RelatedDocumentId == null))
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new { d.ContactId, ContactName = d.Contact.Name, d.TotalAmount })

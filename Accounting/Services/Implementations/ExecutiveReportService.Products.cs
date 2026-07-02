@@ -15,7 +15,9 @@ public partial class ExecutiveReportService
                 && doc.CompanyId == companyId
                 && (doc.DocumentType == DocumentType.Invoice
                     || doc.DocumentType == DocumentType.TaxInvoice
-                    || doc.DocumentType == DocumentType.Receipt)
+                    // ใบเสร็จที่อ้างใบแจ้งหนี้ = ตัดชำระ (line สินค้าซ้ำกับใบแจ้งหนี้)
+                    // → นับเฉพาะขายสด standalone กันยอด/จำนวนสินค้าเบิ้ล 2
+                    || (doc.DocumentType == DocumentType.Receipt && doc.RelatedDocumentId == null))
                 && doc.Status != DocumentStatus.Voided && doc.Status != DocumentStatus.Draft
                 && doc.DocumentDate >= fromDate && doc.DocumentDate <= toDate
             select new
