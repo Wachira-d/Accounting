@@ -294,15 +294,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      COGS เป็น THB ไม่ผ่านการแปลง FX. ใบลดหนี้ฝั่งขายแบบ **Reason=Return**
      กลับ COGS ด้วย: Dr สินค้าคงเหลือ / Cr ต้นทุนขาย
    - purchase: Dr Expense + Dr Input VAT (11610 หรือ **11640** ถ้า §86/4
-     ไม่ครบ) / Cr AP
+     ไม่ครบ) / Cr AP — **บรรทัดสินค้า TrackStock ที่ user ไม่ได้เลือกบัญชี
+     เอง default เข้าสินค้าคงเหลือ** (`Product.InventoryAccountId` → 11500/115)
+     แทนค่าใช้จ่าย (perpetual — สมมาตรกับ COGS ตอนขาย; ใช้กับ PI standalone,
+     GRN, และ CN/DN ฝั่งซื้อ ผ่าน `BuildPurchaseLineAccountResolverAsync`)
    - cash receipt: Dr Cash/Bank / Cr AR (หรือ Cr 217xx ถ้า `IsDeposit`)
    - payment voucher: Dr AP/Expense / Cr Cash/Bank
    - WHT: Cr 21915/21916 ตามประเภทเงินได้
 8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync :4605`) —
    switch ตัดสินตาม `DocumentType` (`:4612`):
-   - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale)
+   - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale); **CN ฝั่งซื้อแบบ Return**
+     (source = PI/Expense/CIL — เราคืนของให้ vendor = ของออกจากสต๊อกเรา)
    - **IN (+1)**: `GoodsReceiptNote` / `PurchaseInvoice` /
-     `CreditNote when Reason==Return`
+     `CreditNote when Reason==Return` (ฝั่งขาย — ลูกค้าคืนของ)
+   - **มัดจำ (`IsDeposit`) → ไม่ขยับสต๊อก** (ยังไม่ส่งมอบ — ใบส่งมอบจริง
+     เป็นผู้ตัด + ลง COGS)
+   - **ขา void กลับตาม movement ที่เกิดจริง** (net ต่อ product ของ
+     `DocumentId` เดิม, ต้นทุนเดิม) — ไม่ recompute จากกติกาปัจจุบัน →
+     เอกสารเก่าที่ขยับด้วยกติกาเดิมกลับได้ถูก + void ซ้ำเป็น no-op
    - `PurchaseInvoice` ที่ผูก GRN accrual แล้ว → **ข้าม** (กันนับซ้ำ
      `:4633`)
    - **No-op (`_ => 0`)**: ทุกประเภทอื่น — รวมถึง `Receipt`,

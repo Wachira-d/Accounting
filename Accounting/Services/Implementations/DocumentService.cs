@@ -5850,6 +5850,55 @@ public class DocumentService : IDocumentService
     private async Task ApplyStockMovementsAsync(Guid companyId, Document doc, int sign, string actor)
     {
         if (sign == 0) return;
+        var now = DateTime.UtcNow;
+
+        // ===== ขา void (sign<0): กลับตาม movement ที่ "เกิดจริง" =====
+        // ไม่ recompute ทิศทางจากกติกาปัจจุบัน — เอกสารเก่าที่เคยขยับสต๊อกด้วย
+        // กติกาเดิม (เช่น purchase-CN ที่เคย IN ผิดทิศ, มัดจำที่เคยตัดสต๊อก)
+        // จะถูกกลับด้วยยอด/ต้นทุนจริงของมันเสมอ; และ idempotent — reversal
+        // movement ผูก DocumentId เดียวกัน ทำให้ net หลัง void = 0 → void ซ้ำ
+        // เป็น no-op
+        if (sign < 0)
+        {
+            var nets = await _db.StockMovements.AsNoTracking()
+                .Where(m => m.CompanyId == companyId && m.DocumentId == doc.Id)
+                .GroupBy(m => m.ProductId)
+                .Select(g => new
+                {
+                    ProductId = g.Key,
+                    NetQty = g.Sum(x => x.Quantity),
+                    OrigCost = g.OrderBy(x => x.MovementDate).Select(x => x.UnitCost).First(),
+                })
+                .ToListAsync();
+            foreach (var n in nets)
+            {
+                if (n.NetQty == 0) continue;
+                var product = await _db.Products.FirstOrDefaultAsync(
+                    p => p.Id == n.ProductId && p.CompanyId == companyId);
+                if (product == null) continue;
+
+                var qtyDelta = -n.NetQty;
+                product.CurrentStock += qtyDelta;
+                _db.StockMovements.Add(new StockMovement
+                {
+                    CompanyId = companyId,
+                    ProductId = product.Id,
+                    DocumentId = doc.Id,
+                    MovementDate = now,
+                    MovementType = qtyDelta > 0 ? "IN" : "OUT",
+                    Quantity = qtyDelta,
+                    // ต้นทุนเดิมของ movement ต้นทาง — กลับรายการมูลค่าเท่ากันพอดี
+                    UnitCost = n.OrigCost,
+                    BalanceAfter = product.CurrentStock,
+                    Reference = doc.DocumentNumber,
+                    Notes = $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
+                    CreatedBy = actor,
+                });
+            }
+            return;
+        }
+
+        // ===== ขาไปข้างหน้า (sign>0) =====
         // DeliveryNote intentionally NOT triggered here — when a tenant uses
         // the full Quotation → SO → DN → Invoice chain, the Invoice is the
         // financial recognition and triggers the stock move. Issuing the DN
@@ -5873,14 +5922,29 @@ public class DocumentService : IDocumentService
         };
         if (direction == 0) return;
 
+        // ใบลดหนี้ "ฝั่งซื้อ" แบบรับคืน (source = PI/Expense/CertificateInLieu):
+        // เราคืนของให้ vendor → ของออกจากสต๊อกเรา (−1) ไม่ใช่รับเข้า (+1)
+        if (doc.DocumentType == DocumentType.CreditNote && doc.RelatedDocumentId.HasValue)
+        {
+            var srcType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            if (srcType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.CertificateInLieu)
+                direction = -1;
+        }
+
+        // มัดจำ (IsDeposit): เงินรับล่วงหน้า — ยังไม่ส่งมอบสินค้า → สต๊อกต้อง
+        // ไม่ขยับ (สอดคล้องกับ COGS ที่ข้าม IsDeposit ใน AutoPostToJournalAsync
+        // — ใบส่งมอบจริงที่ตามมาเป็นผู้ตัดสต๊อก + ลง COGS)
+        if (doc.IsDeposit) return;
+
         // PurchaseInvoice billed against an accrued GRN → goods already
         // stocked at receipt; don't double-count them now.
         if (doc.DocumentType == DocumentType.PurchaseInvoice
             && await GetReceivedViaGrnAccrualAccountAsync(companyId, doc) != null)
             return;
-        // sign flips on void: a sale's OUT becomes an IN; the BalanceAfter
-        // walks back to where it was before.
-        var effective = direction * sign;
         if (doc.Lines == null) return;
 
         // Pre-load the full set of products this document touches in one
@@ -5896,33 +5960,20 @@ public class DocumentService : IDocumentService
             .Where(p => p.CompanyId == companyId && codes.Contains(p.Code) && !p.IsDeleted)
             .ToDictionaryAsync(p => p.Code);
 
-        var now = DateTime.UtcNow;
         foreach (var line in doc.Lines)
         {
             if (string.IsNullOrWhiteSpace(line.ProductCode)) continue;
             if (!products.TryGetValue(line.ProductCode!, out var product)) continue;
             if (!product.TrackStock) continue;
 
-            var qtyDelta = effective * line.Quantity;
+            var qtyDelta = direction * line.Quantity;
 
             // ต้นทุนต่อหน่วยของ movement (TFRS NPAEs บทที่ 8 — ตาม CostingMethod):
-            //   • ซื้อเข้า (IN forward) → ต้นทุนจริงที่จ่าย (line net ต่อหน่วย)
+            //   • ซื้อเข้า (PI/GRN IN) → ต้นทุนจริงที่จ่าย (line net ต่อหน่วย)
             //     + อัปเดต WAC running average ก่อน stock เพิ่ม
-            //   • ขายออก (OUT forward) → WAC ปัจจุบัน (ถ้าใช้ WeightedAverage)
-            //   • void (sign<0) → ใช้ต้นทุนเดิมของ movement ต้นทาง เพื่อให้
-            //     การกลับรายการหักล้างมูลค่าเท่ากันพอดี
+            //   • ขายออก / รับคืน / คืน vendor → WAC ปัจจุบัน (EffectiveUnitCost)
             decimal unitCost;
-            if (sign < 0)
-            {
-                var origCost = await _db.StockMovements.AsNoTracking()
-                    .Where(m => m.DocumentId == doc.Id && m.ProductId == product.Id
-                        && m.CompanyId == companyId)
-                    .OrderBy(m => m.MovementDate)
-                    .Select(m => (decimal?)m.UnitCost)
-                    .FirstOrDefaultAsync();
-                unitCost = origCost ?? EffectiveUnitCost(product);
-            }
-            else if (qtyDelta > 0 && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.GoodsReceiptNote)
+            if (qtyDelta > 0 && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.GoodsReceiptNote)
             {
                 var receiptCost = line.Quantity > 0
                     ? Math.Round(line.Amount / line.Quantity, 4)
@@ -5958,9 +6009,7 @@ public class DocumentService : IDocumentService
                 UnitCost = unitCost,
                 BalanceAfter = product.CurrentStock,
                 Reference = doc.DocumentNumber,
-                Notes = sign > 0
-                    ? $"จาก {doc.DocumentType} เลขที่ {doc.DocumentNumber}"
-                    : $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
+                Notes = $"จาก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
                 CreatedBy = actor,
             });
         }
@@ -5971,6 +6020,43 @@ public class DocumentService : IDocumentService
     private static decimal EffectiveUnitCost(Product p) =>
         p.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && p.AverageUnitCost > 0
             ? p.AverageUnitCost : p.CostPrice;
+
+    /// <summary>Perpetual inventory ฝั่งซื้อ: บรรทัดสินค้า TrackStock ที่ user
+    /// ไม่ได้เลือกบัญชีเอง default เข้า "สินค้าคงเหลือ" (Product.InventoryAccountId
+    /// → 11500/115) แทนค่าใช้จ่าย — สมมาตรกับ COGS ที่ Cr 11500 ตอนขาย
+    /// (ไม่งั้นซื้อลง expense + ขายลง COGS = ต้นทุนเข้า P&L สองรอบ และ 11500
+    /// มีแต่ฝั่ง Cr จนติดลบ). line ที่ user เลือกบัญชีเองชนะเสมอ; สินค้าที่ไม่
+    /// track stock / บริการ ใช้ default ค่าใช้จ่ายตามเดิม</summary>
+    private async Task<Func<DocumentLine, Guid?>> BuildPurchaseLineAccountResolverAsync(
+        Guid companyId, Document doc, Guid? defaultExpenseId)
+    {
+        var codes = doc.Lines?
+            .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+            .Select(l => l.ProductCode!)
+            .Distinct()
+            .ToList() ?? new List<string>();
+
+        var tracked = new Dictionary<string, Product>();
+        if (codes.Count > 0)
+            tracked = await _db.Products.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && codes.Contains(p.Code)
+                    && !p.IsDeleted && p.TrackStock)
+                .ToDictionaryAsync(p => p.Code);
+
+        Guid? invDefaultId = null;
+        if (tracked.Count > 0)
+            invDefaultId = (await FindAccountAsync(companyId, "11500")
+                ?? await FindAccountAsync(companyId, "115"))?.Id;
+
+        return line =>
+        {
+            if (line.AccountId.HasValue) return line.AccountId;
+            if (!string.IsNullOrWhiteSpace(line.ProductCode)
+                && tracked.TryGetValue(line.ProductCode!, out var prod))
+                return prod.InventoryAccountId ?? invDefaultId ?? defaultExpenseId;
+            return defaultExpenseId;
+        };
+    }
 
     /// <summary>รวมต้นทุนขาย (THB) ของบรรทัดสินค้า TrackStock ในเอกสาร —
     /// ใช้ EffectiveUnitCost ให้ตรงกับ UnitCost ที่ stock movement stamp
@@ -6242,11 +6328,17 @@ public class DocumentService : IDocumentService
             // === Revenue / Expense lines ===
             // Sales CN reverses revenue (Dr); Sales DN adds revenue (Cr)
             // Purchase CN reverses expense (Cr); Purchase DN adds expense (Dr)
+            // ฝั่งซื้อ: บรรทัดสินค้า TrackStock default เข้าสินค้าคงเหลือ
+            // (perpetual) — CN คืนของ = Cr ลดมูลค่าสต๊อก, DN ค่าใช้จ่ายเพิ่ม
+            // จาก vendor = Dr เพิ่มมูลค่าสต๊อก — สมมาตรกับ JE ของ PI/GRN
+            var resolveCnDnLineAcc = isPurchaseSide
+                ? await BuildPurchaseLineAccountResolverAsync(companyId, doc, defaultExpense?.Id)
+                : null;
             foreach (var docLine in doc.Lines)
             {
                 Guid? lineAccId;
                 if (isPurchaseSide)
-                    lineAccId = docLine.AccountId ?? defaultExpense?.Id;
+                    lineAccId = resolveCnDnLineAcc!(docLine);
                 else
                     lineAccId = docLine.AccountId ?? defaultRevenue?.Id;
 
@@ -6386,9 +6478,13 @@ public class DocumentService : IDocumentService
                 // รวม VAT เข้าค่าใช้จ่าย (Dr expense = Amount + VatAmount).
                 // บรรทัด claimable → Dr expense net of VAT ปกติ + รวม VAT
                 // ไปเข้าบัญชีภาษีซื้อ 116 ด้านล่าง.
+                // บรรทัดสินค้า TrackStock ที่ไม่ได้เลือกบัญชีเอง → Dr สินค้า
+                // คงเหลือ (perpetual — สมมาตรกับ COGS ตอนขาย)
+                var resolvePiLineAcc = await BuildPurchaseLineAccountResolverAsync(
+                    companyId, doc, defaultExpense?.Id);
                 foreach (var docLine in doc.Lines)
                 {
-                    var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                    var expenseAccountId = resolvePiLineAcc(docLine);
                     if (!expenseAccountId.HasValue) continue;
                     var debitAmount = docLine.IsVatClaimable
                         ? docLine.Amount
@@ -6699,9 +6795,12 @@ public class DocumentService : IDocumentService
             var grNi = await EnsureGrNiAccountAsync(companyId);
             if (grNi == null) return;   // chart can't support it → no JE (legacy behaviour)
 
+            // บรรทัดสินค้า TrackStock → Dr สินค้าคงเหลือ (perpetual) เหมือน PI
+            var resolveGrnLineAcc = await BuildPurchaseLineAccountResolverAsync(
+                companyId, doc, defaultExpense?.Id);
             foreach (var docLine in doc.Lines)
             {
-                var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
+                var expenseAccountId = resolveGrnLineAcc(docLine);
                 if (expenseAccountId.HasValue)
                     AddLine(expenseAccountId.Value, docLine.Amount, 0, docLine.Description, docLine.ProjectId);
             }
