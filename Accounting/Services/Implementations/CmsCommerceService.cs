@@ -971,8 +971,16 @@ public class CmsCommerceService : ICmsCommerceService
             catch (Exception ex)
             { _logger.LogWarning(ex, "ConfirmPayment: approve doc failed for order {OrderId}", orderId); }
 
+            // idempotency: กัน confirm ซ้ำ (เช่น gateway webhook + ยืนยันมือ) สร้าง
+            // payment ERP ซ้ำ → เงินสดเกิน/AR ติดลบ. เช็คว่ามี Payment ของเอกสารนี้
+            // ที่ตรง Reference+Amount แล้วหรือยัง (การชำระเต็มถูก cap BalanceDue กัน
+            // อยู่แล้ว แต่ partial อาจหลุด).
+            var alreadyRecorded = !string.IsNullOrEmpty(pay.Reference) && await _db.Payments.AnyAsync(p =>
+                p.DocumentId == order.ErpDocumentId.Value && !p.IsDeleted
+                && p.Reference == pay.Reference && p.Amount == pay.Amount);
             try
             {
+                if (!alreadyRecorded)
                 await _docService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
                     DocumentId: order.ErpDocumentId.Value,
                     PaymentDate: pay.PaidAt ?? DateTime.UtcNow,

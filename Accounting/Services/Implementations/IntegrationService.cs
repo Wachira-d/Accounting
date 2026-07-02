@@ -693,6 +693,27 @@ public class IntegrationService : IIntegrationService
             if (document == null)
                 throw new KeyNotFoundException($"ไม่พบเอกสารอ้างอิง: {request.InvoiceExternalRef ?? request.DocumentId?.ToString()}");
 
+            // idempotency: webhook ชำระเงินอาจถูกยิงซ้ำ (retry) → ถ้ามี Payment ของ
+            // เอกสารนี้ด้วย Reference เดียวกันแล้ว คืนผลเดิม (ไม่สร้างซ้ำ) กันเอกสาร
+            // ถูกชำระ 2 เท่า (PaidAmount เกิน, BalanceDue ติดลบ, Dr Cash/Cr AR ซ้ำ).
+            var refKey = request.ReferenceNo ?? request.ExternalRef;
+            if (!string.IsNullOrEmpty(refKey))
+            {
+                var dup = await _db.Set<Payment>().AsNoTracking().FirstOrDefaultAsync(p =>
+                    p.CompanyId == companyId && p.DocumentId == document.Id
+                    && p.Reference == refKey && !p.IsDeleted);
+                if (dup != null)
+                {
+                    log.Status = "Duplicate";
+                    log.CreatedPaymentId = dup.Id;
+                    log.CreatedDocumentId = document.Id;
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Payment already recorded (idempotent)",
+                        document.Id, null, null, dup.Id, dup.PaymentNumber);
+                }
+            }
+
             // Create payment
             var paymentNumber = await GetNextPaymentNumberAsync(companyId);
             var payment = new Payment
