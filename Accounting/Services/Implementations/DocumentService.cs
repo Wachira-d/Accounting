@@ -1918,6 +1918,34 @@ public class DocumentService : IDocumentService
                     "กรุณาส่งเข้ากระบวนการอนุมัติหลายชั้นก่อน (เมนู Approval)");
         }
 
+        // ===== SoD (Segregation of Duties): maker ≠ checker =====
+        // มาตรฐาน internal control ระดับ ERP — ผู้สร้างเอกสารห้ามอนุมัติ
+        // เอกสารของตัวเอง (opt-in ผ่าน settings; default ปิดเพื่อไม่ block
+        // เจ้าของกิจการคนเดียวที่ทำทุกหน้าที่)
+        if (settings is { SodBlockSelfApproval: true }
+            && !string.IsNullOrEmpty(doc.CreatedBy)
+            && string.Equals(doc.CreatedBy, approvedBy, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "SoD: ผู้สร้างเอกสารห้ามอนุมัติเอกสารของตัวเอง (การแบ่งแยกหน้าที่เปิดอยู่) — " +
+                "ให้ผู้มีสิทธิ์อนุมัติคนอื่นเป็นผู้อนุมัติ");
+
+        // ===== Commitment control: PO กันวงเงินงบประมาณ =====
+        // actual (GL ปีนี้) + committed (PO เปิดค้าง) + ใบนี้ ต้องไม่เกิน
+        // budget ต่อบัญชี — Block โยน error (override ได้ด้วย acknowledge),
+        // Warn แค่ log
+        if (doc.DocumentType == DocumentType.PurchaseOrder
+            && settings?.BudgetCommitmentMode is "Warn" or "Block")
+        {
+            var overMsg = await CheckBudgetCommitmentAsync(companyId, doc);
+            if (overMsg != null)
+            {
+                if (settings.BudgetCommitmentMode == "Block" && !acknowledgeWarnings)
+                    throw new InvalidOperationException(
+                        overMsg + " — หากยืนยันจะสั่งซื้อ กด \"อนุมัติพร้อม override\"");
+                _logger.LogWarning("Budget commitment warning {DocNo}: {Msg}", doc.DocumentNumber, overMsg);
+            }
+        }
+
         var period = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId &&
             f.StartDate <= doc.DocumentDate &&
@@ -6114,6 +6142,77 @@ public class DocumentService : IDocumentService
                 CreatedBy = actor,
             });
         }
+    }
+
+    /// <summary>Commitment control: ต่อบัญชีใน PO นี้ — actual (GL Dr−Cr
+    /// ปีงบ) + committed (PO Approved/Sent อื่นที่ยังเปิด) + ใบนี้ เทียบ
+    /// budget (Budget.IsActive ของปี, company-wide). คืน null = ไม่เกิน,
+    /// มิฉะนั้นข้อความรายบัญชีที่เกิน</summary>
+    private async Task<string?> CheckBudgetCommitmentAsync(Guid companyId, Document doc)
+    {
+        var year = doc.DocumentDate.Year;
+        var budget = await _db.Budgets.AsNoTracking()
+            .Include(b => b.Lines)
+            .Where(b => b.CompanyId == companyId && b.IsActive
+                && b.FiscalYear == year && b.ProjectId == null)
+            .OrderByDescending(b => b.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (budget == null || doc.Lines == null) return null;
+        var budgetByAccount = budget.Lines
+            .GroupBy(l => l.AccountId)
+            .ToDictionary(g => g.Key, g => g.Sum(l => l.TotalBudget));
+
+        var accIds = doc.Lines
+            .Where(l => l.AccountId.HasValue && budgetByAccount.ContainsKey(l.AccountId.Value))
+            .Select(l => l.AccountId!.Value).Distinct().ToList();
+        if (accIds.Count == 0) return null;
+
+        var yearStart = new DateTime(year, 1, 1);
+        var yearEnd = new DateTime(year, 12, 31);
+        var actuals = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.EntryDate >= yearStart && l.JournalEntry.EntryDate <= yearEnd
+                && accIds.Contains(l.AccountId))
+            .GroupBy(l => l.AccountId)
+            .Select(g => new { AccountId = g.Key, Amount = g.Sum(x => x.DebitAmount - x.CreditAmount) })
+            .ToListAsync();
+        var actualBy = actuals.ToDictionary(a => a.AccountId, a => a.Amount);
+
+        // committed = PO เปิดค้างใบอื่น (Approved/Sent) ปีเดียวกัน — v1 นับ
+        // เต็ม line (ยังไม่หักส่วนที่แปลงเป็น PI แล้ว — conservative)
+        var committedRows = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.Document.CompanyId == companyId
+                && l.Document.DocumentType == DocumentType.PurchaseOrder
+                && (l.Document.Status == DocumentStatus.Approved || l.Document.Status == DocumentStatus.Sent)
+                && !l.Document.IsDeleted
+                && l.Document.DocumentDate >= yearStart && l.Document.DocumentDate <= yearEnd
+                && l.Document.Id != doc.Id
+                && l.AccountId != null && accIds.Contains(l.AccountId.Value))
+            .GroupBy(l => l.AccountId!.Value)
+            .Select(g => new { AccountId = g.Key, Amount = g.Sum(x => x.Amount) })
+            .ToListAsync();
+        var committedBy = committedRows.ToDictionary(a => a.AccountId, a => a.Amount);
+
+        var over = new List<string>();
+        foreach (var accId in accIds)
+        {
+            var cap = budgetByAccount[accId];
+            if (cap <= 0) continue;
+            var thisPo = doc.Lines.Where(l => l.AccountId == accId).Sum(l => l.Amount);
+            var used = actualBy.GetValueOrDefault(accId)
+                + committedBy.GetValueOrDefault(accId) + thisPo;
+            if (used > cap)
+            {
+                var accLabel = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.Id == accId)
+                    .Select(a => a.AccountCode + " " + a.AccountName)
+                    .FirstOrDefaultAsync() ?? accId.ToString();
+                over.Add($"{accLabel}: ใช้จริง+ผูกพัน {used:N2} เกินงบ {cap:N2}");
+            }
+        }
+        return over.Count == 0 ? null
+            : "เกินวงเงินงบประมาณ (commitment control): " + string.Join("; ", over);
     }
 
     /// <summary>ต้นทุนต่อหน่วยตาม CostingMethod (คู่กับ helper เดียวกันฝั่ง POS):

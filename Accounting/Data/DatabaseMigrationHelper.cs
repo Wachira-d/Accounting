@@ -4270,6 +4270,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclLossRatesJson" text NULL;""",
 
+            // ===== SoD + Commitment control (internal control ระดับ ERP) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "SodBlockSelfApproval" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BudgetCommitmentMode" varchar(10) NOT NULL DEFAULT 'Off';""",
+
             // ===== Quotation online accept (ลิงก์ลูกค้ากดยอมรับใบเสนอราคา) =====
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptToken" varchar(80) NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptTokenExpiresAt" timestamptz NULL;""",
