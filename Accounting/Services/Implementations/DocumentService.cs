@@ -3513,7 +3513,9 @@ public class DocumentService : IDocumentService
 
         var isSettlement = doc.DocumentType == DocumentType.Receipt
             || doc.DocumentType == DocumentType.ReceiptVoucher
-            || doc.DocumentType == DocumentType.PaymentVoucher;
+            || doc.DocumentType == DocumentType.PaymentVoucher
+            // CIL ที่อ้างเอกสารตั้งหนี้ = การจ่ายจริง (settlement JE ตัด AP)
+            || doc.DocumentType == DocumentType.CertificateInLieu;
         var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
         var isDebitNote = doc.DocumentType == DocumentType.DebitNote;
         if (!isSettlement && !isCreditNote && !isDebitNote) return;
@@ -3544,7 +3546,7 @@ public class DocumentService : IDocumentService
             // Sums BOTH paths so mixing modal + manual Receipt still caps.
             if (doc.WithholdingTaxAmount > 0m && source.WithholdingTaxAmount > 0m)
             {
-                var siblingTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher };
+                var siblingTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
                 var withheldViaReceipts = await _db.Documents.AsNoTracking()
                     .Where(r => r.RelatedDocumentId == source.Id
                         && r.Id != doc.Id   // exclude self (we're approving it now)
@@ -3646,6 +3648,7 @@ public class DocumentService : IDocumentService
         var typeAffectsSource = doc.DocumentType == DocumentType.Receipt
             || doc.DocumentType == DocumentType.ReceiptVoucher
             || doc.DocumentType == DocumentType.PaymentVoucher
+            || doc.DocumentType == DocumentType.CertificateInLieu
             || doc.DocumentType == DocumentType.CreditNote;
         if (!typeAffectsSource) return;
 
@@ -6487,6 +6490,49 @@ public class DocumentService : IDocumentService
             // never Accounts Payable.
             journalType = JournalType.Purchase;
 
+            // แปลงมาจากเอกสารตั้งหนี้ (Expense) → CIL ทำหน้าที่ "จ่ายจริง"
+            // เหมือน PV settlement: Dr เจ้าหนี้ / Cr เงินสด — ห้าม Dr ค่าใช้จ่าย
+            // ซ้ำ (ต้นทางลงไปแล้ว = ค่าใช้จ่ายเบิ้ล + เจ้าหนี้ค้างตลอดกาล)
+            DocumentType? cilSrcType = null;
+            if (doc.RelatedDocumentId.HasValue)
+                cilSrcType = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType)
+                    .FirstOrDefaultAsync();
+
+            if (cilSrcType is DocumentType.Expense or DocumentType.PurchaseInvoice)
+            {
+                journalType = JournalType.CashPayments;
+                var apAccount = await ResolvePayableAccountAsync(companyId, cilSrcType.Value, doc.Contact);
+                if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
+                {
+                    // Cash basis: ต้นทางตั้ง AP ที่ gross — ตัด AP gross,
+                    // จ่ายเงินสุทธิ, รับรู้ WHT ค้างจ่ายของงวดนี้
+                    var thisWht = doc.WithholdingTaxAmount;
+                    if (apAccount != null)
+                        AddLine(apAccount.Id, doc.TotalAmount + thisWht, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
+                    if (moneyAccount != null)
+                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
+                    if (thisWht > 0)
+                    {
+                        var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
+                        if (whtAcc != null)
+                            AddLine(whtAcc.Id, 0, thisWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
+                    }
+                }
+                else
+                {
+                    // Accrual: AP ต้นทาง net of WHT แล้ว — แค่ย้ายเงินสุทธิ
+                    if (apAccount != null)
+                        AddLine(apAccount.Id, doc.TotalAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
+                    if (moneyAccount != null)
+                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
+                }
+            }
+            else
+            {
             foreach (var docLine in doc.Lines)
             {
                 var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
@@ -6506,6 +6552,7 @@ public class DocumentService : IDocumentService
                 var whtAcc = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                 if (whtAcc != null)
                     AddLine(whtAcc.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+            }
             }
         }
         else if (doc.DocumentType == DocumentType.PurchaseInvoice
@@ -6621,7 +6668,23 @@ public class DocumentService : IDocumentService
         {
             journalType = JournalType.CashReceipts;
 
+            // Settlement mode เฉพาะเมื่อเอกสารต้นทาง "ตั้งลูกหนี้จริง" (Invoice/
+            // TaxInvoice/DebitNote — Dr 113 ตอนอนุมัติ) เท่านั้น. ใบเสร็จที่แปลง
+            // มาจาก Quotation/BillingNote (เอกสาร operational ไม่มี JE) ต้องลง
+            // แบบ standalone: Dr เงินสด / Cr รายได้ + VAT — มิฉะนั้นจะ Cr ลูกหนี้
+            // ที่ไม่เคยถูก Dr (AR ติดลบ) และรายได้ไม่ถูกบันทึกเลย
+            var receiptSettlesAr = false;
             if (doc.RelatedDocumentId.HasValue)
+            {
+                var recSrcType = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType)
+                    .FirstOrDefaultAsync();
+                receiptSettlesAr = recSrcType is DocumentType.Invoice
+                    or DocumentType.TaxInvoice or DocumentType.DebitNote;
+            }
+
+            if (receiptSettlesAr)
             {
                 // Cash basis: the source Invoice posted AR at GROSS (incl. WHT)
                 // and skipped the WHT-Asset line. We now book WHT-Asset for

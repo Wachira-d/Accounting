@@ -182,6 +182,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
   FileAttachment` (`CascadeAttachmentsAsync :3077`)
+- **JE ของใบลูกดูประเภทต้นทาง (กันยอดเบิ้ล/ยอดหาย)**:
+  - Receipt/ReceiptVoucher: **settlement mode (Cr AR) เฉพาะเมื่อ source ตั้ง
+    ลูกหนี้จริง** (Invoice/TaxInvoice/DebitNote) — source เป็น
+    Quotation/BillingNote (operational ไม่มี JE) → ลง **standalone**:
+    Dr เงินสด / Cr รายได้ + VAT (เดิมเช็คแค่ `RelatedDocumentId.HasValue` →
+    Cr ลูกหนี้ผี + รายได้ไม่ถูกบันทึก)
+  - CertificateInLieu ที่อ้าง Expense/PI: **settlement เหมือน PV** — Dr AP /
+    Cr เงินสด (+WHT ตาม basis) — เดิม Dr ค่าใช้จ่ายซ้ำเสมอ = ค่าใช้จ่ายเบิ้ล
+    + เจ้าหนี้ค้างตลอดกาล; CIL เข้า settlementTypes (PaidAmount push + cap
+    + revert ตอน void) แล้ว
 
 ### 2.5 CMS (เว็บไซต์ของฉัน) — Storefront commerce + booking
 - **Order flow** (`CmsCommerceService.cs`):
