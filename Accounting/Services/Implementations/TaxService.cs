@@ -473,27 +473,12 @@ public partial class TaxService : ITaxService
                     });
                 }
 
-                // เพิ่ม line ส่วนที่เป็นภาษีต้องห้าม — IsExcluded=true →
-                // ไม่นับใน ภพ.30 total แต่ปรากฏใน รายงาน + Excel export
-                // เพื่อ audit trail (สรรพากรเห็นชัด เราตัดยอดไหนออก).
-                if (prohibitedVat > 0)
-                {
-                    report.Lines.Add(new TaxReportLine
-                    {
-                        TaxReportId = report.Id,
-                        LineOrder = lineOrder++,
-                        TaxPayerId = doc.Contact?.TaxId,
-                        TaxPayerName = doc.Contact?.Name ?? "",
-                        TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                        Description = $"🚫 [ภาษีซื้อต้องห้าม §82/5] {doc.DocumentNumber} — ไม่นำมาคำนวณ ภพ.30",
-                        IncomeAmount = 0,
-                        TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                        TaxAmount = prohibitedVat,
-                        DocumentId = doc.Id,
-                        IncomeTypeCode = "INPUT",
-                        IsExcluded = true
-                    });
-                }
+                // ภาษีซื้อต้องห้าม §82/5 / ที่ผู้ใช้ไม่เคลม (IsVatClaimable=false →
+                // VAT ถูกกลบเป็นค่าใช้จ่ายใน GL ไม่ลง 11610/11640) = "ไม่ใช่ภาษีซื้อ
+                // ของ ภพ.30" ตามกฎหมาย จึง **ไม่บันทึกในรายงานภาษีซื้อเลย** (เดิม
+                // ใส่เป็น audit line IsExcluded=true → ผู้ใช้เข้าใจผิดว่าถูกดึงมา
+                // เคลม). audit ว่าตัดยอดไหนออก ดูได้จากตัวเอกสาร (line.IsVatClaimable
+                // + ผังบัญชี) — รายงานสะท้อน GL: มีเฉพาะภาษีซื้อที่เคลมจริง.
             }
         }
 

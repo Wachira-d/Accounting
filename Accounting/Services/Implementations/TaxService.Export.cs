@@ -142,7 +142,8 @@ public partial class TaxService
             rows.Add(Row(W,
                 i++,
                 info?.DocumentNumber ?? l.Description ?? "",
-                l.TransactionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                // วันที่ วว/ดด/ปปปป (พ.ศ.) ตามธรรมเนียมรายงานภาษีไทย
+                $"{l.TransactionDate.Day:D2}/{l.TransactionDate.Month:D2}/{(l.TransactionDate.Year + 543):D4}",
                 l.TaxPayerName ?? "",
                 string.IsNullOrWhiteSpace(l.TaxPayerId) ? "00000000000000" : l.TaxPayerId,
                 BranchCodeOrDefault(info?.ContactBranch),
@@ -209,7 +210,9 @@ public partial class TaxService
                 : (info?.DocumentNumber ?? l.Description ?? "");
             rows.Add(Row(W,
                 i++,
-                $"{(invDate.Year + 543):D4}-{invDate.Month:D2}-{invDate.Day:D2}",
+                // คอลัมน์ "วัน เดือน ปี" → รูปแบบ วว/ดด/ปปปป (พ.ศ.) ตามหัวคอลัมน์
+                // (เดิมใส่ ปปปป-ดด-วว สลับกับหัวคอลัมน์)
+                $"{invDate.Day:D2}/{invDate.Month:D2}/{(invDate.Year + 543):D4}",
                 supplierInvNo,
                 string.IsNullOrWhiteSpace(l.TaxPayerId) ? "" : l.TaxPayerId,
                 BranchCodeOrDefault(info?.ContactBranch),
