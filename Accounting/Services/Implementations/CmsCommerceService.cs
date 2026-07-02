@@ -626,6 +626,20 @@ public class CmsCommerceService : ICmsCommerceService
             case SiteOrderStatus.Cancelled: order.CancelledAt = DateTime.UtcNow; break;
         }
 
+        // ยกเลิกออเดอร์ → ต้องกลับรายการเอกสาร ERP ที่ลงบัญชีไว้ (reverse JE + คืน
+        // สต๊อก + ตัดชำระ). เดิมแค่ตั้ง Cancelled → รายได้/VAT/สต๊อกยังค้างสำหรับ
+        // ออเดอร์ที่ยกเลิก. best-effort: ถ้า void ไม่ได้ (เช่นมีใบเสร็จลูก/จ่ายแล้ว)
+        // log ไว้ให้กลับรายการเอง (ปกติต้องออกใบลดหนี้/คืนเงินแทน).
+        if (request.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue && _docService != null)
+        {
+            try { await _docService.VoidDocumentAsync(companyId, order.ErpDocumentId.Value); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ยกเลิกออเดอร์ {Order} แต่ void เอกสาร ERP {Doc} ไม่สำเร็จ — ต้องกลับรายการ/ออกใบลดหนี้เอง",
+                    order.OrderNumber, order.ErpDocumentId);
+            }
+        }
+
         order.UpdatedBy = userId;
         await _db.SaveChangesAsync();
 
@@ -841,16 +855,10 @@ public class CmsCommerceService : ICmsCommerceService
             ContactId: contactId,
             Reference: order.OrderNumber,
             Notes: $"Online order #{order.OrderNumber}",
-            Lines: order.Lines.Select(l => new Models.DTOs.Document.DocumentLineRequest(
-                Description: l.ProductName,
-                Quantity: l.Quantity,
-                UnitPrice: l.UnitPrice,
-                Unit: l.Unit,
-                DiscountPercent: 0m,
-                VatRate: l.VatRate,
-                WithholdingTaxRate: 0m,
-                AccountId: null,
-                ProjectId: null)).ToList(),
+            // เดิมใส่เฉพาะ order.Lines (สินค้า) → ตก ค่าจัดส่ง/ส่วนลด → ยอดเอกสาร ERP
+            // ≠ order.TotalAmount แต่ตอนตัดชำระจ่าย order.TotalAmount → AR ค้างเศษ
+            // ถาวร + รายได้เพี้ยน. เพิ่มบรรทัดค่าจัดส่ง (บวก) + ส่วนลด (ลบ) ให้ยอดตรง.
+            Lines: BuildOrderErpLines(order),
             ProjectId: null,
             BankAccountId: null,
             PaymentAccountId: null,
@@ -873,6 +881,35 @@ public class CmsCommerceService : ICmsCommerceService
         _logger.LogInformation("Order {OrderNumber} synced to ERP document {DocId} ({DocNumber})",
             order.OrderNumber, created.Id, created.DocumentNumber);
         return created.Id;
+    }
+
+    /// <summary>สร้างบรรทัดเอกสาร ERP จาก order — สินค้า + ค่าจัดส่ง (บวก) +
+    /// ส่วนลด (ลบ) ให้ยอดรวม = order.TotalAmount (= Σสินค้า + ค่าจัดส่ง − ส่วนลด,
+    /// ดู line 604) กัน AR ค้างเศษ. ราคาเป็น gross (PricesIncludeVat=true);
+    /// ค่าจัดส่ง/ส่วนลด ใช้ VAT 0% ไม่ให้กระทบฐานภาษีของสินค้า.</summary>
+    private static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order)
+    {
+        var lines = order.Lines.Select(l => new Models.DTOs.Document.DocumentLineRequest(
+            Description: l.ProductName,
+            Quantity: l.Quantity,
+            UnitPrice: l.UnitPrice,
+            Unit: l.Unit,
+            DiscountPercent: 0m,
+            VatRate: l.VatRate,
+            WithholdingTaxRate: 0m,
+            AccountId: null,
+            ProjectId: null)).ToList();
+        if (order.ShippingAmount > 0m)
+            lines.Add(new Models.DTOs.Document.DocumentLineRequest(
+                Description: "ค่าจัดส่ง", Quantity: 1m, UnitPrice: order.ShippingAmount,
+                Unit: "ครั้ง", DiscountPercent: 0m, VatRate: 0m, WithholdingTaxRate: 0m,
+                AccountId: null, ProjectId: null));
+        if (order.DiscountAmount > 0m)
+            lines.Add(new Models.DTOs.Document.DocumentLineRequest(
+                Description: "ส่วนลด", Quantity: 1m, UnitPrice: -order.DiscountAmount,
+                Unit: "ครั้ง", DiscountPercent: 0m, VatRate: 0m, WithholdingTaxRate: 0m,
+                AccountId: null, ProjectId: null));
+        return lines;
     }
 
     /// <summary>เมื่อ admin/webhook ยืนยันว่าได้รับเงินจากออเดอร์ออนไลน์

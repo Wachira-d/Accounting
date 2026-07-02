@@ -317,6 +317,18 @@ public class CmsBookingService : ICmsBookingService
             case BookingStatus.Cancelled: booking.CancelledAt = DateTime.UtcNow; break;
         }
 
+        // ยกเลิกการจอง → กลับรายการเอกสาร ERP (มัดจำ/ใบกำกับ) ที่ลงบัญชีไว้
+        // (reverse JE + คืนสต๊อก). เดิมแค่ตั้ง Cancelled → รายได้/VAT ค้าง.
+        if (request.Status == BookingStatus.Cancelled && booking.ErpDocumentId.HasValue && _docService != null)
+        {
+            try { await _docService.VoidDocumentAsync(companyId, booking.ErpDocumentId.Value); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ยกเลิกการจอง {Booking} แต่ void เอกสาร ERP {Doc} ไม่สำเร็จ — ต้องกลับรายการเอง",
+                    booking.BookingNumber, booking.ErpDocumentId);
+            }
+        }
+
         booking.UpdatedBy = userId;
         await _db.SaveChangesAsync();
 
@@ -460,9 +472,14 @@ public class CmsBookingService : ICmsBookingService
             {
                 new(
                     Description: lineDesc,
-                    Quantity: booking.GuestCount,
+                    // Quantity 1: ยอดจอง (booking.TotalAmount) เป็นราคาต่อ "การจอง"
+                    // (flat = svc.Price) ไม่คูณจำนวนแขก. เดิม Quantity=GuestCount →
+                    // เอกสาร ERP = ราคา × แขก ไม่ตรงยอดจอง (รายได้/AR สูงเกินจริง N เท่า).
+                    Quantity: 1,
                     Unit: "ครั้ง",
-                    UnitPrice: svc.Price,
+                    // มัดจำ (PrePayment): เอกสารต้องเป็น "ยอดมัดจำที่รับ" ไม่ใช่ราคาเต็ม
+                    // เดิมใช้ svc.Price เต็ม → เงินสด/หนี้สินรอรับรู้สูงเกินจริง.
+                    UnitPrice: isDeposit ? booking.DepositAmount : svc.Price,
                     DiscountPercent: 0m,
                     VatRate: 7m,
                     WithholdingTaxRate: 0m,
