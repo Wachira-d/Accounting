@@ -813,6 +813,8 @@ const Layout = {
       description: 'ธุรกรรมข้ามบริษัทในเครือ · auto-mirror · eliminate ตอนรวมงบ' },
     { id: 'consolidation', label: 'งบการเงินรวม', icon: '📑', href: '/pages/consolidation.html', feature: 'Consolidation', _i18nKey: 'nav.consolidation',
       description: 'รวมงบทุกบริษัทในเครือ · FX translation · NCI · elimination entries' },
+    { id: 'accountant-workspace', label: 'สำนักงานบัญชี (ทุก client)', icon: '🗂️', href: '/pages/accountant-workspace.html',
+      description: 'งานคงค้างรวมทุกบริษัทที่ดูแล · ร่างค้างอนุมัติ · ธนาคารรอ match · สถานะ ภ.พ.30 · ลูกหนี้เกินกำหนด' },
 
     { section: 'ขายออนไลน์ & ลูกค้า', icon: '🌐', description: 'เว็บไซต์ · e-commerce · booking · sales funnel · ลูกค้า/vendor portal' },
     { id: 'cms-sites', label: 'เว็บไซต์ของฉัน (CMS)', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
