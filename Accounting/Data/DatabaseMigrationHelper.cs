@@ -4253,7 +4253,11 @@ public static class DatabaseMigrationHelper
             """CREATE INDEX IF NOT EXISTS "IX_PdpaPiiAccessLogs_Subject" ON "PdpaPiiAccessLogs" ("CompanyId", "SubjectType", "SubjectId");""",
 
             // ===== ส่งสลิปเงินเดือนทาง LINE (self-service bind + secure token) =====
-            // หมายเหตุ: push userId ใช้ Employee.LineId เดิม (NotificationEngine ก็ใช้ตัวนี้)
+            // Employee.LineId (LINE userId Uxxxx) — push แจ้งเตือน/สลิปทาง LINE.
+            // ใช้มาก่อน (NotificationEngine/PayslipLineDelivery/PayrollService) แต่
+            // ไม่เคยมี migration → DB เก่า (สร้างก่อนมี field นี้) จะไม่มีคอลัมน์ →
+            // 500 ตอนแจ้งเตือนพนักงาน/ส่งสลิป LINE. IF NOT EXISTS = idempotent.
+            """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "LineId" varchar(100) NULL;""",
             // LINE OA basic id (@xxx) ต่อบริษัท — ทำลิงก์/QR เพิ่มเพื่อนให้พนักงาน
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineOaBasicId" varchar(100) NULL;""",
             // รหัสผูก LINE ระดับพนักงาน (6 หลัก, หมดอายุ 24 ชม.)

@@ -279,6 +279,9 @@
       },
 
       async init() {
+        // ต้องเรียก Layout.init ก่อน — โหลดบริษัท (getCompanyId) + render เมนู;
+        // ไม่งั้น Layout.api()=null → return ทันที (เนื้อหา onboarding + เมนูไม่ขึ้น)
+        if (!Layout.init('getting-started')) return;
         const api = Layout.api(); if (!api) return;
         const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
         if (!co.id) {
