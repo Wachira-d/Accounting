@@ -5593,13 +5593,39 @@ public class DocumentService : IDocumentService
         var src = await _db.Documents.Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == taxInvoice.RelatedDocumentId!.Value && d.CompanyId == companyId);
         if (src == null || src.DocumentType != DocumentType.Invoice) return;
-        if (src.Status != DocumentStatus.Approved && src.Status != DocumentStatus.Sent) return;
-        if (src.PaidAmount > 0.01m) return;   // ชำระแล้ว → ไม่ auto-supersede (กัน settlement หลุด)
-        // มีลูก active อื่นนอกจาก TaxInvoice นี้ → ไม่ supersede (ซับซ้อน)
+        // ต้นทางยกเลิก/ปฏิเสธแล้ว → ไม่มีอะไรต้อง supersede
+        if (src.Status == DocumentStatus.Voided || src.Status == DocumentStatus.Rejected) return;
+
+        // ต้นทางยังไม่ลงบัญชี (Draft/รออนุมัติ) → ยังไม่เคยรับรู้รายได้ → TaxInvoice
+        // ลงได้เดี่ยว ๆ ไม่ซ้ำ. แต่ต้อง void ใบแจ้งหนี้เดิม กันเผลอไปอนุมัติภายหลัง
+        // แล้วลงรายได้/ภาษีขายเป็นครั้งที่ 2. (ไม่มี JE ให้ reverse)
+        if (src.Status == DocumentStatus.Draft || src.Status == DocumentStatus.WaitingApproval)
+        {
+            src.Status = DocumentStatus.Voided;
+            src.Notes = ((src.Notes ?? "") + $" [แทนที่ด้วยใบกำกับภาษี {taxInvoice.DocumentNumber}]").Trim();
+            src.UpdatedAt = DateTime.UtcNow; src.UpdatedBy = actor;
+            _logger.LogInformation("Voided draft Invoice {Src} superseded by TaxInvoice {Tax}",
+                src.DocumentNumber, taxInvoice.DocumentNumber);
+            return;
+        }
+
+        // ต้นทางลงบัญชีแล้ว (Approved/Sent/PartiallyPaid/Paid) — TaxInvoice นี้ลง
+        // รายได้/ภาษีขาย/สต๊อกเต็มจำนวนไปแล้ว (ก่อนหน้าใน AutoPostToJournal) ดังนั้น
+        // ต้อง "กลับรายการใบแจ้งหนี้เดิม" เท่านั้นถึงจะไม่ซ้ำ. ถ้ากลับรายการไม่ได้
+        // (ชำระแล้วบางส่วน/ครบ หรือมีเอกสารลูกอื่น) → **ห้ามลงบัญชีซ้ำ** → block การ
+        // อนุมัติ (throw ใน transaction → rollback JE ของ TaxInvoice ทั้งหมด).
+        if (src.PaidAmount > 0.01m)
+            throw new InvalidOperationException(
+                $"ใบแจ้งหนี้ต้นทาง {src.DocumentNumber} มีการชำระแล้ว ({src.PaidAmount:N2} บาท) — " +
+                "การแปลงเป็นใบกำกับภาษีแล้วอนุมัติจะลงรายได้/ภาษีขายซ้ำกับใบแจ้งหนี้เดิม. " +
+                "ให้ออกใบกำกับภาษีจาก 'ใบเสร็จรับเงิน' ที่รับชำระแทน หรือยกเลิกการชำระ/ใบแจ้งหนี้เดิมก่อน");
         var otherActiveChild = await _db.Documents.AsNoTracking().AnyAsync(d =>
             d.CompanyId == companyId && d.RelatedDocumentId == src.Id && d.Id != taxInvoice.Id
             && !d.IsDeleted && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
-        if (otherActiveChild) return;
+        if (otherActiveChild)
+            throw new InvalidOperationException(
+                $"ใบแจ้งหนี้ต้นทาง {src.DocumentNumber} มีเอกสารลูกอื่นอ้างอิงอยู่ (เช่น ใบเสร็จ/ใบลดหนี้) — " +
+                "การแปลงเป็นใบกำกับภาษีแล้วอนุมัติจะลงบัญชีซ้ำ. กรุณายกเลิกเอกสารลูกอื่นก่อน หรือออกใบกำกับด้วยวิธีอื่น");
 
         var jeIds = await _db.JournalEntries
             .Where(j => j.SourceDocumentId == src.Id && j.CompanyId == companyId
@@ -6415,6 +6441,31 @@ public class DocumentService : IDocumentService
         // Validate double-entry balance per Thai accounting standards (TAS 1)
         var totalDebit = pendingLines.Sum(l => l.Debit);
         var totalCredit = pendingLines.Sum(l => l.Credit);
+
+        // FX rounding squeeze: Conv() ปัดเศษราย "บรรทัด" อิสระ → ผลรวม Dr/Cr ของ
+        // เอกสารต่างสกุลเงินอาจต่างกันไม่กี่สตางค์แม้สมดุลในสกุลเงินตัวเอง (เช่น
+        // round(Total×fx) ≠ Σ round(line×fx)). ดูดผลต่าง "เล็กระดับปัดเศษ" เข้า
+        // บรรทัดยอดสูงสุด (มักเป็นลูกหนี้/เงินสด) กัน throw "ไม่สมดุล" จากการปัดเศษ.
+        // ผลต่างใหญ่เกิน tolerance = imbalance จริง → ปล่อย throw ด้านล่าง.
+        var balDiff = Math.Round(totalDebit - totalCredit, 2, MidpointRounding.AwayFromZero);
+        var roundingTol = 0.01m * pendingLines.Count + 0.01m;
+        if (balDiff != 0m && Math.Abs(balDiff) <= roundingTol && pendingLines.Count > 0)
+        {
+            int idx = 0; decimal maxMag = -1m;
+            for (int i = 0; i < pendingLines.Count; i++)
+            {
+                var mag = pendingLines[i].Debit + pendingLines[i].Credit;
+                if (mag > maxMag) { maxMag = mag; idx = i; }
+            }
+            var pl = pendingLines[idx];
+            // balDiff > 0 = เดบิตเกิน → ลดเดบิต (บรรทัดเดบิต) หรือเพิ่มเครดิต (บรรทัดเครดิต)
+            pendingLines[idx] = pl.Debit >= pl.Credit
+                ? (pl.AccountId, pl.Debit - balDiff, pl.Credit, pl.Description)
+                : (pl.AccountId, pl.Debit, pl.Credit + balDiff, pl.Description);
+            totalDebit = pendingLines.Sum(l => l.Debit);
+            totalCredit = pendingLines.Sum(l => l.Credit);
+        }
+
         if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");

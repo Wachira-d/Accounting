@@ -208,11 +208,21 @@ public class CommissionService : ICommissionService
 
             if (assignment.Plan.CalculationBasis == "Revenue")
             {
-                // Sum revenue from paid/partially-paid invoices
+                // Sum revenue from paid/partially-paid invoices.
+                // ต้องกรอง DocumentType ให้เป็น "เอกสารรับรู้รายได้" เท่านั้น
+                // (ใบแจ้งหนี้/ใบกำกับ + ใบเสร็จขายสด standalone) — เดิมไม่กรอง type
+                // เลย → รวมทุกเอกสาร (ใบเสร็จตัดชำระ, ใบซื้อ, ใบลดหนี้) ทำให้ฐาน
+                // คอมมิชชันเบิ้ล/ผิด = จ่ายคอมเกินจริง.
+                var revenueTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice,
+                    DocumentType.Receipt, DocumentType.ReceiptVoucher };
                 var invoiceQuery = _db.Documents
                     .Where(d => d.CompanyId == companyId
                         && d.DocumentDate >= periodStart
                         && d.DocumentDate <= periodEnd
+                        && revenueTypes.Contains(d.DocumentType)
+                        // ใบเสร็จตัดชำระใบแจ้งหนี้ (RelatedDocumentId) = ไม่ใช่รายได้ใหม่
+                        && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                            || d.RelatedDocumentId == null)
                         && (d.Status == DocumentStatus.Paid || d.Status == DocumentStatus.PartiallyPaid));
 
                 if (assignment.EmployeeId.HasValue)
