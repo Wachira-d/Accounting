@@ -3242,7 +3242,22 @@ public class DocumentService : IDocumentService
             await using var tx = await _db.Database.BeginTransactionAsync();
             try
             {
-                await ReversePaymentInternalAsync(companyId, payment, doc, "ยกเลิกการชำระเงิน");
+                // Lock the payment row INSIDE the transaction เพื่อกัน void ซ้อน
+                // (two concurrent voids ต่างอ่าน IsDeleted=false แล้ว reverse ทั้งคู่
+                //  → bank balance/PaidAmount ถูกกลับสองรอบ). Re-read สถานะหลัง lock:
+                //  ถ้าถูก void ไปแล้ว = no-op idempotent.
+                var locked = await _db.Payments
+                    .FromSqlRaw(
+                        """SELECT * FROM "Payments" WHERE "Id" = {0} AND "CompanyId" = {1} FOR UPDATE""",
+                        paymentId, companyId)
+                    .FirstOrDefaultAsync();
+                if (locked == null || locked.IsDeleted)
+                {
+                    await tx.RollbackAsync();
+                    return;
+                }
+
+                await ReversePaymentInternalAsync(companyId, locked, doc, "ยกเลิกการชำระเงิน");
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
             }

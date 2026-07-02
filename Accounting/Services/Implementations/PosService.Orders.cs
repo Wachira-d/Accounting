@@ -204,6 +204,16 @@ public partial class PosService
         if (request.Lines == null || request.Lines.Count == 0)
             throw new InvalidOperationException("กรุณาเลือกรายการที่จะคืนเงิน");
 
+        // ลูกค้าจ่ายจริงตามยอดหลังหักส่วนลด/คูปองระดับบิล ไม่ใช่ยอดรวมรายบรรทัด
+        // ดังนั้นต้องปรับสัดส่วนคืนเงินด้วย discountFactor มิฉะนั้นจะคืนเกิน
+        // (เช่น สินค้า 1000 ลดทั้งบิล 10% ลูกค้าจ่าย 900 แต่ถ้าคืนเต็ม 1000 = คืนเกิน 100)
+        // ค่าบริการ (ServiceCharge) และทิป (Tip) เป็นรายการเพิ่มบนบิล ไม่คืนตามการคืนสินค้า
+        var lineGrossTotal = order.Items.Sum(i => i.TotalAmount);
+        var orderLevelDiscount = order.DiscountAmount + order.CouponDiscountAmount;
+        var discountFactor = lineGrossTotal > 0
+            ? Math.Max(0m, (lineGrossTotal - orderLevelDiscount) / lineGrossTotal)
+            : 1m;
+
         // Validate + compute the refund (proportional to each line).
         decimal refundGross = 0, refundVat = 0, refundCogs = 0;
         var toRestore = new List<(PosOrderItem Item, decimal Qty)>();
@@ -218,8 +228,8 @@ public partial class PosService
                     $"รายการ '{item.ItemName}' คืนได้ไม่เกิน {remaining:0.##} (ขอคืน {line.Quantity:0.##})");
 
             var ratio = item.Quantity > 0 ? line.Quantity / item.Quantity : 0m;
-            refundGross += item.TotalAmount * ratio;
-            refundVat += item.VatAmount * ratio;
+            refundGross += item.TotalAmount * ratio * discountFactor;
+            refundVat += item.VatAmount * ratio * discountFactor;
             toRestore.Add((item, line.Quantity));
         }
         if (toRestore.Count == 0)

@@ -144,6 +144,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
     **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
     สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)
+  - **Idempotency (กัน retry สร้างเอกสารซ้ำ)**: ทุก inbound endpoint ที่สร้าง
+    เอกสาร (invoice / creditnote / debitnote / **expense** / payment_voucher /
+    certificate_in_lieu) เช็ค `ExternalRef` (→ `Document.Reference`) ก่อน; ถ้า
+    partner **ไม่ส่ง ExternalRef** → fallback `TryFindDocumentByExternalIdAsync`
+    ค้น sync log เดิม (`integrationId + eventType + ExternalId`, Success/Skipped,
+    มี `CreatedDocumentId`) แล้วคืนเอกสารเดิมถ้ายังไม่ voided (`IntegrationService.cs`).
+    `ProcessExpenseAsync`/`ProcessPaymentVoucherAsync` เดิม**ไม่มี** guard นี้ →
+    เพิ่มแล้ว (เคยสร้าง expense ซ้ำเมื่อ retry)
+  - **CN/DN ผ่าน integration = ฝั่งขายเท่านั้น** (DTO มีแต่ field ลูกค้า) —
+    `CreateCreditNoteJournalAsync`/`CreateDebitNoteJournalAsync` ลง AR/ภาษีขาย
+    เสมอ; ใบลด/เพิ่มหนี้ฝั่งซื้อ sync ผ่าน expense reversal ไม่ผ่านช่องทางนี้
 
 ### 2.4 Convert (แปลงเอกสาร)
 - **Method**: `DocumentService.ConvertDocumentAsync` (full) / `ConvertDocumentPartialAsync`
@@ -209,6 +220,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Tax Invoice** (deferred): `IssueTaxInvoiceAsync` → สร้าง Document ใน
   Status=Approved (กัน JE ซ้อน) + เรียก `EtaxInvoiceService`
 - **Refund/Void**: reverse JE + return stock
+  - **Refund คิดสัดส่วนหลังส่วนลดระดับบิล** (`RefundOrderAsync`,
+    `PosService.Orders.cs`): ยอดคืน = `Σ(item.TotalAmount × ratio) × discountFactor`
+    โดย `discountFactor = (Σ item.TotalAmount − (DiscountAmount + CouponDiscountAmount))
+    / Σ item.TotalAmount` — กันคืนเกินเมื่อบิลมีส่วนลด/คูปองระดับออเดอร์ (เช่น
+    สินค้า 1000 ลดทั้งบิล 10% ลูกค้าจ่าย 900 → คืนเต็มต้องได้ 900 ไม่ใช่ 1000).
+    ServiceCharge/Tip เป็นรายการเสริมบนบิล ไม่คืนตามการคืนสินค้า
 - **Offline sync**: `SyncOfflineOrderAsync(ClientOrderId)` dedup
 - **Gap (ยัง TODO)**:
   - Z-report consolidation (ปัจจุบัน 1 JE/order, ไม่มี shift-end batch)
@@ -350,6 +367,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - ⚠️ PDF footer "การลงบัญชี" (`PdfGenerationService.LoadGlPostingAsync`)
   query `OriginalEntryId == null` เพื่อแสดง **JE forward ต้นทาง** เสมอ
   ไม่ใช่ reversal — กัน footer ขึ้น Cr แทน Dr ตอน void
+- **Standalone void ปลอดภัยจาก void ซ้อน (row lock ใน tx)**:
+  - `VoidPaymentAsync` (`DocumentService.cs`) — lock `Payments` row `FOR UPDATE`
+    ในทรานแซกชัน + re-check `IsDeleted`; ถ้า void ไปแล้ว = no-op (กัน reverse
+    bank balance/PaidAmount สองรอบ)
+  - `VoidPayrollAsync` (`PayrollService.cs`) — lock `PayrollRuns` row `FOR UPDATE`
+    + re-check `Status="Voided"`; กัน restore เงินทดรอง (SalaryAdvance
+    OutstandingAmount) + reverse JE ซ้ำเมื่อกด void พร้อมกัน
 
 ### 3.6 §82/3 Undue VAT Reclassification (auto)
 - เมื่อ approve PI/Expense ที่ใบกำกับยังไม่ครบ §86/4 (ขาดเลข/วันที่/สาขา
@@ -949,12 +973,17 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
-_Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-02 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
 _PII encrypt+ (Bank/SSN), audit-log DB trigger, §86/4 hard-block opt-in,_
 _ภ.ง.ด.51 SME bracket, PDPA Wave 3 (RoPA/Consent/PiiAccessLog/Breach)._
+_รอบ 16 (audit ยอดเบิ้ล/double-count + concurrency): supersede block,_
+_deposit-apply settlement JE, settlement receipt กันนับซ้ำในรายงานรายได้,_
+_POS tip fix, POS refund discountFactor, Integration idempotency (expense/PV_
+_+ ExternalId fallback), payment/JE FOR UPDATE ใน tx (create+void), payroll_
+_void row-lock, recurring FOR UPDATE SKIP LOCKED, Employee.LineId migration._
 _รอบ 16: DBD XBRL annual export (TFRS-NPAEs taxonomy) + ผู้ทำบัญชี CPD gate_
 _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Consent/Breach with 72h timer)._
 
