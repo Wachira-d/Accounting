@@ -6441,6 +6441,31 @@ public class DocumentService : IDocumentService
         // Validate double-entry balance per Thai accounting standards (TAS 1)
         var totalDebit = pendingLines.Sum(l => l.Debit);
         var totalCredit = pendingLines.Sum(l => l.Credit);
+
+        // FX rounding squeeze: Conv() ปัดเศษราย "บรรทัด" อิสระ → ผลรวม Dr/Cr ของ
+        // เอกสารต่างสกุลเงินอาจต่างกันไม่กี่สตางค์แม้สมดุลในสกุลเงินตัวเอง (เช่น
+        // round(Total×fx) ≠ Σ round(line×fx)). ดูดผลต่าง "เล็กระดับปัดเศษ" เข้า
+        // บรรทัดยอดสูงสุด (มักเป็นลูกหนี้/เงินสด) กัน throw "ไม่สมดุล" จากการปัดเศษ.
+        // ผลต่างใหญ่เกิน tolerance = imbalance จริง → ปล่อย throw ด้านล่าง.
+        var balDiff = Math.Round(totalDebit - totalCredit, 2, MidpointRounding.AwayFromZero);
+        var roundingTol = 0.01m * pendingLines.Count + 0.01m;
+        if (balDiff != 0m && Math.Abs(balDiff) <= roundingTol && pendingLines.Count > 0)
+        {
+            int idx = 0; decimal maxMag = -1m;
+            for (int i = 0; i < pendingLines.Count; i++)
+            {
+                var mag = pendingLines[i].Debit + pendingLines[i].Credit;
+                if (mag > maxMag) { maxMag = mag; idx = i; }
+            }
+            var pl = pendingLines[idx];
+            // balDiff > 0 = เดบิตเกิน → ลดเดบิต (บรรทัดเดบิต) หรือเพิ่มเครดิต (บรรทัดเครดิต)
+            pendingLines[idx] = pl.Debit >= pl.Credit
+                ? (pl.AccountId, pl.Debit - balDiff, pl.Credit, pl.Description)
+                : (pl.AccountId, pl.Debit, pl.Credit + balDiff, pl.Description);
+            totalDebit = pendingLines.Sum(l => l.Debit);
+            totalCredit = pendingLines.Sum(l => l.Credit);
+        }
+
         if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
             throw new InvalidOperationException(
                 $"การบันทึกบัญชีอัตโนมัติไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}");
