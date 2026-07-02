@@ -105,17 +105,16 @@
               </select>
             </div>
           </div>
-          <div class="form-group"><label class="form-label" data-i18n="common.detail">รายละเอียด</label><textarea class="form-input" id="fDescription" rows="2" placeholder="เช่น ค่าบริการทำบัญชีเดือน &lt;&lt;month&gt;&gt;"></textarea>
-            <div style="margin-top:6px;padding:8px 12px;background:#f0f9ff;border-left:3px solid #0ea5e9;border-radius:6px;font-size:11px;color:#0369a1;line-height:1.7">
-              💡 ใส่ <b>ตัวแปร</b> ให้ระบบเติมค่าอัตโนมัติตอนออกเอกสารแต่ละงวด (พิมพ์ในรายละเอียด/หมายเหตุได้):
-              <div style="margin-top:4px">
-                <code>&lt;&lt;month&gt;&gt;</code> = เดือนนี้ (เช่น กรกฎาคม) ·
-                <code>&lt;&lt;month_prev&gt;&gt;</code> = เดือนก่อน ·
-                <code>&lt;&lt;year&gt;&gt;</code> = ปี พ.ศ. ·
-                <code>&lt;&lt;quarter_th&gt;&gt;</code> = ไตรมาส ·
-                <code>&lt;&lt;date&gt;&gt;</code> = วันที่ออก
-              </div>
-              <div style="margin-top:2px;color:#64748b">ตัวอย่าง: "ค่าบริการทำบัญชีเดือน &lt;&lt;month&gt;&gt; &lt;&lt;year&gt;&gt;" → "ค่าบริการทำบัญชีเดือน กรกฎาคม 2569"</div>
+          <div class="form-group">
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+              <span data-i18n="common.detail">รายละเอียด</span>
+              <button type="button" class="btn btn-sm btn-secondary" style="font-size:11px;padding:2px 8px" onclick="Page.toggleVarPanel()">🏷️ แทรกตัวแปร</button>
+            </label>
+            <textarea class="form-input" id="fDescription" rows="2" placeholder="เช่น ค่าบริการทำบัญชีเดือน &lt;&lt;month&gt;&gt;" oninput="Page._updateVarPreview()"></textarea>
+            <div id="varPanel" style="display:none;margin-top:6px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">
+              <div style="font-size:11px;color:#0369a1;margin-bottom:6px">💡 คลิกตัวแปรเพื่อแทรกลงในรายละเอียด — ระบบเติมค่าจริงให้ทุกงวดตอนออกเอกสาร (ค่าตัวอย่าง = งวดวันนี้)</div>
+              <div id="varChips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+              <div id="varPreview" style="margin-top:8px;font-size:11px;color:#64748b;border-top:1px dashed #bae6fd;padding-top:6px"></div>
             </div>
           </div>
           <div class="form-row">
@@ -208,6 +207,60 @@ const Page = {
     if (this._contactAC) this._contactAC.clear();
     this.onDocTypeChange();
     Layout.openModal('formModal');
+    const vp = document.getElementById('varPanel'); if (vp) vp.style.display = 'none';
+  },
+
+  // ── ตัวแปร placeholder — คำนวณค่าตัวอย่าง (งวดวันนี้) ให้ตรงกับ backend ──
+  _TH_MONTHS: ['', 'มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'],
+  _EN_MONTHS: ['', 'January','February','March','April','May','June','July','August','September','October','November','December'],
+  _varValues() {
+    const d = new Date(), m = d.getMonth() + 1, y = d.getFullYear();
+    const pv = new Date(y, m - 2, 1), nx = new Date(y, m, 1);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return [
+      ['month', this._TH_MONTHS[m], 'เดือนนี้ (ไทย)'],
+      ['month_prev', this._TH_MONTHS[pv.getMonth()+1], 'เดือนก่อน'],
+      ['month_next', this._TH_MONTHS[nx.getMonth()+1], 'เดือนถัดไป'],
+      ['month_en', this._EN_MONTHS[m], 'เดือน (อังกฤษ)'],
+      ['month_no', p2(m), 'เลขเดือน'],
+      ['year', String(y + 543), 'ปี พ.ศ.'],
+      ['year_ce', String(y), 'ปี ค.ศ.'],
+      ['quarter_th', 'ไตรมาส ' + (Math.floor((m-1)/3)+1), 'ไตรมาส (ไทย)'],
+      ['quarter', 'Q' + (Math.floor((m-1)/3)+1), 'ไตรมาส'],
+      ['date', `${p2(d.getDate())}/${p2(m)}/${y+543}`, 'วันที่ออก'],
+      ['day', p2(d.getDate()), 'วันที่'],
+    ];
+  },
+  toggleVarPanel() {
+    const panel = document.getElementById('varPanel');
+    if (!panel) return;
+    const show = panel.style.display === 'none';
+    panel.style.display = show ? 'block' : 'none';
+    if (!show) return;
+    const chips = document.getElementById('varChips');
+    chips.innerHTML = this._varValues().map(([tok, val, label]) =>
+      `<button type="button" onclick="Page.insertVar('&lt;&lt;${tok}&gt;&gt;')" title="${label} → ${val}"
+        style="border:1px solid #7dd3fc;background:#fff;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;color:#0369a1">
+        &lt;&lt;${tok}&gt;&gt; <span style="color:#94a3b8">= ${val}</span></button>`).join('');
+    this._updateVarPreview();
+  },
+  insertVar(token) {
+    const ta = document.getElementById('fDescription');
+    if (!ta) return;
+    const s = ta.selectionStart ?? ta.value.length, e = ta.selectionEnd ?? ta.value.length;
+    ta.value = ta.value.slice(0, s) + token + ta.value.slice(e);
+    const pos = s + token.length;
+    ta.focus(); ta.setSelectionRange(pos, pos);
+    this._updateVarPreview();
+  },
+  _updateVarPreview() {
+    const prev = document.getElementById('varPreview');
+    const ta = document.getElementById('fDescription');
+    if (!prev || !ta) return;
+    let out = ta.value || '';
+    for (const [tok, val] of this._varValues())
+      out = out.replace(new RegExp(`(?:<<|\\{\\{)\\s*${tok}\\s*(?:>>|\\}\\})`, 'gi'), val);
+    prev.innerHTML = out.trim() ? `ตัวอย่างงวดนี้: <b style="color:#0f172a">${out.replace(/</g,'&lt;')}</b>` : '';
   },
 
   async aiSuggestAccount(slot, selectId, hintId) {
