@@ -933,6 +933,17 @@ Approve). แก้ 2 ชั้น: (a) backend DocumentEmailService.SendDocumen
 throw ถ้าไม่ใช่ Draft/WaitingApproval). เพิ่มปุ่ม "📧 ส่งอีเมล" (PDF ปกติ) บน
 เอกสารฝั่งขายที่อนุมัติแล้ว นอกเหนือจาก "ส่ง e-Tax อีเมล" (CC สรรพากร+XML) เดิม.
 e-Tax by Email checkbox แสดงกับ TaxInvoice (รวม combined) อยู่แล้ว.
+
+_รอบ 47 (รายงานภาษี — สะท้อน GL + PDF + ภ.พ.30): (a) รายงานภาษีซื้อไม่ดึง
+เอกสารที่ไม่ได้เคลม VAT — เดิม §82/5/ไม่เคลม (IsVatClaimable=false, VAT กลบ
+ค่าใช้จ่ายไม่ลง 11610) ถูกใส่เป็น audit line IsExcluded → เลิก emit; รายงานมี
+เฉพาะภาษีซื้อที่เคลมจริง (claimableVat>0) สะท้อน GL. ต้นเหตุ: OCR ตั้ง
+HasTaxInvoiceReference=true อัตโนมัติเมื่อมี VAT+เลขใบ แต่ผังบัญชีบังคับ
+ไม่เคลมตอน approve. (b) วันที่ export วว/ดด/ปปปป (พ.ศ.) ตรงหัวคอลัมน์ (เดิม
+สลับ ปปปป-ดด-วว). (c) เพิ่ม PDF: GET tax/{id}/export-pdf?kind=purchase|sales|
+pp30 → PdfGenerationService.GenerateVatReportPdfAsync (QuestPDF) — รายงาน
+ภาษีซื้อ/ขาย ตาราง §87 ประกาศ 104 + แบบสรุป ภ.พ.30 (ช่อง 1-9); ปุ่มในหน้า tax._
+
 (c) UX: maker ที่ไม่มีสิทธิ์อนุมัติ (เช็คจาก my-permissions allowedMenuIds:
 perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่องส่งอีเมล
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve

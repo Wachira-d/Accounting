@@ -133,12 +133,17 @@ public partial class TaxService
         int i = 1;
         foreach (var l in lines)
         {
+            // §82/5 ต้องห้าม / §82/3 เกิน 6 เดือน (IsExcluded) ไม่อยู่ในรายงาน
+            // ภาษีขายที่ยื่น RD — เดิม render เป็นแถวโดยไม่มีคอลัมน์สถานะ ทำให้
+            // ดูเหมือนถูกนับ. รายการ excluded ดูได้ใน sheet audit (มีสถานะ "ไม่นำมาคิด").
+            if (l.IsExcluded) continue;
             var info = l.DocumentId.HasValue && docInfo.TryGetValue(l.DocumentId.Value, out var di) ? di : null;
             var total = l.IncomeAmount + l.TaxAmount;
             rows.Add(Row(W,
                 i++,
                 info?.DocumentNumber ?? l.Description ?? "",
-                l.TransactionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                // วันที่ วว/ดด/ปปปป (พ.ศ.) ตามธรรมเนียมรายงานภาษีไทย
+                $"{l.TransactionDate.Day:D2}/{l.TransactionDate.Month:D2}/{(l.TransactionDate.Year + 543):D4}",
                 l.TaxPayerName ?? "",
                 string.IsNullOrWhiteSpace(l.TaxPayerId) ? "00000000000000" : l.TaxPayerId,
                 BranchCodeOrDefault(info?.ContactBranch),
@@ -186,6 +191,12 @@ public partial class TaxService
         int i = 1;
         foreach (var l in lines)
         {
+            // §82/5 ภาษีซื้อต้องห้าม / §82/3 เกิน 6 เดือน (IsExcluded) ไม่ถูก
+            // บันทึกในรายงานภาษีซื้อที่ยื่น RD (ไม่ใช่ภาษีซื้อของ ภพ.30 — ลงเป็น
+            // ค่าใช้จ่ายแทน). เดิม render เป็นแถว (มูลค่า 0 / VAT xx) โดยไม่มี
+            // คอลัมน์สถานะ → ผู้ใช้เข้าใจผิดว่าถูกดึงมาเคลม. ดูได้ใน sheet audit
+            // ("รายการทั้งหมด") ที่มีสถานะ "ไม่นำมาคิด".
+            if (l.IsExcluded) continue;
             var info = l.DocumentId.HasValue && docInfo.TryGetValue(l.DocumentId.Value, out var di) ? di : null;
             // "วัน เดือน ปี" = วันที่บนใบกำกับของผู้ขาย (SupplierTaxInvoiceDate)
             // ถ้ามี — ตกลงมาที่ TransactionDate (= tax point/DocumentDate) เมื่อ
@@ -199,7 +210,9 @@ public partial class TaxService
                 : (info?.DocumentNumber ?? l.Description ?? "");
             rows.Add(Row(W,
                 i++,
-                $"{(invDate.Year + 543):D4}-{invDate.Month:D2}-{invDate.Day:D2}",
+                // คอลัมน์ "วัน เดือน ปี" → รูปแบบ วว/ดด/ปปปป (พ.ศ.) ตามหัวคอลัมน์
+                // (เดิมใส่ ปปปป-ดด-วว สลับกับหัวคอลัมน์)
+                $"{invDate.Day:D2}/{invDate.Month:D2}/{(invDate.Year + 543):D4}",
                 supplierInvNo,
                 string.IsNullOrWhiteSpace(l.TaxPayerId) ? "" : l.TaxPayerId,
                 BranchCodeOrDefault(info?.ContactBranch),

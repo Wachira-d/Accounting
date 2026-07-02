@@ -14,10 +14,12 @@ namespace Accounting.Controllers;
 public class TaxController : ControllerBase
 {
     private readonly ITaxService _taxService;
+    private readonly IPdfGenerationService _pdfService;
 
-    public TaxController(ITaxService taxService)
+    public TaxController(ITaxService taxService, IPdfGenerationService pdfService)
     {
         _taxService = taxService;
+        _pdfService = pdfService;
     }
 
     [HttpGet]
@@ -88,6 +90,22 @@ public class TaxController : ControllerBase
     {
         var (content, fileName) = await _taxService.ExportTaxReportXlsxAsync(companyId, reportId);
         return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+    }
+
+    /// <summary>PDF รายงานภาษี — kind: purchase (ภาษีซื้อ) · sales (ภาษีขาย) ·
+    /// pp30 (แบบสรุป ภ.พ.30). แสดง inline (download=false) หรือแนบไฟล์.</summary>
+    [HttpGet("{reportId:guid}/export-pdf")]
+    public async Task<IActionResult> ExportTaxReportPdf(Guid companyId, Guid reportId,
+        [FromQuery] string kind = "purchase", [FromQuery] bool download = false)
+    {
+        var k = kind?.ToLowerInvariant() switch { "sales" => "sales", "pp30" => "pp30", _ => "purchase" };
+        var report = await _taxService.GetTaxReportAsync(companyId, reportId);
+        var pdf = await _pdfService.GenerateVatReportPdfAsync(companyId, report, k);
+        var label = k switch { "sales" => "รายงานภาษีขาย", "pp30" => "แบบภพ30", _ => "รายงานภาษีซื้อ" };
+        var fileName = $"{label}_{report.Month:D2}-{report.Year + 543}.pdf";
+        if (download) return File(pdf, "application/pdf", fileName);
+        Response.Headers["Content-Disposition"] = "inline";
+        return File(pdf, "application/pdf");
     }
 
     [HttpDelete("{reportId:guid}")]

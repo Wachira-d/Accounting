@@ -41,6 +41,10 @@ public interface IPdfGenerationService
     /// จากเทมเพลตใบกำกับ/ตั้งค่า) ให้สวยคงที่ทุก server โดยไม่พึ่ง Chromium.</summary>
     Task<byte[]> GeneratePayslipPdfAsync(Guid companyId, PayslipPdfData data);
 
+    /// <summary>PDF รายงานภาษีซื้อ/ขาย (§87 ประกาศ 104) หรือแบบสรุป ภ.พ.30 —
+    /// kind: "purchase" | "sales" | "pp30". compose ด้วย QuestPDF โดยตรง.</summary>
+    Task<byte[]> GenerateVatReportPdfAsync(Guid companyId, Accounting.Models.DTOs.Tax.TaxReportResponse report, string kind);
+
     /// <summary>
     /// Build a PDF/A-3 (conformance level U) document with the eTax XML embedded as an Associated File.
     /// Required for Thai e-Tax Invoice by Email compliance per ETDA Recommendation 3-2560 v2.0.
