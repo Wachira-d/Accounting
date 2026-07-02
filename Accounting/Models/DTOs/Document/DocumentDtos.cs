@@ -124,6 +124,9 @@ public record DocumentLineRequest(
     // / น้ำมันรถยนต์นั่ง / ใบกำกับฯ ไม่สมบูรณ์.
     bool IsVatClaimable = true,
     string? VatNonClaimableReason = null,
+    // Landed cost — บรรทัดต้นทุนแฝง (ค่าขนส่ง/อากร/ประกัน) บน PI/GRN
+    // ถูกเกลี่ยเข้าต้นทุนต่อหน่วยของบรรทัดสินค้า + JE เข้า 115 สินค้าคงเหลือ
+    bool IsLandedCost = false,
     // ส่วนลดต่อบรรทัดเป็น "ยอดเงิน" (มาตรฐานสากล: ERP รองรับ discount ทั้ง %
     // และ amount). เมื่อระบุ > 0 ระบบใช้ค่านี้ตรง ๆ แทนการคิดจาก DiscountPercent
     // (เคสใบกำกับระบุส่วนลดเป็นบาท เช่น "ส่วนลด 600.28"). null/0 = ใช้ %.
@@ -514,6 +517,7 @@ public record DocumentLineResponse(
     // ภาษีซื้อต้องห้าม flag + เหตุผล — UI แสดง checkbox + tooltip
     bool IsVatClaimable = true,
     string? VatNonClaimableReason = null,
+    bool IsLandedCost = false,
     // AccountCode (string) คู่กับ AccountId — ให้ frontend ใช้ matched code
     // ใน per-line picker โดยไม่ต้อง round-trip ลง /chart-of-accounts ทุกครั้ง
     string? AccountCode = null,

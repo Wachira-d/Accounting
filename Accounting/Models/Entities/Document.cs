@@ -477,6 +477,14 @@ public class DocumentLine : BaseEntity
     /// </summary>
     public bool IsVatClaimable { get; set; } = true;
 
+    /// <summary>Landed cost — บรรทัดต้นทุนแฝงของการซื้อ/นำเข้า (ค่าขนส่ง/
+    /// อากร/ประกันภัย/เคลียร์ของ) บน PI/GRN: มูลค่าถูก "เกลี่ย" เข้าต้นทุน
+    /// ต่อหน่วยของบรรทัดสินค้า TrackStock ในใบเดียวกัน (ถ่วงตามมูลค่า line)
+    /// → WAC/movement UnitCost รวมต้นทุนแฝง และ JE default เข้า 115
+    /// สินค้าคงเหลือ (ไม่ใช่ค่าใช้จ่าย) ตาม TFRS NPAEs บทที่ 8 (cost of
+    /// purchase = ราคาซื้อ + ต้นทุนจัดหาจนถึงสภาพพร้อมขาย).</summary>
+    public bool IsLandedCost { get; set; }
+
     /// <summary>เหตุผลที่ VAT บรรทัดนี้เคลมไม่ได้ — ใช้แสดงในรายงานสรรพากร
     /// + audit trail. ค่าที่ใช้บ่อย: "§82/5(3) ค่ารับรอง" / "§82/5(6)
     /// รถยนต์นั่ง" / "§82/5(1) ใบกำกับฯ ไม่สมบูรณ์" / free text. Null เมื่อ

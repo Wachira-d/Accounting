@@ -757,6 +757,7 @@ public class DocumentService : IDocumentService
                     ProductCode = string.IsNullOrWhiteSpace(line.ProductCode) ? null : line.ProductCode.Trim(),
                     SourceLineId = line.SourceLineId,
                     IsVatClaimable = enforcedClaimable,
+                    IsLandedCost = line.IsLandedCost,
                     VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
                     GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
                 });
@@ -1257,6 +1258,7 @@ public class DocumentService : IDocumentService
                     // converted document keeps its fulfilment accounting intact.
                     SourceLineId = line.SourceLineId,
                     IsVatClaimable = enforcedClaimable,
+                    IsLandedCost = line.IsLandedCost,
                     VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
                     GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
                 });
@@ -6085,8 +6087,23 @@ public class DocumentService : IDocumentService
             .Where(p => p.CompanyId == companyId && codes.Contains(p.Code) && !p.IsDeleted)
             .ToDictionaryAsync(p => p.Code);
 
+        // Landed cost (PI/GRN): บรรทัด IsLandedCost (ค่าขนส่ง/อากร/ประกัน)
+        // เกลี่ยเข้าต้นทุนบรรทัดสินค้า TrackStock ถ่วงตามมูลค่า line —
+        // TFRS NPAEs บทที่ 8: cost of purchase รวมต้นทุนจัดหาจนพร้อมขาย
+        var landedTotal = 0m;
+        var stockLineBase = 0m;
+        if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.GoodsReceiptNote)
+        {
+            landedTotal = doc.Lines.Where(l => l.IsLandedCost).Sum(l => l.Amount);
+            stockLineBase = doc.Lines
+                .Where(l => !l.IsLandedCost && !string.IsNullOrWhiteSpace(l.ProductCode)
+                    && products.TryGetValue(l.ProductCode!, out var pp) && pp.TrackStock)
+                .Sum(l => l.Amount);
+        }
+
         foreach (var line in doc.Lines)
         {
+            if (line.IsLandedCost) continue;   // ไม่ใช่สินค้า — มูลค่าถูกเกลี่ยแล้ว
             if (string.IsNullOrWhiteSpace(line.ProductCode)) continue;
             if (!products.TryGetValue(line.ProductCode!, out var product)) continue;
             if (!product.TrackStock) continue;
@@ -6100,8 +6117,12 @@ public class DocumentService : IDocumentService
             decimal unitCost;
             if (qtyDelta > 0 && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.GoodsReceiptNote)
             {
+                // เกลี่ย landed cost ตามสัดส่วนมูลค่า line ของบรรทัดนี้
+                var landedShare = (landedTotal > 0 && stockLineBase > 0)
+                    ? landedTotal * (line.Amount / stockLineBase)
+                    : 0m;
                 var receiptCost = line.Quantity > 0
-                    ? Math.Round(line.Amount / line.Quantity, 4)
+                    ? Math.Round((line.Amount + landedShare) / line.Quantity, 4)
                     : line.UnitPrice;
                 if (product.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && receiptCost > 0)
                 {
@@ -6273,9 +6294,18 @@ public class DocumentService : IDocumentService
             invDefaultId = (await FindAccountAsync(companyId, "11500")
                 ?? await FindAccountAsync(companyId, "115"))?.Id;
 
+        // landed cost ต้องเข้า 115 ด้วย (มูลค่าถูกเกลี่ยเข้าต้นทุนสินค้าแล้ว
+        // — ถ้าลงเป็นค่าใช้จ่ายจะ double: expense + COGS ที่แพงขึ้น)
+        Guid? invForLanded = invDefaultId;
+        if (invForLanded == null && doc.Lines?.Any(l => l.IsLandedCost) == true)
+            invForLanded = (await FindAccountAsync(companyId, "11500")
+                ?? await FindAccountAsync(companyId, "115"))?.Id;
+
         return line =>
         {
             if (line.AccountId.HasValue) return line.AccountId;
+            if (line.IsLandedCost)
+                return invForLanded ?? defaultExpenseId;
             if (!string.IsNullOrWhiteSpace(line.ProductCode)
                 && tracked.TryGetValue(line.ProductCode!, out var prod))
                 return prod.InventoryAccountId ?? invDefaultId ?? defaultExpenseId;
@@ -7599,6 +7629,7 @@ public class DocumentService : IDocumentService
             HasProjectCostEntry: pceByLine != null && pceByLine.ContainsKey(l.Id),
             IsVatClaimable: l.IsVatClaimable,
             VatNonClaimableReason: l.VatNonClaimableReason,
+            IsLandedCost: l.IsLandedCost,
             AccountCode: l.Account != null ? l.Account.AccountCode : null,
             GlAccountAiFeedbackId: l.GlAccountAiFeedbackId,
             AccountName: l.Account != null ? l.Account.AccountName : null)).ToList(),
