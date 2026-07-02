@@ -5,7 +5,7 @@
 // Version tag emitted to the console at module load — bump it when shipping
 // a fix so the user can tell at a glance whether the browser actually picked
 // up the new version vs. a cached older copy.
-console.log('[ProductLookup] module v3 loaded');
+console.log('[ProductLookup] module v4 loaded');
 
 const ProductLookup = {
   _debounceTimer: null,
@@ -164,7 +164,10 @@ const ProductLookup = {
         const idx = parseInt(el.dataset.index);
         const p = items[idx];
         dropdown.style.display = 'none';
-        const row = inputEl.closest('tr');
+        // รองรับทั้ง table layout เดิม (<tr>) และ card layout ใหม่ (.line-card)
+        // เดิมหาแค่ closest('tr') → card layout คืน null → onSelect ไม่ทำงาน →
+        // คลิกแล้ว dropdown หายแต่ไม่เติมค่า.
+        const row = inputEl.closest('tr') || inputEl.closest('.line-card');
         if (row && onSelect) onSelect(row, p);
       });
     });
