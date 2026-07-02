@@ -205,11 +205,24 @@ public class RecurringTransactionService : IRecurringTransactionService
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
-                // Lock the row to prevent concurrent scheduler instances from processing the same item
-                await _db.Database.ExecuteSqlRawAsync(
-                    "SELECT 1 FROM \"RecurringTransactions\" WHERE \"Id\" = {0} FOR UPDATE SKIP LOCKED", recurring.Id);
+                // Lock the row to prevent concurrent scheduler instances from processing
+                // the same item. ⚠️ ต้อง "เช็คผล" ของ SKIP LOCKED — ถ้าอีก instance ถือ
+                // lock อยู่ query จะคืน 0 แถว (ถูก skip) → ต้องข้าม. เดิมใช้
+                // ExecuteSqlRawAsync แล้วทิ้งผล → instance ที่ถูก skip ยังทำต่อ (ReloadAsync
+                // อ่าน committed state ที่ NextRunDate ยังไม่ถูก advance) → สร้างเอกสารซ้ำ
+                // ตอน scale หลาย instance / job รันซ้อน.
+                var lockRow = await _db.RecurringTransactions
+                    .FromSqlRaw("SELECT * FROM \"RecurringTransactions\" WHERE \"Id\" = {0} FOR UPDATE SKIP LOCKED", recurring.Id)
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync();
+                if (lockRow == null)
+                {
+                    // instance อื่นถือ lock/กำลังประมวลผลรายการนี้อยู่ → ข้าม กันสร้างซ้ำ
+                    await transaction.CommitAsync();
+                    continue;
+                }
 
-                // Re-read inside transaction to get the latest state
+                // Re-read inside transaction to get the latest state (ตอนนี้ถือ lock แล้ว)
                 await _db.Entry(recurring).ReloadAsync();
 
                 if (recurring.Status != RecurringStatus.Active || recurring.NextRunDate > now)
