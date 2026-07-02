@@ -36,7 +36,7 @@ public partial class PdfGenerationService
             ? "สำนักงานใหญ่" : $"สาขาที่ {report.CompanyBranchCode}";
         var periodTh = $"{_taxMonthsTh[Math.Clamp(report.Month, 1, 12)]} {report.Year + 543}";
 
-        var pdf = Document.Create(container =>
+        var pdf = QuestPDF.Fluent.Document.Create(container =>
         {
             container.Page(page =>
             {
