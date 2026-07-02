@@ -452,7 +452,13 @@ public class ConsolidationService : IConsolidationService
         // Eliminate intercompany revenue/expense
         var icRevenue = await _db.Documents
             .Where(d => memberCompanyIds.Contains(d.CompanyId)
-                && d.Status != DocumentStatus.Voided
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                // เอกสารรับรู้รายได้เท่านั้น: ใบแจ้งหนี้/ใบกำกับ + ใบเสร็จขายสด
+                // standalone. ใบเสร็จตัดชำระ (RelatedDocumentId) = ไม่ใช่รายได้ →
+                // ตัดออก กันตัดรายการระหว่างกันซ้ำ (over-elimination).
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                    || ((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                        && d.RelatedDocumentId == null))
                 && d.DocumentDate <= asOfDate
                 && d.Contact != null
                 && memberCompanyIds.Contains(d.Contact.CompanyId))

@@ -260,9 +260,12 @@ public class DashboardService : IDashboardService
         // Server-side GroupBy + OrderBy + Take — only top N rows returned
         var rawData = await _db.Documents
             .Where(d => d.CompanyId == companyId
+                // ใบเสร็จที่อ้างใบแจ้งหนี้ = ตัดชำระ ไม่ใช่รายได้ใหม่ → นับเฉพาะขายสด
+                // standalone กันยอดลูกค้าเบิ้ล 2 (Invoice + ใบเสร็จตัดชำระ)
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
-                    || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
-                && d.Status != DocumentStatus.Voided
+                    || ((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                        && d.RelatedDocumentId == null))
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
             .Select(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : null, d.TotalAmount })
             .ToListAsync();

@@ -46,7 +46,7 @@ public class ArApAnalysisService : IArApAnalysisService
             .Select(d => new DocRow(
                 d.Id, d.ContactId, d.Contact.Name, d.Contact.TaxId,
                 d.DocumentType, d.DocumentDate, d.DueDate,
-                d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Status))
+                d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Status, d.RelatedDocumentId))
             .ToListAsync();
 
         // Single-pass classification — much cheaper than four .Where(...).ToList().
@@ -58,8 +58,15 @@ public class ArApAnalysisService : IArApAnalysisService
         {
             if (ArOpenTypes.Contains(d.DocumentType)) arDocs.Add(d);
             if (ApOpenTypes.Contains(d.DocumentType)) apDocs.Add(d);
-            if (RevenueTypes.Contains(d.DocumentType)) revenueDocs.Add(d);
-            if (CostTypes.Contains(d.DocumentType)) costDocs.Add(d);
+            // ฐานรายได้/ต้นทุน (DSO/DPO/trend) นับ TotalAmount → ต้องกันเอกสาร
+            // "ตัดชำระ" (ใบเสร็จ/ใบสำคัญรับ ฝั่งรับ, ใบสำคัญจ่าย ฝั่งจ่าย) ที่อ้าง
+            // เอกสารต้นทาง (RelatedDocumentId) เพราะจะซ้ำกับใบแจ้งหนี้/ใบซื้อต้นทาง.
+            // นับเฉพาะขายสด/ซื้อสด standalone (RelatedDocumentId == null).
+            var isRevSettlement = (d.DocumentType == DocumentType.Receipt
+                || d.DocumentType == DocumentType.ReceiptVoucher) && d.RelatedDocumentId != null;
+            var isCostSettlement = d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId != null;
+            if (RevenueTypes.Contains(d.DocumentType) && !isRevSettlement) revenueDocs.Add(d);
+            if (CostTypes.Contains(d.DocumentType) && !isCostSettlement) costDocs.Add(d);
         }
 
         var arOpen = arDocs.Where(d => d.BalanceDue > 0).ToList();
@@ -158,7 +165,7 @@ public class ArApAnalysisService : IArApAnalysisService
         Guid Id, Guid ContactId, string ContactName, string? ContactTaxId,
         DocumentType DocumentType, DateTime DocumentDate, DateTime? DueDate,
         decimal TotalAmount, decimal PaidAmount, decimal BalanceDue,
-        DocumentStatus Status);
+        DocumentStatus Status, Guid? RelatedDocumentId);
 
     public async Task<ContactArApDetailResponse> GetContactDetailAsync(Guid companyId, Guid contactId, string type)
     {
@@ -173,7 +180,11 @@ public class ArApAnalysisService : IArApAnalysisService
 
         var allDocs = await _db.Documents
             .Where(d => d.CompanyId == companyId && d.ContactId == contactId
-                && docTypes.Contains(d.DocumentType) && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
+                && docTypes.Contains(d.DocumentType) && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
+                // กันเอกสารตัดชำระ (ใบเสร็จ/ใบสำคัญรับ/ใบสำคัญจ่าย ที่อ้างต้นทาง) นับ
+                // รายได้/ต้นทุนซ้ำกับใบแจ้งหนี้/ใบซื้อต้นทาง — นับเฉพาะขาย/ซื้อสด standalone
+                && !((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher
+                      || d.DocumentType == DocumentType.PaymentVoucher) && d.RelatedDocumentId != null))
             .OrderByDescending(d => d.DocumentDate)
             .ToListAsync();
 
