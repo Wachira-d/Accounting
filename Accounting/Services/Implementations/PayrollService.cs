@@ -2347,6 +2347,22 @@ public class PayrollService : IPayrollService
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
+            // Lock the run row INSIDE the transaction เพื่อกัน void ซ้อน — สอง void
+            // พร้อมกันต่างอ่าน Status="Paid" แล้ว restore advance/reverse JE ทั้งคู่
+            // → OutstandingAmount เด้งกลับซ้ำ + JE ถูกกลับสองรอบ. Re-read หลัง lock:
+            // ถ้าถูก void ไปแล้ว = no-op idempotent.
+            var lockedRun = await _db.Set<PayrollRun>()
+                .FromSqlRaw(
+                    """SELECT * FROM "PayrollRuns" WHERE "Id" = {0} AND "CompanyId" = {1} FOR UPDATE""",
+                    payrollRunId, companyId)
+                .FirstOrDefaultAsync();
+            if (lockedRun == null || lockedRun.Status == "Voided")
+            {
+                await tx.RollbackAsync();
+                return;
+            }
+            run = lockedRun;
+
             if (run.Status == "Paid" && run.JournalEntryId.HasValue && _accountingService != null)
             {
                 await _accountingService.ReverseJournalEntryAsync(companyId, run.JournalEntryId.Value,

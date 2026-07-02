@@ -317,6 +317,42 @@ public class CmsBookingService : ICmsBookingService
             case BookingStatus.Cancelled: booking.CancelledAt = DateTime.UtcNow; break;
         }
 
+        // ให้บริการเสร็จ (Completed) + เอกสาร ERP เป็นมัดจำ → รับรู้รายได้จากมัดจำ
+        // (ตัด 217xx ขายรอรับรู้ → รายได้). เดิมแค่ stamp CompletedAt → รายได้รอ
+        // รับรู้ค้าง 217xx ตลอด (under-recognition). RealizeDeposit cap ที่คงค้าง →
+        // เรียกซ้ำปลอดภัย.
+        if (request.Status == BookingStatus.Completed && booking.ErpDocumentId.HasValue && _docService != null)
+        {
+            try
+            {
+                var erpDoc = await _db.Documents.AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.Id == booking.ErpDocumentId.Value && d.CompanyId == companyId);
+                if (erpDoc != null && erpDoc.IsDeposit)
+                {
+                    var remaining = erpDoc.SubTotal - erpDoc.DepositRealizedAmount;
+                    if (remaining > 0.005m)
+                        await _docService.RealizeDepositAsync(companyId, erpDoc.Id,
+                            new Models.DTOs.Document.RealizeDepositRequest(remaining, DateTime.UtcNow, null), userId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "รับรู้รายได้มัดจำการจอง {Booking} ไม่สำเร็จ — ต้องรับรู้เอง", booking.BookingNumber);
+            }
+        }
+
+        // ยกเลิกการจอง → กลับรายการเอกสาร ERP (มัดจำ/ใบกำกับ) ที่ลงบัญชีไว้
+        // (reverse JE + คืนสต๊อก). เดิมแค่ตั้ง Cancelled → รายได้/VAT ค้าง.
+        if (request.Status == BookingStatus.Cancelled && booking.ErpDocumentId.HasValue && _docService != null)
+        {
+            try { await _docService.VoidDocumentAsync(companyId, booking.ErpDocumentId.Value); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ยกเลิกการจอง {Booking} แต่ void เอกสาร ERP {Doc} ไม่สำเร็จ — ต้องกลับรายการเอง",
+                    booking.BookingNumber, booking.ErpDocumentId);
+            }
+        }
+
         booking.UpdatedBy = userId;
         await _db.SaveChangesAsync();
 
@@ -460,9 +496,14 @@ public class CmsBookingService : ICmsBookingService
             {
                 new(
                     Description: lineDesc,
-                    Quantity: booking.GuestCount,
+                    // Quantity 1: ยอดจอง (booking.TotalAmount) เป็นราคาต่อ "การจอง"
+                    // (flat = svc.Price) ไม่คูณจำนวนแขก. เดิม Quantity=GuestCount →
+                    // เอกสาร ERP = ราคา × แขก ไม่ตรงยอดจอง (รายได้/AR สูงเกินจริง N เท่า).
+                    Quantity: 1,
                     Unit: "ครั้ง",
-                    UnitPrice: svc.Price,
+                    // มัดจำ (PrePayment): เอกสารต้องเป็น "ยอดมัดจำที่รับ" ไม่ใช่ราคาเต็ม
+                    // เดิมใช้ svc.Price เต็ม → เงินสด/หนี้สินรอรับรู้สูงเกินจริง.
+                    UnitPrice: isDeposit ? booking.DepositAmount : svc.Price,
                     DiscountPercent: 0m,
                     VatRate: 7m,
                     WithholdingTaxRate: 0m,

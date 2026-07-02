@@ -110,6 +110,9 @@
 
       async init() {
         document.body.classList.add('kds-mode');
+        // โหลดบริษัท (getCompanyId) — ไม่งั้น Layout.api()=null → KDS ไม่ดึงออเดอร์.
+        // เมนูถูกซ่อนด้วย CSS kds-mode อยู่แล้ว (แสดงเต็มจอ).
+        if (!Layout.init('pos-kds')) return;
         this._applyAudioToggleUi();
         this.tickClock();
         this.clockTimer = setInterval(() => this.tickClock(), 1000);

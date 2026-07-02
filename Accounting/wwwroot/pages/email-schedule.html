@@ -167,6 +167,10 @@
       _stats: { pending: 0, sent: 0, failed: 0 },
 
       async init() {
+        // ต้องเรียก Layout.init ก่อน — เป็นตัว render แถบเมนูซ้าย + โหลดบริษัท
+        // (getCompanyId). เดิมหน้านี้เรียกแค่ setTitle → เมนูหาย + โหลดค้าง
+        // เพราะ getCompanyId เป็น null. ทุกหน้าอื่นเรียก Layout.init เหมือนกัน.
+        if (!Layout.init('email-schedule')) return;
         Layout.setTitle('ส่งอีเมลอัตโนมัติ');
         await this.loadRules();
       },

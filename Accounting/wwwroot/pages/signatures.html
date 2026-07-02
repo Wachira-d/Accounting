@@ -129,6 +129,6 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/pages/signatures-logic.js"></script>
-  <script>Layout.currentPage='signatures'; Layout.render(); Page.init();</script>
+  <script>if (Layout.init('signatures')) Page.init();</script>
 </body>
 </html>

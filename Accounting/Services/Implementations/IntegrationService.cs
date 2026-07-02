@@ -499,6 +499,20 @@ public class IntegrationService : IIntegrationService
                     return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
                 }
             }
+            else
+            {
+                // ไม่มี ExternalRef → fallback dedup ด้วย ExternalId จาก sync log เดิม
+                var priorDoc = await TryFindDocumentByExternalIdAsync(companyId, integrationId, "invoice.created", request.ExternalId);
+                if (priorDoc != null)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = priorDoc.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip by ExternalId)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", priorDoc.Id, priorDoc.ContactId, null, null, priorDoc.DocumentNumber);
+                }
+            }
 
             // Resolve or create contact
             var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, request.CustomerTaxId);
@@ -693,6 +707,27 @@ public class IntegrationService : IIntegrationService
             if (document == null)
                 throw new KeyNotFoundException($"ไม่พบเอกสารอ้างอิง: {request.InvoiceExternalRef ?? request.DocumentId?.ToString()}");
 
+            // idempotency: webhook ชำระเงินอาจถูกยิงซ้ำ (retry) → ถ้ามี Payment ของ
+            // เอกสารนี้ด้วย Reference เดียวกันแล้ว คืนผลเดิม (ไม่สร้างซ้ำ) กันเอกสาร
+            // ถูกชำระ 2 เท่า (PaidAmount เกิน, BalanceDue ติดลบ, Dr Cash/Cr AR ซ้ำ).
+            var refKey = request.ReferenceNo ?? request.ExternalRef;
+            if (!string.IsNullOrEmpty(refKey))
+            {
+                var dup = await _db.Set<Payment>().AsNoTracking().FirstOrDefaultAsync(p =>
+                    p.CompanyId == companyId && p.DocumentId == document.Id
+                    && p.Reference == refKey && !p.IsDeleted);
+                if (dup != null)
+                {
+                    log.Status = "Duplicate";
+                    log.CreatedPaymentId = dup.Id;
+                    log.CreatedDocumentId = document.Id;
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Payment already recorded (idempotent)",
+                        document.Id, null, null, dup.Id, dup.PaymentNumber);
+                }
+            }
+
             // Create payment
             var paymentNumber = await GetNextPaymentNumberAsync(companyId);
             var payment = new Payment
@@ -766,6 +801,19 @@ public class IntegrationService : IIntegrationService
                     log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
                     await SaveSyncLog(log, integrationId);
                     return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+            else
+            {
+                var priorDoc = await TryFindDocumentByExternalIdAsync(companyId, integrationId, "creditnote.created", request.ExternalId);
+                if (priorDoc != null)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = priorDoc.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip by ExternalId)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", priorDoc.Id, priorDoc.ContactId, null, null, priorDoc.DocumentNumber);
                 }
             }
 
@@ -865,6 +913,19 @@ public class IntegrationService : IIntegrationService
                     log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
                     await SaveSyncLog(log, integrationId);
                     return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+            else
+            {
+                var priorDoc = await TryFindDocumentByExternalIdAsync(companyId, integrationId, "debitnote.created", request.ExternalId);
+                if (priorDoc != null)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = priorDoc.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip by ExternalId)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", priorDoc.Id, priorDoc.ContactId, null, null, priorDoc.DocumentNumber);
                 }
             }
 
@@ -1336,30 +1397,32 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // If mapping produced lines, add VAT line if missing
+            // Mapped lines อยู่ที่ NET (ไม่รวม VAT) และ balanced net อยู่แล้ว →
+            // เดิมเช็ค totalDr!=totalCr (ไม่มีวันจริง) → VAT ถูกตกทิ้งเสมอ →
+            // ลูกหนี้/เจ้าหนี้ต่ำกว่า gross + ภาษีขาย/ซื้อ (21911/11610) ไม่ถูกลง
+            // (ภ.พ.30 ขาด). แก้: gross up ฝั่ง "เงิน" (ลูกหนี้ฝั่งขาย/เจ้าหนี้ฝั่งซื้อ)
+            // ด้วยยอด VAT + เพิ่มบรรทัด VAT ให้ JE = gross ของเอกสาร.
             if (journalLines.Any() && document.VatAmount > 0)
             {
-                var hasVatLine = journalLines.Any(l =>
-                    l.CreditAmount > 0 || l.DebitAmount > 0); // simplified check
-                // Check if VAT total is balanced — if not, auto-add VAT account
-                var totalDr = journalLines.Sum(l => l.DebitAmount);
-                var totalCr = journalLines.Sum(l => l.CreditAmount);
-                if (totalDr != totalCr)
+                var vatAccount = await ResolveVatAccountAsync(companyId, isInput: !isRevenue);
+                var moneyAccountId = isRevenue
+                    ? journalLines.FirstOrDefault(l => l.DebitAmount > 0)?.AccountId   // ลูกหนี้
+                    : journalLines.FirstOrDefault(l => l.CreditAmount > 0)?.AccountId; // เจ้าหนี้
+                if (vatAccount != null && moneyAccountId.HasValue)
                 {
-                    // Type-validated: output VAT (21911) for revenue, input VAT
-                    // (11610) for purchase — never the old 2151/1140 prefixes.
-                    var vatAccount = await ResolveVatAccountAsync(companyId, isInput: !isRevenue);
-                    if (vatAccount != null)
+                    if (isRevenue)
                     {
-                        var diff = totalDr - totalCr;
-                        journalLines.Add(new JournalEntryLine
-                        {
-                            AccountId = vatAccount.Id,
-                            DebitAmount = diff < 0 ? Math.Abs(diff) : 0,
-                            CreditAmount = diff > 0 ? diff : 0,
-                            Description = isRevenue ? "ภาษีขาย" : "ภาษีซื้อ",
-                            LineOrder = lineOrder++
-                        });
+                        journalLines.Add(new JournalEntryLine { AccountId = moneyAccountId.Value,
+                            DebitAmount = document.VatAmount, Description = "ปรับลูกหนี้รวมภาษี", LineOrder = lineOrder++ });
+                        journalLines.Add(new JournalEntryLine { AccountId = vatAccount.Id,
+                            CreditAmount = document.VatAmount, Description = "ภาษีขาย", LineOrder = lineOrder++ });
+                    }
+                    else
+                    {
+                        journalLines.Add(new JournalEntryLine { AccountId = vatAccount.Id,
+                            DebitAmount = document.VatAmount, Description = "ภาษีซื้อ", LineOrder = lineOrder++ });
+                        journalLines.Add(new JournalEntryLine { AccountId = moneyAccountId.Value,
+                            CreditAmount = document.VatAmount, Description = "ปรับเจ้าหนี้รวมภาษี", LineOrder = lineOrder++ });
                     }
                 }
             }
@@ -1512,7 +1575,7 @@ public class IntegrationService : IIntegrationService
                     });
                 }
 
-                // Cr: เจ้าหนี้การค้า
+                // Cr: เจ้าหนี้การค้า (= TotalAmount = SubTotal+VAT−WHT)
                 journalLines.Add(new JournalEntryLine
                 {
                     AccountId = apAccount.Id,
@@ -1520,6 +1583,28 @@ public class IntegrationService : IIntegrationService
                     Description = $"เจ้าหนี้ - {document.DocumentNumber}",
                     LineOrder = lineOrder++
                 });
+
+                // Cr: ภาษีหัก ณ ที่จ่ายค้างจ่าย — เดิมไม่มีบรรทัดนี้ → Dr (SubTotal+VAT)
+                // > Cr เจ้าหนี้ (SubTotal+VAT−WHT) → JE ไม่ balance → return null →
+                // ค่าใช้จ่ายที่มี WHT "ไม่ลง GL เลย" (ไม่มีทั้งค่าใช้จ่าย/ภาษีซื้อ/
+                // เจ้าหนี้/WHT payable). 21917 นิติบุคคล / 21916 บุคคล.
+                if (document.WithholdingTaxAmount > 0)
+                {
+                    var juristic = expenseContact?.ContactType == Models.Enums.ContactType.JuristicPerson;
+                    var whtAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && a.AccountCode == (juristic ? "21917" : "21916"))
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && a.AccountCode == (juristic ? "21916" : "21917"));
+                    if (whtAcc != null)
+                        journalLines.Add(new JournalEntryLine
+                        {
+                            AccountId = whtAcc.Id,
+                            CreditAmount = document.WithholdingTaxAmount,
+                            Description = $"ภาษีหัก ณ ที่จ่ายค้างจ่าย - {document.DocumentNumber}",
+                            LineOrder = lineOrder++
+                        });
+                    else
+                        _logger.LogWarning("ไม่พบบัญชี WHT payable (21916/21917) company {Cid} — เอกสาร {Doc} มี WHT แต่ลง JE ไม่ได้",
+                            companyId, document.DocumentNumber);
+                }
             }
             else
             {
@@ -1673,6 +1758,11 @@ public class IntegrationService : IIntegrationService
     /// Dr: รายได้ (4xxxx) = SubTotal
     /// Dr: ภาษีขาย (2151x) = VatAmount (ถ้ามี)
     /// Cr: ลูกหนี้การค้า (113xx) = TotalAmount
+    ///
+    /// หมายเหตุ (by design): endpoint นี้รองรับเฉพาะใบลดหนี้ "ฝั่งขาย" (คู่ค้าเป็น
+    /// ลูกค้า) — InboundCreditNoteRequest มีแต่ field ลูกค้า ไม่มี supplier —
+    /// ใบลดหนี้ฝั่งซื้อ (ผู้ขายลดหนี้ให้เรา = ลดเจ้าหนี้/ภาษีซื้อ) ต้อง sync ผ่าน
+    /// expense/payment-voucher reversal ไม่ผ่านช่องทางนี้ จึงไม่มีการลงบัญชีผิดฝั่ง
     /// </summary>
     private async Task<Guid?> CreateCreditNoteJournalAsync(Guid companyId, Document document)
     {
@@ -1755,6 +1845,9 @@ public class IntegrationService : IIntegrationService
     /// Dr: ลูกหนี้การค้า (113xx) = TotalAmount
     /// Cr: รายได้ (4xxxx) = SubTotal
     /// Cr: ภาษีขาย (2151x) = VatAmount (ถ้ามี)
+    ///
+    /// หมายเหตุ (by design): รองรับเฉพาะใบเพิ่มหนี้ "ฝั่งขาย" (คู่ค้าเป็นลูกค้า)
+    /// เช่นเดียวกับใบลดหนี้ — ฝั่งซื้อ sync ผ่าน expense ไม่ผ่านช่องทางนี้
     /// </summary>
     private async Task<Guid?> CreateDebitNoteJournalAsync(Guid companyId, Document document)
     {
@@ -1843,6 +1936,35 @@ public class IntegrationService : IIntegrationService
             ExternalRef = externalRef,
             Status = "Pending"
         };
+    }
+
+    /// <summary>
+    /// Idempotency fallback เมื่อ partner ไม่ส่ง ExternalRef มา — ค้น sync log
+    /// เดิมที่ event เดียวกัน (integrationId + eventType + externalId) และสร้าง
+    /// เอกสารสำเร็จไปแล้ว คืนเอกสารนั้นถ้ายังไม่ถูก void เพื่อกัน retry สร้างซ้ำ
+    /// (ExternalId มี index อยู่แล้ว: IX_IntegrationSyncLogs_ExternalId)
+    /// </summary>
+    private async Task<Document?> TryFindDocumentByExternalIdAsync(
+        Guid companyId, Guid integrationId, string eventType, string? externalId)
+    {
+        if (string.IsNullOrEmpty(externalId)) return null;
+
+        var priorDocId = await _db.Set<IntegrationSyncLog>()
+            .Where(l => l.CompanyId == companyId
+                && l.IntegrationId == integrationId
+                && l.EventType == eventType
+                && l.ExternalId == externalId
+                && l.CreatedDocumentId != null
+                && (l.Status == "Success" || l.Status == "Skipped"))
+            .OrderByDescending(l => l.CreatedAt)
+            .Select(l => l.CreatedDocumentId)
+            .FirstOrDefaultAsync();
+        if (priorDocId == null) return null;
+
+        return await _db.Documents.FirstOrDefaultAsync(d => d.Id == priorDocId
+            && d.CompanyId == companyId
+            && !d.IsDeleted
+            && d.Status != DocumentStatus.Voided);
     }
 
     private async Task SaveSyncLog(IntegrationSyncLog log, Guid integrationId)
@@ -2024,6 +2146,37 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // Idempotency: กัน retry สร้างเอกสารค่าใช้จ่ายซ้ำ — เช็ค ExternalRef
+            // (→ Document.Reference) ก่อน ถ้าไม่มีก็ fallback ด้วย ExternalId จาก sync log
+            if (!string.IsNullOrEmpty(request.ExternalRef))
+            {
+                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
+                    && d.Reference == request.ExternalRef && !d.IsDeleted
+                    && d.DocumentType == DocumentType.Expense);
+                if (existing != null && existing.Status != DocumentStatus.Voided)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = existing.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+            else
+            {
+                var priorDoc = await TryFindDocumentByExternalIdAsync(companyId, integrationId, "expense.created", request.ExternalId);
+                if (priorDoc != null)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = priorDoc.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip by ExternalId)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", priorDoc.Id, priorDoc.ContactId, null, null, priorDoc.DocumentNumber);
+                }
+            }
+
             // Resolve supplier contact
             Contact? supplier = null;
             if (!string.IsNullOrEmpty(request.SupplierTaxId))
@@ -2118,6 +2271,36 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // Idempotency: กัน retry สร้างใบสำคัญจ่ายซ้ำ
+            if (!string.IsNullOrEmpty(request.ExternalRef))
+            {
+                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
+                    && d.Reference == request.ExternalRef && !d.IsDeleted
+                    && d.DocumentType == DocumentType.PaymentVoucher);
+                if (existing != null && existing.Status != DocumentStatus.Voided)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = existing.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+            else
+            {
+                var priorDoc = await TryFindDocumentByExternalIdAsync(companyId, integrationId, "payment_voucher.created", request.ExternalId);
+                if (priorDoc != null)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = priorDoc.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip by ExternalId)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", priorDoc.Id, priorDoc.ContactId, null, null, priorDoc.DocumentNumber);
+                }
+            }
+
             // Resolve supplier contact — same cascade as the expense sync.
             Contact? supplier = null;
             if (!string.IsNullOrEmpty(request.SupplierTaxId))
@@ -2347,6 +2530,36 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // Idempotency: กัน retry สร้างใบแทนหนังสือรับรองหักภาษีซ้ำ
+            if (!string.IsNullOrEmpty(request.ExternalRef))
+            {
+                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
+                    && d.Reference == request.ExternalRef && !d.IsDeleted
+                    && d.DocumentType == DocumentType.CertificateInLieu);
+                if (existing != null && existing.Status != DocumentStatus.Voided)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = existing.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                }
+            }
+            else
+            {
+                var priorDoc = await TryFindDocumentByExternalIdAsync(companyId, integrationId, "certificate_in_lieu.created", request.ExternalId);
+                if (priorDoc != null)
+                {
+                    log.Status = "Skipped";
+                    log.CreatedDocumentId = priorDoc.Id;
+                    log.ErrorMessage = "Document already exists (idempotent skip by ExternalId)";
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(true, "Already synced", priorDoc.Id, priorDoc.ContactId, null, null, priorDoc.DocumentNumber);
+                }
+            }
+
             // Resolve supplier contact
             Contact? supplier = null;
             if (!string.IsNullOrEmpty(request.SupplierTaxId))
