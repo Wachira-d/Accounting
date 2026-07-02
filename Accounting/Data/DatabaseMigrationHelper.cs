@@ -4265,6 +4265,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "LineId" varchar(100) NULL;""",
             // LINE OA basic id (@xxx) ต่อบริษัท — ทำลิงก์/QR เพิ่มเพื่อนให้พนักงาน
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineOaBasicId" varchar(100) NULL;""",
+
+            // ===== ECL — ค่าเผื่อหนี้สงสัยจะสูญอัตโนมัติ (TFRS NPAEs บทที่ 9) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclLossRatesJson" text NULL;""",
             // รหัสผูก LINE ระดับพนักงาน (6 หลัก, หมดอายุ 24 ชม.)
             """
             CREATE TABLE IF NOT EXISTS "EmployeeLineBindCodes" (

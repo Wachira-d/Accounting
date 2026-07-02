@@ -14,6 +14,15 @@ public class CompanySettings : TenantEntity
     /// แบบ irreversible — เปิดเฉพาะเมื่อรู้จริง ๆ ว่าทำอะไรอยู่.</summary>
     public bool AllowNegativeStock { get; set; } = false;
 
+    /// <summary>เปิดตั้งค่าเผื่อหนี้สงสัยจะสูญอัตโนมัติ (ECL — TFRS NPAEs
+    /// บทที่ 9). Opt-in: EclAllowanceJob จะ post ปรับปรุงค่าเผื่อสิ้นเดือน
+    /// (Dr 57130 / Cr 18100) จาก AR aging × loss rate ต่อ bucket.</summary>
+    public bool EclEnabled { get; set; } = false;
+
+    /// <summary>Loss rate (%) ต่อ aging bucket [0-30, 31-60, 61-90, 91-180,
+    /// 180+] เป็น JSON array 5 ตัว เช่น "[1,5,10,25,50]" — null = default.</summary>
+    public string? EclLossRatesJson { get; set; }
+
     // Branding
     public string? LogoPath { get; set; }
     public string? LogoUrl { get; set; }
