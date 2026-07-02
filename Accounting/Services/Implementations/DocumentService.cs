@@ -3545,6 +3545,22 @@ public class DocumentService : IDocumentService
             d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
         if (source == null) return;
 
+        // CreditNote: revert ลด PaidAmount ได้เฉพาะเมื่อตอน apply เคย "เพิ่ม" —
+        // คือ AR-mode (ออก CN ตอน source ยังค้าง → Cr ลูกหนี้ 113). ถ้าเป็น
+        // cash-refund mode (source จ่ายครบแล้ว → JE Cr เงินสด 111, ไม่แตะ
+        // PaidAmount) แล้ว revert ไปลด PaidAmount = สร้าง "ลูกหนี้ผี" (ลูกค้าค้าง
+        // เงินที่จ่ายไปแล้ว). ดูจาก JE ต้นฉบับของ CN ว่าเครดิตบัญชีลูกหนี้ (113) ไหม.
+        if (doc.DocumentType == DocumentType.CreditNote)
+        {
+            var cnCreditedAr = await _db.JournalEntryLines.AnyAsync(l =>
+                l.JournalEntry.SourceDocumentId == doc.Id
+                && l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.OriginalEntryId == null
+                && l.CreditAmount > 0
+                && l.Account.AccountCode.StartsWith("113"));
+            if (!cnCreditedAr) return;   // cash-refund mode → ไม่แตะ source
+        }
+
         source.PaidAmount = Math.Max(0m, source.PaidAmount - doc.TotalAmount);
         source.BalanceDue = source.TotalAmount - source.PaidAmount;
         if (source.Status != DocumentStatus.Voided)

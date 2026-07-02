@@ -1022,8 +1022,12 @@ public partial class PosService
             }
         }
 
-        // Credit: Sales Revenue (net of VAT)
-        var revenueAmount = order.NetAmount - order.VatAmount;
+        // Credit: Sales Revenue (net of VAT AND tip). NetAmount รวมทิปไว้ →
+        // ต้องหักทิปออกจากรายได้ ไม่งั้นทิปถูกเครดิตซ้ำ (ในรายได้ + บัญชีทิป 2160
+        // ด้านล่าง) → เครดิตเกินเดบิต = JE ไม่สมดุล → CreateJournalEntry throw →
+        // ถูก swallow (ด้านล่าง) → ออเดอร์ที่มีทิป "ไม่ลง GL เลย" (รายได้/VAT/COGS
+        // หาย). กรณี fallback ไม่มีบัญชี 2160 ทิปจะถูกบวกกลับเข้า sales (ยังสมดุล).
+        var revenueAmount = order.NetAmount - order.VatAmount - order.TipAmount;
         lines.Add(new(salesAccount.Id, 0, revenueAmount, $"รายได้ขาย POS #{order.OrderNumber}"));
 
         // Credit: VAT Payable (if any)
