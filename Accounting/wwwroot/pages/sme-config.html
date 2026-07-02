@@ -216,7 +216,7 @@
       async loadUsers() {
         try {
           const cid = Layout.getCompanyId();
-          const r = await fetch(`/api/companies/${cid}/users?pageSize=200`, {
+          const r = await fetch(`/api/company/${cid}/users?pageSize=200`, {
             headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
           const j = await r.json();
           this._users = j.data?.items || j.data || [];
@@ -455,7 +455,7 @@
         const cid = Layout.getCompanyId();
         // Resolve product codes → ids
         try {
-          const pr = await fetch(`/api/companies/${cid}/products?pageSize=500`, {
+          const pr = await fetch(`/api/companies/${cid}/product?pageSize=500`, {
             headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
           const pj = await pr.json();
           const products = pj.data?.items || pj.data || [];

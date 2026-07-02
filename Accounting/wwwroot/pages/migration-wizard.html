@@ -174,7 +174,7 @@
         if (!confirm(`ย้อนการ commit ของ "${name}"?\n\nระบบจะลบ Opening Balance ที่ session นี้สร้างใน fiscal period เป้าหมาย\nงวดบัญชีต้องยังไม่ปิด/ล็อก จึงจะ rollback ได้`)) return;
         try {
           const cid = Layout.getCompanyId();
-          const r = await fetch(`/api/companies/${cid}/migration-wizard/sessions/${sessionId}/rollback`, {
+          const r = await fetch(`/api/companies/${cid}/migration/sessions/${sessionId}/rollback`, {
             method: 'POST', headers: { 'Authorization': 'Bearer ' + API.token }
           });
           const j = await r.json();

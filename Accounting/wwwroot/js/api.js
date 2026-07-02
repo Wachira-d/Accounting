@@ -698,15 +698,16 @@ const API = {
       confirmIntercompanyTxn: (id) => API.post(`${base}/intercompany/${id}/confirm`),
       voidIntercompanyTxn: (id) => API.post(`${base}/intercompany/${id}/void`),
       getIntercompanyBalances: () => API.get(`${base}/intercompany/balances`),
-      // Consolidation
-      getConsolidationGroups: () => API.get('/api/consolidation/groups'),
-      getConsolidationGroup: (id) => API.get(`/api/consolidation/groups/${id}`),
-      createConsolidationGroup: (d) => API.post('/api/consolidation/groups', d),
-      addConsolidationMember: (gid, d) => API.post(`/api/consolidation/groups/${gid}/members`, d),
-      removeConsolidationMember: (gid, mid) => API.del(`/api/consolidation/groups/${gid}/members/${mid}`),
-      getConsolidatedBS: (gid) => API.get(`/api/consolidation/groups/${gid}/balance-sheet`),
-      getConsolidatedPnl: (gid) => API.get(`/api/consolidation/groups/${gid}/pnl`),
-      getEliminations: (gid) => API.get(`/api/consolidation/groups/${gid}/eliminations`),
+      // Consolidation — ConsolidationController อยู่ใต้ companies/{companyId}
+      // (เดิมชี้ /api/consolidation/... เฉย ๆ → 404 ทั้งหน้า)
+      getConsolidationGroups: () => API.get(`${base}/consolidation/groups`),
+      getConsolidationGroup: (id) => API.get(`${base}/consolidation/groups/${id}`),
+      createConsolidationGroup: (d) => API.post(`${base}/consolidation/groups`, d),
+      addConsolidationMember: (gid, d) => API.post(`${base}/consolidation/groups/${gid}/members`, d),
+      removeConsolidationMember: (gid, mid) => API.del(`${base}/consolidation/groups/${gid}/members/${mid}`),
+      getConsolidatedBS: (gid) => API.get(`${base}/consolidation/groups/${gid}/balance-sheet`),
+      getConsolidatedPnl: (gid) => API.get(`${base}/consolidation/groups/${gid}/pnl`),
+      getEliminations: (gid) => API.get(`${base}/consolidation/groups/${gid}/eliminations`),
       // Commission
       getCommissionPlans: () => API.get(`${base}/commissions/plans`),
       createCommissionPlan: (d) => API.post(`${base}/commissions/plans`, d),

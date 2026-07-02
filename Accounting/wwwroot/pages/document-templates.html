@@ -743,7 +743,7 @@
       async loadSampleDocs() {
         try {
           const cid = Layout.getCompanyId();
-          const r = await API.get(`/api/companies/${cid}/documents?pageSize=20`);
+          const r = await API.get(`/api/companies/${cid}/document?pageSize=20`);
           this.sampleDocs = r.data?.items || r.data || [];
           document.getElementById('sampleDoc').innerHTML = this.sampleDocs.length === 0
             ? '<option>— ยังไม่มีเอกสาร —</option>'

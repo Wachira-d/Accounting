@@ -2469,7 +2469,7 @@
         this._contactSearchTimer = setTimeout(async () => {
           const cid = Layout.getCompanyId();
           try {
-            const res = await API.get(`/api/companies/${cid}/contacts?search=${encodeURIComponent(term)}`);
+            const res = await API.get(`/api/companies/${cid}/document/contacts?search=${encodeURIComponent(term)}`);
             const items = (res.data?.items || res.data || []);
             if (!items.length) {
               resultsEl.innerHTML = '<div class="contact-search-item" style="color:var(--gray-400)">ไม่พบผู้ติดต่อ</div>';
