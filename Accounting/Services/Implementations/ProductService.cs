@@ -583,6 +583,32 @@ public class ProductService : IProductService
             items.Count);
     }
 
+    /// <summary>กระทบยอด perpetual: มูลค่าสต๊อกการ์ด vs GL 115x — ผลต่างควร
+    /// ใกล้ศูนย์; ถ้าไม่ = มี movement ที่ไม่ลง GL / manual JE ที่ไม่ผ่านสต๊อก /
+    /// ของหาย-เกินที่ยังไม่ปรับปรุงจากตรวจนับ</summary>
+    public async Task<InventoryGlTieOutReport> GetInventoryGlTieOutAsync(Guid companyId)
+    {
+        var valuation = await GetInventoryValuationAsync(companyId);
+
+        var glBalance = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.Account.AccountCode.StartsWith("115"))
+            .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
+        glBalance = Math.Round(glBalance, 2, MidpointRounding.AwayFromZero);
+
+        var diff = Math.Round(valuation.TotalValue - glBalance, 2, MidpointRounding.AwayFromZero);
+        var interpretation = Math.Abs(diff) <= 1m
+            ? "✓ สต๊อกการ์ดตรงกับ GL"
+            : diff > 0
+                ? "สต๊อกการ์ดสูงกว่า GL — อาจมี movement รับเข้าที่ยังไม่ลงบัญชี (เช่นซื้อที่ลงเป็นค่าใช้จ่าย) หรือ JE ปรับลดที่ยังไม่ปรับสต๊อก"
+                : "GL สูงกว่าสต๊อกการ์ด — อาจมีของหายที่ยังไม่ตรวจนับปรับปรุง หรือ manual JE เพิ่ม 115 โดยไม่ผ่านระบบสต๊อก";
+
+        return new InventoryGlTieOutReport(
+            DateTime.UtcNow, valuation.TotalValue, glBalance, diff,
+            valuation.TotalProducts, interpretation);
+    }
+
     // ===== STOCK BALANCE AS OF DATE (สินค้าคงเหลือ ณ วันที่) =====
 
     public async Task<StockBalanceAsOfDateReport> GetStockBalanceAsOfDateAsync(Guid companyId, StockBalanceAsOfDateRequest request)

@@ -163,6 +163,18 @@ public class FixedAssetService : IFixedAssetService
                     $"วิธีคิดค่าเสื่อมราคา '{asset.DepreciationMethod}' ไม่รองรับ")
             };
 
+            // Switch-to-straight-line (มาตรฐานสากล): declining balance เป็น
+            // asymptotic ไม่มีวันถึง salvage ภายในอายุใช้งาน — เมื่อเส้นตรงจาก
+            // NBV คงเหลือ (เกลี่ยเดือนที่เหลือ) สูงกว่า DB ของงวด ให้สลับใช้
+            // เส้นตรง เพื่อให้ NBV ลงถึง salvage พอดี ณ สิ้นอายุ
+            if (asset.DepreciationMethod is DepreciationMethod.DecliningBalance
+                or DepreciationMethod.DoubleDecliningBalance)
+            {
+                var remainingMonths = asset.UsefulLifeMonths - i;
+                var slRemaining = (nbv - asset.SalvageValue) / remainingMonths;
+                if (slRemaining > depAmount) depAmount = slRemaining;
+            }
+
             if (nbv - depAmount < asset.SalvageValue)
                 depAmount = nbv - asset.SalvageValue;
             if (depAmount <= 0) break;

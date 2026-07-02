@@ -215,6 +215,15 @@ public class ProductController : ControllerBase
         return Ok(new ApiResponse<InventoryValuationReport>(true, result));
     }
 
+    /// <summary>กระทบยอดมูลค่าสต๊อกการ์ด vs GL สินค้าคงเหลือ (115x) —
+    /// เครื่องมือปิดงวด: ผลต่างต้องอธิบายได้ก่อน finalize งบ</summary>
+    [HttpGet("inventory/gl-tieout")]
+    public async Task<ActionResult<ApiResponse<InventoryGlTieOutReport>>> GetInventoryGlTieOut(Guid companyId)
+    {
+        var result = await _productService.GetInventoryGlTieOutAsync(companyId);
+        return Ok(new ApiResponse<InventoryGlTieOutReport>(true, result));
+    }
+
     // ===== Stock Balance as of Date =====
 
     [HttpGet("inventory/balance")]
