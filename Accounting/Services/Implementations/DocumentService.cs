@@ -2686,9 +2686,15 @@ public class DocumentService : IDocumentService
 
                 // 2) Reverse linked Posted JEs via AccountingService (proper linkage:
                 //    OriginalEntryId/ReversedByEntryId, fiscal period validation, dimensions).
+                // ⚠️ OriginalEntryId == null: reverse เฉพาะ JE "ต้นฉบับ" ของเอกสาร
+                // ไม่รวม reversal entry. เดิมไม่กรอง → ตอน void เอกสารที่มี Payment:
+                // ขั้น 1 reverse JE ของ payment สร้าง REV1 (Posted + SourceDocumentId=
+                // doc) → ขั้นนี้จับ REV1 มา reverse ซ้ำ → เงินสดค้างบนบัญชี + AR ติดลบ
+                // เงียบ ๆ (งบยัง balance). กรอง OriginalEntryId==null กันเคสนี้.
                 var postedJournalIds = await _db.JournalEntries
                     .Where(j => j.SourceDocumentId == documentId && j.CompanyId == companyId
-                        && j.Status == JournalEntryStatus.Posted)
+                        && j.Status == JournalEntryStatus.Posted
+                        && j.OriginalEntryId == null)
                     .Select(j => j.Id)
                     .ToListAsync();
                 foreach (var jeId in postedJournalIds)
@@ -4451,6 +4457,11 @@ public class DocumentService : IDocumentService
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
+        // ⚠️ เปิด transaction "ก่อน" FOR UPDATE — lock จะถือไว้จนจบ transaction
+        // เท่านั้น. เดิมเปิด tx ทีหลัง → FOR UPDATE รันใน autocommit → ปล่อย lock
+        // ทันที → ชำระพร้อมกัน 2 รายการ ผ่าน balance check ทั้งคู่ → ตัด AR ซ้ำ
+        // (over-relief). await using = rollback อัตโนมัติถ้า throw ก่อน commit.
+        await using var transaction = await _db.Database.BeginTransactionAsync();
         // Lock document row to prevent concurrent overpayment
         var doc = await _db.Documents
             .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", request.DocumentId, companyId)
@@ -4531,7 +4542,7 @@ public class DocumentService : IDocumentService
             }
         }
 
-        await using var transaction = await _db.Database.BeginTransactionAsync();
+        // (transaction เปิดไว้ก่อน FOR UPDATE ด้านบนแล้ว)
         try
         {
             var payYearMonth = DateTime.UtcNow.ToString("yyyyMM");
@@ -4729,6 +4740,9 @@ public class DocumentService : IDocumentService
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
+            // ⚠️ เปิด transaction ก่อน FOR UPDATE — lock ต้องอยู่ใน tx ถึงจะถือไว้จน
+            // จบ (เดิมเปิด tx ทีหลัง → lock ปล่อยทันที → ชำระพร้อมกันตัด AR ซ้ำ).
+            await using var transaction = await _db.Database.BeginTransactionAsync();
             // Lock all target docs in one go — sort by Id to avoid deadlock
             // when two concurrent multi-doc payments overlap on the same
             // docs in different orders.
@@ -4756,7 +4770,7 @@ public class DocumentService : IDocumentService
                         $"จัดสรร {alloc.AllocatedAmount:N2} ของ {d.DocumentNumber} เกินยอดค้าง ({d.BalanceDue:N2})");
             }
 
-            await using var transaction = await _db.Database.BeginTransactionAsync();
+            // (transaction เปิดไว้ก่อน FOR UPDATE ด้านบนแล้ว)
             try
             {
                 // ===== Create the parent Payment =====
