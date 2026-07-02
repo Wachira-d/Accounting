@@ -162,7 +162,7 @@ public partial class PosService
                         MovementDate = DateTime.UtcNow,
                         MovementType = "IN",
                         Quantity = item.Quantity,
-                        UnitCost = product.CostPrice,
+                        UnitCost = EffectiveUnitCost(product),
                         BalanceAfter = product.CurrentStock,
                         Reference = $"VOID-{order.OrderNumber}",
                         Notes = "คืนสต็อกจากการยกเลิกออเดอร์",
@@ -252,7 +252,7 @@ public partial class PosService
                     if (product?.TrackStock == true)
                     {
                         product.CurrentStock += qty;
-                        refundCogs += product.CostPrice * qty;
+                        refundCogs += EffectiveUnitCost(product) * qty;
                         _db.StockMovements.Add(new StockMovement
                         {
                             CompanyId = companyId,
@@ -260,7 +260,7 @@ public partial class PosService
                             MovementDate = DateTime.UtcNow,
                             MovementType = "IN",
                             Quantity = qty,
-                            UnitCost = product.CostPrice,
+                            UnitCost = EffectiveUnitCost(product),
                             BalanceAfter = product.CurrentStock,
                             Reference = $"REFUND-{order.OrderNumber}",
                             Notes = "คืนสินค้าจากการคืนเงิน POS",
@@ -567,7 +567,7 @@ public partial class PosService
                         MovementDate = request.CompletedAt,
                         MovementType = "OUT",
                         Quantity = -item.Quantity,
-                        UnitCost = product.CostPrice,
+                        UnitCost = EffectiveUnitCost(product),
                         BalanceAfter = product.CurrentStock,
                         Reference = order.OrderNumber,
                         Notes = "POS Sale (offline sync)",
@@ -970,7 +970,7 @@ public partial class PosService
                     MovementDate = DateTime.UtcNow,
                     MovementType = "OUT",
                     Quantity = -item.Quantity,
-                    UnitCost = product.CostPrice,
+                    UnitCost = EffectiveUnitCost(product),
                     BalanceAfter = product.CurrentStock,
                     Reference = order.OrderNumber,
                     Notes = "POS Sale"
@@ -990,6 +990,13 @@ public partial class PosService
     }
 
     // ==================== Accounting Integration ====================
+
+    /// <summary>ต้นทุนต่อหน่วยตาม CostingMethod: WeightedAverage → ค่าเฉลี่ย
+    /// ถ่วงน้ำหนักปัจจุบัน, อื่น ๆ (Standard/FIFO ที่ยังไม่มี layer) → CostPrice.
+    /// ใช้ทุกจุดที่ stamp UnitCost / คิด COGS ใน POS ให้สอดคล้องกัน</summary>
+    private static decimal EffectiveUnitCost(Product p) =>
+        p.CostingMethod == CostingMethod.WeightedAverage && p.AverageUnitCost > 0
+            ? p.AverageUnitCost : p.CostPrice;
 
     private async Task CreateSalesJournalEntryAsync(Guid companyId, PosOrder order, string userId)
     {
@@ -1070,9 +1077,14 @@ public partial class PosService
             .Select(i => i.ProductId!.Value).Distinct().ToList();
         if (prodIds.Count > 0)
         {
+            // ต้นทุนตาม CostingMethod ของสินค้า: WeightedAverage ใช้ค่าเฉลี่ย
+            // ถ่วงน้ำหนักปัจจุบัน (AverageUnitCost) ไม่ใช่ CostPrice นิ่ง ๆ
+            // — ไม่งั้นสินค้าที่ราคาซื้อขยับ COGS จะผิดตาม TFRS NPAEs บทที่ 8
             var costByProduct = await _db.Products
                 .Where(p => prodIds.Contains(p.Id) && p.TrackStock)
-                .ToDictionaryAsync(p => p.Id, p => p.CostPrice);
+                .ToDictionaryAsync(p => p.Id,
+                    p => p.CostingMethod == CostingMethod.WeightedAverage && p.AverageUnitCost > 0
+                        ? p.AverageUnitCost : p.CostPrice);
             decimal totalCogs = 0;
             foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
                 if (costByProduct.TryGetValue(item.ProductId!.Value, out var cost))

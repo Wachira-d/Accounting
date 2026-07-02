@@ -5904,6 +5904,46 @@ public class DocumentService : IDocumentService
             if (!product.TrackStock) continue;
 
             var qtyDelta = effective * line.Quantity;
+
+            // ต้นทุนต่อหน่วยของ movement (TFRS NPAEs บทที่ 8 — ตาม CostingMethod):
+            //   • ซื้อเข้า (IN forward) → ต้นทุนจริงที่จ่าย (line net ต่อหน่วย)
+            //     + อัปเดต WAC running average ก่อน stock เพิ่ม
+            //   • ขายออก (OUT forward) → WAC ปัจจุบัน (ถ้าใช้ WeightedAverage)
+            //   • void (sign<0) → ใช้ต้นทุนเดิมของ movement ต้นทาง เพื่อให้
+            //     การกลับรายการหักล้างมูลค่าเท่ากันพอดี
+            decimal unitCost;
+            if (sign < 0)
+            {
+                var origCost = await _db.StockMovements.AsNoTracking()
+                    .Where(m => m.DocumentId == doc.Id && m.ProductId == product.Id
+                        && m.CompanyId == companyId)
+                    .OrderBy(m => m.MovementDate)
+                    .Select(m => (decimal?)m.UnitCost)
+                    .FirstOrDefaultAsync();
+                unitCost = origCost ?? EffectiveUnitCost(product);
+            }
+            else if (qtyDelta > 0 && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.GoodsReceiptNote)
+            {
+                var receiptCost = line.Quantity > 0
+                    ? Math.Round(line.Amount / line.Quantity, 4)
+                    : line.UnitPrice;
+                if (product.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && receiptCost > 0)
+                {
+                    // newAvg = (oldStock×oldAvg + qty×receiptCost) / (oldStock+qty)
+                    var oldStock = Math.Max(0m, product.CurrentStock);
+                    var oldAvg = product.AverageUnitCost > 0 ? product.AverageUnitCost : product.CostPrice;
+                    var totalQty = oldStock + line.Quantity;
+                    product.AverageUnitCost = totalQty <= 0
+                        ? receiptCost
+                        : Math.Round((oldStock * oldAvg + line.Quantity * receiptCost) / totalQty, 4);
+                }
+                unitCost = receiptCost > 0 ? receiptCost : product.CostPrice;
+            }
+            else
+            {
+                unitCost = EffectiveUnitCost(product);
+            }
+
             product.CurrentStock += qtyDelta;
             _db.StockMovements.Add(new StockMovement
             {
@@ -5915,7 +5955,7 @@ public class DocumentService : IDocumentService
                 // direction so "IN" / "OUT" reads naturally even on a void.
                 MovementType = qtyDelta > 0 ? "IN" : "OUT",
                 Quantity = qtyDelta,
-                UnitCost = product.CostPrice,
+                UnitCost = unitCost,
                 BalanceAfter = product.CurrentStock,
                 Reference = doc.DocumentNumber,
                 Notes = sign > 0
@@ -5925,6 +5965,12 @@ public class DocumentService : IDocumentService
             });
         }
     }
+
+    /// <summary>ต้นทุนต่อหน่วยตาม CostingMethod (คู่กับ helper เดียวกันฝั่ง POS):
+    /// WeightedAverage → running average, อื่น ๆ → CostPrice</summary>
+    private static decimal EffectiveUnitCost(Product p) =>
+        p.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && p.AverageUnitCost > 0
+            ? p.AverageUnitCost : p.CostPrice;
 
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {

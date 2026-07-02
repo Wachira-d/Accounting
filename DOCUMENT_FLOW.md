@@ -303,6 +303,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      เพราะ Invoice ที่ตามมาจะ trigger ให้ — กัน double-count `:4608`),
      `Quotation`, `PO`, `PR`, `BillingNote`, `DebitNote`, และ
      `CreditNote.Discount/Adjustment/Writeoff`
+   - **UnitCost ของ movement ตาม CostingMethod** (TFRS NPAEs บทที่ 8):
+     ซื้อเข้า (PI/GRN) = ต้นทุนจริง line net ต่อหน่วย + อัปเดต WAC running
+     average; ขายออก = `AverageUnitCost` ปัจจุบัน (เมื่อ WeightedAverage,
+     ไม่ใช่ `CostPrice` นิ่ง); void = ต้นทุนเดิมของ movement ต้นทาง
+     (ให้กลับรายการหักล้างมูลค่าเท่ากัน). POS ใช้ helper `EffectiveUnitCost`
+     เดียวกันทั้ง COGS JE / stock stamp / refund
 9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
    บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
    12310 → **group ตาม AccountId** → 1 group = 1 `FixedAsset` (TFRS for NPAEs
