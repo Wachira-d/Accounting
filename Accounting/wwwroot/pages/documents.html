@@ -758,7 +758,8 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+          <button class="btn btn-outline" onclick="Page.save()" title="บันทึกเป็นฉบับร่าง (เลข DRAFT) — แก้ไขต่อ/รอผู้มีสิทธิ์อนุมัติ">บันทึกร่าง</button>
+          <button class="btn btn-primary" onclick="Page.save(true)" title="บันทึก + อนุมัติทันที (ออกเลขเอกสารจริง ลงบัญชี ตัดสต๊อก) — จบในคลิกเดียว">✓ บันทึกและอนุมัติ</button>
         </div>
       </div>
     </div>
@@ -4160,7 +4161,7 @@
           if (btn) { btn.disabled = false; btn.textContent = '⟲ ดึงรายการจาก OCR'; }
         }
       },
-      async save() {
+      async save(approveAfter = false) {
         const api = Layout.api(); if (!api) return;
         // Strict mode: every line must come from the product picker, not a
         // free-text description. The checkbox lives next to "+ เพิ่มรายการ".
@@ -4502,6 +4503,25 @@
               }
             } catch (e) {
               Layout.toast('สร้างเอกสารแล้ว แต่บันทึกชำระไม่สำเร็จ: ' + e.message + ' — โปรดกด "💰 บันทึกชำระเงิน" ในหน้ารายละเอียดแทน', 'warning', 8000);
+            }
+          }
+
+          // "บันทึกและอนุมัติ" — จบใน 1 คลิก: ออกเลขจริง + ลง GL + ตัดสต๊อก.
+          // ข้ามถ้า flow อื่น (ส่งอีเมล/รับเงินสด) อนุมัติไปแล้ว; ไม่มีสิทธิ์
+          // → เอกสารยังถูกบันทึกเป็นร่าง + แจ้งชัดเจน (ไม่ยิง 403)
+          if (approveAfter && savedDocId
+              && !['Approved', 'Sent', 'PartiallyPaid', 'Paid'].includes(savedStatus)) {
+            const _adt = document.getElementById('fDocType')?.value;
+            if (!this._canApproveDoc(_adt)) {
+              Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);
+            } else {
+              try {
+                await api.approveDocument(savedDocId);
+                Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
+              } catch (ae) {
+                Layout.toast('บันทึกเป็นร่างแล้ว แต่อนุมัติไม่ผ่าน: '
+                  + (ae.message || 'กรุณาตรวจข้อมูล (§86/4) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
+              }
             }
           }
 
