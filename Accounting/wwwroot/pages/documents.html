@@ -731,6 +731,9 @@
               <input type="checkbox" id="fSendEmail" onchange="Page.toggleSendEmail()">
               <label for="fSendEmail" style="font-weight:600">📧 ส่งอีเมลให้ลูกค้าหลังบันทึก</label>
             </div>
+            <div id="noApproveHint" style="display:none;margin-bottom:12px;padding:10px 12px;background:#fef3c7;border-left:3px solid #f59e0b;border-radius:6px;font-size:12px;color:#92400e;line-height:1.6">
+              ℹ️ คุณ<b>ไม่มีสิทธิ์อนุมัติเอกสาร</b> — เอกสารจะถูกสร้างเป็น <b>ฉบับร่าง (รออนุมัติ)</b> และ<b>ยังไม่ส่งอีเมล</b> จนกว่าผู้มีสิทธิ์จะอนุมัติ (เลขเอกสารจริง §86/4 ออกตอนอนุมัติ) จากนั้นกดปุ่ม "📧 ส่งอีเมล" ในหน้ารายการได้
+            </div>
             <div id="sendEmailFields" style="display:none">
               <div class="form-row">
                 <div class="form-group"><label class="form-label">ถึง <span class="req">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
@@ -2687,6 +2690,7 @@
       onDocTypeChange() {
         this.refreshEmailTemplate();
         this._refreshEtaxByEmailVisibility();
+        this._refreshNoApproveHint();
         // 💡 Live tooltip — pull the `title` attribute from the
         // currently-selected option into the hint line below the select.
         // We do this rather than relying on browser-native option tooltips
@@ -3107,6 +3111,29 @@
                       && eligibleTypes.includes(docType);
         const hint = document.getElementById('etaxByEmailHint');
         if (hint) hint.style.display = showEtax ? 'flex' : 'none';
+      },
+      /** ผู้ใช้มีสิทธิ์อนุมัติเอกสารประเภทนี้ไหม (ใช้ perm keys ที่ my-permissions
+       * คืนมาใน allowedMenuIds). ไม่มีข้อมูลสิทธิ์ → true (backend บังคับอยู่แล้ว). */
+      _canApproveDoc(docType) {
+        const p = (window.Layout && Layout.myPermissions) || null;
+        if (!p) return true;
+        if (p.isOwnerOrAdmin) return true;
+        const a = p.allowedMenuIds || [];
+        if (a.includes('*')) return true;   // legacy fallback = อนุญาตทั้งหมด
+        const revenueTypes = ['Invoice','TaxInvoice','Receipt','ReceiptVoucher',
+          'Quotation','BillingNote','DebitNote','CreditNote','DeliveryNote'];
+        const dirKey = revenueTypes.includes(docType)
+          ? 'perm:Document.Revenue.Approve' : 'perm:Document.Purchase.Approve';
+        return a.includes('perm:Document.Approve') || a.includes(dirKey);
+      },
+      /** แสดงหมายเหตุ "ไม่มีสิทธิ์อนุมัติ" บนกล่องส่งอีเมล (เฉพาะตอนสร้างใหม่). */
+      _refreshNoApproveHint() {
+        const el = document.getElementById('noApproveHint');
+        if (!el) return;
+        const docType = document.getElementById('fDocType')?.value;
+        // เฉพาะตอน "สร้างใหม่" (ตอนแก้ไข เอกสารมีสถานะของมันเองแล้ว)
+        const show = !this.editingId && docType && !this._canApproveDoc(docType);
+        el.style.display = show ? 'block' : 'none';
       },
       /**
        * Build a Thai-language subject + HTML body from the current form state.
@@ -4384,14 +4411,21 @@
               const _approvedStates = ['Approved', 'Sent', 'PartiallyPaid', 'Paid'];
               let _canSend = _approvedStates.includes(savedStatus);
               if (!_canSend) {
-                try {
-                  await api.approveDocument(savedDocId);
-                  _canSend = true;
-                  savedStatus = 'Approved';   // กัน paid-chain ด้านล่าง approve ซ้ำ
-                  Layout.toast('อนุมัติเอกสาร (ออกเลขจริง) ก่อนส่งอีเมลแล้ว', 'success');
-                } catch (ae) {
-                  Layout.toast('เอกสารบันทึกแล้ว แต่ยังอนุมัติไม่ได้ จึงไม่ส่งอีเมล — '
-                    + (ae.message || 'กรุณาตรวจข้อมูลให้ครบ (§86/4) แล้วอนุมัติเอง'), 'error', 9000);
+                const _dt = document.getElementById('fDocType')?.value;
+                if (!this._canApproveDoc(_dt)) {
+                  // maker ไม่มีสิทธิ์อนุมัติ → ไม่ยิง approve (กัน 403) แจ้งแบบเป็นมิตร
+                  Layout.toast('เอกสารถูกสร้างเป็นร่างรออนุมัติแล้ว — คุณไม่มีสิทธิ์อนุมัติ '
+                    + 'ระบบจึงยังไม่ส่งอีเมล ให้ผู้มีสิทธิ์อนุมัติแล้วกด "📧 ส่งอีเมล" ในหน้ารายการ', 'info', 9000);
+                } else {
+                  try {
+                    await api.approveDocument(savedDocId);
+                    _canSend = true;
+                    savedStatus = 'Approved';   // กัน paid-chain ด้านล่าง approve ซ้ำ
+                    Layout.toast('อนุมัติเอกสาร (ออกเลขจริง) ก่อนส่งอีเมลแล้ว', 'success');
+                  } catch (ae) {
+                    Layout.toast('เอกสารบันทึกแล้ว แต่ยังอนุมัติไม่ได้ จึงไม่ส่งอีเมล — '
+                      + (ae.message || 'กรุณาตรวจข้อมูลให้ครบ (§86/4) แล้วอนุมัติเอง'), 'error', 9000);
+                  }
                 }
               }
               if (!_canSend) {

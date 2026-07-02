@@ -932,7 +932,11 @@ Approve). แก้ 2 ชั้น: (a) backend DocumentEmailService.SendDocumen
 แจ้งเหตุ. แชร์ savedStatus กับ paid-on-issue chain กัน approve ซ้ำ (ApproveDocument
 throw ถ้าไม่ใช่ Draft/WaitingApproval). เพิ่มปุ่ม "📧 ส่งอีเมล" (PDF ปกติ) บน
 เอกสารฝั่งขายที่อนุมัติแล้ว นอกเหนือจาก "ส่ง e-Tax อีเมล" (CC สรรพากร+XML) เดิม.
-e-Tax by Email checkbox แสดงกับ TaxInvoice (รวม combined) อยู่แล้ว._
+e-Tax by Email checkbox แสดงกับ TaxInvoice (รวม combined) อยู่แล้ว.
+(c) UX: maker ที่ไม่มีสิทธิ์อนุมัติ (เช็คจาก my-permissions allowedMenuIds:
+perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่องส่งอีเมล
+ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
+(กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
