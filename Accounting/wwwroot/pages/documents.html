@@ -4323,6 +4323,7 @@
         }
         try {
           let savedDocId = this.editingId;
+          let savedStatus = null;   // ใช้ตัดสินว่าต้อง approve ก่อนส่งเมลไหม
           if (this.editingId) {
             await api.updateDocument(this.editingId, payload);
             Layout.toast('แก้ไขเอกสารสำเร็จ');
@@ -4332,6 +4333,7 @@
             // Backend อาจ auto-approve Cash PV → ดู status จริงในผลตอบกลับ
             // แล้ว toast ให้สื่อสารถูก (Paid / Approved / Draft)
             const createdStatus = cr.data?.status;
+            savedStatus = createdStatus;
             if (createdStatus === 'Paid')
               Layout.toast('สร้าง + อนุมัติ + ลงบัญชี = ชำระแล้ว ครบในคลิกเดียว', 'success');
             else if (createdStatus === 'Approved')
@@ -4375,6 +4377,26 @@
             if (!to) {
               Layout.toast('เอกสารบันทึกแล้ว แต่ไม่ส่งอีเมล (ไม่มีผู้รับ)', 'info');
             } else {
+              // ⚖️ ห้ามส่งเอกสาร Draft (เลข DRAFT-xxx) ให้ลูกค้า/สรรพากร —
+              // เลขจริงตาม §86/4 ออกตอนอนุมัติเท่านั้น. ถ้ายังไม่อนุมัติ → อนุมัติ
+              // ให้ก่อน (1-click issue+send). อนุมัติไม่ผ่าน (เช่น §86/4 ไม่ครบ) →
+              // ไม่ส่ง + แจ้งเหตุชัดเจน.
+              const _approvedStates = ['Approved', 'Sent', 'PartiallyPaid', 'Paid'];
+              let _canSend = _approvedStates.includes(savedStatus);
+              if (!_canSend) {
+                try {
+                  await api.approveDocument(savedDocId);
+                  _canSend = true;
+                  savedStatus = 'Approved';   // กัน paid-chain ด้านล่าง approve ซ้ำ
+                  Layout.toast('อนุมัติเอกสาร (ออกเลขจริง) ก่อนส่งอีเมลแล้ว', 'success');
+                } catch (ae) {
+                  Layout.toast('เอกสารบันทึกแล้ว แต่ยังอนุมัติไม่ได้ จึงไม่ส่งอีเมล — '
+                    + (ae.message || 'กรุณาตรวจข้อมูลให้ครบ (§86/4) แล้วอนุมัติเอง'), 'error', 9000);
+                }
+              }
+              if (!_canSend) {
+                // ข้ามการส่ง — เอกสารยังเป็น Draft ห้ามส่ง
+              } else
               try {
                 const asEtax = document.getElementById('fEmailAsEtax')?.checked;
                 const emailReq = {
@@ -4421,7 +4443,11 @@
               // Cash-sale chain implies the operator already committed to
               // immediate approval — short-circuit the warnings prompt by
               // acknowledging up front. Hard errors still throw.
-              await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
+              // ข้าม approve ถ้า email-block อนุมัติไปแล้ว (กัน "อนุมัติซ้ำ" ที่ throw).
+              if (!['Approved', 'Sent', 'PartiallyPaid', 'Paid'].includes(savedStatus)) {
+                await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
+                savedStatus = 'Approved';
+              }
               // Re-fetch to get authoritative totals + balanceDue (server
               // rounding / VAT calc can drift from client-side sum).
               const detail = await api.getDocument(savedDocId);
@@ -4747,6 +4773,15 @@
             actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
             actions += ` <button class="btn btn-secondary" onclick="Page.sendEtaxEmailOneClick('${d.id}')" title="สร้าง e-Tax + ส่งอีเมลให้ลูกค้า (แนบ PDF/A-3 ฝัง XML + CC สรรพากร) ในคลิกเดียว">📧 ส่ง e-Tax อีเมล</button>`;
           }
+          // ส่งอีเมลปกติ (แนบ PDF) — เอกสารฝั่งขายที่อนุมัติแล้วเท่านั้น (กันส่ง Draft).
+          // ให้เลือกส่งแบบธรรมดาได้ นอกเหนือจาก e-Tax by Email ด้านบน.
+          const salesEmailTypes = ['Invoice', 'TaxInvoice', 'Receipt', 'ReceiptVoucher',
+            'Quotation', 'BillingNote', 'CreditNote', 'DebitNote', 'DeliveryNote'];
+          if (salesEmailTypes.includes(d.documentType)
+              && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')) {
+            const _defTo = (d.contact?.email || d.contactEmail || '').replace(/'/g, '');
+            actions += ` <button class="btn btn-secondary" onclick="Page.sendDocEmailPrompt('${d.id}','${_defTo}')" title="ส่งเอกสาร (PDF) ให้ลูกค้าทางอีเมล">📧 ส่งอีเมล</button>`;
+          }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
           // ด้านบนแล้วเลือก "ดาวน์โหลด PDF" → ได้ PDF/A-3 อัตโนมัติ
@@ -5061,6 +5096,19 @@
           await this.detail(id);
           await this.load();
         } catch (e) { Layout.toast('ส่ง e-Tax อีเมลไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
+      },
+      /** ส่งเอกสาร (PDF) ทางอีเมลแบบธรรมดา — เฉพาะเอกสารที่อนุมัติแล้ว
+       * (backend บล็อกเอกสาร Draft ให้อีกชั้น). */
+      async sendDocEmailPrompt(id, defaultTo) {
+        const to = window.prompt('ส่งเอกสารทางอีเมลไปยัง (อีเมลลูกค้า):', defaultTo || '');
+        if (!to) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังส่งอีเมล ...', 'info');
+          await api.sendDocumentEmail(id, { to, attachPdf: true });
+          Layout.toast('ส่งอีเมลสำเร็จ', 'success');
+          await this.load();
+        } catch (e) { Layout.toast('ส่งอีเมลไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
       },
       async generateEtax(id) {
         if (!confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้')) return;
