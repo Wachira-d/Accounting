@@ -329,6 +329,10 @@
             ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
             <button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="Page.exportEFiling('${r.id}','${r.taxType}',${r.year},${r.month})" title="ดาวน์โหลดไฟล์ pipe-delimited สำหรับยื่น RD">📥 e-Filing</button>
             <button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="Page.exportXlsx('${r.id}')" title="ส่งออกรายงานเป็น Excel — VAT แยกชีตภาษีขาย/ภาษีซื้อ">📊 Excel</button>
+            ${String(r.taxType).toLowerCase().includes('vat') ? `
+            <button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="Page.exportPdf('${r.id}','purchase')" title="PDF รายงานภาษีซื้อ">📄 ภ.ซื้อ</button>
+            <button class="btn btn-sm" style="background:#0ea5e9;color:#fff" onclick="Page.exportPdf('${r.id}','sales')" title="PDF รายงานภาษีขาย">📄 ภ.ขาย</button>
+            <button class="btn btn-sm" style="background:#4f46e5;color:#fff" onclick="Page.exportPdf('${r.id}','pp30')" title="แบบสรุป ภ.พ.30 (PDF)">🧾 ภ.พ.30</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>
@@ -811,6 +815,26 @@
           a.click();
           URL.revokeObjectURL(a.href);
           Layout.toast('ส่งออก Excel สำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // PDF รายงานภาษีซื้อ/ขาย/ภ.พ.30 — fetch เป็น blob (แนบ token) แล้วเปิดแท็บใหม่
+      async exportPdf(reportId, kind) {
+        const cid = Layout.getCompanyId();
+        const token = localStorage.getItem('token');
+        try {
+          Layout.toast('กำลังสร้าง PDF ...', 'info');
+          const res = await fetch(`/api/companies/${cid}/tax/${reportId}/export-pdf?kind=${kind}`,
+            { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          if (!res.ok) {
+            let detail = '';
+            try { const j = await res.clone().json(); detail = j?.message || ''; } catch {}
+            throw new Error(detail || `สร้าง PDF ล้มเหลว (${res.status})`);
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          window.open(url, '_blank');
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
