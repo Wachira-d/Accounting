@@ -25,6 +25,11 @@ public class Employee : TenantEntity
     public string? Address { get; set; }
     public string? Phone { get; set; }
     public string? Email { get; set; }
+    /// <summary>LINE userId (Uxxxx…) — ใช้ push แจ้งเตือน/สลิปเงินเดือนทาง LINE
+    /// (NotificationEngine + PayslipLineDeliveryService). เติมได้ 2 ทาง:
+    /// HR กรอกเอง หรือพนักงานผูกเองผ่าน LINE OA บริษัท (EmployeeLineBindCode →
+    /// bot เขียนค่านี้ให้). LINE Messaging API push ต้องใช้ userId นี้เท่านั้น
+    /// (ใช้ @handle ไม่ได้).</summary>
     public string? LineId { get; set; }
 
     // Employment

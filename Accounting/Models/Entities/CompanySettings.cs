@@ -151,6 +151,10 @@ public class CompanySettings : TenantEntity
     /// <summary>LINE Group/Room ID สำหรับส่งแจ้งเตือนกลุ่ม (เช่น ทีมบัญชี).
     /// optional — ถ้าใส่ จะใช้แทน global GroupId เดิม.</summary>
     public string? LineDefaultGroupId { get; set; }
+    /// <summary>LINE OA basic ID (เช่น "@nextacc") — ใช้สร้างลิงก์/QR เพิ่มเพื่อน
+    /// ให้พนักงานกดเพิ่ม OA แล้วผูก LINE รับสลิป. optional; ถ้าว่างจะแสดง
+    /// คำแนะนำให้พนักงานค้นหา OA เอง.</summary>
+    public string? LineOaBasicId { get; set; }
     public bool LineConfigured { get; set; } = false;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }

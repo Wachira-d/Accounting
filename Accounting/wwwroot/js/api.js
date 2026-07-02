@@ -584,6 +584,11 @@ const API = {
       getPayrollDetail: (runId, empId) => API.get(`${base}/payroll/runs/${runId}/employees/${empId}`),
       getPayslip: (runId, empId) => `${base}/payroll/runs/${runId}/employees/${empId}/payslip`,
       getPayslipDownload: (runId, empId) => `${base}/payroll/runs/${runId}/employees/${empId}/payslip?download=true`,
+      // ส่งสลิปทาง LINE + ผูก LINE รายพนักงาน
+      sendPayslipLine: (runId, empId) => API.post(`${base}/payroll/runs/${runId}/employees/${empId}/payslip/send-line`, {}),
+      sendPayslipLineAll: (runId) => API.post(`${base}/payroll/runs/${runId}/payslip/send-line-all`, {}),
+      issueEmployeeLineBindCode: (empId) => API.post(`${base}/payroll/employees/${empId}/line-bind-code`, {}),
+      getEmployeeLineStatus: (empId) => API.get(`${base}/payroll/employees/${empId}/line-status`),
       setPayrollPaymentAccount: (runId, empId, accountCode) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/payment-account`, { accountCode }),
       updatePayrollDetail: (runId, empId, body) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/detail`, body),
       getPayrollItems: () => API.get(`${base}/payroll/items`),

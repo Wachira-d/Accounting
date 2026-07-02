@@ -7,7 +7,9 @@ public record LineConfigResponse(
     string? DefaultGroupId,
     bool Configured,
     DateTime? LastTestedAt,
-    string? LastTestStatus);
+    string? LastTestStatus,
+    /// <summary>LINE OA basic id (@xxx) — ใช้สร้างลิงก์เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป.</summary>
+    string? OaBasicId = null);
 
 public record UpdateLineConfigRequest(
     bool Enabled,
@@ -17,7 +19,9 @@ public record UpdateLineConfigRequest(
     /// <summary>Channel Secret — ใช้ตรวจ webhook signature.</summary>
     string? ChannelSecret,
     /// <summary>LINE Group/Room ID สำหรับส่งแจ้งเตือนกลุ่ม (optional).</summary>
-    string? DefaultGroupId);
+    string? DefaultGroupId,
+    /// <summary>LINE OA basic id (@xxx) — สำหรับปุ่ม/QR เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป.</summary>
+    string? OaBasicId = null);
 
 public record TestLineConfigRequest(string ToLineId);
 

@@ -50,6 +50,7 @@ public class LineConfigController : ControllerBase
         if (!string.IsNullOrEmpty(req.ChannelSecret))
             s.LineChannelSecret = _secrets.Protect(req.ChannelSecret);
         if (req.DefaultGroupId != null) s.LineDefaultGroupId = req.DefaultGroupId;
+        if (req.OaBasicId != null) s.LineOaBasicId = string.IsNullOrWhiteSpace(req.OaBasicId) ? null : req.OaBasicId.Trim();
         s.UpdatedAt = DateTime.UtcNow;
         // Reset configured flag after change — admin must re-test
         s.LineConfigured = false;
@@ -105,5 +106,6 @@ public class LineConfigController : ControllerBase
         DefaultGroupId: s.LineDefaultGroupId,
         Configured: s.LineConfigured,
         LastTestedAt: s.LineLastTestedAt,
-        LastTestStatus: s.LineLastTestStatus);
+        LastTestStatus: s.LineLastTestStatus,
+        OaBasicId: s.LineOaBasicId);
 }

@@ -16,13 +16,17 @@ public class PayrollController : ControllerBase
     private readonly IPayrollService _service;
     private readonly ISensitivityService _sensitivity;
     private readonly IPermissionService _permissions;
+    private readonly IPayslipLineDeliveryService _payslipLine;
     public PayrollController(IPayrollService service, ISensitivityService sensitivity,
-        IPermissionService permissions)
+        IPermissionService permissions, IPayslipLineDeliveryService payslipLine)
     {
         _service = service;
         _sensitivity = sensitivity;
         _permissions = permissions;
+        _payslipLine = payslipLine;
     }
+
+    private string? ActorEmail() => User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
 
     /// <summary>PDPA ม.26 — เปิดดู PII (CitizenId/Phone/Email) แบบ raw เฉพาะ
     /// user ที่มี permission Pii.View. คนอื่น ๆ ได้ค่า mask ตาม PiiMask helper.</summary>
@@ -282,6 +286,65 @@ public class PayrollController : ControllerBase
         // inline — ให้เบราว์เซอร์ render ใน iframe แทนการดาวน์โหลด
         Response.Headers["Content-Disposition"] = "inline";
         return File(slip.PdfData, "application/pdf");
+    }
+
+    // ===== ส่งสลิปทาง LINE =====
+
+    /// <summary>สร้างรหัสผูก LINE 6 หลักให้พนักงาน — HR แสดงรหัส/QR ให้พนักงาน
+    /// เพิ่มเพื่อน LINE OA บริษัทแล้วส่ง "สลิป {รหัส}" เพื่อรับสลิปทาง LINE.</summary>
+    [HttpPost("employees/{employeeId:guid}/line-bind-code")]
+    public async Task<ActionResult> IssueLineBindCode(Guid companyId, Guid employeeId)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var (code, addFriendUrl) = await _payslipLine.IssueBindCodeAsync(companyId, employeeId, ActorEmail());
+        return Ok(new ApiResponse<object>(true, new
+        {
+            code,
+            addFriendUrl,
+            instruction = $"ให้พนักงานเพิ่มเพื่อน LINE OA บริษัท แล้วส่งข้อความ: สลิป {code}",
+            expiresInHours = 24,
+        }));
+    }
+
+    /// <summary>สถานะผูก LINE ของพนักงาน (ผูกแล้ว/ยังไม่ผูก).</summary>
+    [HttpGet("employees/{employeeId:guid}/line-status")]
+    public async Task<ActionResult> GetLineStatus(Guid companyId, Guid employeeId)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var (bound, masked) = await _payslipLine.GetLineStatusAsync(companyId, employeeId);
+        return Ok(new ApiResponse<object>(true, new { bound, maskedLineUserId = masked }));
+    }
+
+    /// <summary>ส่งสลิปงวดนี้ให้พนักงานคนเดียวทาง LINE.</summary>
+    [HttpPost("runs/{runId:guid}/employees/{employeeId:guid}/payslip/send-line")]
+    public async Task<ActionResult> SendPayslipLine(Guid companyId, Guid runId, Guid employeeId)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var result = await _payslipLine.SendPayslipAsync(companyId, runId, employeeId, ActorEmail());
+        var (ok, msg) = result switch
+        {
+            PayslipLineSendResult.Sent => (true, "ส่งสลิปทาง LINE สำเร็จ"),
+            PayslipLineSendResult.NotBound => (false, "พนักงานยังไม่ได้ผูก LINE — สร้างรหัสให้พนักงานผูกก่อน"),
+            PayslipLineSendResult.NoPayrollDetail => (false, "ไม่พบรายละเอียดเงินเดือนของพนักงานในงวดนี้"),
+            PayslipLineSendResult.LineNotConfigured => (false, "ยังไม่ได้ตั้งค่า LINE Messaging API ของบริษัท"),
+            _ => (false, "ส่งไม่สำเร็จ กรุณาลองใหม่"),
+        };
+        return Ok(new ApiResponse<object>(ok, new { result = result.ToString(), message = msg }));
+    }
+
+    /// <summary>ส่งสลิปทั้งงวดให้พนักงานทุกคนที่ผูก LINE แล้ว.</summary>
+    [HttpPost("runs/{runId:guid}/payslip/send-line-all")]
+    public async Task<ActionResult> SendPayslipLineAll(Guid companyId, Guid runId)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        var r = await _payslipLine.SendPayslipForRunAsync(companyId, runId, ActorEmail());
+        return Ok(new ApiResponse<object>(true, new
+        {
+            total = r.Total, sent = r.Sent, notBound = r.NotBound, failed = r.Failed,
+            message = $"ส่งสำเร็จ {r.Sent}/{r.Total} คน" +
+                      (r.NotBound > 0 ? $" · ยังไม่ผูก LINE {r.NotBound} คน" : "") +
+                      (r.Failed > 0 ? $" · ล้มเหลว {r.Failed} คน" : ""),
+        }));
     }
 
     // Leave

@@ -906,6 +906,22 @@ contact.paymentDueDays → fDueDate + fPaymentTerms อัตโนมัติ 
 เดิม). Service กันเฉพาะ type=TaxInvoice จริงเท่านั้นถึงรับ flag (กันหัวเพี้ยน).
 DTO: CreateDocumentRequest + DocumentResponse echo flag; hydrate checkbox ตอน edit._
 
+_รอบ 45 (ส่งสลิปเงินเดือนทาง LINE): พนักงานผูก LINE เองผ่าน LINE OA บริษัท —
+HR สร้างรหัส 6 หลัก (`EmployeeLineBindCode`, หมดอายุ 24 ชม.), พนักงานเพิ่มเพื่อน
+OA แล้วส่ง "สลิป {รหัส}" → LineBotService.TryBindFromLineAsync เขียน Employee.LineId
+(= push userId เดียวกับ NotificationEngine). ส่งสลิป: PayslipLineDeliveryService
+สร้าง `PayslipShareToken` (สุ่ม 32 bytes base64url, หมดอายุ 7 วัน, เพิกถอน token
+เก่าของงวด+คนเดียวกัน) แล้ว push flex card **ซ่อนยอดเงิน** (โชว์แค่ชื่อ/งวด + ปุ่ม)
+ผ่าน ILineNotifyService.PushFlexToUserAsync (channel ต่อบริษัท). ปุ่มลิงก์ไป
+`GET /api/public/payslip/{token}` ([AllowAnonymous]) → validate token → reuse
+GeneratePayslipAsync → stream PDF inline + log **PdpaPiiAccessLog** (ม.37(4),
+Operation=Read, SubjectType=Employee) + increment AccessCount. UI payroll.html:
+ปุ่ม "📤 LINE" รายคน + "ส่งสลิปทั้งงวดทาง LINE" + modal รหัสผูก (NotBound →
+เสนอสร้างรหัส). Settings: LINE OA Basic ID (`CompanySettings.LineOaBasicId`)
+ทำลิงก์เพิ่มเพื่อน. Endpoints (HR-authed): POST runs/{r}/employees/{e}/payslip/
+send-line · POST runs/{r}/payslip/send-line-all · POST employees/{e}/line-bind-code
+· GET employees/{e}/line-status._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
