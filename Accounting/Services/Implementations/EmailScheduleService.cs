@@ -168,6 +168,19 @@ public class EmailScheduleService : IEmailScheduleService
                 .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
             if (doc == null) return;
 
+            // ห้ามส่งอีเมลเอกสาร Draft/รออนุมัติ — เลขจริง §86/4 ออกตอน Approve
+            // เท่านั้น (DocumentEmailService บล็อกอยู่แล้ว จะทำให้คิว fail). ถ้า
+            // recurring ตั้ง AutoApprove=true เอกสารจะ Approved ตั้งแต่ตอนสร้าง →
+            // ส่งได้; ถ้า false ให้รอ trigger "DocumentApproved" ตอน user อนุมัติ.
+            if (doc.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval
+                or DocumentStatus.Rejected)
+            {
+                _logger.LogInformation(
+                    "Recurring doc {Doc} ยังไม่อนุมัติ ({Status}) — ข้ามการส่งอีเมลอัตโนมัติ (กัน DRAFT ถึงลูกค้า)",
+                    documentId, doc.Status);
+                return;
+            }
+
             var rules = await _db.EmailScheduleRules.AsNoTracking()
                 .Where(r => r.CompanyId == companyId && r.IsActive && !r.IsDeleted
                     && r.Trigger == "RecurringInvoiceCreated"

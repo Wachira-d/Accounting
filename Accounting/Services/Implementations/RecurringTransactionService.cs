@@ -285,6 +285,48 @@ public class RecurringTransactionService : IRecurringTransactionService
         return new DateTime(next.Year, next.Month, day, 0, 0, 0, DateTimeKind.Utc);
     }
 
+    private static readonly string[] _thMonthsFull =
+        { "", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+          "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม" };
+    private static readonly string[] _enMonthsFull =
+        { "", "January", "February", "March", "April", "May", "June",
+          "July", "August", "September", "October", "November", "December" };
+
+    /// <summary>แทนค่า placeholder ในข้อความเทมเพลต recurring ด้วยวันที่จริง
+    /// ตอนสร้างเอกสาร (base = วันที่ออกเอกสาร ตามปฏิทินไทย). รองรับทั้ง
+    /// &lt;&lt;token&gt;&gt; และ {{token}} (case-insensitive). token ที่ใช้ได้ ดู
+    /// RecurringPlaceholderHelp. คืน null ถ้า input null.</summary>
+    internal static string? ApplyRecurringPlaceholders(string? text, DateTime baseDate)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        var prev = baseDate.AddMonths(-1);
+        var next = baseDate.AddMonths(1);
+        var q = (baseDate.Month - 1) / 3 + 1;
+
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["month"] = _thMonthsFull[baseDate.Month],
+            ["month_en"] = _enMonthsFull[baseDate.Month],
+            ["month_no"] = baseDate.Month.ToString("D2"),
+            ["month_prev"] = _thMonthsFull[prev.Month],
+            ["month_prev_en"] = _enMonthsFull[prev.Month],
+            ["month_next"] = _thMonthsFull[next.Month],
+            ["month_next_en"] = _enMonthsFull[next.Month],
+            ["year"] = (baseDate.Year + 543).ToString(),          // พ.ศ.
+            ["year_ce"] = baseDate.Year.ToString(),                // ค.ศ.
+            ["year_prev"] = (prev.Year + 543).ToString(),          // ปี พ.ศ. ของเดือนก่อน (คุม ม.ค.)
+            ["year_next"] = (next.Year + 543).ToString(),
+            ["quarter"] = $"Q{q}",
+            ["quarter_th"] = $"ไตรมาส {q}",
+            ["date"] = $"{baseDate.Day:D2}/{baseDate.Month:D2}/{baseDate.Year + 543}",
+            ["day"] = baseDate.Day.ToString("D2"),
+        };
+
+        return System.Text.RegularExpressions.Regex.Replace(
+            text, @"(?:<<|\{\{)\s*([a-zA-Z_]+)\s*(?:>>|\}\})",
+            m => map.TryGetValue(m.Groups[1].Value, out var v) ? v : m.Value);
+    }
+
     private async Task CreateDocumentFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions)
     {
         try
@@ -298,6 +340,13 @@ public class RecurringTransactionService : IRecurringTransactionService
 
             Guid? projectId = root.TryGetProperty("projectId", out var pjEl) && pjEl.ValueKind == JsonValueKind.String && Guid.TryParse(pjEl.GetString(), out var pjId) ? pjId : null;
 
+            // ── Placeholder ในเทมเพลต — แทนค่าวันที่/เดือน/ปี ตอนสร้างเอกสารจริง
+            // เช่น "ค่าบริการทำบัญชีเดือน <<month>>" → "...เดือน กรกฎาคม".
+            // ฐานคือ "วันที่ออกเอกสาร" (วันนี้ ตามปฏิทินไทย). ดู PlaceholderHelp
+            // สำหรับ token ทั้งหมด. ใช้กับ description + notes + reference.
+            var baseDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+            string? Sub(string? s) => ApplyRecurringPlaceholders(s, baseDate);
+
             // Extract lines from template
             var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
             if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
@@ -307,7 +356,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     Guid? lineProjectId = line.TryGetProperty("projectId", out var lpEl) && lpEl.ValueKind == JsonValueKind.String && Guid.TryParse(lpEl.GetString(), out var lpId) ? lpId : null;
 
                     lines.Add(new Models.DTOs.Document.DocumentLineRequest(
-                        Description: line.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
+                        Description: Sub(line.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "") ?? "",
                         Quantity: line.TryGetProperty("quantity", out var qty) ? qty.GetDecimal() : 1,
                         UnitPrice: line.TryGetProperty("unitPrice", out var up) ? up.GetDecimal() : 0,
                         Unit: line.TryGetProperty("unit", out var unit) ? unit.GetString() : null,
@@ -329,8 +378,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                 DocumentDate: DateTime.UtcNow,
                 DueDate: root.TryGetProperty("dueDays", out var dd) ? DateTime.UtcNow.AddDays(dd.GetInt32()) : DateTime.UtcNow.AddDays(30),
                 ContactId: contactId,
-                Reference: $"AUTO-{recurring.Name}",
-                Notes: root.TryGetProperty("notes", out var notes) ? notes.GetString() : null,
+                Reference: Sub($"AUTO-{recurring.Name}"),
+                Notes: Sub(root.TryGetProperty("notes", out var notes) ? notes.GetString() : null),
                 Lines: lines,
                 ProjectId: projectId,
                 BankAccountId: bankAccountId,
@@ -456,6 +505,10 @@ public class RecurringTransactionService : IRecurringTransactionService
             using var doc = JsonDocument.Parse(recurring.TemplateData!);
             var root = doc.RootElement;
 
+            // แทนค่า placeholder (&lt;&lt;month&gt;&gt; ฯลฯ) เหมือนฝั่งเอกสาร
+            var baseDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+            string? Sub(string? s) => ApplyRecurringPlaceholders(s, baseDate);
+
             var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
             if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
             {
@@ -465,14 +518,14 @@ public class RecurringTransactionService : IRecurringTransactionService
                         AccountId: line.TryGetProperty("accountId", out var aid) ? Guid.Parse(aid.GetString()!) : Guid.Empty,
                         DebitAmount: line.TryGetProperty("debitAmount", out var da) ? da.GetDecimal() : 0,
                         CreditAmount: line.TryGetProperty("creditAmount", out var ca) ? ca.GetDecimal() : 0,
-                        Description: line.TryGetProperty("description", out var desc) ? desc.GetString() : null
+                        Description: Sub(line.TryGetProperty("description", out var desc) ? desc.GetString() : null)
                     ));
                 }
             }
 
             var request = new Models.DTOs.Accounting.CreateJournalEntryRequest(
                 EntryDate: DateTime.UtcNow,
-                Description: root.TryGetProperty("description", out var d) ? d.GetString() ?? recurring.Name : recurring.Name,
+                Description: Sub(root.TryGetProperty("description", out var d) ? d.GetString() ?? recurring.Name : recurring.Name) ?? recurring.Name,
                 Reference: $"AUTO-{recurring.Name}",
                 Lines: lines
             );

@@ -847,8 +847,9 @@ const Layout = {
     { section: 'ตั้งค่า & ผู้ใช้', icon: '⚙️', description: 'ผู้ใช้ · role · ตั้งค่าบริษัท · workflow อนุมัติ · ลายเซ็น' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings',
       description: 'ข้อมูลบริษัท · logo · เลขผู้เสียภาษี · default บัญชี · เลขเอกสาร · SMTP' },
-    { id: 'design-system', label: 'คู่มือ Design System & UX', icon: '📐', href: '/pages/design-system.html',
-      description: 'คู่มือ design token · flow · responsive · accessibility · ใช้กำกับการพัฒนาทุกหน้า' },
+    // หมายเหตุ: design-system.html เป็นคู่มือ design token/component สำหรับ
+    // นักพัฒนา — ไม่ใช่ฟีเจอร์สำหรับผู้ใช้ระบบบัญชี จึงถอดออกจากเมนู (ยังเปิด
+    // ตรงผ่าน URL /pages/design-system.html ได้สำหรับทีมพัฒนา).
     { id: 'email-schedule', label: 'ส่งอีเมลอัตโนมัติ', icon: '📧', href: '/pages/email-schedule.html',
       description: 'ตั้งกฎส่งใบกำกับ/สลิป/ใบ 50ทวิ ตามวันที่กำหนด · เตือนใกล้/เกินกำหนดชำระ · ดูคิว' },
     { id: 'settings-features', label: 'ฟีเจอร์ & เมนู (Owner)', icon: '🧩', href: '/pages/settings-features.html', adminOnly: true,

@@ -18,15 +18,21 @@ public partial class ExecutiveReportService
                 d.Status,
                 d.TotalAmount,
                 d.PaidAmount,
-                d.DocumentDate
+                d.DocumentDate,
+                d.RelatedDocumentId
             })
             .ToListAsync();
 
+        // นับรายได้: ใบแจ้งหนี้/ใบกำกับ = ขายเชื่อ (รับรู้รายได้). ใบเสร็จ/ใบสำคัญรับ
+        // นับ "เฉพาะที่ไม่ได้อ้างอิงเอกสารต้นทาง" (ขายสด standalone) — ใบเสร็จที่แปลง/
+        // อ้างจากใบแจ้งหนี้ = การ "ตัดชำระ" (Dr เงินสด/Cr ลูกหนี้) ไม่ใช่รายได้ใหม่
+        // → นับซ้ำกับใบแจ้งหนี้ต้นทาง (ยอดขายเบิ้ล 2). กันตรงนี้.
         var revDocs = docs.Where(d =>
             d.DocumentType == DocumentType.Invoice
             || d.DocumentType == DocumentType.TaxInvoice
-            || d.DocumentType == DocumentType.Receipt
-            || d.DocumentType == DocumentType.ReceiptVoucher).ToList();
+            || ((d.DocumentType == DocumentType.Receipt
+                 || d.DocumentType == DocumentType.ReceiptVoucher)
+                && d.RelatedDocumentId == null)).ToList();
         var billable = revDocs.Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft).ToList();
 
         var totalRevenue = billable.Sum(d => d.TotalAmount);
