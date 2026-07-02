@@ -5448,6 +5448,10 @@
                   </div>
                 </div>
                 <div class="form-group">
+                  <label class="form-label">ค่าธรรมเนียมหักจากยอดโอน — ถ้ามี <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(marketplace/gateway/ธนาคาร — เอกสารถูกล้างที่ ยอดรับ+ค่าธรรมเนียม)</span></label>
+                  <input id="rpFee" class="form-input" type="number" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="form-group">
                   <label class="form-label">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</label>
                   <input id="rpRef" class="form-input" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ">
                 </div>
@@ -5471,6 +5475,7 @@
         amountEl.max = balanceDue;
         dateEl.value = today;
         document.getElementById('rpRef').value = '';
+        document.getElementById('rpFee').value = '';
         document.getElementById('rpNotes').value = '';
         document.getElementById('rpMethod').value = 'BankTransfer';
         // Populate the bank-override dropdown with the company's bank
@@ -5572,6 +5577,8 @@
               exchangeRate: ((currency || 'THB') !== 'THB')
                 ? (parseFloat(document.getElementById('rpFxRate').value || '0') || null)
                 : null,
+              feeAmount: (parseFloat(document.getElementById('rpFee').value || '0') || 0) > 0
+                ? parseFloat(document.getElementById('rpFee').value) : null,
             });
             Layout.toast('บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success');
             wrap.classList.remove('active');

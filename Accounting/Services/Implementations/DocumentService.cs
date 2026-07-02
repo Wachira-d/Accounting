@@ -3515,8 +3515,8 @@ public class DocumentService : IDocumentService
         payment.IsDeleted = true;
         payment.UpdatedAt = DateTime.UtcNow;
 
-        // Restore document balance
-        doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount);
+        // Restore document balance (รวมค่าธรรมเนียมที่เคยล้างเอกสารด้วย)
+        doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount - payment.FeeAmount);
         doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
         if (doc.Status != DocumentStatus.Voided)
         {
@@ -4671,6 +4671,8 @@ public class DocumentService : IDocumentService
 
         if (request.ExchangeRate is <= 0)
             throw new InvalidOperationException("อัตราแลกเปลี่ยน ณ วันชำระต้องมากกว่า 0");
+        if (request.FeeAmount is < 0)
+            throw new InvalidOperationException("ค่าธรรมเนียมต้องไม่ติดลบ");
 
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
@@ -4701,8 +4703,19 @@ public class DocumentService : IDocumentService
                 "ใบวางบิล/ใบเสนอราคาให้แปลงเป็นใบแจ้งหนี้/ใบกำกับ/ใบเสร็จก่อน; " +
                 "ใบเสร็จ/ใบสำคัญรับ-จ่ายคือหลักฐานเงินเข้า-ออกที่เกิดแล้ว ไม่ต้องชำระซ้ำ");
 
-        if (request.Amount > doc.BalanceDue)
-            throw new InvalidOperationException($"จำนวนเงินชำระ ({request.Amount:N2}) มากกว่ายอดค้างชำระ ({doc.BalanceDue:N2})");
+        var paymentFee = request.FeeAmount ?? 0m;
+        if (paymentFee > 0)
+        {
+            // ค่าธรรมเนียมหักจากยอดโอนใช้กับฝั่งรับเท่านั้น (marketplace/gateway
+            // หักก่อนโอน) — ฝั่งจ่ายบันทึกค่าธรรมเนียมเป็นค่าใช้จ่ายแยกเอง
+            var feeAllowedTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote };
+            if (!feeAllowedTypes.Contains(doc.DocumentType))
+                throw new InvalidOperationException(
+                    "ค่าธรรมเนียมหักจากยอดโอน ใช้ได้เฉพาะเอกสารฝั่งขาย (ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้)");
+        }
+        if (request.Amount + paymentFee > doc.BalanceDue + 0.01m)
+            throw new InvalidOperationException(
+                $"เงินสุทธิ ({request.Amount:N2}) + ค่าธรรมเนียม ({paymentFee:N2}) มากกว่ายอดค้างชำระ ({doc.BalanceDue:N2})");
 
         // Installment WHT — for cash-basis WHT recognition (or when the
         // source carries any WHT at all), each installment recognises its
@@ -4741,7 +4754,7 @@ public class DocumentService : IDocumentService
             // Without this, proportional rounding leaves a satang-level gap
             // (115.38 + 115.38 + 69.23 = 299.99 ≠ 300.00) and the WHT cert
             // numbers don't reconcile with ภ.ง.ด.3/53 filings.
-            var isFinalPayment = request.Amount + 0.01m >= doc.BalanceDue;
+            var isFinalPayment = request.Amount + paymentFee + 0.01m >= doc.BalanceDue;
 
             if (request.WithholdingTaxAmount.HasValue)
             {
@@ -4820,12 +4833,14 @@ public class DocumentService : IDocumentService
                 PayerSignatureName = request.PayerSignatureName,
                 // rate วันชำระ — เก็บเฉพาะเอกสาร FX (THB rate=1 ไม่มีความหมาย)
                 ExchangeRate = doc.ExchangeRate != 1m ? request.ExchangeRate : null,
+                FeeAmount = paymentFee,
+                FeeAccountId = request.FeeAccountId,
                 CreatedBy = createdBy
             };
 
             _db.Payments.Add(payment);
 
-            doc.PaidAmount += request.Amount;
+            doc.PaidAmount += request.Amount + paymentFee;
             doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
             doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
             // Clear stale aging immediately when the doc settles — otherwise
@@ -7490,10 +7505,29 @@ public class DocumentService : IDocumentService
                 if (whtAccount != null)
                     pendingLines.Add((whtAccount.Id, thbWht, 0, $"WHT (ถูกหัก) งวด {payment.PaymentNumber}"));
             }
+            // ค่าธรรมเนียม marketplace/gateway ที่ถูกหักจากยอดโอน — Dr ค่าธรรมเนียม
+            var thbFee = 0m;
+            if (payment.FeeAmount > 0)
+            {
+                thbFee = fx == 1m ? payment.FeeAmount
+                    : Math.Round(payment.FeeAmount * fx, 2, MidpointRounding.AwayFromZero);
+                var feeAcc = payment.FeeAccountId.HasValue
+                    ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                        a.Id == payment.FeeAccountId.Value && a.CompanyId == companyId && !a.IsDeleted)
+                    : null;
+                feeAcc ??= await FindAccountAsync(companyId, "53200")
+                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId
+                        && a.IsActive && !a.IsDeleted && a.AccountType == AccountType.Expense
+                        && a.AccountName.Contains("ค่าธรรมเนียม"));
+                if (feeAcc == null)
+                    throw new InvalidOperationException(
+                        "ไม่พบผังบัญชีค่าธรรมเนียม (53xxx) — กรุณาเพิ่มก่อนบันทึกรับเงินแบบหักค่าธรรมเนียม");
+                pendingLines.Add((feeAcc.Id, thbFee, 0m, $"ค่าธรรมเนียม (หักจากยอดโอน) - {payment.PaymentNumber}"));
+            }
             var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
             if (arAccount != null)
             {
-                var arClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
+                var arClear = (postPerPaymentWht ? thbAmount + thbWht : thbAmount) + thbFee;
                 pendingLines.Add((arAccount.Id, 0, arClear, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
             }
             // Realized FX: รับเงินได้ THB มากกว่าที่ AR ตั้งไว้ = กำไร (Cr),

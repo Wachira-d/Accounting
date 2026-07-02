@@ -4104,6 +4104,9 @@ public static class DatabaseMigrationHelper
             // rate ณ วันชำระจริงของเอกสารสกุลต่างประเทศ — ต่างจาก rate เอกสาร →
             // post กำไร/ขาดทุนอัตราแลกเปลี่ยนที่เกิดขึ้นจริง (42600/54950)
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NULL;""",
+            // ค่าธรรมเนียม marketplace/gateway/ธนาคาร ที่ถูกหักจากยอดโอน
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "FeeAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "FeeAccountId" uuid NULL;""",
 
             // ===== Contact: credit limit (วงเงินเครดิต) =====
             // null = ไม่จำกัด (เดิม). ใช้ดู AR เทียบเตือนตอนสร้าง Invoice ใหม่.

@@ -806,7 +806,13 @@ public record CreatePaymentRequest(
     /// <summary>อัตราแลกเปลี่ยน ณ วันชำระจริง (เฉพาะเอกสารสกุลต่างประเทศ) —
     /// ต่างจาก rate เอกสาร → ระบบ post กำไร/ขาดทุนจากอัตราแลกเปลี่ยน
     /// realized อัตโนมัติ (42600/54950). Null = ใช้ rate เอกสารตามเดิม.</summary>
-    decimal? ExchangeRate = null);
+    decimal? ExchangeRate = null,
+    /// <summary>ค่าธรรมเนียมที่ถูกหักจากยอดโอน (marketplace/gateway/ธนาคาร)
+    /// — Amount คือเงินสุทธิที่เข้าบัญชี; เอกสารถูกล้างที่ Amount+FeeAmount.
+    /// ใช้ได้เฉพาะเอกสารฝั่งขาย (Invoice/TaxInvoice/DebitNote).</summary>
+    decimal? FeeAmount = null,
+    /// <summary>ผังค่าธรรมเนียม — null = ระบบหา 53xxx/ชื่อ "ค่าธรรมเนียม".</summary>
+    Guid? FeeAccountId = null);
 
 public record PaymentAllocationRequest(
     Guid DocumentId,
