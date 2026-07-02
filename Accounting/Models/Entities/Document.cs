@@ -58,6 +58,13 @@ public class Document : TenantEntity
     /// timestamp นี้ถูกตั้ง. คู่กับ ReclassifyExpiredUndueInputVatAsync.</summary>
     public DateTime? InputVatExpiredAt { get; set; }
 
+    /// <summary>True = เอกสารนี้ออกเป็น "ใบแจ้งหนี้/ใบกำกับภาษี" ใบเดียว
+    /// (combined). DocumentType ยังเป็น TaxInvoice จึงทำงานเป็นใบกำกับภาษี
+    /// เต็มรูป (ลง VAT 21911 → ภ.พ.30, บังคับ §86/4, ออก e-Tax ได้) แต่หัว
+    /// กระดาษ PDF พิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี" แทน "ใบกำกับภาษี" เพื่อให้ใช้
+    /// เป็นทั้งใบแจ้งหนี้ (เรียกเก็บเงิน + เครดิตเทอม) และใบกำกับภาษีในใบเดียว.</summary>
+    public bool CombinedInvoiceTaxInvoice { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense

@@ -1170,6 +1170,8 @@ public static class DatabaseMigrationHelper
             """,
             // §82/3: ภาษีซื้อ 11640 พ้น 6 เดือน → reclassify เป็นค่าใช้จ่าย
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatExpiredAt" timestamp with time zone NULL;""",
+            // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CombinedInvoiceTaxInvoice" boolean NOT NULL DEFAULT false;""",
             // User override ผัง VAT ปลายทาง (เช่น "51000" = ลงต้นทุนขายแทน)
             // — ใช้ AccountCode (string) เพื่อ portable, validator แปลงเป็น Id ตอน post
             """

@@ -859,6 +859,13 @@ public partial class PdfGenerationService : IPdfGenerationService
                 ? "Tax Invoice / Receipt"
                 : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
         }
+        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม.
+        if (template.CustomTitle == null
+            && doc.DocumentType == DocumentType.TaxInvoice
+            && doc.CombinedInvoiceTaxInvoice)
+        {
+            title = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
+        }
         if (doc.IsDeposit)
             title += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
