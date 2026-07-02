@@ -176,10 +176,28 @@ public class ChequeService : IChequeService
         // the status guard above so this is idempotent on its own.
         // When the inbound deposit bank wasn't recorded, we log + skip
         // the balance side rather than silently mismatch.
+        //
+        // กันนับซ้ำ: ถ้าเช็คผูกกับ Payment ที่บันทึกพร้อม BankAccountId —
+        // CreatePaymentAsync ปรับ CurrentBalance ไปแล้วตอนบันทึกรับ/จ่าย
+        // การ clear เช็คห้ามปรับซ้ำ (ไม่งั้นยอดธนาคารบวก/ลบสองรอบจากเงินก้อนเดียว)
+        var paymentAlreadyMovedBalance = false;
+        if (cheque.PaymentId.HasValue)
+        {
+            paymentAlreadyMovedBalance = await _db.Payments.AnyAsync(p =>
+                p.Id == cheque.PaymentId.Value && p.CompanyId == companyId
+                && !p.IsDeleted && p.BankAccountId != null, ct);
+        }
+
         var bank = cheque.IsInbound
             ? cheque.DepositBankAccount
             : cheque.ChequeBook?.BankAccount;
-        if (bank != null)
+        if (paymentAlreadyMovedBalance)
+        {
+            _logger.LogInformation(
+                "Cheque {Id} cleared — balance already moved by linked payment {PaymentId}, skipping double adjustment",
+                chequeId, cheque.PaymentId);
+        }
+        else if (bank != null)
         {
             if (cheque.IsInbound) bank.CurrentBalance += cheque.Amount;
             else                  bank.CurrentBalance -= cheque.Amount;
