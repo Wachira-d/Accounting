@@ -32,6 +32,7 @@ public class DocumentService : IDocumentService
     private readonly Accounting.Services.Ai.IDocumentAiAugmenter? _aiAugmenter;
     private readonly Accounting.Services.Ai.IAiFeedbackRecorder? _feedbackRecorder;
     private readonly IFixedAssetService? _fixedAssets;
+    private readonly Accounting.Services.Implementations.Inventory.IInventoryCostingService? _inventoryCosting;
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly IAdvancedArApService? _advancedArAp;
     private readonly IApprovalService? _approval;
@@ -53,9 +54,11 @@ public class DocumentService : IDocumentService
         IAdvancedArApService? advancedArAp = null,
         IApprovalService? approval = null,
         Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
-        IFixedAssetService? fixedAssets = null)
+        IFixedAssetService? fixedAssets = null,
+        Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null)
     {
         _fixedAssets = fixedAssets;
+        _inventoryCosting = inventoryCosting;
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
         _approval = approval;
@@ -6086,7 +6089,11 @@ public class DocumentService : IDocumentService
             }
             else
             {
-                unitCost = EffectiveUnitCost(product);
+                // ขายออก → FIFO layer / WAC ตาม CostingMethod; รับคืน (IN
+                // ที่ไม่ใช่ซื้อ) → WAC ปัจจุบัน
+                unitCost = qtyDelta < 0
+                    ? await ResolveOutboundUnitCostAsync(product, -qtyDelta)
+                    : EffectiveUnitCost(product);
             }
 
             product.CurrentStock += qtyDelta;
@@ -6114,6 +6121,31 @@ public class DocumentService : IDocumentService
     private static decimal EffectiveUnitCost(Product p) =>
         p.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && p.AverageUnitCost > 0
             ? p.AverageUnitCost : p.CostPrice;
+
+    /// <summary>ต้นทุนขายออกต่อหน่วย — FIFO เดิน layer จริงผ่าน
+    /// InventoryCostingService (คำนวณ "ก่อน" movement ของเอกสารนี้ถูก insert
+    /// → COGS JE กับ movement stamp ได้ค่าเดียวกัน deterministic);
+    /// negative-stock guard ของ service ถูก catch → fallback WAC/CostPrice
+    /// (คงพฤติกรรมเดิม ไม่ block การอนุมัติเพิ่ม)</summary>
+    private async Task<decimal> ResolveOutboundUnitCostAsync(Product product, decimal qty)
+    {
+        if (product.CostingMethod == Models.Enums.CostingMethod.Fifo
+            && _inventoryCosting != null && qty > 0)
+        {
+            try
+            {
+                var fifoCost = await _inventoryCosting.ResolveOutboundCostAsync(product.Id, qty);
+                if (fifoCost > 0) return fifoCost;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex,
+                    "FIFO outbound cost fallback for product {Code} qty {Qty} — ใช้ WAC/CostPrice แทน",
+                    product.Code, qty);
+            }
+        }
+        return EffectiveUnitCost(product);
+    }
 
     /// <summary>Perpetual inventory ฝั่งซื้อ: บรรทัดสินค้า TrackStock ที่ user
     /// ไม่ได้เลือกบัญชีเอง default เข้า "สินค้าคงเหลือ" (Product.InventoryAccountId
@@ -6155,7 +6187,7 @@ public class DocumentService : IDocumentService
     /// <summary>รวมต้นทุนขาย (THB) ของบรรทัดสินค้า TrackStock ในเอกสาร —
     /// ใช้ EffectiveUnitCost ให้ตรงกับ UnitCost ที่ stock movement stamp
     /// เพื่อให้ COGS JE กับมูลค่าสต๊อกที่ตัดหักล้างกันพอดี</summary>
-    private async Task<decimal> ComputeSalesCogsAsync(Guid companyId, Document doc)
+    private async Task<decimal> ComputeSalesCogsAsync(Guid companyId, Document doc, bool outbound = true)
     {
         if (doc.Lines == null) return 0m;
         var codes = doc.Lines
@@ -6175,7 +6207,12 @@ public class DocumentService : IDocumentService
         {
             if (string.IsNullOrWhiteSpace(line.ProductCode)) continue;
             if (!products.TryGetValue(line.ProductCode!, out var product)) continue;
-            total += EffectiveUnitCost(product) * line.Quantity;
+            // FIFO/WAC — resolver เดียวกับ movement stamp เพื่อให้ COGS JE
+            // หักล้างมูลค่าสต๊อกพอดี; ขารับคืน (CN Return) เป็น IN → WAC
+            var lineUnitCost = outbound
+                ? await ResolveOutboundUnitCostAsync(product, line.Quantity)
+                : EffectiveUnitCost(product);
+            total += lineUnitCost * line.Quantity;
         }
         return Math.Round(total, 2, MidpointRounding.AwayFromZero);
     }
@@ -6496,7 +6533,7 @@ public class DocumentService : IDocumentService
             if (isCreditNote && !isPurchaseSide
                 && doc.CreditNoteReason == Models.Enums.CreditNoteReason.Return)
             {
-                var cogsBack = await ComputeSalesCogsAsync(companyId, doc);
+                var cogsBack = await ComputeSalesCogsAsync(companyId, doc, outbound: false);
                 if (cogsBack > 0)
                 {
                     var cogsAcc = await FindAccountAsync(companyId, "51110") ?? await FindAccountAsync(companyId, "511");
