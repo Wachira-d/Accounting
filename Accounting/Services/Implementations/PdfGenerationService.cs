@@ -850,8 +850,15 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Document Title — Receipt/ReceiptVoucher ที่มี VAT > 0 ต้องพิมพ์เป็น
         // ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4: ใบเสร็จที่มี VAT = ใบกำกับภาษีในตัว);
         // มัดจำ (IsDeposit) → ต่อท้าย "(เงินมัดจำ)" ให้ลูกค้าทราบ.
-        var title = template.CustomTitle ?? GetDocumentTitle(doc.DocumentType, lang);
-        if (template.CustomTitle == null
+        // "custom title จริง" = ผู้ใช้ตั้งเอง ต่างจากชื่อประเภทมาตรฐาน. เทมเพลต
+        // default (in-memory + seed DB) เติม CustomTitle = ชื่อประเภทเสมอ จึงเช็ค
+        // null อย่างเดียวไม่พอ — ไม่งั้นหัวพิเศษ (Receipt+VAT / combined / ต้นฉบับ)
+        // ไม่ทำงาน. ถือว่าไม่ได้ตั้งเองเมื่อว่าง หรือเท่ากับชื่อประเภทมาตรฐาน.
+        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
+        var hasCustomTitle = !string.IsNullOrWhiteSpace(template.CustomTitle)
+            && template.CustomTitle != defaultTitle;
+        var title = hasCustomTitle ? template.CustomTitle! : defaultTitle;
+        if (!hasCustomTitle
             && (doc.DocumentType == DocumentType.Receipt || doc.DocumentType == DocumentType.ReceiptVoucher)
             && doc.VatAmount > 0)
         {
@@ -860,7 +867,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
         }
         // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม.
-        if (template.CustomTitle == null
+        if (!hasCustomTitle
             && doc.DocumentType == DocumentType.TaxInvoice
             && doc.CombinedInvoiceTaxInvoice)
         {
@@ -874,7 +881,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
         var isCopyPrint = !string.IsNullOrWhiteSpace(watermark)
             && (watermark!.Contains("สำเนา") || watermark.Contains("COPY", StringComparison.OrdinalIgnoreCase));
-        if (isRd864Doc && template.CustomTitle == null && !isCopyPrint)
+        if (isRd864Doc && !hasCustomTitle && !isCopyPrint)
             title += lang == "en" ? " (Original)" : " (ต้นฉบับ)";
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
 

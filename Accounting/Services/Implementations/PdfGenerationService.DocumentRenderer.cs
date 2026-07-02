@@ -42,9 +42,17 @@ public partial class PdfGenerationService
         var stripe = SanitizeHex(template.TableStripedColor) ?? "#F8FAFC";
         var layout = (template.LayoutStyle ?? "Classic").Trim();
         var fontChain = GetFontFamilyChain(b.FontFamily);
-        var titleText = template.CustomTitle ?? GetDocumentTitle(doc.DocumentType, lang);
+        // "custom title จริง" = ผู้ใช้ตั้งเองต่างจากชื่อประเภทมาตรฐาน. เทมเพลต
+        // default (ทั้ง in-memory และที่ seed ลง DB) เติม CustomTitle = ชื่อประเภท
+        // เสมอ จึงเช็ค null อย่างเดียวไม่ได้ (ไม่งั้น logic หัวพิเศษ Receipt+VAT /
+        // combined / "(ต้นฉบับ)" จะไม่ทำงานเลย). ถือว่า "ไม่ได้ตั้งเอง" เมื่อว่าง
+        // หรือเท่ากับชื่อประเภทมาตรฐาน.
+        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
+        var hasCustomTitle = !string.IsNullOrWhiteSpace(template.CustomTitle)
+            && template.CustomTitle != defaultTitle;
+        var titleText = hasCustomTitle ? template.CustomTitle! : defaultTitle;
         // Receipt + VAT > 0 → ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4); IsDeposit → ต่อท้าย "(เงินมัดจำ)"
-        if (template.CustomTitle == null
+        if (!hasCustomTitle
             && (doc.DocumentType == Accounting.Models.Enums.DocumentType.Receipt
                 || doc.DocumentType == Accounting.Models.Enums.DocumentType.ReceiptVoucher)
             && doc.VatAmount > 0)
@@ -53,7 +61,7 @@ public partial class PdfGenerationService
         }
         // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม เพื่อใช้
         // เป็นทั้งใบแจ้งหนี้ (เรียกเก็บ+เครดิตเทอม) และใบกำกับภาษีเต็มรูปในใบเดียว.
-        if (template.CustomTitle == null
+        if (!hasCustomTitle
             && doc.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice
             && doc.CombinedInvoiceTaxInvoice)
         {
@@ -70,7 +78,7 @@ public partial class PdfGenerationService
                     or Accounting.Models.Enums.DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
         var isCopyPrint = !string.IsNullOrWhiteSpace(b.WatermarkText)
             && (b.WatermarkText!.Contains("สำเนา") || b.WatermarkText.Contains("COPY", StringComparison.OrdinalIgnoreCase));
-        if (isRd864Doc && template.CustomTitle == null && !isCopyPrint)
+        if (isRd864Doc && !hasCustomTitle && !isCopyPrint)
             titleText += lang == "en" ? "  (Original)" : "  (ต้นฉบับ)";
 
         try
