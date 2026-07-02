@@ -112,8 +112,9 @@ docType: {
   TaxInvoice: 'ใบกำกับภาษี', DebitNote: 'ใบเพิ่มหนี้', CreditNote: 'ใบลดหนี้',
   DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
   PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
-  PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
-  CertificateInLieu: 'ใบรับรองแทนใบเสร็จ',
+  GoodsReceiptNote: 'ใบรับสินค้า',
+  PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ใบบันทึกค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
+  CertificateInLieu: 'ใบรับรองแทนใบเสร็จรับเงิน',
 },
 accountType: {
   Asset: 'สินทรัพย์', Liability: 'หนี้สิน', Equity: 'ส่วนของเจ้าของ',
@@ -721,7 +722,9 @@ docType: {
   TaxInvoice: 'Tax Invoice', DebitNote: 'Debit Note', CreditNote: 'Credit Note',
   DeliveryNote: 'Delivery Note', BillingNote: 'Billing Note', ReceiptVoucher: 'Receipt Voucher',
   PurchaseRequisition: 'Purchase Requisition', PurchaseOrder: 'Purchase Order',
+  GoodsReceiptNote: 'Goods Receipt Note',
   PurchaseInvoice: 'Purchase Invoice', Expense: 'Expense', PaymentVoucher: 'Payment Voucher',
+  CertificateInLieu: 'Certificate in Lieu of Receipt',
 },
 accountType: {
   Asset: 'Asset', Liability: 'Liability', Equity: 'Equity',

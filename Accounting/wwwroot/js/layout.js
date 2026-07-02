@@ -2127,8 +2127,9 @@ const Layout = {
       TaxInvoice: 'ใบกำกับภาษี', DebitNote: 'ใบเพิ่มหนี้', CreditNote: 'ใบลดหนี้',
       DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
       PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
-      PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
-      CertificateInLieu: 'ใบรับรองแทนใบเสร็จ'
+      GoodsReceiptNote: 'ใบรับสินค้า',
+      PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ใบบันทึกค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
+      CertificateInLieu: 'ใบรับรองแทนใบเสร็จรับเงิน'
     };
     return map[type] || type;
   },

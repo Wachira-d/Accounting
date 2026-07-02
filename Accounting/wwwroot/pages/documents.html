@@ -146,17 +146,19 @@
       <!-- Revenue tabs -->
       <div class="tab tab-revenue" data-type="Invoice" onclick="Page.setType(this)">ใบแจ้งหนี้</div>
       <div class="tab tab-revenue" data-type="TaxInvoice" onclick="Page.setType(this)">ใบกำกับภาษี</div>
-      <div class="tab tab-revenue" data-type="Receipt" onclick="Page.setType(this)">ใบเสร็จ</div>
+      <div class="tab tab-revenue" data-type="Receipt" onclick="Page.setType(this)">ใบเสร็จรับเงิน</div>
       <div class="tab tab-revenue" data-type="Quotation" onclick="Page.setType(this)">ใบเสนอราคา</div>
       <div class="tab tab-revenue" data-type="DeliveryNote" onclick="Page.setType(this)">ใบส่งของ</div>
       <div class="tab tab-revenue" data-type="BillingNote" onclick="Page.setType(this)">ใบวางบิล</div>
       <div class="tab tab-revenue" data-type="CreditNote" onclick="Page.setType(this)">ใบลดหนี้</div>
+      <div class="tab tab-revenue" data-type="DebitNote" onclick="Page.setType(this)">ใบเพิ่มหนี้</div>
       <div class="tab tab-revenue" data-type="ReceiptVoucher" onclick="Page.setType(this)">ใบสำคัญรับ</div>
       <!-- Expense tabs -->
       <div class="tab tab-expense" data-type="PurchaseRequisition" onclick="Page.setType(this)">ใบขอซื้อ</div>
       <div class="tab tab-expense" data-type="PurchaseOrder" onclick="Page.setType(this)">ใบสั่งซื้อ</div>
+      <div class="tab tab-expense" data-type="GoodsReceiptNote" onclick="Page.setType(this)">ใบรับสินค้า</div>
       <div class="tab tab-expense" data-type="PurchaseInvoice" onclick="Page.setType(this)">ใบแจ้งหนี้ซื้อ</div>
-      <div class="tab tab-expense" data-type="Expense" onclick="Page.setType(this)">ค่าใช้จ่าย</div>
+      <div class="tab tab-expense" data-type="Expense" onclick="Page.setType(this)">ใบบันทึกค่าใช้จ่าย</div>
       <div class="tab tab-expense" data-type="PaymentVoucher" onclick="Page.setType(this)">ใบสำคัญจ่าย</div>
       <div class="tab tab-expense" data-type="CertificateInLieu" onclick="Page.setType(this)">ใบรับรองแทนใบเสร็จ</div>
     </div>
@@ -3243,7 +3245,7 @@
         const q = (query || '').trim();
         if (!q) { Layout.toast('พิมพ์ชื่อหรือเลขผู้เสียภาษีก่อน', 'error'); return; }
         // Sales-side docs → customer; purchase-side → supplier.
-        const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
+        const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
         const docType = document.getElementById('fDocType')?.value || '';
         const isSupplier = expenseTypes.has(docType);
         const isTaxId = /^\d{13}$/.test(q);
@@ -3920,7 +3922,7 @@
           // Re-tag the line table for selling-vs-cost defaults on the typeahead.
           const linesTbl = document.getElementById('linesTable');
           if (linesTbl) {
-            const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
+            const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
             linesTbl.dataset.docSide = expenseTypes.has(d.documentType) ? 'expense' : 'revenue';
           }
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
