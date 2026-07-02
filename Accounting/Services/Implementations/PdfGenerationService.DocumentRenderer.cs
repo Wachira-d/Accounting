@@ -51,6 +51,14 @@ public partial class PdfGenerationService
         {
             titleText = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
         }
+        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม เพื่อใช้
+        // เป็นทั้งใบแจ้งหนี้ (เรียกเก็บ+เครดิตเทอม) และใบกำกับภาษีเต็มรูปในใบเดียว.
+        if (template.CustomTitle == null
+            && doc.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice
+            && doc.CombinedInvoiceTaxInvoice)
+        {
+            titleText = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
+        }
         if (doc.IsDeposit)
             titleText += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบกำกับ/ใบเสร็จภาษี. สำเนา

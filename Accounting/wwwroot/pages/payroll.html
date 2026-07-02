@@ -338,6 +338,14 @@
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Page.downloadPayslip()">⬇️ ดาวน์โหลด</button><button class="btn btn-primary" onclick="Page.printPayslip()" data-i18n="common.print">พิมพ์</button></div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="lineBindModal">
+      <div class="modal" style="max-width:440px">
+        <div class="modal-header"><h3 class="modal-title">รหัสผูก LINE รับสลิป</h3><button class="modal-close" onclick="Layout.closeModal('lineBindModal')">&times;</button></div>
+        <div class="modal-body" id="lineBindBody" style="padding:20px"></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('lineBindModal')" data-i18n="common.close">ปิด</button></div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -993,13 +1001,19 @@ const Page = {
           <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary||0)}</td>
           <td>${payCell}</td>
           <td>${payEditable ? `<button class="btn btn-sm btn-secondary" onclick="Page.openEditDetail('${empId}')" title="แก้ยอดรายคน">✏️ แก้ยอด</button>` : ''}</td>
-          <td><button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${empId}')">ดูสลิป</button></td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${empId}')">ดูสลิป</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.sendPayslipLine('${id}','${empId}')" title="ส่งสลิปนี้ให้พนักงานทาง LINE">📤 LINE</button>
+          </td>
         </tr>`;}).join('') : '<tr><td colspan="9" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
         ${payEditable && details.length ? '<div class="text-xs text-gray-400" style="margin-top:6px">💡 เลือกแหล่งจ่ายรายคนได้ — ตอนกด "จ่าย" ระบบจะแยกเครดิตเงินสด/ธนาคารตามบัญชีของแต่ละคน (ว่าง = ใช้บัญชีเริ่มต้นของบริษัท)</div>' : ''}`;
       const jeBtn = r.journalEntryId
         ? `<a class="btn btn-secondary" href="/pages/journals.html?entryId=${r.journalEntryId}" title="ดู JE ที่ลงบัญชีตอนจ่ายเงินเดือน (Dr เงินเดือน / Cr ปกส.+ภงด.1+ธนาคาร)">🧾 ดูรายการบัญชี (JE)</a>`
         : (r.status === 'Paid' ? '' : '<span class="text-xs text-gray-400" style="align-self:center">* JE จะลงเมื่อกด “จ่าย”</span>');
-      document.getElementById('runDetailFooter').innerHTML = `${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      const lineAllBtn = details.length
+        ? `<button class="btn btn-secondary" onclick="Page.sendAllPayslipLine('${id}')" title="ส่งสลิปให้พนักงานทุกคนที่ผูก LINE แล้ว">📤 ส่งสลิปทั้งงวดทาง LINE</button>`
+        : '';
+      document.getElementById('runDetailFooter').innerHTML = `${lineAllBtn}${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       // Comments + activity timeline (#23) — HR ทีมแชร์ note ระหว่าง run
       const commentsHost = document.createElement('div');
       commentsHost.id = `runComments-${id}`;
@@ -1129,6 +1143,54 @@ const Page = {
   printPayslip() {
     try { document.getElementById('payslipFrame').contentWindow.print(); }
     catch { Layout.toast('พิมพ์ไม่ได้ — ลองดาวน์โหลดแล้วเปิดพิมพ์แทน', 'error'); }
+  },
+
+  // ===== ส่งสลิปทาง LINE =====
+  async sendPayslipLine(runId, empId) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.sendPayslipLine(runId, empId);
+      const d = res?.data || res;
+      if (d?.result === 'NotBound') {
+        // ยังไม่ผูก LINE → เสนอสร้างรหัสให้พนักงานผูก
+        if (confirm('พนักงานคนนี้ยังไม่ได้ผูก LINE\nต้องการสร้างรหัสผูก LINE ให้พนักงานตอนนี้เลยไหม?'))
+          await this.showLineBindCode(empId);
+        return;
+      }
+      Layout.toast(d?.message || 'ส่งสลิปทาง LINE แล้ว', d?.result === 'Sent' ? 'success' : 'error');
+    } catch (e) { Layout.toast(e.message || 'ส่งไม่สำเร็จ', 'error'); }
+  },
+
+  async sendAllPayslipLine(runId) {
+    const api = Layout.api(); if (!api) return;
+    if (!confirm('ส่งสลิปให้พนักงานทุกคนที่ผูก LINE แล้วในงวดนี้?')) return;
+    try {
+      const res = await api.sendPayslipLineAll(runId);
+      const d = res?.data || res;
+      Layout.toast(d?.message || 'ส่งสลิปทั้งงวดแล้ว', 'success');
+    } catch (e) { Layout.toast(e.message || 'ส่งไม่สำเร็จ', 'error'); }
+  },
+
+  // สร้าง + แสดงรหัสผูก LINE ให้พนักงาน (self-service: เพิ่มเพื่อน OA → ส่ง "สลิป {รหัส}")
+  async showLineBindCode(empId) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.issueEmployeeLineBindCode(empId);
+      const d = res?.data || res;
+      const addLink = d?.addFriendUrl
+        ? `<div style="margin-top:12px"><a class="btn btn-secondary" href="${d.addFriendUrl}" target="_blank" rel="noopener">➕ เพิ่มเพื่อน LINE OA บริษัท</a></div>`
+        : `<div class="text-xs text-gray-400" style="margin-top:12px">* ยังไม่ได้ตั้งค่า LINE OA ของบริษัท — ให้พนักงานค้นหา/เพิ่มเพื่อน OA เอง แล้วตั้งค่า LINE OA Basic ID ที่หน้าตั้งค่า</div>`;
+      const html = `
+        <div style="text-align:center;padding:8px">
+          <div class="text-sm text-gray-500">ให้พนักงานเพิ่มเพื่อน LINE OA บริษัท แล้วพิมพ์ข้อความ:</div>
+          <div style="font-size:15px;margin:10px 0"><b>สลิป ${d.code}</b></div>
+          <div style="font-size:34px;font-weight:800;letter-spacing:6px;color:#1e40af">${d.code}</div>
+          <div class="text-xs text-gray-400" style="margin-top:8px">รหัสหมดอายุใน ${d.expiresInHours || 24} ชั่วโมง · ใช้ได้ครั้งเดียว</div>
+          ${addLink}
+        </div>`;
+      document.getElementById('lineBindBody').innerHTML = html;
+      Layout.openModal('lineBindModal');
+    } catch (e) { Layout.toast(e.message || 'สร้างรหัสไม่สำเร็จ', 'error'); }
   },
 
   // ===== Leaves =====

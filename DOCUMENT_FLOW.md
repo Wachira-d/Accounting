@@ -891,6 +891,37 @@ PDF ต่อชนิด GetDocumentTitle ถูกต้อง (Invoice→ใ�
 แต่ UI ไม่โชว์) → ตั้งหัวเอกสารเองต่อเทมเพลตได้ (เช่น "ใบแจ้งหนี้/ใบกำกับภาษี").
 เมื่อตั้ง CustomTitle → "(ต้นฉบับ)" auto ไม่ต่อท้าย (ใส่เองในหัวได้)._
 
+_รอบ 44 (ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว — checkbox บนฟอร์ม): เพิ่ม flag ระดับ
+เอกสาร `Document.CombinedInvoiceTaxInvoice` (bool, migration ALTER ADD COLUMN
+IF NOT EXISTS). หน้า create-doc (documents.html) มี checkbox `fCombinedTaxInvoice`
+โผล่เฉพาะฝั่งขาย Invoice/TaxInvoice (คุมโดย onDocTypeChange). ติ๊กแล้ว save →
+frontend บังคับ `documentType='TaxInvoice'` + `combinedInvoiceTaxInvoice=true`
+(ผ่าน `_effectiveDocType`). เอกสารทำงานเป็นใบกำกับภาษีเต็มรูป (post VAT 21911→
+ภพ.30, บังคับ §86/4 ตอน approve, ออก e-Tax T03/T01 ได้ตามปกติ) แต่หัวกระดาษ PDF
+พิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี" (Invoice / Tax Invoice) แทน "ใบกำกับภาษี" — override
+ทั้ง QuestPDF (PdfGenerationService.DocumentRenderer.cs) + HTML path
+(PdfGenerationService.cs) เมื่อ `type==TaxInvoice && CombinedInvoiceTaxInvoice
+&& CustomTitle==null`. ยังคงต่อท้าย "(ต้นฉบับ)"/สำเนา ตามเดิม. เครดิตเทอมดึงจาก
+contact.paymentDueDays → fDueDate + fPaymentTerms อัตโนมัติ (maybePreselectTaxInvoice
+เดิม). Service กันเฉพาะ type=TaxInvoice จริงเท่านั้นถึงรับ flag (กันหัวเพี้ยน).
+DTO: CreateDocumentRequest + DocumentResponse echo flag; hydrate checkbox ตอน edit._
+
+_รอบ 45 (ส่งสลิปเงินเดือนทาง LINE): พนักงานผูก LINE เองผ่าน LINE OA บริษัท —
+HR สร้างรหัส 6 หลัก (`EmployeeLineBindCode`, หมดอายุ 24 ชม.), พนักงานเพิ่มเพื่อน
+OA แล้วส่ง "สลิป {รหัส}" → LineBotService.TryBindFromLineAsync เขียน Employee.LineId
+(= push userId เดียวกับ NotificationEngine). ส่งสลิป: PayslipLineDeliveryService
+สร้าง `PayslipShareToken` (สุ่ม 32 bytes base64url, หมดอายุ 7 วัน, เพิกถอน token
+เก่าของงวด+คนเดียวกัน) แล้ว push flex card **ซ่อนยอดเงิน** (โชว์แค่ชื่อ/งวด + ปุ่ม)
+ผ่าน ILineNotifyService.PushFlexToUserAsync (channel ต่อบริษัท). ปุ่มลิงก์ไป
+`GET /api/public/payslip/{token}` ([AllowAnonymous]) → validate token → reuse
+GeneratePayslipAsync → stream PDF inline + log **PdpaPiiAccessLog** (ม.37(4),
+Operation=Read, SubjectType=Employee) + increment AccessCount. UI payroll.html:
+ปุ่ม "📤 LINE" รายคน + "ส่งสลิปทั้งงวดทาง LINE" + modal รหัสผูก (NotBound →
+เสนอสร้างรหัส). Settings: LINE OA Basic ID (`CompanySettings.LineOaBasicId`)
+ทำลิงก์เพิ่มเพื่อน. Endpoints (HR-authed): POST runs/{r}/employees/{e}/payslip/
+send-line · POST runs/{r}/payslip/send-line-all · POST employees/{e}/line-bind-code
+· GET employees/{e}/line-status._
+
 _Last verified against codebase: 2026-06-26 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

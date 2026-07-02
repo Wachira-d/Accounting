@@ -12,6 +12,8 @@ public class AccountingDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<LineBindCode> LineBindCodes => Set<LineBindCode>();
     public DbSet<LineUserState> LineUserStates => Set<LineUserState>();
+    public DbSet<EmployeeLineBindCode> EmployeeLineBindCodes => Set<EmployeeLineBindCode>();
+    public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
     public DbSet<CompanyInvitation> CompanyInvitations => Set<CompanyInvitation>();

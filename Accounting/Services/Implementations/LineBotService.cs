@@ -23,13 +23,14 @@ public class LineBotService : ILineBotService
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<LineBotService> _logger;
     private readonly IDocumentService _docService;
+    private readonly IPayslipLineDeliveryService _payslipLine;
 
     public LineBotService(AccountingDbContext db, IConfiguration config,
         IHttpClientFactory httpFactory, ILogger<LineBotService> logger,
-        IDocumentService docService)
+        IDocumentService docService, IPayslipLineDeliveryService payslipLine)
     {
         _db = db; _config = config; _httpFactory = httpFactory;
-        _logger = logger; _docService = docService;
+        _logger = logger; _docService = docService; _payslipLine = payslipLine;
     }
 
     public async Task<string> IssueBindCodeAsync(Guid userId)
@@ -67,6 +68,20 @@ public class LineBotService : ILineBotService
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
         var msg = text.Trim();
+
+        // 0) Employee payslip-bind — "สลิป 123456" / "ผูกสลิป 123456" ผูก LINE นี้
+        // กับ "พนักงาน" (ไม่ใช่ผู้ใช้ระบบ) เพื่อรับสลิปเงินเดือน. ต้องเช็คก่อน
+        // user-bind ด้านล่างเพราะ "ผูกสลิป" ก็ขึ้นต้นด้วย "ผูก".
+        if (msg.StartsWith("สลิป", StringComparison.OrdinalIgnoreCase)
+         || msg.StartsWith("ผูกสลิป", StringComparison.OrdinalIgnoreCase)
+         || msg.StartsWith("payslip", StringComparison.OrdinalIgnoreCase))
+        {
+            var slipCode = new string(msg.Where(char.IsDigit).ToArray());
+            if (slipCode.Length != 6)
+                return "กรุณาส่ง: สลิป {รหัส 6 หลัก ที่ได้จากฝ่ายบุคคล}";
+            var reply = await _payslipLine.TryBindFromLineAsync(lineUserId, slipCode);
+            return reply ?? "❌ รหัสรับสลิปไม่ถูกต้องหรือหมดอายุ — กรุณาขอรหัสใหม่จากฝ่ายบุคคล";
+        }
 
         // 1) Bind command — "ผูก 123456" links this LineUserId to a Next Acc account.
         if (msg.StartsWith("ผูก", StringComparison.OrdinalIgnoreCase)

@@ -255,6 +255,12 @@
                    tooltips on <option> are unreliable across browsers
                    (Safari doesn't show them); this hint line is guaranteed. -->
               <div id="docTypeHint" class="hint" style="margin-top:6px;padding:8px 12px;background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;font-size:12px;color:#1e40af;line-height:1.5"></div>
+              <label id="fCombinedTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
+                <input type="checkbox" id="fCombinedTaxInvoice" style="margin-top:3px">
+                <span>ออกเป็น <b>"ใบแจ้งหนี้/ใบกำกับภาษี"</b> ใบเดียว — ทำงานเป็นใบกำกับภาษีเต็มรูป (ลง VAT/ภพ.30 · ออก e-Tax ได้) แต่พิมพ์หัวรวม
+                  <span style="display:block;color:#64748b;font-size:11px">ต้องมีเลขภาษี/สาขา/ที่อยู่ผู้ซื้อครบ (§86/4)</span>
+                </span>
+              </label>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
@@ -2748,6 +2754,18 @@
         const cashShortcutTypes = ['Invoice', 'TaxInvoice'];
         const paidSection = document.getElementById('paidOnIssueSection');
         if (paidSection) paidSection.style.display = cashShortcutTypes.includes(docType) ? '' : 'none';
+        // "ออกเป็นใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" — แสดง checkbox เฉพาะฝั่งขาย
+        // ที่ออกใบกำกับได้ (Invoice/TaxInvoice). ติ๊กแล้ว save จะ force type=
+        // TaxInvoice + combinedInvoiceTaxInvoice=true เพื่อพิมพ์หัวรวม.
+        const combinedRow = document.getElementById('fCombinedTaxRow');
+        if (combinedRow) {
+          const canCombine = docType === 'Invoice' || docType === 'TaxInvoice';
+          combinedRow.style.display = canCombine ? 'flex' : 'none';
+          if (!canCombine) {
+            const cb = document.getElementById('fCombinedTaxInvoice');
+            if (cb) cb.checked = false;
+          }
+        }
         // Tax Point §78/§78/1 — แสดงเฉพาะเอกสารที่กระทบ VAT (ขาย/ซื้อ)
         // Quotation/PR/PO/DN/BillingNote ไม่ตกในงวด VAT จึงไม่ต้องโชว์
         const taxPointSec = document.getElementById('taxPointSection');
@@ -4024,6 +4042,11 @@
           // ทำหลัง onDocTypeChange เพราะมันคุมการแสดง/reset checkbox มัดจำ.
           const fFs = document.getElementById('fIsForeignService');
           if (fFs) fFs.checked = !!d.isForeignService;
+          // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — hydrate checkbox จาก doc.
+          // (doc.documentType เป็น TaxInvoice อยู่แล้ว → combinedRow แสดงจาก
+          // onDocTypeChange; แค่ติ๊กกล่องคืน).
+          const fComb = document.getElementById('fCombinedTaxInvoice');
+          if (fComb) fComb.checked = !!d.combinedInvoiceTaxInvoice;
           const fDep = document.getElementById('fIsDeposit');
           if (fDep) {
             fDep.checked = !!d.isDeposit;
@@ -4214,8 +4237,15 @@
         if (pcVal.startsWith('bank:')) bankAccountId = pcVal.substring(5);
         else if (pcVal.startsWith('account:')) paymentAccountId = pcVal.substring(8);
         const expenseCategoryId = document.getElementById('fExpenseCategory')?.value || null;
+        // "ใบแจ้งหนี้/ใบกำกับภาษี" ใบเดียว — ติ๊ก checkbox บนฟอร์ม (ฝั่งขาย
+        // Invoice/TaxInvoice) → บังคับ type=TaxInvoice ให้ทำงานเป็นใบกำกับ
+        // เต็มรูป (VAT/ภพ.30/§86/4/e-Tax) แล้วส่ง flag ให้ PDF พิมพ์หัวรวม.
+        const _combineTax = (_docType === 'Invoice' || _docType === 'TaxInvoice')
+          && (document.getElementById('fCombinedTaxInvoice')?.checked || false);
+        const _effectiveDocType = _combineTax ? 'TaxInvoice' : _docType;
         const payload = {
-          documentType: document.getElementById('fDocType').value,
+          documentType: _effectiveDocType,
+          combinedInvoiceTaxInvoice: _combineTax,
           documentDate: document.getElementById('fDate').value,
           dueDate: document.getElementById('fDueDate').value || null,
           deliveryDate: document.getElementById('fDeliveryDate')?.value || null,

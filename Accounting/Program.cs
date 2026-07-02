@@ -504,6 +504,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayou
     Accounting.Services.Implementations.Payroll.TipPayoutService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.IDocumentLineDeliveryService,
     Accounting.Services.Implementations.DocumentLineDeliveryService>();
+builder.Services.AddScoped<IPayslipLineDeliveryService, PayslipLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();

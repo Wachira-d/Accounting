@@ -576,6 +576,11 @@ public class DocumentService : IDocumentService
                 ServiceUsedDate = request.ServiceUsedDate,
                 BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim(),
                 InputVatAccountCodeOverride = string.IsNullOrWhiteSpace(request.InputVatAccountCodeOverride) ? null : request.InputVatAccountCodeOverride.Trim(),
+                // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — ยอมรับ flag เฉพาะเมื่อ type เป็น
+                // TaxInvoice จริง (frontend force type=TaxInvoice ตอนติ๊ก) เพื่อกัน
+                // เอกสารประเภทอื่นมาตั้ง flag แล้วหัวกระดาษเพี้ยน.
+                CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice
+                    && request.DocumentType == DocumentType.TaxInvoice,
                 CreatedBy = createdBy
             };
 
@@ -1132,6 +1137,10 @@ public class DocumentService : IDocumentService
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
+        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — รับเฉพาะเมื่อ doc เป็น TaxInvoice.
+        if (request.CombinedInvoiceTaxInvoice.HasValue)
+            doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
+                && doc.DocumentType == DocumentType.TaxInvoice;
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)
@@ -6773,7 +6782,8 @@ public class DocumentService : IDocumentService
         DepositRefundedAt: d.DepositRefundedAt,
         DepositRefundReason: d.DepositRefundReason,
         DepositAppliedToDocumentId: d.DepositAppliedToDocumentId,
-        BookingNumber: d.BookingNumber);
+        BookingNumber: d.BookingNumber,
+        CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

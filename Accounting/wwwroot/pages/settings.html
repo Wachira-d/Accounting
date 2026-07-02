@@ -598,6 +598,11 @@
       </div>
 
       <div class="form-group">
+        <label class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(optional — เช่น @nextacc — ใช้ทำลิงก์เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิปเงินเดือน)</span></label>
+        <input type="text" class="form-input" id="lineOaBasicId" placeholder="@nextacc" />
+      </div>
+
+      <div class="form-group">
         <label class="form-label">📨 ทดสอบส่งข้อความ — LINE User ID / Group ID</label>
         <input type="text" class="form-input" id="lineTestId" placeholder="U... หรือ C... ของผู้รับ" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
@@ -996,6 +1001,7 @@
           const c = j.data || {};
           document.getElementById('lineEnabled').checked = !!c.enabled;
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
+          document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
           document.getElementById('lineToken').value = '';
           document.getElementById('lineSecret').value = '';
           document.getElementById('lineTokenStatus').textContent = c.hasAccessToken
@@ -1018,6 +1024,7 @@
           channelAccessToken: document.getElementById('lineToken').value || null,
           channelSecret: document.getElementById('lineSecret').value || null,
           defaultGroupId: document.getElementById('lineGroupId').value || null,
+          oaBasicId: document.getElementById('lineOaBasicId').value || null,
         };
         try {
           const r = await fetch(`/api/companies/${cid}/line-config`, {

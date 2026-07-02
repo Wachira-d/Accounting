@@ -85,7 +85,11 @@ public record CreateDocumentRequest(
     string? BookingNumber = null,
     // ผัง VAT ปลายทาง override — กรณีไม่เคลม VAT ลงเป็นต้นทุน/ค่าใช้จ่าย
     // (§82/5) เว้นว่าง = default ตาม completeness §86/4 (11610 / 11640)
-    string? InputVatAccountCodeOverride = null);
+    string? InputVatAccountCodeOverride = null,
+    // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — frontend ติ๊ก checkbox ที่หน้าใบแจ้งหนี้
+    // แล้ว force DocumentType=TaxInvoice + flag นี้=true. เอกสารทำงานเป็นใบกำกับ
+    // ภาษีเต็มรูป (VAT/ภ.พ.30/§86/4/e-Tax) แต่หัวกระดาษพิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี".
+    bool CombinedInvoiceTaxInvoice = false);
 
 public record DocumentLineRequest(
     string Description,
@@ -177,7 +181,9 @@ public record UpdateDocumentRequest(
     bool? IsForeignService = null,
     bool? IsDeposit = null,
     string? DepositDeferredAccountCode = null,
-    bool? DepositOutputVatDeferred = null);
+    bool? DepositOutputVatDeferred = null,
+    // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — แก้ได้ตอน Draft เท่านั้น.
+    bool? CombinedInvoiceTaxInvoice = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -460,7 +466,10 @@ public record DocumentResponse(
     DateTime? DepositRefundedAt = null,
     string? DepositRefundReason = null,
     Guid? DepositAppliedToDocumentId = null,
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — echo กลับมาเพื่อ hydrate checkbox
+    // ตอนแก้ไข + ให้ UI ติดป้าย/หัวกระดาษถูก. type ยังเป็น TaxInvoice.
+    bool CombinedInvoiceTaxInvoice = false);
 
 public record ProjectCostBrief(
     Guid ProjectId,

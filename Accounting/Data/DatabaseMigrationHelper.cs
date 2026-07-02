@@ -1170,6 +1170,8 @@ public static class DatabaseMigrationHelper
             """,
             // §82/3: ภาษีซื้อ 11640 พ้น 6 เดือน → reclassify เป็นค่าใช้จ่าย
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InputVatExpiredAt" timestamp with time zone NULL;""",
+            // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CombinedInvoiceTaxInvoice" boolean NOT NULL DEFAULT false;""",
             // User override ผัง VAT ปลายทาง (เช่น "51000" = ลงต้นทุนขายแทน)
             // — ใช้ AccountCode (string) เพื่อ portable, validator แปลงเป็น Id ตอน post
             """
@@ -4249,6 +4251,50 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_PdpaPiiAccessLogs_At" ON "PdpaPiiAccessLogs" ("CompanyId", "At" DESC);""",
             """CREATE INDEX IF NOT EXISTS "IX_PdpaPiiAccessLogs_Subject" ON "PdpaPiiAccessLogs" ("CompanyId", "SubjectType", "SubjectId");""",
+
+            // ===== ส่งสลิปเงินเดือนทาง LINE (self-service bind + secure token) =====
+            // หมายเหตุ: push userId ใช้ Employee.LineId เดิม (NotificationEngine ก็ใช้ตัวนี้)
+            // LINE OA basic id (@xxx) ต่อบริษัท — ทำลิงก์/QR เพิ่มเพื่อนให้พนักงาน
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineOaBasicId" varchar(100) NULL;""",
+            // รหัสผูก LINE ระดับพนักงาน (6 หลัก, หมดอายุ 24 ชม.)
+            """
+            CREATE TABLE IF NOT EXISTS "EmployeeLineBindCodes" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "Code" varchar(6) NOT NULL,
+                "ExpiresAt" timestamp with time zone NOT NULL,
+                "UsedAt" timestamp with time zone NULL,
+                "UsedByLineUserId" varchar(100) NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp with time zone NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_EmployeeLineBindCodes_Code" ON "EmployeeLineBindCodes" ("Code") WHERE "UsedAt" IS NULL;""",
+            // Token เข้าถึงสลิปแบบสาธารณะ (ปุ่มดาวน์โหลดใน LINE)
+            """
+            CREATE TABLE IF NOT EXISTS "PayslipShareTokens" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "PayrollRunId" uuid NOT NULL,
+                "EmployeeId" uuid NOT NULL,
+                "Token" varchar(120) NOT NULL,
+                "ExpiresAt" timestamp with time zone NOT NULL,
+                "RevokedAt" timestamp with time zone NULL,
+                "Channel" varchar(30) NOT NULL DEFAULT 'LINE',
+                "AccessCount" integer NOT NULL DEFAULT 0,
+                "LastAccessedAt" timestamp with time zone NULL,
+                "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp with time zone NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PayslipShareTokens_Token" ON "PayslipShareTokens" ("Token");""",
 
             // Breach incidents (ม.37(4)) — แจ้ง PDPC ภายใน 72 ชม.
             """
