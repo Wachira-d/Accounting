@@ -28,6 +28,13 @@ public static class ThaiDate
     /// กลับมาเป็นวันเดิมเสมอ + format/compare ตรงทุก layer.</summary>
     public static DateTime CalendarDateUtc(DateTime dt)
     {
+        // Era guard — storage ต้องเป็น ค.ศ. เสมอ (ช่วงสมเหตุผล ~1900–2400).
+        // ปีนอกช่วงแปลว่ามีการปน พ.ศ./ค.ศ. หลุดมา: 2569 (พ.ศ. ไม่ถูกแปลง) หรือ
+        // 1483 (ค.ศ. ถูกลบ 543 เกิน) → ปรับกลับให้อยู่ในช่วง ค.ศ. กัน bug
+        // ทุกทาง (create/update/import/OCR/auto-receipt) เขียนปีเพี้ยนลง DB
+        // ซึ่งทำให้ aging/เลขเอกสาร (yyyyMMdd) ผิด ~543 ปี. AddYears กัน Feb29.
+        if (dt.Year > 2400) dt = dt.AddYears(-543);
+        else if (dt.Year < 1900) dt = dt.AddYears(543);
         // ตีความ dt ว่าเป็น instant UTC (Unspecified/Local → treat เป็น UTC
         // เพื่อไม่ double-shift; midnight Unspecified → Bangkok 07:00 = วันเดิม)
         var utc = dt.Kind == DateTimeKind.Utc ? dt : DateTime.SpecifyKind(dt, DateTimeKind.Utc);
