@@ -286,6 +286,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
+   - **sales COGS (perpetual — นโยบายเดียวกับ POS)**: Invoice/TaxInvoice
+     ที่มีบรรทัดสินค้า TrackStock → Dr ต้นทุนขาย (51110/511) /
+     Cr สินค้าคงเหลือ (11500/115) ที่ WAC ปัจจุบัน (`ComputeSalesCogsAsync`
+     — ตรงกับ UnitCost ที่ stock movement stamp); ข้ามเมื่อ `IsDeposit`
+     (ยังไม่ส่งมอบของ) หรือผัง 511/115 ไม่มี (log warning);
+     COGS เป็น THB ไม่ผ่านการแปลง FX. ใบลดหนี้ฝั่งขายแบบ **Reason=Return**
+     กลับ COGS ด้วย: Dr สินค้าคงเหลือ / Cr ต้นทุนขาย
    - purchase: Dr Expense + Dr Input VAT (11610 หรือ **11640** ถ้า §86/4
      ไม่ครบ) / Cr AP
    - cash receipt: Dr Cash/Bank / Cr AR (หรือ Cr 217xx ถ้า `IsDeposit`)

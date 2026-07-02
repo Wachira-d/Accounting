@@ -5972,6 +5972,34 @@ public class DocumentService : IDocumentService
         p.CostingMethod == Models.Enums.CostingMethod.WeightedAverage && p.AverageUnitCost > 0
             ? p.AverageUnitCost : p.CostPrice;
 
+    /// <summary>รวมต้นทุนขาย (THB) ของบรรทัดสินค้า TrackStock ในเอกสาร —
+    /// ใช้ EffectiveUnitCost ให้ตรงกับ UnitCost ที่ stock movement stamp
+    /// เพื่อให้ COGS JE กับมูลค่าสต๊อกที่ตัดหักล้างกันพอดี</summary>
+    private async Task<decimal> ComputeSalesCogsAsync(Guid companyId, Document doc)
+    {
+        if (doc.Lines == null) return 0m;
+        var codes = doc.Lines
+            .Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
+            .Select(l => l.ProductCode!)
+            .Distinct()
+            .ToList();
+        if (codes.Count == 0) return 0m;
+
+        var products = await _db.Products.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && codes.Contains(p.Code)
+                && !p.IsDeleted && p.TrackStock)
+            .ToDictionaryAsync(p => p.Code);
+
+        decimal total = 0m;
+        foreach (var line in doc.Lines)
+        {
+            if (string.IsNullOrWhiteSpace(line.ProductCode)) continue;
+            if (!products.TryGetValue(line.ProductCode!, out var product)) continue;
+            total += EffectiveUnitCost(product) * line.Quantity;
+        }
+        return Math.Round(total, 2, MidpointRounding.AwayFromZero);
+    }
+
     private async Task AutoPostToJournalAsync(Guid companyId, Document doc, string createdBy)
     {
         // Multi-currency: every Baht amount that hits the GL must be converted
@@ -6111,6 +6139,35 @@ public class DocumentService : IDocumentService
                 if (vatAccount != null)
                     AddLine(vatAccount.Id, 0, doc.VatAmount, "ภาษีขาย");
             }
+
+            // COGS perpetual: Dr ต้นทุนขาย / Cr สินค้าคงเหลือ — นโยบายเดียวกับ POS
+            // เพื่อให้กำไรขั้นต้นถูกต้องต่อบิลทุกช่องทาง (เดิมฝั่งใบแจ้งหนี้เป็น
+            // periodic — ไม่ลง COGS ตอนขาย ทำให้ P&L ระหว่างช่องทางไม่สอดคล้อง)
+            // เฉพาะบรรทัดสินค้าที่ TrackStock; มัดจำ (IsDeposit) ยังไม่ส่งมอบของ
+            // → ไม่ลง COGS. ต้นทุน = WAC-aware (EffectiveUnitCost) ตรงกับ
+            // ApplyStockMovementsAsync. ไม่ผ่าน Conv() เพราะต้นทุนเป็น THB อยู่แล้ว
+            if (!doc.IsDeposit)
+            {
+                var cogsTotal = await ComputeSalesCogsAsync(companyId, doc);
+                if (cogsTotal > 0)
+                {
+                    var cogsAcc = await FindAccountAsync(companyId, "51110") ?? await FindAccountAsync(companyId, "511");
+                    var invAcc = await FindAccountAsync(companyId, "11500") ?? await FindAccountAsync(companyId, "115");
+                    if (cogsAcc != null && invAcc != null)
+                    {
+                        pendingLines.Add((cogsAcc.Id, cogsTotal, 0m, $"ต้นทุนขาย - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                        pendingLines.Add((invAcc.Id, 0m, cogsTotal, $"ตัดสินค้าคงเหลือ - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "ไม่พบผังต้นทุนขาย (511xx) หรือสินค้าคงเหลือ (115xx) — ข้ามการลง COGS ของ {DocNo}",
+                            doc.DocumentNumber);
+                    }
+                }
+            }
         }
         // ============================================================
         // ADJUSTMENT NOTES: CreditNote / DebitNote (polymorphic by source)
@@ -6243,6 +6300,28 @@ public class DocumentService : IDocumentService
                         whtIsDebit ? doc.WithholdingTaxAmount : 0,
                         whtIsDebit ? 0 : doc.WithholdingTaxAmount,
                         $"{typeLabel} ภาษีหัก ณ ที่จ่าย");
+                }
+            }
+
+            // === COGS reversal — เฉพาะใบลดหนี้ฝั่งขายแบบ "รับคืนสินค้า" ===
+            // ของกลับเข้าสต๊อกจริง (ApplyStockMovementsAsync IN เมื่อ Reason=Return)
+            // → กลับต้นทุนขายด้วย: Dr สินค้าคงเหลือ / Cr ต้นทุนขาย ที่ WAC ปัจจุบัน
+            // (ค่าเดียวกับที่ movement restock stamp) — คู่กับ COGS perpetual ฝั่งขาย
+            if (isCreditNote && !isPurchaseSide
+                && doc.CreditNoteReason == Models.Enums.CreditNoteReason.Return)
+            {
+                var cogsBack = await ComputeSalesCogsAsync(companyId, doc);
+                if (cogsBack > 0)
+                {
+                    var cogsAcc = await FindAccountAsync(companyId, "51110") ?? await FindAccountAsync(companyId, "511");
+                    var invAcc = await FindAccountAsync(companyId, "11500") ?? await FindAccountAsync(companyId, "115");
+                    if (cogsAcc != null && invAcc != null)
+                    {
+                        pendingLines.Add((invAcc.Id, cogsBack, 0m, $"รับคืนสินค้าเข้าสต๊อก - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                        pendingLines.Add((cogsAcc.Id, 0m, cogsBack, $"กลับต้นทุนขาย (รับคืน) - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
                 }
             }
         }
