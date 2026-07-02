@@ -798,7 +798,11 @@ public record CreatePaymentRequest(
     string? PayerSignatureBase64 = null,
     /// <summary>Optional — display name printed under the payer signature
     /// image. Defaults to CreatedBy user's FullName when null.</summary>
-    string? PayerSignatureName = null);
+    string? PayerSignatureName = null,
+    /// <summary>อัตราแลกเปลี่ยน ณ วันชำระจริง (เฉพาะเอกสารสกุลต่างประเทศ) —
+    /// ต่างจาก rate เอกสาร → ระบบ post กำไร/ขาดทุนจากอัตราแลกเปลี่ยน
+    /// realized อัตโนมัติ (42600/54950). Null = ใช้ rate เอกสารตามเดิม.</summary>
+    decimal? ExchangeRate = null);
 
 public record PaymentAllocationRequest(
     Guid DocumentId,

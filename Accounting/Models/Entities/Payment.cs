@@ -66,6 +66,15 @@ public class Payment : TenantEntity
     /// Document.ProjectId.</summary>
     public Guid? ProjectId { get; set; }
 
+    /// <summary>อัตราแลกเปลี่ยน ณ วันชำระจริง (settlement-day rate) — เฉพาะ
+    /// เอกสารสกุลต่างประเทศ. เมื่อต่างจาก rate ของเอกสาร (วันแจ้งหนี้) ระบบ
+    /// post กำไร/ขาดทุนจากอัตราแลกเปลี่ยนที่เกิดขึ้นจริง (realized FX G/L)
+    /// อัตโนมัติ: เงินสดเข้า-ออกที่ rate นี้, AR/AP ตัดที่ rate เอกสาร,
+    /// ผลต่าง → 42600 (กำไร) / 54950 (ขาดทุน). Null = ใช้ rate เอกสาร
+    /// (พฤติกรรมเดิม — ไม่มี FX diff). เก็บไว้บน row เพื่อให้การ void
+    /// กลับยอดธนาคารด้วย rate เดียวกับตอนบันทึก.</summary>
+    public decimal? ExchangeRate { get; set; }
+
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000
     /// cheque that pays invoice A 5K + B 6K + C 4K). When this list

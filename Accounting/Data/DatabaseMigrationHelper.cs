@@ -4100,6 +4100,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "PayerSignatureBase64" text NULL;""",
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "PayerSignatureName" varchar(200) NULL;""",
 
+            // ===== Payments: settlement-day FX rate (realized FX gain/loss) =====
+            // rate ณ วันชำระจริงของเอกสารสกุลต่างประเทศ — ต่างจาก rate เอกสาร →
+            // post กำไร/ขาดทุนอัตราแลกเปลี่ยนที่เกิดขึ้นจริง (42600/54950)
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NULL;""",
+
             // ===== Contact: credit limit (วงเงินเครดิต) =====
             // null = ไม่จำกัด (เดิม). ใช้ดู AR เทียบเตือนตอนสร้าง Invoice ใหม่.
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "CreditLimit" numeric(18,2) NULL;""",

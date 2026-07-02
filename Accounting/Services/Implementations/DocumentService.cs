@@ -3466,9 +3466,12 @@ public class DocumentService : IDocumentService
         if (payment.BankAccountId.HasValue)
         {
             var isInflow = await IsCashInflowDocAsync(companyId, doc);
-            var thbAmount = doc.ExchangeRate == 1m
+            // ใช้ rate เดียวกับตอนบันทึกรับ/จ่าย (settlement rate ถ้ามี) —
+            // มิฉะนั้นยอดธนาคารกลับไม่เท่าที่บวกไว้
+            var reverseFx = payment.ExchangeRate ?? doc.ExchangeRate;
+            var thbAmount = reverseFx == 1m
                 ? payment.Amount
-                : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+                : Math.Round(payment.Amount * reverseFx, 2, MidpointRounding.AwayFromZero);
             var delta = isInflow ? -thbAmount : thbAmount;
             await _db.BankAccounts
                 .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
@@ -4582,6 +4585,26 @@ public class DocumentService : IDocumentService
         DocumentType.PurchaseInvoice, DocumentType.Expense,
     };
 
+    /// <summary>ผังกำไร/ขาดทุนจากอัตราแลกเปลี่ยน — รองรับทั้ง 2 convention
+    /// ที่มีในระบบ (template ใหม่ 42600/54950, FxRevaluationService เดิม
+    /// 4901/5901) + fallback ค้นตามชื่อ + ข้ามฝั่ง (contra) เป็นทางเลือกสุดท้าย</summary>
+    private async Task<ChartOfAccount?> ResolveFxGainLossAccountAsync(Guid companyId, bool isGain)
+    {
+        if (isGain)
+            return await FindAccountAsync(companyId, "42600")
+                ?? await FindAccountAsync(companyId, "4901")
+                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.IsActive && !a.IsDeleted && a.AccountName.Contains("กำไรจากอัตราแลกเปลี่ยน"))
+                ?? await FindAccountAsync(companyId, "54950")
+                ?? await FindAccountAsync(companyId, "5901");
+        return await FindAccountAsync(companyId, "54950")
+            ?? await FindAccountAsync(companyId, "5901")
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId
+                && a.IsActive && !a.IsDeleted && a.AccountName.Contains("ขาดทุนจากอัตราแลกเปลี่ยน"))
+            ?? await FindAccountAsync(companyId, "42600")
+            ?? await FindAccountAsync(companyId, "4901");
+    }
+
     /// <summary>เงินของการชำระเอกสารนี้ "เข้า" (ลูกค้าจ่ายเรา) หรือ "ออก"
     /// (เราจ่าย vendor) — DebitNote ต้องดูฝั่งจากเอกสารต้นทาง: ฝั่งซื้อ
     /// (source = PI/Expense/CIL) คือเงินออก ไม่ใช่เงินเข้า</summary>
@@ -4612,6 +4635,9 @@ public class DocumentService : IDocumentService
         // Validate PaymentDate is not in the future
         if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
             throw new InvalidOperationException("วันที่ชำระเงินต้องไม่เป็นวันที่ในอนาคต");
+
+        if (request.ExchangeRate is <= 0)
+            throw new InvalidOperationException("อัตราแลกเปลี่ยน ณ วันชำระต้องมากกว่า 0");
 
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
@@ -4759,6 +4785,8 @@ public class DocumentService : IDocumentService
                 // so a buggy caller can't inflate a Payment row.
                 PayerSignatureBase64 = TrimSignature(request.PayerSignatureBase64),
                 PayerSignatureName = request.PayerSignatureName,
+                // rate วันชำระ — เก็บเฉพาะเอกสาร FX (THB rate=1 ไม่มีความหมาย)
+                ExchangeRate = doc.ExchangeRate != 1m ? request.ExchangeRate : null,
                 CreatedBy = createdBy
             };
 
@@ -4791,9 +4819,10 @@ public class DocumentService : IDocumentService
             if (payment.BankAccountId.HasValue)
             {
                 var isInflow = await IsCashInflowDocAsync(companyId, doc);
-                var thbAmount = doc.ExchangeRate == 1m
+                var bankFx = payment.ExchangeRate ?? doc.ExchangeRate;
+                var thbAmount = bankFx == 1m
                     ? payment.Amount
-                    : Math.Round(payment.Amount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+                    : Math.Round(payment.Amount * bankFx, 2, MidpointRounding.AwayFromZero);
                 var delta = isInflow ? thbAmount : -thbAmount;
                 await _db.BankAccounts
                     .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
@@ -4891,6 +4920,8 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException("Allocations ต้องมีอย่างน้อย 1 รายการ");
         if (request.Amount <= 0)
             throw new InvalidOperationException("จำนวนเงินชำระต้องมากกว่า 0");
+        if (request.ExchangeRate is <= 0)
+            throw new InvalidOperationException("อัตราแลกเปลี่ยน ณ วันชำระต้องมากกว่า 0");
         if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
             throw new InvalidOperationException("วันที่ชำระเงินต้องไม่เป็นวันที่ในอนาคต");
 
@@ -4976,6 +5007,7 @@ public class DocumentService : IDocumentService
                     Notes = request.Notes,
                     PayerSignatureBase64 = TrimSignature(request.PayerSignatureBase64),
                     PayerSignatureName = request.PayerSignatureName,
+                    ExchangeRate = request.ExchangeRate,
                     CreatedBy = createdBy,
                 };
                 _db.Payments.Add(payment);
@@ -5060,14 +5092,16 @@ public class DocumentService : IDocumentService
                         WithholdingTaxAmount = whtSlice,
                         ProjectId = payment.ProjectId,
                         Notes = payment.Notes,
+                        ExchangeRate = request.ExchangeRate,
                         CreatedBy = createdBy,
                     };
                     await CreatePaymentJournalAsync(companyId, d, virtualPayment, createdBy);
                     // สะสมเงินสด THB ที่ลง GL จริง (แปลงตาม rate ของแต่ละเอกสาร
                     // — สอดคล้องกับ CreatePaymentJournalAsync ที่แปลงต่อเอกสาร)
-                    thbCashMoved += d.ExchangeRate == 1m
+                    var allocFx = request.ExchangeRate ?? d.ExchangeRate;
+                    thbCashMoved += allocFx == 1m
                         ? alloc.AllocatedAmount
-                        : Math.Round(alloc.AllocatedAmount * d.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+                        : Math.Round(alloc.AllocatedAmount * allocFx, 2, MidpointRounding.AwayFromZero);
                 }
 
                 payment.WithholdingTaxAmount = totalWht;
@@ -5082,9 +5116,10 @@ public class DocumentService : IDocumentService
                 var unapplied = request.Amount - allocSum;
                 if (unapplied > 0.005m)
                 {
-                    var thbUnapplied = firstDoc.ExchangeRate == 1m
+                    var unappliedFx = request.ExchangeRate ?? firstDoc.ExchangeRate;
+                    var thbUnapplied = unappliedFx == 1m
                         ? unapplied
-                        : Math.Round(unapplied * firstDoc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+                        : Math.Round(unapplied * unappliedFx, 2, MidpointRounding.AwayFromZero);
                     var cashAcc = await ResolvePaymentCashAccountAsync(companyId, payment);
                     var suspenseAcc = isInflowDoc
                         ? (await FindAccountAsync(companyId, "21710") ?? await FindAccountAsync(companyId, "217"))
@@ -6674,14 +6709,16 @@ public class DocumentService : IDocumentService
             // แบบ standalone: Dr เงินสด / Cr รายได้ + VAT — มิฉะนั้นจะ Cr ลูกหนี้
             // ที่ไม่เคยถูก Dr (AR ติดลบ) และรายได้ไม่ถูกบันทึกเลย
             var receiptSettlesAr = false;
+            var srcFx = doc.ExchangeRate;   // rate ของเอกสารต้นทาง (AR ตั้งที่ rate นี้)
             if (doc.RelatedDocumentId.HasValue)
             {
-                var recSrcType = await _db.Documents.AsNoTracking()
+                var recSrc = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                    .Select(d => (DocumentType?)d.DocumentType)
+                    .Select(d => new { d.DocumentType, d.ExchangeRate })
                     .FirstOrDefaultAsync();
-                receiptSettlesAr = recSrcType is DocumentType.Invoice
+                receiptSettlesAr = recSrc?.DocumentType is DocumentType.Invoice
                     or DocumentType.TaxInvoice or DocumentType.DebitNote;
+                if (recSrc != null) srcFx = recSrc.ExchangeRate;
             }
 
             if (receiptSettlesAr)
@@ -6692,37 +6729,65 @@ public class DocumentService : IDocumentService
                 // balance. Pull the WHT amount from the source so we always
                 // match what was actually withheld, not whatever the operator
                 // typed on the Receipt.
+                //
+                // FX cross-rate: เงินสดรับที่ rate วันรับ (Conv ของใบเสร็จ) แต่
+                // AR/WHT ตัดที่ rate ของเอกสารต้นทาง (มูลค่าที่ตั้งไว้ใน GL) —
+                // ผลต่าง → กำไร/ขาดทุนอัตราแลกเปลี่ยน realized (bypass Conv
+                // สำหรับบรรทัด AR/WHT/FX โดย add ตรงเข้า pendingLines)
+                decimal SrcThb(decimal amt) => srcFx == 1m ? amt
+                    : Math.Round(amt * srcFx, 2, MidpointRounding.AwayFromZero);
                 var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
+                var cashThb = Conv(doc.TotalAmount);
+                decimal arThb, whtThb = 0m;
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
-                    // For partial / installment receipts, use the WHT
-                    // recorded on THIS receipt — not the source's full WHT.
-                    // The operator entered the per-installment WHT on the
-                    // receipt's own lines so cumulative across receipts
-                    // matches the source's total.
                     var thisWht = doc.WithholdingTaxAmount;
-                    // Cash actually received = doc.TotalAmount (net of THIS receipt's WHT).
                     if (moneyAccount != null)
-                        AddLine(moneyAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
+                        pendingLines.Add((moneyAccount.Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
+                    lineProjects.Add(doc.ProjectId);
                     if (thisWht > 0)
                     {
                         var whtAccount = await FindAccountAsync(companyId, "11910");
                         if (whtAccount != null)
-                            AddLine(whtAccount.Id, thisWht, 0, "ภาษีหัก ณ ที่จ่าย (ลูกค้าหัก)");
+                        {
+                            whtThb = SrcThb(thisWht);
+                            pendingLines.Add((whtAccount.Id, whtThb, 0m, "ภาษีหัก ณ ที่จ่าย (ลูกค้าหัก)"));
+                            lineProjects.Add(doc.ProjectId);
+                        }
                     }
+                    arThb = SrcThb(doc.TotalAmount + thisWht);
                     if (arAccount != null)
-                        AddLine(arAccount.Id, 0, doc.TotalAmount + thisWht,
-                            $"ตัดลูกหนี้ - {doc.DocumentNumber}");
+                    {
+                        pendingLines.Add((arAccount.Id, 0m, arThb, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
                 }
                 else
                 {
                     // Accrual: AR was already net of WHT at Invoice time, so
                     // Receipt just moves the net cash from AR to Cash.
                     if (moneyAccount != null)
-                        AddLine(moneyAccount.Id, doc.TotalAmount, 0, $"รับชำระ - {doc.DocumentNumber}");
+                        pendingLines.Add((moneyAccount.Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
+                    lineProjects.Add(doc.ProjectId);
+                    arThb = SrcThb(doc.TotalAmount);
                     if (arAccount != null)
-                        AddLine(arAccount.Id, 0, doc.TotalAmount,
-                            $"ตัดลูกหนี้ - {doc.DocumentNumber}");
+                    {
+                        pendingLines.Add((arAccount.Id, 0m, arThb, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
+                }
+                // Realized FX: Dr รวม (cash+wht) เทียบ Cr AR ที่ rate ต้นทาง
+                var recFxDiff = cashThb + whtThb - arThb;
+                if (recFxDiff != 0m && srcFx != doc.ExchangeRate)
+                {
+                    var fxAcc = await ResolveFxGainLossAccountAsync(companyId, isGain: recFxDiff > 0);
+                    if (fxAcc != null)
+                    {
+                        pendingLines.Add(recFxDiff > 0
+                            ? (fxAcc.Id, 0m, recFxDiff, $"กำไรจากอัตราแลกเปลี่ยน (realized) - {doc.DocumentNumber}")
+                            : (fxAcc.Id, -recFxDiff, 0m, $"ขาดทุนจากอัตราแลกเปลี่ยน (realized) - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
                 }
             }
             else
@@ -6798,11 +6863,20 @@ public class DocumentService : IDocumentService
                 // a PurchaseInvoice booked เจ้าหนี้การค้า (21210). Resolve by
                 // the source doc's type so the liability nets to zero on the
                 // right account.
-                var sourceType = await _db.Documents.AsNoTracking()
+                //
+                // FX cross-rate: AP ตัดที่ rate ของเอกสารต้นทาง เงินสดจ่ายที่
+                // rate ของ PV (วันจ่ายจริง) — ผลต่าง → FX realized G/L
+                var pvSrc = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                    .Select(d => (DocumentType?)d.DocumentType)
-                    .FirstOrDefaultAsync() ?? DocumentType.PurchaseInvoice;
+                    .Select(d => new { d.DocumentType, d.ExchangeRate })
+                    .FirstOrDefaultAsync();
+                var sourceType = pvSrc?.DocumentType ?? DocumentType.PurchaseInvoice;
+                var pvSrcFx = pvSrc?.ExchangeRate ?? doc.ExchangeRate;
+                decimal PvSrcThb(decimal amt) => pvSrcFx == 1m ? amt
+                    : Math.Round(amt * pvSrcFx, 2, MidpointRounding.AwayFromZero);
                 var apAccount = await ResolvePayableAccountAsync(companyId, sourceType, doc.Contact);
+                var pvCashThb = Conv(doc.TotalAmount);
+                decimal apThb, pvWhtThb = 0m;
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     // Cash basis: PI booked AP at GROSS, skipped the WHT
@@ -6811,29 +6885,58 @@ public class DocumentService : IDocumentService
                     // THIS voucher's WHT (per-installment) so cumulative
                     // matches the source PI's total over multiple PVs.
                     var thisWht = doc.WithholdingTaxAmount;
+                    apThb = PvSrcThb(doc.TotalAmount + thisWht);
                     if (apAccount != null)
-                        AddLine(apAccount.Id, doc.TotalAmount + thisWht, 0,
-                            $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
+                    {
+                        pendingLines.Add((apAccount.Id, apThb, 0m, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
                     if (moneyAccount != null)
-                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
-                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
+                    {
+                        pendingLines.Add((moneyAccount.Id, 0m, pvCashThb,
+                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
                     if (thisWht > 0)
                     {
                         var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                         if (whtAccount != null)
-                            AddLine(whtAccount.Id, 0, thisWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
+                        {
+                            pvWhtThb = PvSrcThb(thisWht);
+                            pendingLines.Add((whtAccount.Id, 0m, pvWhtThb, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)"));
+                            lineProjects.Add(doc.ProjectId);
+                        }
                     }
                 }
                 else
                 {
                     // Accrual: AP at PI was already net of WHT, so PV just
                     // moves net cash from AP to Cash/Bank.
+                    apThb = PvSrcThb(doc.TotalAmount);
                     if (apAccount != null)
-                        AddLine(apAccount.Id, doc.TotalAmount, 0,
-                            $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
+                    {
+                        pendingLines.Add((apAccount.Id, apThb, 0m, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
                     if (moneyAccount != null)
-                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
-                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}");
+                    {
+                        pendingLines.Add((moneyAccount.Id, 0m, pvCashThb,
+                            $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
+                }
+                // Realized FX ฝั่งจ่าย: จ่าย THB มากกว่า AP ที่ตั้ง = ขาดทุน (Dr)
+                var pvFxDiff = pvCashThb + pvWhtThb - apThb;
+                if (pvFxDiff != 0m && pvSrcFx != doc.ExchangeRate)
+                {
+                    var fxAcc = await ResolveFxGainLossAccountAsync(companyId, isGain: pvFxDiff < 0);
+                    if (fxAcc != null)
+                    {
+                        pendingLines.Add(pvFxDiff > 0
+                            ? (fxAcc.Id, pvFxDiff, 0m, $"ขาดทุนจากอัตราแลกเปลี่ยน (realized) - {doc.DocumentNumber}")
+                            : (fxAcc.Id, 0m, -pvFxDiff, $"กำไรจากอัตราแลกเปลี่ยน (realized) - {doc.DocumentNumber}"));
+                        lineProjects.Add(doc.ProjectId);
+                    }
                 }
             }
             else
@@ -7195,19 +7298,24 @@ public class DocumentService : IDocumentService
         var whtBasis = whtSettings?.WhtRecognitionBasis ?? Models.Enums.WhtRecognitionBasis.Cash;
 
         var pendingLines = new List<(Guid AccountId, decimal Debit, decimal Credit, string? Description)>();
-        // Convert payment to THB (base) at the document's captured FX rate.
-        // Note: this uses the doc rate, not a settlement-day rate, so FX gain/loss
-        // on settlement isn't booked yet (separate feature when needed).
+        // FX: AR/AP ตัดที่ rate เอกสาร (มูลค่าที่ตั้งไว้ใน GL) ส่วนเงินสดเข้า-ออก
+        // ที่ rate วันชำระจริง (payment.ExchangeRate ถ้ามี) — ผลต่าง = กำไร/
+        // ขาดทุนจากอัตราแลกเปลี่ยนที่เกิดขึ้นจริง (realized) → 42600 / 54950
         var fx = doc.ExchangeRate;
+        var settleFx = payment.ExchangeRate ?? fx;
         var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
+        var thbCash = settleFx == fx ? thbAmount
+            : Math.Round(payment.Amount * settleFx, 2, MidpointRounding.AwayFromZero);
         var thbWht = fx == 1m ? payment.WithholdingTaxAmount
             : Math.Round(payment.WithholdingTaxAmount * fx, 2, MidpointRounding.AwayFromZero);
         var postPerPaymentWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash && thbWht > 0m;
+        // ผลต่าง FX ของงวดนี้ (คิดเฉพาะส่วนเงินสด — WHT ตัดที่ rate เอกสารทั้งคู่)
+        var fxDiff = thbCash - thbAmount;   // >0 = ได้ THB มากขึ้น
 
         if (isRevenue)
         {
-            // Cash actually received this installment.
-            pendingLines.Add((cashAccount.Id, thbAmount, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            // Cash actually received this installment (rate วันรับเงินจริง).
+            pendingLines.Add((cashAccount.Id, thbCash, 0, $"รับชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
             // Cash basis: book the WHT-Asset slice now so the GL AR clears
             // at gross (cash + WHT).
             if (postPerPaymentWht)
@@ -7222,6 +7330,18 @@ public class DocumentService : IDocumentService
                 var arClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
                 pendingLines.Add((arAccount.Id, 0, arClear, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
             }
+            // Realized FX: รับเงินได้ THB มากกว่าที่ AR ตั้งไว้ = กำไร (Cr),
+            // น้อยกว่า = ขาดทุน (Dr)
+            if (fxDiff != 0m)
+            {
+                var fxAcc = await ResolveFxGainLossAccountAsync(companyId, isGain: fxDiff > 0);
+                if (fxAcc == null)
+                    throw new InvalidOperationException(
+                        "ไม่พบบัญชีกำไร/ขาดทุนจากอัตราแลกเปลี่ยน (42600/54950) — กรุณาเพิ่มในผังก่อนบันทึกชำระต่างสกุลด้วย rate วันชำระ");
+                pendingLines.Add(fxDiff > 0
+                    ? (fxAcc.Id, 0m, fxDiff, $"กำไรจากอัตราแลกเปลี่ยน (realized) - {payment.PaymentNumber}")
+                    : (fxAcc.Id, -fxDiff, 0m, $"ขาดทุนจากอัตราแลกเปลี่ยน (realized) - {payment.PaymentNumber}"));
+            }
         }
         else
         {
@@ -7233,13 +7353,25 @@ public class DocumentService : IDocumentService
                 var apClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
                 pendingLines.Add((apAccount.Id, apClear, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
             }
-            pendingLines.Add((cashAccount.Id, 0, thbAmount, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            pendingLines.Add((cashAccount.Id, 0, thbCash, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
             // Cash basis: Cr WHT-Payable for this installment's withholding.
             if (postPerPaymentWht)
             {
                 var whtAccount = await ResolveWhtPayableAccountAsync(companyId, doc.Contact);
                 if (whtAccount != null)
                     pendingLines.Add((whtAccount.Id, 0, thbWht, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
+            }
+            // Realized FX ฝั่งจ่าย: จ่าย THB มากกว่าที่ AP ตั้งไว้ = ขาดทุน (Dr),
+            // น้อยกว่า = กำไร (Cr)
+            if (fxDiff != 0m)
+            {
+                var fxAcc = await ResolveFxGainLossAccountAsync(companyId, isGain: fxDiff < 0);
+                if (fxAcc == null)
+                    throw new InvalidOperationException(
+                        "ไม่พบบัญชีกำไร/ขาดทุนจากอัตราแลกเปลี่ยน (42600/54950) — กรุณาเพิ่มในผังก่อนบันทึกชำระต่างสกุลด้วย rate วันชำระ");
+                pendingLines.Add(fxDiff > 0
+                    ? (fxAcc.Id, fxDiff, 0m, $"ขาดทุนจากอัตราแลกเปลี่ยน (realized) - {payment.PaymentNumber}")
+                    : (fxAcc.Id, 0m, -fxDiff, $"กำไรจากอัตราแลกเปลี่ยน (realized) - {payment.PaymentNumber}"));
             }
         }
 

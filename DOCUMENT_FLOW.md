@@ -401,6 +401,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - คำนวณ `BalanceDue = TotalAmount − TotalPaid`
 - → `PartiallyPaid` หรือ `Paid` อัตโนมัติ
 - post JE: Dr Cash/Bank / Cr AR (sales) หรือ Dr AP / Cr Cash/Bank (purchase)
+- **FX realized gain/loss**: เอกสารสกุลต่างประเทศใส่ `ExchangeRate` (rate วัน
+  ชำระ) บน payment ได้ — เงินสดเข้า-ออกที่ rate วันชำระ, AR/AP ตัดที่ rate
+  เอกสาร, ผลต่าง → 42600 กำไร / 54950 ขาดทุน (`ResolveFxGainLossAccountAsync`
+  รองรับ 42600/4901 + 54950/5901 + ค้นชื่อ); เก็บ rate บน `Payments.ExchangeRate`
+  เพื่อให้ void กลับยอดธนาคารด้วย rate เดิม; settlement Receipt/PV ข้ามใบที่
+  rate ต่างกัน (ใบเสร็จ rate วันรับ vs invoice rate วันแจ้ง) ก็ post FX diff
+  เช่นกัน; สิ้นงวด unrealized ใช้ `FxRevaluationService.PostAsync` (มีอยู่แล้ว)
 - WHT cert auto-issue (`WithholdingTaxCertService` — ถ้ามี WHT บนใบ)
 
 ### 3.5 Void / Cancel
