@@ -683,15 +683,21 @@ public class ProductService : IProductService
 
             if (inventoryAccount != null && cogsSummaryAccount != null)
             {
-                // Find previous snapshot to calculate COGS adjustment
-                var previousSnapshot = await _db.InventorySnapshots
-                    .Where(s => s.CompanyId == companyId && s.Status == "Finalized"
-                        && s.SnapshotDate < request.SnapshotDate)
-                    .OrderByDescending(s => s.SnapshotDate)
-                    .FirstOrDefaultAsync();
-
-                var previousValue = previousSnapshot?.TotalValue ?? 0;
-                var adjustmentAmount = stockReport.TotalValue - previousValue;
+                // ฐานเปรียบเทียบ = ยอดคงเหลือตามบัญชี (GL 115x) ณ วัน snapshot
+                // — ถูกทั้งสองโหมด:
+                //   • periodic เดิม: GL 115 ขยับเฉพาะจาก snapshot ก่อนหน้า →
+                //     delta = เดิม (มูลค่า snapshot ก่อนหน้า)
+                //   • perpetual (ซื้อ Dr 115 / ขาย Cr 115 ทุกบิล): GL วิ่งตามจริง
+                //     → delta = ผลต่างตรวจนับ (ของหาย/เกิน) เท่านั้น
+                // เดิมเทียบกับ snapshot ก่อนหน้าอย่างเดียว ซึ่งเมื่อเปิด perpetual
+                // COGS จะทำให้ JE ปรับปรุงนับมูลค่าซ้ำกับที่ GL บันทึกไปแล้ว
+                var glInventoryBalance = await _db.JournalEntryLines
+                    .Where(l => l.JournalEntry.CompanyId == companyId
+                        && l.JournalEntry.Status == JournalEntryStatus.Posted
+                        && l.JournalEntry.EntryDate <= request.SnapshotDate
+                        && l.Account.AccountCode.StartsWith("115"))
+                    .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
+                var adjustmentAmount = stockReport.TotalValue - glInventoryBalance;
 
                 if (adjustmentAmount != 0)
                 {

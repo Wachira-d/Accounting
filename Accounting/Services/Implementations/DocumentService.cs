@@ -5860,16 +5860,21 @@ public class DocumentService : IDocumentService
         // เป็น no-op
         if (sign < 0)
         {
-            var nets = await _db.StockMovements.AsNoTracking()
+            // ดึง row ดิบแล้ว group ใน memory — GroupBy + First() projection
+            // EF Core แปลเป็น SQL ไม่ได้ (movement ต่อเอกสารมีน้อย ไม่หนัก)
+            var rows = await _db.StockMovements.AsNoTracking()
                 .Where(m => m.CompanyId == companyId && m.DocumentId == doc.Id)
-                .GroupBy(m => m.ProductId)
+                .Select(m => new { m.ProductId, m.Quantity, m.UnitCost, m.MovementDate })
+                .ToListAsync();
+            var nets = rows
+                .GroupBy(r => r.ProductId)
                 .Select(g => new
                 {
                     ProductId = g.Key,
                     NetQty = g.Sum(x => x.Quantity),
-                    OrigCost = g.OrderBy(x => x.MovementDate).Select(x => x.UnitCost).First(),
+                    OrigCost = g.OrderBy(x => x.MovementDate).First().UnitCost,
                 })
-                .ToListAsync();
+                .ToList();
             foreach (var n in nets)
             {
                 if (n.NetQty == 0) continue;
