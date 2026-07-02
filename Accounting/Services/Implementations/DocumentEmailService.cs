@@ -35,6 +35,18 @@ public class DocumentEmailService : IDocumentEmailService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new InvalidOperationException("Document not found");
 
+        // ห้ามส่งเอกสารที่ยังไม่อนุมัติออกไปหาลูกค้า — เลขเอกสารจริง (§86/4 gap-free)
+        // ออกตอน Approve เท่านั้น; ฉบับร่างใช้เลข DRAFT-{guid} ซึ่งเป็นใบกำกับที่
+        // ใช้ไม่ได้ตามกฎหมาย. กันทุกทาง (create-flow, ปุ่มส่งซ้ำ, integration).
+        if (doc.Status is Models.Enums.DocumentStatus.Draft
+            or Models.Enums.DocumentStatus.WaitingApproval
+            or Models.Enums.DocumentStatus.Rejected)
+            throw new InvalidOperationException(
+                "กรุณาอนุมัติเอกสารก่อนส่งอีเมล — ระบบออกเลขเอกสารจริงตอนอนุมัติ " +
+                "(เลข DRAFT ห้ามส่งให้ลูกค้า/สรรพากร ตาม §86/4)");
+        if (doc.Status is Models.Enums.DocumentStatus.Voided)
+            throw new InvalidOperationException("เอกสารถูกยกเลิกแล้ว ไม่สามารถส่งอีเมลได้");
+
         var settings = await GetOrCreateSettings(companyId);
         var template = BuildDefaultTemplate(doc, settings, isEtaxByEmail: false);
 
