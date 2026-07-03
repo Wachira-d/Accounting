@@ -294,6 +294,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **เลขเอกสารยังเป็น `DRAFT-{guid}`** (ไม่ออกเลขจริง กัน gap §86/4)
 
 ### 3.2 Approve (Draft/WaitingApproval → Approved) — **ขั้นสำคัญที่สุด**
+
+> **ทางเข้า approve มี 3 ทาง — ทุกทางวิ่งเข้า `ApproveDocumentAsync` เดียวกัน:**
+> ① ปุ่มอนุมัติ/บันทึกและอนุมัติ (ตรง) ② กฎอนุมัติตามวงเงิน (ApprovalService
+> gate — กฎ match แล้วปุ่มตรงถูกล็อคจน workflow ผ่าน) ③ ส่งเซ็นอนุมัติ
+> (SignatureApprovalService — เซ็นครบทุกคน → เรียก ApproveDocumentAsync
+> ให้อัตโนมัติ; **เดิมตั้ง Status ตรง ๆ ข้าม JE/สต๊อกทั้งหมด — แก้แล้ว**)
+> RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว
+> (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง)
 **`DocumentService.ApproveDocumentAsync` (`:1512`)** ทำตามลำดับ:
 
 1. **Permission + workflow gate** (`:1638`) — ตรวจ ApprovalWorkflow

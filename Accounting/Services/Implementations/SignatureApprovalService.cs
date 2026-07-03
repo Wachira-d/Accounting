@@ -380,12 +380,16 @@ public class SignatureApprovalService : ISignatureApprovalService
             IpAddress = ipAddress
         });
 
-        // Update document — promote Draft placeholder to real running number now.
-        if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
-            doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-                _db, doc.CompanyId, doc.DocumentType, doc.DocumentDate);
-        doc.Status = DocumentStatus.Approved;
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync();   // เก็บลายเซ็น/approval row ก่อน
+
+        // อนุมัติผ่าน "pipeline เต็ม" ของ DocumentService — ห้ามตั้ง Status ตรง ๆ
+        // (เดิมข้าม JE/สต๊อก/tax point/§86-4/§65ตรี ทั้งหมด → เอกสารการเงิน
+        // ที่อนุมัติผ่านลายเซ็น "หายจากบัญชี" ทั้งใบ). acknowledgeWarnings=true
+        // เพราะผ่านการเซ็นหลายคนแล้ว = ระดับการยืนยันสูงกว่า warning dialog;
+        // hard block (§86/4 ไม่ครบ ฯลฯ) ยัง throw ตามปกติ.
+        var approved = await _docService.ApproveDocumentAsync(
+            companyId, documentId, $"external:{request.ApproverName}", acknowledgeWarnings: true);
+        doc = await _db.Documents.FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 
         // Auto-convert if requested
@@ -453,12 +457,10 @@ public class SignatureApprovalService : ISignatureApprovalService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
         if (doc == null) return;
 
-        // Promote Draft placeholder to real running number on approval.
-        if (doc.DocumentNumber.StartsWith("DRAFT-", StringComparison.Ordinal))
-            doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-                _db, doc.CompanyId, doc.DocumentType, doc.DocumentDate);
-        doc.Status = DocumentStatus.Approved;
-        await _db.SaveChangesAsync();
+        // อนุมัติผ่าน pipeline เต็ม (JE + สต๊อก + tax point + ออกเลข + validation)
+        // — เดิมตั้ง Status ตรง ๆ ทำให้เอกสารข้ามการลงบัญชีทั้งหมด
+        await _docService.ApproveDocumentAsync(companyId, documentId, userId, acknowledgeWarnings: true);
+        doc = await _db.Documents.FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 
         // Notify on full approval — best-effort.

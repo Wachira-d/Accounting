@@ -1903,21 +1903,29 @@ public class DocumentService : IDocumentService
                     "เปิด setting 'บังคับ §86/4 ครบทุก field' ไว้ → ต้องเติมก่อนอนุมัติ");
         }
 
-        // Enforce CompanySettings.RequireApprovalForDocuments: when the
-        // approval rail is on and the document's amount crosses the threshold,
-        // refuse direct approve and force the multi-step SignatureApproval
-        // flow. SignatureApprovalService finalises documents by setting
-        // doc.Status = Approved directly (it doesn't re-enter this method),
-        // so the workflow path is not impacted.
+        // Enforce CompanySettings.RequireApprovalForDocuments: เกินวงเงิน →
+        // ห้ามอนุมัติตรง ต้องผ่าน flow ลายเซ็นหลายขั้นก่อน. เมื่อลายเซ็นครบ
+        // SignatureApprovalService จะเรียกกลับเข้า method นี้ (pipeline เต็ม:
+        // JE/สต๊อก/ออกเลข) — จึงยกเว้น block ให้เอกสารที่ "เซ็นครบทุกคนแล้ว"
+        // มิฉะนั้น flow ที่ setting นี้บังคับใช้เองจะโดน block ตัวเอง (deadlock).
         var settings = await _db.CompanySettings.AsNoTracking()
             .FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (settings is { RequireApprovalForDocuments: true })
         {
             var threshold = settings.ApprovalThresholdAmount ?? 0m;
             if (doc.TotalAmount >= threshold)
-                throw new InvalidOperationException(
-                    $"เอกสารยอด {doc.TotalAmount:N2} บาท เกินวงเงินอนุมัติอัตโนมัติ ({threshold:N2}) — " +
-                    "กรุณาส่งเข้ากระบวนการอนุมัติหลายชั้นก่อน (เมนู Approval)");
+            {
+                var sigRows = await _db.Set<DocumentApproval>().AsNoTracking()
+                    .Where(a => a.DocumentId == documentId && !a.IsDeleted)
+                    .Select(a => a.Status)
+                    .ToListAsync();
+                var fullySigned = sigRows.Count > 0 && sigRows.All(s => s == ApprovalStatus.Approved);
+                if (!fullySigned)
+                    throw new InvalidOperationException(
+                        $"เอกสารยอด {doc.TotalAmount:N2} บาท เกินวงเงินอนุมัติตรง ({threshold:N2}) — " +
+                        "ส่งเข้ากระบวนการเซ็นอนุมัติหลายขั้นก่อน: เปิดเอกสาร → \"ส่งขออนุมัติ\" " +
+                        "(ตั้งผู้เซ็นในเมนู ตั้งค่า & ผู้ใช้ → ลายเซ็นและอนุมัติ)");
+            }
         }
 
         // ===== SoD (Segregation of Duties): maker ≠ checker =====
