@@ -4918,6 +4918,23 @@
               this._showApprovalWarnings(id, e.body.data.warnings, e.body.data.aiHints, () => tryApprove(true));
               return;
             }
+            // เอกสารเข้ากฎอนุมัติหลายขั้น (workflow gate) → เดิมเป็นทางตัน
+            // (error เฉย ๆ ไม่มีปุ่มไปต่อ) — เสนอส่งเข้าคิวขออนุมัติทันที
+            const msg = e.message || '';
+            if (msg.includes('workflow') || msg.includes('ต้องผ่าน multi-level')
+                || msg.includes('ผ่านการอนุมัติ')) {
+              if (confirm('เอกสารนี้เข้ากฎอนุมัติหลายขั้น (ตามวงเงิน/ประเภท)\n\nส่งเข้าคิวขออนุมัติเลยหรือไม่? ผู้อนุมัติตามกฎจะได้รับแจ้งเตือน')) {
+                try {
+                  await api.submitForApproval('Document', id);
+                  Layout.closeModal('detailModal');
+                  Layout.toast('ส่งขออนุมัติแล้ว — ติดตามสถานะได้ที่เมนู "กฎอนุมัติตามวงเงิน (Workflow)"', 'success', 7000);
+                  await this.load();
+                } catch (se) {
+                  Layout.toast('ส่งขออนุมัติไม่สำเร็จ: ' + se.message, 'error');
+                }
+              }
+              return;
+            }
             Layout.toast(e.message, 'error');
           }
         };
