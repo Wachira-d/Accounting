@@ -407,6 +407,10 @@
               <label class="form-label" data-help="ใช้เมื่อต้องการให้รายงานแยกตามโครงการ/งาน เช่น 'รีโนเวทห้องประชุม' ระบบจะสรุปรายรับ-รายจ่ายต่อโครงการให้อัตโนมัติ">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
               <select class="form-select" id="fProject"><option value="">— ไม่ระบุโครงการ —</option></select>
             </div>
+            <div class="form-group">
+              <label class="form-label" data-help="Cost center: สาขา/แผนก (หน่วยงานถาวร — วัดต้นทุนตามโครงสร้างองค์กร) ต่างจากโครงการที่เป็นงานชั่วคราวมีจบ · ไหลลงบัญชีอัตโนมัติ → ดูกำไร-ขาดทุนต่อสาขา/แผนกได้ที่เมนู สาขา & มิติ">สาขา / แผนก (Cost Center)</label>
+              <select class="form-select" id="fDimension"><option value="">— ไม่ระบุ —</option></select>
+            </div>
             <div class="form-group"><label class="form-label" data-help="หมายเลขอ้างอิงภายในหรือเลข PO ของลูกค้า — แสดงบนเอกสารที่พิมพ์" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
@@ -3309,6 +3313,17 @@
           `<option value="${p.id}">${this.escapeHtml(p.code)} — ${this.escapeHtml(p.name)}</option>`
         ).join('');
         // Form selector (create/edit)
+        // Cost center dropdown — โหลดคู่กับโครงการ (cache ไว้เหมือนกัน)
+        try {
+          const dimSel = document.getElementById('fDimension');
+          if (dimSel && dimSel.options.length <= 1) {
+            const dres = await Layout.api().getDimensions();
+            const dims = dres?.data?.items || dres?.data || [];
+            dimSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' +
+              dims.filter(d => d.isActive !== false).map(d =>
+                `<option value="${d.id}">${Layout.esc(d.code ? d.code + ' - ' : '')}${Layout.esc(d.name)}</option>`).join('');
+          }
+        } catch { /* ไม่มีสิทธิ์/ฟีเจอร์ปิด — ปล่อยว่าง */ }
         const fSel = document.getElementById('fProject');
         if (fSel) fSel.innerHTML = '<option value="">— ไม่ระบุโครงการ —</option>' + optionsHtml;
         // Toolbar filter
@@ -3880,6 +3895,7 @@
         const _att = document.getElementById('fAttachments'); if (_att) _att.value = '';
         const _attPv = document.getElementById('fAttachmentsPreview'); if (_attPv) _attPv.innerHTML = '';
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
+        const fd = document.getElementById('fDimension'); if (fd) fd.value = '';
         // Clear CertificateInLieu fields
         if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = '';
         if (document.getElementById('fCertifierName')) document.getElementById('fCertifierName').value = '';
@@ -3972,6 +3988,8 @@
           document.getElementById('fCustomTerms').value = d.customTermsAndConditions || '';
           const fp = document.getElementById('fProject');
           if (fp) fp.value = d.projectId || '';
+          const fd = document.getElementById('fDimension');
+          if (fd) fd.value = d.dimensionId || '';
           // แหล่งเงิน + หมวดค่าใช้จ่าย — hydrate ผ่าน helper ที่ bulletproof
           // (เพิ่ม option ถ้าหาย + mark userTouched กัน async suggest ทับ)
           this._hydratePaymentAndCategory(d);
@@ -4262,6 +4280,7 @@
           }
         }
         const projectId = document.getElementById('fProject')?.value || null;
+        const dimensionId = document.getElementById('fDimension')?.value || null;
         const pcVal = document.getElementById('fPaymentChannel')?.value || '';
         let bankAccountId = null, paymentAccountId = null;
         if (pcVal.startsWith('bank:')) bankAccountId = pcVal.substring(5);
@@ -4289,6 +4308,7 @@
           customFooterNotes: document.getElementById('fCustomFooterNotes').value || null,
           customTermsAndConditions: document.getElementById('fCustomTerms').value || null,
           projectId,
+          dimensionId,
           bankAccountId,
           paymentAccountId,
           expenseCategoryId,

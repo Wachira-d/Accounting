@@ -532,6 +532,7 @@ public class DocumentService : IDocumentService
                 Notes = request.Notes,
                 Sensitivity = request.Sensitivity,
                 ProjectId = request.ProjectId,
+                DimensionId = request.DimensionId,
                 BankAccountId = request.BankAccountId,
                 PaymentAccountId = request.PaymentAccountId,
                 ExpenseCategoryId = request.ExpenseCategoryId,
@@ -1164,6 +1165,8 @@ public class DocumentService : IDocumentService
             if (!projectOk)
                 throw new InvalidOperationException("ไม่พบโครงการในบริษัทนี้");
             doc.ProjectId = request.ProjectId.Value;
+        if (request.DimensionId.HasValue)
+            doc.DimensionId = request.DimensionId.Value == Guid.Empty ? null : request.DimensionId.Value;
         }
 
         if (request.BankAccountId.HasValue)
@@ -7349,7 +7352,10 @@ public class DocumentService : IDocumentService
             // Header-level Project: enables filtering JE lookups by project even on
             // system-generated lines that inherit. ProjectAccountingService queries
             // (l.ProjectId == projectId || l.JournalEntry.ProjectId == projectId).
-            ProjectId = doc.ProjectId
+            ProjectId = doc.ProjectId,
+            // Cost center / มิติ — ไหลจากเอกสารลง JE ให้รายงาน P&L ต่อสาขา/แผนก
+            // มีข้อมูลจากเอกสารซื้อ-ขายจริง (เดิมได้เฉพาะ manual JE)
+            DimensionId = doc.DimensionId
         };
 
         _db.JournalEntries.Add(entry);
@@ -7622,7 +7628,8 @@ public class DocumentService : IDocumentService
             // invoice (advance on Project A → final on Project B) lands
             // in the right P&L. Falls back to doc.ProjectId when no
             // override.
-            ProjectId = payment.ProjectId ?? doc.ProjectId
+            ProjectId = payment.ProjectId ?? doc.ProjectId,
+            DimensionId = doc.DimensionId
         };
 
         _db.JournalEntries.Add(entry);
@@ -7679,6 +7686,7 @@ public class DocumentService : IDocumentService
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,
         ProjectId: d.ProjectId,
+        DimensionId: d.DimensionId,
         ProjectCode: d.Project?.Code,
         ProjectName: d.Project?.Name,
         BankAccountId: d.BankAccountId,

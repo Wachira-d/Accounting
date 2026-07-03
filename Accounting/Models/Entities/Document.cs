@@ -197,6 +197,12 @@ public class Document : TenantEntity
     public Guid? ProjectId { get; set; }
     public Project? Project { get; set; }
 
+    /// <summary>Cost center / สาขา / แผนก (AccountingDimension) — ต่างจาก
+    /// Project: มิติเป็นหน่วยงาน "ถาวร" ตามโครงสร้างองค์กร (วัดต้นทุนต่อสาขา/
+    /// แผนกต่อเนื่อง) ส่วน Project เป็น "งานชั่วคราว" มีจบ (วัดกำไรต่องาน).
+    /// ไหลลง JournalEntry.DimensionId ตอน auto-post → รายงาน P&L ต่อมิติ.</summary>
+    public Guid? DimensionId { get; set; }
+
     // Bank account link — which bank account money flows in/out of.
     // Used for reconciliation and auto-posting to correct GL bank account.
     public Guid? BankAccountId { get; set; }

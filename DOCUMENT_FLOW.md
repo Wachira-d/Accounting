@@ -324,6 +324,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    excess clamp ที่ใบปัจจุบันรับผิดชอบ. §82/5(6) vehicle warning bypass
    เมื่อ `CompanySettings.IsVehicleDealer=true`.
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
+   - **Header JE สืบทอด `ProjectId` + `DimensionId` จากเอกสาร** — โครงการ
+     (งานชั่วคราว วัดกำไรต่องาน) และ cost center/มิติ (สาขา/แผนกถาวร วัด
+     ต้นทุนตามโครงสร้าง) เป็นคนละแกน เลือกได้อิสระทั้งคู่ในฟอร์มสร้างเอกสาร
+     → รายงาน P&L ต่อมิติ (`getDimensionPnl`) มีข้อมูลจากเอกสารซื้อ-ขายจริง
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
    - **sales COGS (perpetual — นโยบายเดียวกับ POS)**: Invoice/TaxInvoice

@@ -4280,6 +4280,9 @@ public static class DatabaseMigrationHelper
             // ===== Landed cost — ต้นทุนแฝงการซื้อ/นำเข้า เกลี่ยเข้าต้นทุนสินค้า =====
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IsLandedCost" boolean NOT NULL DEFAULT false;""",
 
+            // ===== Cost center / มิติ บนเอกสาร → ไหลลง JE (รายงาน P&L ต่อสาขา/แผนก) =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DimensionId" uuid NULL;""",
+
             // ===== Quotation online accept (ลิงก์ลูกค้ากดยอมรับใบเสนอราคา) =====
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptToken" varchar(80) NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptTokenExpiresAt" timestamptz NULL;""",
