@@ -154,8 +154,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     เพิ่มแล้ว (เคยสร้าง expense ซ้ำเมื่อ retry)
   - **Resync update** (`ResyncUpdate=true` บน inbound invoice/expense):
     เจอ ExternalRef เดิม → แทน idempotent skip ระบบ "แก้เอกสาร + ปรับ JE"
-    ถูกหลักบัญชี: กลับ JE เดิมทั้งชุด (reversal คู่, ลิงก์ Original/ReversedBy
-    — ไม่ลบของเดิม) → rebuild lines/ยอด → post JE ใหม่ — เลขเอกสารคงเดิม.
+    สองโหมดตามสถานะงวด (contract ระบบต้นทางเช่น TakeTime):
+    • **งวดเปิด + JE เดิมใบเดียว → in-place**: แก้ JE ใบเดิม (เลข JE คงเดิม
+      แทนที่บรรทัดทั้งชุด อัปเดต totals/วันที่) — audit ผ่าน Notes + sync log
+    • **งวดปิด / มีหลาย JE → reversal**: กลับ JE เดิมทั้งชุด (คู่ Dr↔Cr,
+      ลิงก์ Original/ReversedBy) + post JE ใหม่
+    เลขเอกสารคงเดิมทั้งสองโหมด; response message ระบุโหมดชัด
+    ("(in-place)" / "(reversal)") ให้ระบบต้นทางแสดงผลถูก.
     Guard: มีการชำระแล้ว / มี CN-DN ลูก / เดือนภาษียื่น ภ.พ.30 หรือ filing-lock
     แล้ว → คืน error ชัดเจน (ให้ void+ส่งใหม่ หรือออก CN แทน); sync log
     Status="Updated"
