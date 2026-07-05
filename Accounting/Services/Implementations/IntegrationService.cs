@@ -1698,6 +1698,13 @@ public class IntegrationService : IIntegrationService
             _db.JournalEntryLines.Add(l);
         }
         original.EntryDate = NormalizeDate(document.DocumentDate);
+        // วันที่ใหม่อาจข้ามเดือน — งวดต้องตามไปด้วย (ทั้งสองงวดถูกยืนยันว่า
+        // เปิดอยู่แล้วก่อนเข้าโหมด in-place)
+        var newPeriod = await _db.FiscalPeriods.AsNoTracking().FirstOrDefaultAsync(f =>
+            f.CompanyId == companyId
+            && f.StartDate <= original.EntryDate && f.EndDate >= original.EntryDate
+            && f.Status == FiscalPeriodStatus.Open);
+        original.FiscalPeriodId = newPeriod?.Id;
         original.TotalDebit = newLines.Sum(l => l.DebitAmount);
         original.TotalCredit = newLines.Sum(l => l.CreditAmount);
         original.Description = $"Auto: {document.DocumentNumber} (แก้ไขจาก resync)";
@@ -1982,7 +1989,7 @@ public class IntegrationService : IIntegrationService
         Guid companyId, Guid integrationId, Document existing,
         InboundInvoiceRequest request, IntegrationSyncLog log, Stopwatch sw)
     {
-        var guardError = await ResyncGuardAsync(companyId, existing);
+        var guardError = await ResyncGuardAsync(companyId, existing, NormalizeDate(request.DocumentDate));
         if (guardError != null)
         {
             log.Status = "Failed";
@@ -2052,7 +2059,7 @@ public class IntegrationService : IIntegrationService
         Guid companyId, Guid integrationId, Document existing,
         InboundExpenseRequest request, IntegrationSyncLog log, Stopwatch sw)
     {
-        var guardError = await ResyncGuardAsync(companyId, existing);
+        var guardError = await ResyncGuardAsync(companyId, existing, NormalizeDate(request.DocumentDate));
         if (guardError != null)
         {
             log.Status = "Failed";
@@ -2116,8 +2123,10 @@ public class IntegrationService : IIntegrationService
     }
 
     /// <summary>Resync guard — ตรวจว่าเอกสาร sync เดิมแก้ได้ไหม (ยังไม่แตะ JE).
+    /// ตรวจทั้ง "เดือนภาษีเดิม" (หนังสือเดิมจะถูกแก้/กลับ) และ "เดือนของวันที่
+    /// ใหม่" (JE ใหม่จะลงที่นั่น) — เดือนใดยื่น ภ.พ.30/ล็อกแล้ว = ปฏิเสธ.
     /// คืน error message เมื่อไม่ผ่าน (null = ผ่าน).</summary>
-    private async Task<string?> ResyncGuardAsync(Guid companyId, Document doc)
+    private async Task<string?> ResyncGuardAsync(Guid companyId, Document doc, DateTime newDocDate)
     {
         // 1) มีการชำระแล้ว → ยอดใหม่จะชนกับ settlement ที่เกิดไปแล้ว
         if (doc.PaidAmount > 0.005m)
@@ -2140,6 +2149,18 @@ public class IntegrationService : IIntegrationService
         if (vatFiled)
             return $"เดือนภาษี {taxDate:MM/yyyy} ของเอกสาร {doc.DocumentNumber} ยื่น ภ.พ.30 แล้ว — " +
                    "resync แก้ไม่ได้ ให้ปรับปรุงผ่านใบลดหนี้/เพิ่มหนี้ของเดือนปัจจุบัน";
+
+        // 3b) เดือนของ "วันที่ใหม่" ก็ต้องยังไม่ยื่น — JE ที่แก้/post ใหม่จะลงเดือนนั้น
+        if (newDocDate.Year != taxDate.Year || newDocDate.Month != taxDate.Month)
+        {
+            var newMonthFiled = await _db.TaxReports.AsNoTracking().AnyAsync(r =>
+                r.CompanyId == companyId && !r.IsDeleted && r.TaxType == TaxType.VAT
+                && r.Year == newDocDate.Year && r.Month == newDocDate.Month
+                && (r.Status != TaxReportStatus.Draft || r.FilingLockedAt != null));
+            if (newMonthFiled)
+                return $"วันที่ใหม่ {newDocDate:dd/MM/yyyy} ตกในเดือนภาษีที่ยื่น ภ.พ.30 แล้ว — " +
+                       "resync แก้ไม่ได้ ให้ใช้วันที่ในเดือนที่ยังไม่ยื่น หรือออกใบลดหนี้/เพิ่มหนี้แทน";
+        }
 
         return null;
     }
