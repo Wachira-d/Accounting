@@ -491,6 +491,10 @@ public class IntegrationService : IIntegrationService
                         && d.DocumentType == DocumentType.TaxInvoice);
                 if (existing != null && existing.Status != DocumentStatus.Voided)
                 {
+                    // ── Resync update: partner ส่งข้อมูลแก้ไขมาพร้อม flag ──
+                    if (request.ResyncUpdate)
+                        return await ResyncUpdateInvoiceAsync(companyId, integrationId, existing, request, log, sw);
+
                     log.Status = "Skipped";
                     log.CreatedDocumentId = existing.Id;
                     log.ErrorMessage = "Document already exists (idempotent skip)";
@@ -1925,6 +1929,176 @@ public class IntegrationService : IIntegrationService
         return je.Id;
     }
 
+    /// <summary>Resync update ใบแจ้งหนี้/ใบกำกับจากระบบภายนอก — เลขเอกสารคงเดิม
+    /// แต่กลับ JE เดิม + สร้างบรรทัด/ยอดใหม่ + post JE ใหม่ (audit trail ครบ).</summary>
+    private async Task<InboundSyncResponse> ResyncUpdateInvoiceAsync(
+        Guid companyId, Guid integrationId, Document existing,
+        InboundInvoiceRequest request, IntegrationSyncLog log, Stopwatch sw)
+    {
+        var guardError = await TryResyncReverseAsync(companyId, existing);
+        if (guardError != null)
+        {
+            log.Status = "Failed";
+            log.ErrorMessage = guardError;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+            return new InboundSyncResponse(false, guardError, existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+        }
+
+        // ลบบรรทัดเดิม → สร้างใหม่จากข้อมูล resync (helper เดียวกับตอน create)
+        var oldLines = await _db.DocumentLines.Where(l => l.DocumentId == existing.Id).ToListAsync();
+        _db.DocumentLines.RemoveRange(oldLines);
+        var vatRate = request.VatRate ?? 7m;
+        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+        foreach (var l in newLines) { l.DocumentId = existing.Id; _db.DocumentLines.Add(l); }
+
+        var subTotal = newLines.Sum(l => l.Amount);
+        var totalVat = newLines.Sum(l => l.VatAmount);
+        existing.DocumentDate = NormalizeDate(request.DocumentDate);
+        existing.DueDate = NormalizeDate(request.DueDate ?? request.DocumentDate.AddDays(30));
+        existing.SubTotal = subTotal;
+        existing.VatAmount = totalVat;
+        existing.TotalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
+        existing.BalanceDue = existing.TotalAmount;   // PaidAmount == 0 (guard ผ่านแล้ว)
+        existing.Notes = (existing.Notes ?? "")
+            + $"\n[Resync แก้ไขจากระบบภายนอก] {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC — JE เดิมถูกกลับรายการและ post ใหม่";
+        await _db.SaveChangesAsync();
+
+        // post JE ใหม่จากยอดปัจจุบัน (path เดียวกับตอน create)
+        var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, existing, "invoice");
+
+        log.Status = "Updated";
+        log.CreatedDocumentId = existing.Id;
+        log.CreatedJournalEntryId = journalEntryId;
+        log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+        await SaveSyncLog(log, integrationId);
+        _logger.LogInformation("Resync-updated invoice {DocNo} (company {Cid}) — JE reversed + reposted",
+            existing.DocumentNumber, companyId);
+        return new InboundSyncResponse(true, "Resync updated — JE ปรับแล้ว", existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
+    }
+
+    /// <summary>Resync update ค่าใช้จ่ายจากระบบภายนอก — semantics เดียวกับ invoice.</summary>
+    private async Task<InboundSyncResponse> ResyncUpdateExpenseAsync(
+        Guid companyId, Guid integrationId, Document existing,
+        InboundExpenseRequest request, IntegrationSyncLog log, Stopwatch sw)
+    {
+        var guardError = await TryResyncReverseAsync(companyId, existing);
+        if (guardError != null)
+        {
+            log.Status = "Failed";
+            log.ErrorMessage = guardError;
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+            return new InboundSyncResponse(false, guardError, existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+        }
+
+        var oldLines = await _db.DocumentLines.Where(l => l.DocumentId == existing.Id).ToListAsync();
+        _db.DocumentLines.RemoveRange(oldLines);
+        var vatRate = request.VatRate ?? 7m;
+        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate);
+        foreach (var l in newLines) { l.DocumentId = existing.Id; _db.DocumentLines.Add(l); }
+
+        var subTotal = newLines.Sum(l => l.Amount);
+        var totalVat = newLines.Sum(l => l.VatAmount);
+        var totalWht = newLines.Sum(l => l.WithholdingTaxAmount);
+        existing.DocumentDate = NormalizeDate(request.DocumentDate);
+        existing.DueDate = NormalizeDate(request.DueDate ?? request.DocumentDate.AddDays(30));
+        existing.SubTotal = subTotal;
+        existing.VatAmount = totalVat;
+        existing.WithholdingTaxAmount = totalWht;
+        existing.TotalAmount = (request.IncludeVat ? subTotal : subTotal + totalVat) - totalWht;
+        existing.BalanceDue = existing.TotalAmount;
+        existing.Notes = (existing.Notes ?? "")
+            + $"\n[Resync แก้ไขจากระบบภายนอก] {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC — JE เดิมถูกกลับรายการและ post ใหม่";
+        await _db.SaveChangesAsync();
+
+        var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, existing, "expense");
+
+        log.Status = "Updated";
+        log.CreatedDocumentId = existing.Id;
+        log.CreatedJournalEntryId = journalEntryId;
+        log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+        await SaveSyncLog(log, integrationId);
+        _logger.LogInformation("Resync-updated expense {DocNo} (company {Cid}) — JE reversed + reposted",
+            existing.DocumentNumber, companyId);
+        return new InboundSyncResponse(true, "Resync updated — JE ปรับแล้ว", existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
+    }
+
+    /// <summary>Resync update guard + JE correction (ถูกหลักบัญชี):
+    /// ตรวจว่าเอกสาร sync เดิมแก้ได้ไหม แล้ว "กลับ JE เดิมทั้งชุด" (reversal
+    /// คู่ Dr↔Cr, ลิงก์ OriginalEntryId/ReversedByEntryId — ไม่ลบของเดิม
+    /// เพื่อ audit trail) เตรียมพร้อมสำหรับ post JE ใหม่จากข้อมูล resync.
+    /// คืน error message เมื่อไม่ผ่านเงื่อนไข (null = ผ่าน + reverse แล้ว).</summary>
+    private async Task<string?> TryResyncReverseAsync(Guid companyId, Document doc)
+    {
+        // 1) มีการชำระแล้ว → ยอดใหม่จะชนกับ settlement ที่เกิดไปแล้ว
+        if (doc.PaidAmount > 0.005m)
+            return $"เอกสาร {doc.DocumentNumber} มีการรับ/จ่ายชำระแล้ว ({doc.PaidAmount:N2}) — " +
+                   "resync แก้ไม่ได้ ให้ void แล้วส่งใหม่ หรือออกใบลดหนี้/เพิ่มหนี้ปรับยอดแทน";
+
+        // 2) มี CN/DN อ้างถึง → การแก้ต้นทางทำ cap/ยอดอ้างอิงเพี้ยน
+        var hasChildren = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == doc.Id && !d.IsDeleted
+            && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
+        if (hasChildren)
+            return $"เอกสาร {doc.DocumentNumber} มีใบลดหนี้/ใบเพิ่มหนี้/เอกสารลูกอ้างถึง — resync แก้ไม่ได้";
+
+        // 3) เดือนภาษีของเอกสารยื่น ภ.พ.30 ไปแล้ว/ล็อก → ห้ามแก้ย้อน (RD compliance)
+        var taxDate = (doc.TaxPointDate ?? doc.DocumentDate);
+        var vatFiled = await _db.TaxReports.AsNoTracking().AnyAsync(r =>
+            r.CompanyId == companyId && !r.IsDeleted && r.TaxType == TaxType.VAT
+            && r.Year == taxDate.Year && r.Month == taxDate.Month
+            && (r.Status != TaxReportStatus.Draft || r.FilingLockedAt != null));
+        if (vatFiled)
+            return $"เดือนภาษี {taxDate:MM/yyyy} ของเอกสาร {doc.DocumentNumber} ยื่น ภ.พ.30 แล้ว — " +
+                   "resync แก้ไม่ได้ ให้ปรับปรุงผ่านใบลดหนี้/เพิ่มหนี้ของเดือนปัจจุบัน";
+
+        // 4) กลับ JE forward เดิมทั้งชุด (ที่ยังไม่เคยถูกกลับ)
+        var originals = await _db.JournalEntries
+            .Include(j => j.Lines)
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == doc.Id
+                && j.Status == JournalEntryStatus.Posted
+                && j.OriginalEntryId == null && j.ReversedByEntryId == null)
+            .ToListAsync();
+        foreach (var original in originals)
+        {
+            var reversal = new JournalEntry
+            {
+                CompanyId = companyId,
+                EntryNumber = await GetNextJournalNumberAsync(companyId, "RV"),
+                EntryDate = DateTime.UtcNow.Date,
+                JournalType = original.JournalType,
+                Description = $"กลับรายการ (resync แก้ไขจากระบบภายนอก) - {doc.DocumentNumber}",
+                Reference = original.Reference,
+                Status = JournalEntryStatus.Posted,
+                IsAutoGenerated = true,
+                SourceDocumentId = doc.Id,
+                OriginalEntryId = original.Id,
+                TotalDebit = original.TotalCredit,
+                TotalCredit = original.TotalDebit,
+                CreatedBy = "integration-resync",
+            };
+            _db.JournalEntries.Add(reversal);
+            var order = 1;
+            foreach (var line in original.Lines.OrderBy(l => l.LineOrder))
+            {
+                _db.JournalEntryLines.Add(new JournalEntryLine
+                {
+                    JournalEntryId = reversal.Id,
+                    AccountId = line.AccountId,
+                    DebitAmount = line.CreditAmount,
+                    CreditAmount = line.DebitAmount,
+                    Description = $"กลับรายการ - {line.Description}",
+                    LineOrder = order++,
+                    ProjectId = line.ProjectId,
+                    DimensionId = line.DimensionId,
+                });
+            }
+            original.ReversedByEntryId = reversal.Id;
+        }
+        return null;
+    }
+
     private IntegrationSyncLog CreateSyncLog(Guid companyId, Guid integrationId, string eventType, string? externalId, string? externalRef)
     {
         return new IntegrationSyncLog
@@ -2155,6 +2329,9 @@ public class IntegrationService : IIntegrationService
                     && d.DocumentType == DocumentType.Expense);
                 if (existing != null && existing.Status != DocumentStatus.Voided)
                 {
+                    if (request.ResyncUpdate)
+                        return await ResyncUpdateExpenseAsync(companyId, integrationId, existing, request, log, sw);
+
                     log.Status = "Skipped";
                     log.CreatedDocumentId = existing.Id;
                     log.ErrorMessage = "Document already exists (idempotent skip)";

@@ -98,7 +98,14 @@ public record InboundInvoiceRequest(
     // real preparer, stamped into the "ผู้จัดทำ" slot of the created document.
     // Both null → falls back to the company Owner as before.
     string? PreparerName = null,
-    string? PreparerSignatureBase64 = null);
+    string? PreparerSignatureBase64 = null,
+    /// <summary>Resync update — เมื่อ true และพบเอกสารเดิม (ExternalRef ซ้ำ):
+    /// แทนที่จะข้าม (idempotent skip) ระบบจะ "แก้เอกสาร + ปรับ JE" ให้ตรงข้อมูล
+    /// ใหม่แบบถูกหลักบัญชี: กลับ JE เดิม (reversal คู่) → อัปเดตบรรทัด/ยอด →
+    /// post JE ใหม่ — เลขเอกสารคงเดิม. เงื่อนไข: ยังไม่มีการชำระ, ไม่มี CN/DN
+    /// อ้างถึง, งวด VAT ของเดือนภาษีเดิมยังไม่ยื่น/ล็อก — ไม่ผ่านเงื่อนไขจะได้
+    /// error ชัดเจน (ให้ void แล้วส่งใหม่ หรือออก CN แทน).</summary>
+    bool ResyncUpdate = false);
 
 /// <summary>
 /// Base64-encoded file attachment for external integrations. Server enforces:
@@ -174,7 +181,9 @@ public record InboundExpenseRequest(
     // the "ผู้จัดทำ" slot of the document — even though they are not a
     // NextAcc User. Both null → falls back to the company Owner as before.
     string? PreparerName = null,
-    string? PreparerSignatureBase64 = null);
+    string? PreparerSignatureBase64 = null,
+    /// <summary>Resync update — เหมือน InboundInvoiceRequest.ResyncUpdate.</summary>
+    bool ResyncUpdate = false);
 
 /// <summary>ใบสำคัญจ่าย (การจ่ายเงินจริง) จากระบบภายนอก — สำหรับ voucher
 /// ที่จ่ายเงินไปแล้วในระบบต้นทาง: สร้างเอกสาร PV เดียวจบ (Dr ค่าใช้จ่าย /

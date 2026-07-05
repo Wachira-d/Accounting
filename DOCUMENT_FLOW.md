@@ -152,6 +152,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     มี `CreatedDocumentId`) แล้วคืนเอกสารเดิมถ้ายังไม่ voided (`IntegrationService.cs`).
     `ProcessExpenseAsync`/`ProcessPaymentVoucherAsync` เดิม**ไม่มี** guard นี้ →
     เพิ่มแล้ว (เคยสร้าง expense ซ้ำเมื่อ retry)
+  - **Resync update** (`ResyncUpdate=true` บน inbound invoice/expense):
+    เจอ ExternalRef เดิม → แทน idempotent skip ระบบ "แก้เอกสาร + ปรับ JE"
+    ถูกหลักบัญชี: กลับ JE เดิมทั้งชุด (reversal คู่, ลิงก์ Original/ReversedBy
+    — ไม่ลบของเดิม) → rebuild lines/ยอด → post JE ใหม่ — เลขเอกสารคงเดิม.
+    Guard: มีการชำระแล้ว / มี CN-DN ลูก / เดือนภาษียื่น ภ.พ.30 หรือ filing-lock
+    แล้ว → คืน error ชัดเจน (ให้ void+ส่งใหม่ หรือออก CN แทน); sync log
+    Status="Updated"
   - **CN/DN ผ่าน integration = ฝั่งขายเท่านั้น** (DTO มีแต่ field ลูกค้า) —
     `CreateCreditNoteJournalAsync`/`CreateDebitNoteJournalAsync` ลง AR/ภาษีขาย
     เสมอ; ใบลด/เพิ่มหนี้ฝั่งซื้อ sync ผ่าน expense reversal ไม่ผ่านช่องทางนี้
