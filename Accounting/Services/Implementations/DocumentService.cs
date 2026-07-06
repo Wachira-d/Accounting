@@ -721,6 +721,12 @@ public class DocumentService : IDocumentService
                     .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
                     .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
 
+            // บริษัทไม่จด VAT → เคลมภาษีซื้อไม่ได้ทุกบรรทัด — VAT ที่จ่ายผู้ขาย
+            // รวมเป็นต้นทุน/ค่าใช้จ่าย ไม่เข้า 11610/11640 (เช็คครั้งเดียว)
+            var companyVatReg = await _db.CompanySettings.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => (bool?)c.VatRegistered).FirstOrDefaultAsync() ?? true;
+
             doc.PricesIncludeVat = request.PricesIncludeVat;
             doc.IsForeignService = request.IsForeignService;
             int lineIdx = -1;
@@ -746,6 +752,11 @@ public class DocumentService : IDocumentService
                 {
                     enforcedClaimable = false;
                     enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
+                }
+                if (!companyVatReg && amt.VatAmount > 0)
+                {
+                    enforcedClaimable = false;
+                    enforcedReason ??= "บริษัทไม่ได้จดทะเบียน VAT — เคลมภาษีซื้อไม่ได้ (รวมเป็นต้นทุน)";
                 }
                 _db.DocumentLines.Add(new DocumentLine
                 {
@@ -1228,6 +1239,10 @@ public class DocumentService : IDocumentService
                     .Where(a => a.CompanyId == companyId && updAccountIds.Contains(a.Id))
                     .ToDictionaryAsync(a => a.Id, a => a.InputVatClaimable);
 
+            var companyVatReg = await _db.CompanySettings.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => (bool?)c.VatRegistered).FirstOrDefaultAsync() ?? true;
+
             int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
@@ -1246,6 +1261,11 @@ public class DocumentService : IDocumentService
                 {
                     enforcedClaimable = false;
                     enforcedReason ??= "บัญชีนี้ตั้งเป็นภาษีซื้อต้องห้ามในผังบัญชี";
+                }
+                if (!companyVatReg && amt.VatAmount > 0)
+                {
+                    enforcedClaimable = false;
+                    enforcedReason ??= "บริษัทไม่ได้จดทะเบียน VAT — เคลมภาษีซื้อไม่ได้ (รวมเป็นต้นทุน)";
                 }
                 _db.DocumentLines.Add(new DocumentLine
                 {

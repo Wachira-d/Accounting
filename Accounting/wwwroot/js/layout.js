@@ -186,8 +186,26 @@ const Layout = {
     await this.loadMyPermissions();
   },
 
+  async loadVatRegistration() {
+    if (!this.currentCompany?.id) return;
+    // ค่า cache กัน flicker + ลด request; refresh เงียบ ๆ ทุกครั้งที่โหลดบริษัท
+    try {
+      const cached = localStorage.getItem('vatReg:' + this.currentCompany.id);
+      if (cached !== null) this._vatRegistered = cached === 'true';
+    } catch {}
+    try {
+      const res = await API.get(`/api/companies/${this.currentCompany.id}/settings`);
+      if (res?.success && res.data) {
+        this._vatRegistered = res.data.vatRegistered !== false;
+        try { localStorage.setItem('vatReg:' + this.currentCompany.id, String(this._vatRegistered)); } catch {}
+        this._refreshNavMenu();
+      }
+    } catch { /* keep default (show) */ }
+  },
+
   async loadMyPermissions() {
     if (!this.currentCompany?.id) return;
+    this.loadVatRegistration();
     try {
       const res = await API.get(`/api/company/${this.currentCompany.id}/roles/my-permissions`);
       if (res?.success && res.data) {
@@ -267,6 +285,9 @@ const Layout = {
         && (!item.id || this.hasMenuAccess(item.id))
         && (!item.adminOnly || isAdminUser);
       if (!visible) return false;
+      // เมนูเฉพาะบริษัทจด VAT (ภ.พ.30 / ภาษีซื้อรอ / ภ.พ.30 ย้อนหลัง) — ซ่อน
+      // เมื่อบริษัทไม่จด VAT (ไม่มีภาระยื่น). default true → ไม่กระทบถ้ายังไม่โหลด
+      if (item.vatOnly && this._vatRegistered === false) return false;
       if (uiMode === 'simple' && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
       return true;
     });
@@ -716,11 +737,11 @@ const Layout = {
       description: 'Inbound (ของ vendor วางที่เรา จ่ายเมื่อใช้) · Outbound (ของเราอยู่ที่ลูกค้า รับรู้รายได้เมื่อขาย)' },
 
     { section: 'ภาษี & e-Filing', icon: '🏛️', description: 'ภ.พ.30 · ภงด.1/3/53/54 · e-Tax · ปฏิทินภาษี · Export ยื่นสรรพากร' },
-    { id: 'tax', label: 'รายงานภาษี ภพ.30', icon: '🏛️', href: '/pages/tax.html', feature: 'TaxManagement', _i18nKey: 'nav.tax',
+    { id: 'tax', label: 'รายงานภาษี ภพ.30', icon: '🏛️', href: '/pages/tax.html', feature: 'TaxManagement', _i18nKey: 'nav.tax', vatOnly: true,
       description: 'VAT รายเดือน · Defer Input VAT ≤6 เดือน · Filing Lock · Reject & Reverse · Export pipe-delimited RD' },
-    { id: 'vat-history', label: 'ภ.พ.30 ย้อนหลัง', icon: '🗄️', href: '/pages/vat-history.html', feature: 'TaxManagement',
+    { id: 'vat-history', label: 'ภ.พ.30 ย้อนหลัง', icon: '🗄️', href: '/pages/vat-history.html', feature: 'TaxManagement', vatOnly: true,
       description: 'ประวัติรายงาน ภ.พ.30 ทุกเดือนที่ผ่านมา · เปิดดู / พิมพ์ซ้ำ / ตรวจสถานะยื่น' },
-    { id: 'undue-vat', label: 'ภาษีซื้อยังไม่ถึงกำหนด', icon: '⏳', href: '/pages/undue-vat.html', feature: 'TaxManagement',
+    { id: 'undue-vat', label: 'ภาษีซื้อยังไม่ถึงกำหนด', icon: '⏳', href: '/pages/undue-vat.html', feature: 'TaxManagement', vatOnly: true,
       description: 'เอกสารที่ภาษีซื้อพักไว้ 11640 รอใบกำกับครบ §86/4 — เตือนก่อนหมดสิทธิเคลม 6 เดือน (§82/3) · เติมข้อมูลแล้วย้ายเข้า ภ.พ.30' },
     { id: 'wht', label: 'หัก ณ ที่จ่าย (ภงด.)', icon: '📜', href: '/pages/wht.html', feature: 'TaxManagement', _i18nKey: 'nav.wht',
       description: 'ภงด.1/3/53/54 · สร้างหนังสือรับรองหัก ณ ที่จ่าย · Export ยื่นออนไลน์' },

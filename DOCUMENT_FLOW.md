@@ -333,7 +333,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - **§90/2 hard-block**: `CompanySettings.VatRegistered=false` → ห้ามอนุมัติ
      ใบกำกับภาษี (ทุกกรณี) และเอกสารขายที่ VatAmount > 0 (Invoice/Receipt/RV/
      BillingNote/CN/DN ฝั่งขาย — CN/DN ฝั่งซื้อที่ related เป็น PI/Expense/GRN
-     ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน
+     ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน; ฟอร์ม
+     สร้างเอกสาร (documents.html) ปิดตัวเลือกใบกำกับภาษี + ป้ายเตือน
+   - **ภาษีซื้อฝั่งไม่จด VAT**: บริษัท `VatRegistered=false` → ทุกบรรทัดถูกบังคับ
+     `IsVatClaimable=false` ตอน create/update (DocumentService) → posting รวม
+     VAT เข้าต้นทุน/ค่าใช้จ่าย ไม่เข้า 11610/11640 (เคลมภาษีซื้อไม่ได้). เมนู
+     ภ.พ.30/ภ.พ.30 ย้อนหลัง/ภาษีซื้อรอ (nav `vatOnly:true`) ถูกซ่อนใน layout.js
    - **Settlement doc self-paid**: PV/Receipt/RV/CIL ที่มี RelatedDocumentId
      (แปลงมาจากเอกสารตั้งหนี้) เมื่ออนุมัติ → ตัวมันเอง PaidAmount=Total,
      Status=Paid (เป็นเอกสารการจ่าย/รับเงินจริง ไม่ใช่ลูกหนี้/เจ้าหนี้ใหม่)
