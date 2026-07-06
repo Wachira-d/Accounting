@@ -3561,7 +3561,12 @@
           paymentDate,
           paymentTermsDays: scan.paymentTermsDays || null,
           reference: scan.extractedDocumentNumber || null,
-          notes: scan.processingNotes ? `(จาก OCR) ${scan.processingNotes}` : null,
+          // ⚠ ห้ามใส่ processingNotes ลง notes — เป็น diagnostic ภายใน (Zone
+          // Analysis / Field Confidence / AI reasoning) ที่จะไปโผล่บน PDF
+          // เอกสารจริง. ดูรายละเอียด OCR ได้ในหน้า review (ส่วน "AI raw
+          // response") อยู่แล้ว. notes บนเอกสารเก็บแค่ marker สะอาดอ้างอิง
+          // ไฟล์ต้นทาง (ตรงกับ path auto-create ฝั่ง backend)
+          notes: scan.originalFileName ? `สร้างจากการสแกน OCR: ${scan.originalFileName}` : null,
           lines,
           currency,
           pricesIncludeVat,

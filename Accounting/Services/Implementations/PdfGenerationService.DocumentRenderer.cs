@@ -652,6 +652,27 @@ public partial class PdfGenerationService
         }
     }
 
+    /// <summary>
+    /// กัน OCR diagnostic trace หลุดไปพิมพ์บนเอกสารจริง. เอกสารเก่าที่ handoff
+    /// flow เคยยัด processingNotes ทั้งก้อนลง Notes (prefix "(จาก OCR)" +
+    /// marker [Zone Analysis]/[Field Confidence]/[Reasoning]/[VendorIntel]/
+    /// [AI/DeepSeek] ฯลฯ) จะถูกตัดออกตอน render — เหลือเฉพาะหมายเหตุจริง.
+    /// ถ้าทั้งก้อนเป็น diagnostic → คืน null (ไม่พิมพ์ส่วนหมายเหตุเลย).
+    /// </summary>
+    internal static string? SanitizeNotesForPrint(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes)) return null;
+        var text = notes.Trim();
+        // Fast path: OCR dump ขึ้นต้นด้วย "(จาก OCR)" หรือมี marker วงเล็บเหลี่ยม
+        // ที่เป็น diagnostic ภายใน — ตัดตั้งแต่ marker ตัวแรกเป็นต้นไป
+        var markerRx = new System.Text.RegularExpressions.Regex(
+            @"\(จาก OCR\)|\[Zone Analysis\]|\[Field Confidence\]|\[Reasoning\]|\[VendorIntel\]|\[AI/DeepSeek\]|\[Azure DI|\[Buyer\]|\[Role\]|\[Category\]|\[NaiveBayes\]|\[Enrich\]|\[DBD\]|\[Handwriting\]|\[Tier \d|\[AmountTriple\]|\[SmartExtract\]|\[Gateway\]|\[ImagePrep\]|\[RequestPlan\]|\[Swap\]");
+        var m = markerRx.Match(text);
+        if (m.Success)
+            text = text[..m.Index].Trim();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
     private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent)
     {
         // CertificateInLieu — เอกสารใบรับรองการจ่ายเงินแทนใบเสร็จ
@@ -710,11 +731,12 @@ public partial class PdfGenerationService
         // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — เดิมไม่ถูก
         // render บน PDF (แสดงแต่ CustomFooterNotes). QuestPDF Text รองรับ \n →
         // หมายเหตุหลายบรรทัดแสดงครบ.
-        if (!string.IsNullOrWhiteSpace(doc.Notes))
+        var cleanNotes = SanitizeNotesForPrint(doc.Notes);
+        if (!string.IsNullOrWhiteSpace(cleanNotes))
             col.Item().PaddingTop(8).Text(tt =>
             {
                 tt.Span("หมายเหตุ: ").Bold().FontSize(10).FontColor("#555");
-                tt.Span(doc.Notes!.Trim()).FontSize(10).FontColor("#555");
+                tt.Span(cleanNotes).FontSize(10).FontColor("#555");
             });
 
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes) ? doc.CustomFooterNotes : t.FooterNotes;

@@ -1040,8 +1040,9 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // หมายเหตุระดับเอกสาร (doc.Notes) ที่ผู้ใช้กรอกตอนสร้าง — white-space:
         // pre-line ให้ \n แสดงเป็นหลายบรรทัด
-        if (!string.IsNullOrWhiteSpace(doc.Notes))
-            sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>หมายเหตุ:</strong> {System.Net.WebUtility.HtmlEncode(doc.Notes.Trim())}</div>");
+        var cleanNotesHtml = SanitizeNotesForPrint(doc.Notes);
+        if (!string.IsNullOrWhiteSpace(cleanNotesHtml))
+            sb.AppendLine($"<div class='footer-notes' style='white-space:pre-line'><strong>หมายเหตุ:</strong> {System.Net.WebUtility.HtmlEncode(cleanNotesHtml)}</div>");
 
         var footerNotes = !string.IsNullOrWhiteSpace(doc.CustomFooterNotes)
             ? doc.CustomFooterNotes

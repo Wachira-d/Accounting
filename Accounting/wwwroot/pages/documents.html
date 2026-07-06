@@ -3339,6 +3339,13 @@
         return String(s ?? '').replace(/[&<>"']/g, c =>
           ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
       },
+      // ตัด OCR diagnostic trace ที่หลุดมาใน notes เอกสารเก่า (prefix "(จาก OCR)"
+      // + marker วงเล็บเหลี่ยม) ก่อนแสดงผล — ให้ตรงกับ SanitizeNotesForPrint ฝั่ง PDF
+      cleanNotes(s) {
+        if (!s) return '';
+        const m = String(s).match(/\(จาก OCR\)|\[Zone Analysis\]|\[Field Confidence\]|\[Reasoning\]|\[VendorIntel\]|\[AI\/DeepSeek\]|\[Azure DI|\[Buyer\]|\[Role\]|\[Category\]|\[NaiveBayes\]|\[Enrich\]|\[DBD\]|\[Handwriting\]|\[Tier \d|\[AmountTriple\]|\[SmartExtract\]|\[Gateway\]|\[ImagePrep\]|\[RequestPlan\]|\[Swap\]/);
+        return (m ? String(s).slice(0, m.index) : String(s)).trim();
+      },
       setSide(side) {
         this.side = side;
         this.docType = '';
@@ -4766,7 +4773,7 @@
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
-            ${d.notes ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${d.notes}</div></div>` : ''}
+            ${(() => { const n = this.cleanNotes(d.notes); return n ? `<div style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.note">หมายเหตุ</div><div class="text-sm">${this.escapeHtml(n)}</div></div>` : ''; })()}
             ${d.documentType === 'CertificateInLieu' ? `
             <div style="margin-top:12px;padding:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px">
               <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:8px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
@@ -6376,7 +6383,7 @@
             </div>
           </div>
 
-          ${d.notes ? `<div style="margin-top:20px;padding:12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>หมายเหตุ:</strong> ${d.notes}</div>` : ''}
+          ${(() => { const n = this.cleanNotes(d.notes); return n ? `<div style="margin-top:20px;padding:12px;background:#F8F9FA;border-radius:6px;font-size:12px"><strong>หมายเหตุ:</strong> ${this.escapeHtml(n)}</div>` : ''; })()}
 
           <!-- Signature -->
           <div style="display:flex;justify-content:space-between;margin-top:48px;padding-top:16px;gap:12px">
