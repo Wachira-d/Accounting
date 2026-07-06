@@ -464,6 +464,7 @@
         this._renderPresets();
         this._renderGlobalLooks();
         await this.loadTemplates();   // populates this.templates (no auto-open)
+        await this._seedGlobalCustomColors();   // เติมช่อง "กำหนดสีเอง" จากค่าที่บันทึกจริง
         this.showOverview();
         // sample docs are only needed for the editor's live preview
         this.loadSampleDocs();
@@ -714,9 +715,32 @@
           } catch (e) { fail++; if (!firstErr) firstErr = e?.message || String(e); }
         }
         await this.loadTemplates();
+        await this._seedGlobalCustomColors();   // ช่อง "กำหนดสีเอง" สะท้อนสีที่เพิ่งใช้
         this.renderGallery();
         if (ok > 0) Layout.toast(`ใช้${what}สำเร็จ ${ok} ประเภท${fail ? ` (พลาด ${fail})` : ''}`, fail ? 'info' : 'success');
         else Layout.toast(`ไม่สำเร็จ: ${firstErr || 'unknown'}`, 'error');
+      },
+
+      // เติมช่อง "กำหนดสีเอง" จากสีที่บันทึกไว้จริง — list endpoint ไม่ส่งสี
+      // มา จึงดึงเทมเพลตตัวแทน (ใบแจ้งหนี้ หรือตัวแรก) แบบเต็มด้วย by-id
+      async _seedGlobalCustomColors() {
+        try {
+          const rep = this._defaultTemplateFor('Invoice') || (this.templates || [])[0];
+          if (!rep) return;
+          const cid = Layout.getCompanyId();
+          const full = (await API.get(`/api/companies/${cid}/document-templates/${rep.id}`)).data;
+          if (!full) return;
+          const setPair = (colorId, hexId, val) => {
+            const v = this._validHex(val);
+            if (!v) return;
+            const c = document.getElementById(colorId), h = document.getElementById(hexId);
+            if (c) c.value = v;
+            if (h) h.value = v;
+          };
+          setPair('cAccent', 'cAccentHex', full.accentColor);
+          setPair('cHead', 'cHeadHex', full.tableHeaderColor);
+          setPair('cStripe', 'cStripeHex', full.tableStripedColor);
+        } catch { /* คงค่า default เมื่อดึงไม่ได้ */ }
       },
 
       _renderPresets() {
