@@ -35,7 +35,13 @@ public record BankAccountResponse(
     Guid? LinkedAccountId,
     string? LinkedAccountCode,
     string? LinkedAccountName,
-    bool IsActive);
+    bool IsActive,
+    // ── ยอดจริงจาก statement ล่าสุด vs ยอดตามบัญชี (GL) ──
+    decimal? StatementBalance = null,      // ยอดคงเหลือแถวล่าสุดของ statement ที่นำเข้า
+    DateTime? StatementBalanceDate = null, // ยอด ณ วันที่
+    DateTime? StatementImportedAt = null,  // นำเข้าเมื่อ
+    decimal? BookBalance = null,           // ยอดตามบัญชี (GL จาก JE ที่ post แล้ว)
+    decimal? StatementDiff = null);        // StatementBalance − BookBalance (null = ยังไม่เคยนำเข้า)
 
 public record CreateBankTransactionRequest(
     Guid BankAccountId,

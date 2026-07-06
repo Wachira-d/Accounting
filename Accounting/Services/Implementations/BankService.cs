@@ -195,11 +195,16 @@ public partial class BankService : IBankService
             // Use GL-computed balance when a linked COA is set (authoritative source).
             // Fall back to stored CurrentBalance when no COA is linked (pure manual tracking).
             var displayBalance = a.LinkedAccountId.HasValue ? gl : a.CurrentBalance;
+            // ยอดตามธนาคาร (statement ล่าสุด) เทียบยอดตามบัญชี — ผลต่าง = งานกระทบยอดที่ค้าง
+            var bookBalance = a.LinkedAccountId.HasValue ? gl : a.CurrentBalance;
             return new BankAccountResponse(
                 a.Id, a.AccountName, a.BankName, a.AccountNumber,
                 a.BranchName, a.AccountType, a.Currency, displayBalance,
                 a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
-                a.IsActive);
+                a.IsActive,
+                a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt,
+                bookBalance,
+                a.StatementBalance.HasValue ? a.StatementBalance.Value - bookBalance : null);
         }).ToList();
     }
 
@@ -786,10 +791,19 @@ public partial class BankService : IBankService
         var conflicts = new List<ImportConflict>();
         int imported = 0, skipped = 0;
 
+        // ยอดคงเหลือ "ล่าสุดจริง" ของ statement — ห้ามใช้แถวสุดท้ายของไฟล์ตรง ๆ
+        // เพราะธนาคารไทยหลายแห่ง export แบบใหม่→เก่า (ยอดแถวสุดท้าย = ยอดเก่าสุด)
+        // ใช้แถวที่วันที่มากสุด; ถ้าหลายแถววันเดียวกันให้เคารพลำดับในไฟล์
+        // (ไฟล์เก่า→ใหม่เอาแถวท้าย, ไฟล์ใหม่→เก่าเอาแถวแรก)
+        var newestFirst = parsedRows.Count > 1 && parsedRows[0].Date > parsedRows[^1].Date;
+        var maxDate = parsedRows.Max(r => r.Date);
+        var latestRow = newestFirst
+            ? parsedRows.First(r => r.Date == maxDate)
+            : parsedRows.Last(r => r.Date == maxDate);
+
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            decimal? lastBalance = null;
             var rowNum = 0;
             foreach (var r in parsedRows)
             {
@@ -820,7 +834,6 @@ public partial class BankService : IBankService
                     if (isSameContent)
                     {
                         skipped++;
-                        lastBalance = r.Balance;
                         continue;
                     }
 
@@ -829,7 +842,6 @@ public partial class BankService : IBankService
                         conflicts.Add(new ImportConflict(
                             rowNum, r.Date, amount,
                             desc, duplicate.Description, duplicate.Id));
-                        lastBalance = r.Balance;
                         continue;
                     }
 
@@ -840,7 +852,6 @@ public partial class BankService : IBankService
                     existingEntity.Reference = r.Reference;
                     existingEntity.BalanceAfter = r.Balance;
                     imported++;
-                    lastBalance = r.Balance;
                     continue;
                 }
 
@@ -856,7 +867,6 @@ public partial class BankService : IBankService
                     Reference = r.Reference
                 });
                 imported++;
-                lastBalance = r.Balance;
             }
 
             if (conflicts.Count > 0 && !request.ForceOverwrite)
@@ -865,8 +875,12 @@ public partial class BankService : IBankService
                 return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts);
             }
 
-            if (imported > 0 && lastBalance.HasValue)
-                account.CurrentBalance = lastBalance.Value;
+            // อัปเดต snapshot ยอดจริงทุกครั้งที่ไฟล์ผ่าน (แม้รายการซ้ำถูกข้ามหมด —
+            // การอัพ statement ช่วงทับซ้อนก็ยังยืนยันยอด ณ วันล่าสุดได้)
+            account.StatementBalance = latestRow.Balance;
+            account.StatementBalanceDate = latestRow.Date;
+            account.StatementImportedAt = DateTime.UtcNow;
+            account.CurrentBalance = latestRow.Balance;
 
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();
@@ -894,7 +908,8 @@ public partial class BankService : IBankService
         a.Id, a.AccountName, a.BankName, a.AccountNumber,
         a.BranchName, a.AccountType, a.Currency, a.CurrentBalance,
         a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
-        a.IsActive);
+        a.IsActive,
+        a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt);
 
     private static BankTransactionResponse MapTransactionToResponse(BankTransaction t) => new(
         t.Id, t.BankAccountId, t.TransactionDate, t.TransactionType,

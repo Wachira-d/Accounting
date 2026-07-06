@@ -16,6 +16,16 @@ public class BankAccount : TenantEntity
     public decimal CurrentBalance { get; set; }
     public bool IsActive { get; set; } = true;
 
+    // ── Snapshot ยอดจริงจาก statement ล่าสุดที่นำเข้า ──
+    // แยกจาก CurrentBalance เพื่อให้ UI แสดง "ยอดตามธนาคาร ณ วันที่ X" เทียบกับ
+    // ยอดตามบัญชี (GL) ได้ตรงไปตรงมา — ธนาคารคือ source of truth ของเงินจริง
+    /// <summary>ยอดคงเหลือจากแถวล่าสุดของ statement ที่นำเข้า (null = ยังไม่เคยนำเข้า)</summary>
+    public decimal? StatementBalance { get; set; }
+    /// <summary>วันที่ของแถวล่าสุดใน statement (ยอด ณ วันนี้)</summary>
+    public DateTime? StatementBalanceDate { get; set; }
+    /// <summary>เวลาที่นำเข้า statement ครั้งล่าสุด</summary>
+    public DateTime? StatementImportedAt { get; set; }
+
     // Mapping to Chart of Account
     public Guid? LinkedAccountId { get; set; }
     public ChartOfAccount? LinkedAccount { get; set; }

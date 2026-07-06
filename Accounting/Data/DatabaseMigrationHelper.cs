@@ -4297,6 +4297,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignedBy" varchar(200) NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignatureBase64" text NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_DeliverySignToken" ON "Documents" ("DeliverySignToken") WHERE "DeliverySignToken" IS NOT NULL;""",
+
+            // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
+            """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",
+            """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalanceDate" timestamptz NULL;""",
+            """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementImportedAt" timestamptz NULL;""",
             // รหัสผูก LINE ระดับพนักงาน (6 หลัก, หมดอายุ 24 ชม.)
             """
             CREATE TABLE IF NOT EXISTS "EmployeeLineBindCodes" (

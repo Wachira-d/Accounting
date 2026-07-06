@@ -713,11 +713,28 @@
               <div class="text-xs text-gray-500">${a.bankName} - ${a.accountNumber}</div>
               <div class="text-xs text-gray-400">${a.accountType === 'Savings' ? 'ออมทรัพย์' : a.accountType === 'Current' ? 'กระแสรายวัน' : a.accountType === 'Fixed' ? 'ฝากประจำ' : a.accountType || ''} | ${a.branchName || '-'}</div>
               ${a.linkedAccountCode ? `<div class="text-xs" style="color:var(--primary);margin-top:4px">ผังบัญชี: ${a.linkedAccountCode} ${a.linkedAccountName || ''}</div>` : ''}
-              <div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
-              <div class="text-xs text-gray-400">${a.currency || 'THB'}</div>
+              ${this.renderBalances(a)}
             </div>
           `).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ยอด 2 บรรทัด: ธนาคารจริง (statement ล่าสุด) เป็นตัวหลัก + ยอดตามบัญชี (GL)
+      // ผลต่าง > 0.01 = มีรายการยังไม่กระทบยอด/ยังไม่บันทึก → ป้ายเตือนชี้ไป tab กระทบยอด
+      renderBalances(a) {
+        const fmtD = d => { const t = new Date(d); return isNaN(t) ? '' : t.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }); };
+        if (a.statementBalance == null) {
+          // ยังไม่เคยอัพ statement — โชว์ยอดตามบัญชีแบบเดิม พร้อมชวนนำเข้า
+          return `<div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
+              <div class="text-xs text-gray-400">${a.currency || 'THB'} · ยอดตามบัญชี (GL) — <span style="color:var(--primary)">นำเข้า statement เพื่อเทียบยอดธนาคารจริง</span></div>`;
+        }
+        const diff = a.statementDiff ?? (a.statementBalance - (a.bookBalance ?? a.currentBalance));
+        const hasDiff = Math.abs(diff) > 0.01;
+        return `<div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.statementBalance)}</div>
+              <div class="text-xs text-gray-400">${a.currency || 'THB'} · 🏦 ยอดตามธนาคาร${a.statementBalanceDate ? ' ณ ' + fmtD(a.statementBalanceDate) : ''}</div>
+              <div class="text-xs" style="margin-top:2px;color:var(--text-secondary)">📒 ยอดตามบัญชี (GL): <b>${Layout.money(a.bookBalance ?? a.currentBalance)}</b></div>
+              ${hasDiff
+                ? `<div class="text-xs" style="margin-top:4px"><span class="badge badge-warning" title="ยอดธนาคารกับยอดบัญชีไม่ตรงกัน — มีรายการยังไม่บันทึก/ยังไม่กระทบยอด">⚠ ต่างกัน ${Layout.money(Math.abs(diff))}</span> <a href="javascript:void(0)" onclick="event.stopPropagation();Page.selectAccount('${a.id}');document.querySelectorAll('.tab')[1]?.click()" style="color:var(--primary)">ไปกระทบยอด →</a></div>`
+                : `<div class="text-xs" style="margin-top:4px"><span class="badge badge-success">✓ ยอดตรงกัน</span></div>`}`;
       },
       async selectAccount(id) {
         const acct = this.accounts.find(a => a.id === id);
