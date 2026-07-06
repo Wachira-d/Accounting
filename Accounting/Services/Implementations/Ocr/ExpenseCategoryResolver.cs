@@ -48,6 +48,10 @@ internal static class ExpenseCategoryResolver
         BusinessType? businessType = null)
     {
         var reasons = new List<string>();
+        // Two-tier corpus: ข้อมูลตรง (ผู้ขาย/หัวเรื่อง/บรรทัดรายการ) น้ำหนักเต็ม;
+        // rawText ทั้งใบเป็นหลักฐานอ่อน (มีข้อความแฝงเยอะ เช่น เงื่อนไขท้ายบิล
+        // ที่มีคำว่า "ที่ปรึกษา"/"ภาษีอากร") → นับครึ่งเดียว กันหมวดเพี้ยนจากคำหลง
+        var primaryCorpus = BuildCorpus(vendorName, headerDescription, lineDescriptions, null).ToLowerInvariant();
         var corpus = BuildCorpus(vendorName, headerDescription, lineDescriptions, rawText).ToLowerInvariant();
 
         // Score every rule against the corpus; highest wins.
@@ -55,9 +59,13 @@ internal static class ExpenseCategoryResolver
         decimal bestScore = 0m;
         foreach (var rule in Rules)
         {
-            int kwScore = 0;
+            decimal kwScore = 0m;
             foreach (var kw in rule.Keywords)
-                if (corpus.Contains(kw.ToLowerInvariant())) kwScore += kw.Length >= 6 ? 2 : 1;
+            {
+                var k = kw.ToLowerInvariant();
+                if (primaryCorpus.Contains(k)) kwScore += kw.Length >= 6 ? 2m : 1m;
+                else if (corpus.Contains(k)) kwScore += kw.Length >= 6 ? 1m : 0.5m;
+            }
             // Vendor-brand matches outweigh single keyword hits because they're
             // far more discriminating ("ปตท." in a vendor name strongly
             // implies fuel; "ปตท." in a random product description doesn't).
@@ -272,6 +280,23 @@ internal static class ExpenseCategoryResolver
             VendorBrands: new[] {
                 "kerry", "เคอรี่", "flash", "แฟลช", "j&t", "เจแอนด์ที", "thai post",
                 "ไปรษณีย์ไทย", "dhl", "fedex", "ems", "ninja"
+            }),
+
+        // ─── ซื้อสินค้า / วัตถุดิบ — ค้าส่ง/ค้าปลีกรายใหญ่ (ไม่มี WHT) ───
+        // Makro/Lotus/BigC ฯลฯ = ซื้อของเข้าร้าน/วัตถุดิบเกือบเสมอ — ก่อนมี
+        // rule นี้ บิล Makro ที่อ่านรายการไม่ได้จะแพ้ให้ keyword หลง ๆ ใน
+        // rawText (เช่น "ที่ปรึกษา" ในข้อความท้ายบิล) แล้วหมวดเพี้ยนทั้งใบ
+        new CategoryRule("ซื้อสินค้า / วัตถุดิบ", "51110", "ต้นทุนสินค้า",
+            StatutoryWhtRate: null,
+            Keywords: new[] {
+                "ซื้อสินค้า", "วัตถุดิบ", "สินค้าเพื่อขาย", "wholesale", "ของเข้าร้าน"
+            },
+            VendorBrands: new[] {
+                "makro", "แม็คโคร", "แมคโคร", "siam makro", "lotus", "โลตัส",
+                "big c", "บิ๊กซี", "bigc", "cj more", "cj express", "ซีเจ",
+                "homepro", "โฮมโปร", "ไทวัสดุ", "thai watsadu", "thaiwatsadu",
+                "global house", "โกลบอลเฮ้าส์", "dohome", "ดูโฮม",
+                "villa market", "gourmet market", "tops", "ท็อปส์"
             }),
 
         // ─── ค่าบริการ / ค่าแรง — 5300 generic, 3% WHT ───
