@@ -361,6 +361,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      → รายงาน P&L ต่อมิติ (`getDimensionPnl`) มีข้อมูลจากเอกสารซื้อ-ขายจริง
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
+   - **มัดจำ VAT พักรอ (21913) — การแสดงผล ≠ การลงบัญชี**: ใบเสร็จ/ใบสำคัญรับ
+     ที่ `IsDeposit && DepositOutputVatDeferred` ยังไม่ใช่ใบกำกับภาษี (tax point
+     ยังไม่เกิด §78) → PDF/HTML **ซ่อนบรรทัด "ยอดก่อน VAT" + "VAT 7%"**, หัวเรื่อง
+     ไม่ขึ้น "ใบกำกับภาษี", บรรทัดรายการพิมพ์ยอดรวม VAT (Amount+VatAmount) ให้เท่า
+     ยอดสุทธิ, ใส่หมายเหตุ "ไม่ใช่ใบกำกับภาษี" (`PdfGenerationService.IsDeferredVatDeposit`);
+     **JE ยังแยก net/21913 ตามเดิม** (คนละเรื่อง) และ **ยกเว้น §86/4 gate** ตอน
+     approve (ไม่บังคับ TaxId/ที่อยู่ผู้ซื้อ — ใบกำกับจริงออกตอนใช้บริการค่อยบังคับ).
+     ตรงข้าม: มัดจำ tax point เกิดแล้ว (21911) = ใบกำกับจริง → โชว์ VAT ครบ
    - **sales COGS (perpetual — นโยบายเดียวกับ POS)**: Invoice/TaxInvoice
      ที่มีบรรทัดสินค้า TrackStock → Dr ต้นทุนขาย (51110/511) /
      Cr สินค้าคงเหลือ (11500/115) ที่ WAC ปัจจุบัน (`ComputeSalesCogsAsync`

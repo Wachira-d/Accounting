@@ -1936,8 +1936,12 @@ public class DocumentService : IDocumentService
         // บังคับเลขผู้เสียภาษี/สาขาผู้ซื้อเฉพาะเมื่อผู้ซื้อเป็นผู้ประกอบการจด VAT;
         // ผู้ซื้อบุคคลธรรมดาที่ไม่แจ้งข้อมูล → ออกใบกำกับได้ (เคลมภาษีซื้อไม่ได้เอง)
         // VAT ขายยังลงรายงาน/นำส่ง ภ.พ.30 ครบตามปกติ
+        // มัดจำที่ VAT ยังพักรอ (21913) ยังไม่ใช่ใบกำกับภาษี → ไม่บังคับ field
+        // ผู้ซื้อ §86/4 (ใบกำกับจริงออกตอนใช้บริการ/ชำระครบ ค่อยบังคับ)
+        var isDeferredVatDeposit = doc.IsDeposit && doc.DepositOutputVatDeferred
+            && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
         if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null
-            && !doc.Contact.IsWalkInCustomer)
+            && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit)
         {
             var missing = new List<string>();
             var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();

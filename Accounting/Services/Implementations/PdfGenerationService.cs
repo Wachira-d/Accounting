@@ -806,6 +806,15 @@ public partial class PdfGenerationService : IPdfGenerationService
         catch { return null; }
     }
 
+    /// <summary>ใบเสร็จ/ใบสำคัญรับ "เงินมัดจำ" ที่ VAT ยังพักรอ (21913 — tax point
+    /// ยังไม่เกิดตาม §78) ยังไม่ใช่ใบกำกับภาษี: เอกสารที่ลูกค้าเห็นต้องไม่โชว์
+    /// บรรทัด VAT และหัวเรื่องต้องไม่ใช่ "ใบกำกับภาษี" — JE ภายในยังแยก net/21913
+    /// ถูกต้องตามเดิม (คนละเรื่องกับการแสดงผล). ตรงข้าม: มัดจำที่ tax point เกิด
+    /// แล้ว (21911, DepositOutputVatDeferred=false) = ใบกำกับภาษีจริง → โชว์ VAT.</summary>
+    internal static bool IsDeferredVatDeposit(Document doc) =>
+        doc.IsDeposit && doc.DepositOutputVatDeferred && doc.VatAmount != 0m
+        && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
+
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
@@ -893,7 +902,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         var title = hasCustomTitle ? template.CustomTitle! : defaultTitle;
         if (!hasCustomTitle
             && (doc.DocumentType == DocumentType.Receipt || doc.DocumentType == DocumentType.ReceiptVoucher)
-            && doc.VatAmount > 0)
+            && doc.VatAmount > 0
+            && !IsDeferredVatDeposit(doc))   // มัดจำ VAT พักรอ ≠ ใบกำกับภาษี
         {
             title = lang == "en"
                 ? "Tax Invoice / Receipt"
@@ -988,10 +998,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine("</tbody></table>");
 
         // Summary
+        // มัดจำ VAT พักรอ → ซ่อนบรรทัด ยอดก่อน VAT + VAT (ยังไม่ใช่ใบกำกับภาษี
+        // ห้ามบอกลูกค้าว่าเก็บ VAT แล้ว) แสดงเฉพาะยอดรวมสุทธิ
+        var hideVatBreakdown = IsDeferredVatDeposit(doc);
         sb.AppendLine("<div class='summary'>");
-        if (template.ShowSubTotal) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
+        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
-        if (template.ShowVatSummary && doc.VatAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
+        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         sb.AppendLine($"<div class='sum-row total'><span>ยอดรวมสุทธิ</span><span>{doc.TotalAmount:N2}</span></div>");
 
@@ -1002,6 +1015,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                 : ConvertToThaiWords(doc.TotalAmount);
             sb.AppendLine($"<div class='amount-words'>({words})</div>");
         }
+        if (hideVatBreakdown)
+            sb.AppendLine("<div style='margin-top:8px;font-size:11px;color:#555;font-style:italic'>* เอกสารนี้ไม่ใช่ใบกำกับภาษี — ใบกำกับภาษีจะออกให้เมื่อมีการใช้บริการ/ชำระครบถ้วน</div>");
         sb.AppendLine("</div>");
 
         // CertificateInLieu — reason, certifier, witness, payment date

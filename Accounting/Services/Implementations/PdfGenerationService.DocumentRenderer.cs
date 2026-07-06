@@ -55,7 +55,8 @@ public partial class PdfGenerationService
         if (!hasCustomTitle
             && (doc.DocumentType == Accounting.Models.Enums.DocumentType.Receipt
                 || doc.DocumentType == Accounting.Models.Enums.DocumentType.ReceiptVoucher)
-            && doc.VatAmount > 0)
+            && doc.VatAmount > 0
+            && !IsDeferredVatDeposit(doc))   // มัดจำ VAT พักรอ ≠ ใบกำกับภาษี
         {
             titleText = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
         }
@@ -589,9 +590,14 @@ public partial class PdfGenerationService
                 // ราคารวม VAT: amount ที่แสดง = qty × price − discount (รวม
                 // VAT) เพื่อให้สอดคล้องกับ label header. backend Amount เป็น
                 // ex-VAT สำหรับ GL/ภพ.30 ไม่กระทบ.
-                var printedAmount = doc.PricesIncludeVat
-                    ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
-                    : line.Amount;
+                // มัดจำ VAT พักรอ: พิมพ์ยอดบรรทัดแบบรวม VAT (Amount ex + VatAmount)
+                // เพื่อให้บรรทัดรวมเท่ายอดสุทธิที่ลูกค้าจ่ายจริง (ไม่มีบรรทัด VAT
+                // แยกให้เห็น)
+                var printedAmount = IsDeferredVatDeposit(doc)
+                    ? Math.Round(line.Amount + line.VatAmount, 2)
+                    : doc.PricesIncludeVat
+                        ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
+                        : line.Amount;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
                 Td(line.Description ?? "");
                 Td(line.Quantity.ToString("N2"), "right");
@@ -633,15 +639,21 @@ public partial class PdfGenerationService
                     if (total) { valTxt.Bold().FontColor(filledTotal ? "#FFFFFF" : accent); }
                 });
             }
-            if (t.ShowSubTotal) Row("ยอดรวมก่อน VAT", doc.SubTotal.ToString("N2"));
+            var hideVatBreakdown = IsDeferredVatDeposit(doc);
+            if (t.ShowSubTotal && !hideVatBreakdown) Row("ยอดรวมก่อน VAT", doc.SubTotal.ToString("N2"));
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
                 Row("ส่วนลดรวม", doc.DiscountAmount.ToString("N2"));
-            if (t.ShowVatSummary && doc.VatAmount > 0)
+            if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown)
                 Row("ภาษีมูลค่าเพิ่ม 7%", doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
                 Row("ภาษีหัก ณ ที่จ่าย", $"({doc.WithholdingTaxAmount:N2})");
             Row("ยอดรวมสุทธิ", doc.TotalAmount.ToString("N2"), total: true);
         });
+
+        // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)
+        if (IsDeferredVatDeposit(doc))
+            col.Item().PaddingTop(6).Text("* เอกสารนี้ไม่ใช่ใบกำกับภาษี — ใบกำกับภาษีจะออกให้เมื่อมีการใช้บริการ/ชำระครบถ้วน")
+                .FontSize(9).Italic().FontColor("#555");
 
         if (t.ShowAmountInWords)
         {
