@@ -237,6 +237,21 @@ public class CompanyService : ICompanyService
         if (request.IsSetupComplete.HasValue) company.IsSetupComplete = request.IsSetupComplete.Value;
 
         company.UpdatedBy = userId.ToString();
+
+        // Sync สถานะ VAT/เรตไปที่ CompanySettings ด้วย — ระบบมี 2 flag
+        // (Company.IsVatRegistered อ่านโดย POS/ECommerce/AI, CompanySettings.
+        // VatRegistered อ่านโดย DocumentService/Integration §90/2 + ภาษีซื้อ)
+        // ถ้าไม่ sync จะแตกกัน: หน้าหนึ่งคิด VAT อีกหน้าบล็อก → บัญชีเพี้ยน
+        if (request.IsVatRegistered.HasValue || request.VatRate.HasValue)
+        {
+            var cs = await _db.CompanySettings.FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
+            if (cs != null)
+            {
+                if (request.IsVatRegistered.HasValue) cs.VatRegistered = request.IsVatRegistered.Value;
+                if (request.VatRate.HasValue) cs.DefaultVatRate = request.VatRate.Value;
+            }
+        }
+
         await _db.SaveChangesAsync();
 
         return await GetByIdAsync(companyId, userId);

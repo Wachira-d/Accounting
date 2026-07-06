@@ -50,6 +50,18 @@ public class SettingsService : ISettingsService
         if (request.EnforceManagerApproval.HasValue) settings.EnforceManagerApproval = request.EnforceManagerApproval.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
+        // Sync กลับไปที่ Company.IsVatRegistered/VatRate — flag คู่ที่ POS/
+        // ECommerce/AI อ่าน ต้องตรงกับ CompanySettings เสมอ (ดูหมายเหตุใน
+        // CompanyService.UpdateCompany) มิฉะนั้นบางช่องทางคิด VAT บางช่องบล็อก
+        if (request.VatRegistered.HasValue || request.DefaultVatRate.HasValue)
+        {
+            var comp = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
+            if (comp != null)
+            {
+                if (request.VatRegistered.HasValue) comp.IsVatRegistered = request.VatRegistered.Value;
+                if (request.DefaultVatRate.HasValue) comp.VatRate = request.DefaultVatRate.Value;
+            }
+        }
         if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
         if (request.IsVehicleDealer.HasValue) settings.IsVehicleDealer = request.IsVehicleDealer.Value;
         if (request.EmailFromName != null) settings.EmailFromName = request.EmailFromName;

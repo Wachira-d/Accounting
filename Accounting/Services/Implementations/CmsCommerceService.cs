@@ -837,7 +837,11 @@ public class CmsCommerceService : ICmsCommerceService
             }
         }
 
-        var docType = order.RequestTaxInvoice ? DocumentType.TaxInvoice : DocumentType.Invoice;
+        // บริษัทไม่จด VAT → ห้ามออกใบกำกับ + ไม่คิด VAT ขาย (§90/2). บังคับเป็น
+        // ใบแจ้งหนี้ + zero VAT ทุกบรรทัด มิฉะนั้นเอกสารติด hard-block ตอน approve
+        var storeVatRegistered = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => (bool?)c.IsVatRegistered).FirstOrDefaultAsync() == true;
+        var docType = (order.RequestTaxInvoice && storeVatRegistered) ? DocumentType.TaxInvoice : DocumentType.Invoice;
 
         // Route ผ่าน IDocumentService.CreateDocumentAsync = ผ่าน:
         // - DocumentNumberGenerator (gap-free per §86/4)
@@ -858,7 +862,7 @@ public class CmsCommerceService : ICmsCommerceService
             // เดิมใส่เฉพาะ order.Lines (สินค้า) → ตก ค่าจัดส่ง/ส่วนลด → ยอดเอกสาร ERP
             // ≠ order.TotalAmount แต่ตอนตัดชำระจ่าย order.TotalAmount → AR ค้างเศษ
             // ถาวร + รายได้เพี้ยน. เพิ่มบรรทัดค่าจัดส่ง (บวก) + ส่วนลด (ลบ) ให้ยอดตรง.
-            Lines: BuildOrderErpLines(order),
+            Lines: BuildOrderErpLines(order, storeVatRegistered),
             ProjectId: null,
             BankAccountId: null,
             PaymentAccountId: null,
@@ -887,7 +891,7 @@ public class CmsCommerceService : ICmsCommerceService
     /// ส่วนลด (ลบ) ให้ยอดรวม = order.TotalAmount (= Σสินค้า + ค่าจัดส่ง − ส่วนลด,
     /// ดู line 604) กัน AR ค้างเศษ. ราคาเป็น gross (PricesIncludeVat=true);
     /// ค่าจัดส่ง/ส่วนลด ใช้ VAT 0% ไม่ให้กระทบฐานภาษีของสินค้า.</summary>
-    private static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order)
+    private static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true)
     {
         var lines = order.Lines.Select(l => new Models.DTOs.Document.DocumentLineRequest(
             Description: l.ProductName,
@@ -895,7 +899,7 @@ public class CmsCommerceService : ICmsCommerceService
             UnitPrice: l.UnitPrice,
             Unit: l.Unit,
             DiscountPercent: 0m,
-            VatRate: l.VatRate,
+            VatRate: vatRegistered ? l.VatRate : 0m,
             WithholdingTaxRate: 0m,
             AccountId: null,
             ProjectId: null)).ToList();
