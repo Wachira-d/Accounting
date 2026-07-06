@@ -259,8 +259,8 @@ public class OpenBankingService : IOpenBankingService
 
                 if (isDuplicate) { duplicateSkipped++; continue; }
 
-                // Use balance from CSV if available, else compute running
-                var balanceAfter = r.Balance != 0 ? r.Balance : (runningBalance + signedAmount);
+                // Use balance from CSV if available (null = ช่องว่าง), else compute running
+                var balanceAfter = r.Balance ?? (runningBalance + signedAmount);
                 runningBalance = balanceAfter;
 
                 var desc = r.Description;

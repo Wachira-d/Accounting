@@ -128,12 +128,11 @@ public class ImportBankStatementRequestValidator : AbstractValidator<ImportBankS
     public ImportBankStatementRequestValidator()
     {
         RuleFor(x => x.BankAccountId).NotEmpty().WithMessage("กรุณาเลือกบัญชีธนาคาร");
-        // Accept CSV, Excel (.xlsx) and OFX. The BankService dispatches on the
-        // value to the right parser; older clients that still send "CSV" or
-        // "OFX" keep working.
+        // ตรงกับที่ BankService รองรับจริง: CSV และ Excel เท่านั้น (OFX/QIF/MT940
+        // ไม่เคยมี parser — เดิม validator รับแล้วไปตายที่ service ทำให้ผู้ใช้งง)
         RuleFor(x => x.FileFormat).NotEmpty()
-            .Must(f => f is "CSV" or "EXCEL" or "XLSX" or "OFX")
-            .WithMessage("รูปแบบไฟล์ต้องเป็น CSV, Excel (.xlsx) หรือ OFX");
+            .Must(f => f is "CSV" or "EXCEL" or "XLSX")
+            .WithMessage("รูปแบบไฟล์ต้องเป็น CSV หรือ Excel (.xlsx)");
         RuleFor(x => x.Base64Content).NotEmpty().WithMessage("กรุณาอัพโหลดไฟล์");
     }
 }

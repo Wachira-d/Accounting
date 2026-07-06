@@ -793,18 +793,42 @@ public partial class BankService : IBankService
 
         // ยอดคงเหลือ "ล่าสุดจริง" ของ statement — ห้ามใช้แถวสุดท้ายของไฟล์ตรง ๆ
         // เพราะธนาคารไทยหลายแห่ง export แบบใหม่→เก่า (ยอดแถวสุดท้าย = ยอดเก่าสุด)
-        // ใช้แถวที่วันที่มากสุด; ถ้าหลายแถววันเดียวกันให้เคารพลำดับในไฟล์
-        // (ไฟล์เก่า→ใหม่เอาแถวท้าย, ไฟล์ใหม่→เก่าเอาแถวแรก)
+        // ใช้แถวที่วันที่มากสุด "ที่มียอดคงเหลือจริง" (Balance=null คือช่องว่าง);
+        // หลายแถววันเดียวกันเคารพลำดับในไฟล์ (เก่า→ใหม่เอาแถวท้าย, ใหม่→เก่าเอาแถวแรก)
         var newestFirst = parsedRows.Count > 1 && parsedRows[0].Date > parsedRows[^1].Date;
-        var maxDate = parsedRows.Max(r => r.Date);
-        var latestRow = newestFirst
-            ? parsedRows.First(r => r.Date == maxDate)
-            : parsedRows.Last(r => r.Date == maxDate);
+        BankCsvParser.Row? latestRow = null;
+        var balanceRows = parsedRows.Where(r => r.Balance.HasValue).ToList();
+        if (balanceRows.Count > 0)
+        {
+            var maxDate = balanceRows.Max(r => r.Date);
+            latestRow = newestFirst
+                ? balanceRows.First(r => r.Date == maxDate)
+                : balanceRows.Last(r => r.Date == maxDate);
+        }
+
+        // ตรวจความต่อเนื่องของยอด: balance แถวถัดไปต้อง = แถวก่อน + ฝาก − ถอน
+        // จุดที่ไม่ต่อเนื่อง = ไฟล์ขาดรายการ (ตัดหน้า/กรองบางประเภทออกตอน export)
+        // → เตือน เพราะนำเข้าต่อไปเฉย ๆ จะได้ยอดบัญชีที่ไม่มีวันตรงกับธนาคาร
+        var chronological = newestFirst ? Enumerable.Reverse(parsedRows).ToList() : parsedRows;
+        var continuityBreaks = 0;
+        for (var ci = 1; ci < chronological.Count; ci++)
+        {
+            var prevBal = chronological[ci - 1].Balance;
+            var curBal = chronological[ci].Balance;
+            if (!prevBal.HasValue || !curBal.HasValue) continue;
+            var expected = prevBal.Value + chronological[ci].Deposit - chronological[ci].Withdrawal;
+            if (Math.Abs(expected - curBal.Value) > 0.01m) continuityBreaks++;
+        }
+        var warnings = new List<string>();
+        if (continuityBreaks > 0)
+            warnings.Add($"⚠ ยอดคงเหลือในไฟล์ไม่ต่อเนื่อง {continuityBreaks} จุด — ไฟล์อาจขาดรายการ " +
+                "(ถูกตัดหน้า/กรองบางประเภทออกตอน export) ยอดบัญชีอาจไม่ตรงธนาคารจนกว่าจะนำเข้าครบ");
 
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
             var rowNum = 0;
+            var usedExisting = new HashSet<Guid>();
             foreach (var r in parsedRows)
             {
                 rowNum++;
@@ -819,13 +843,18 @@ public partial class BankService : IBankService
                 var txnType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal;
 
                 // Check for duplicates: same date + amount + type
+                // จับคู่แบบใช้ครั้งเดียว — statement มี 2 รายการยอดเท่ากันวันเดียวกัน
+                // ได้จริง (เช่น PromptPay 55 บาท 2 ครั้ง) ห้ามให้ทั้งคู่ชนแถวเดิม
+                // แถวเดียวแล้วหายไป 1 รายการ
                 var duplicate = existingTxns.FirstOrDefault(t =>
-                    t.TransactionDate.Date == r.Date.Date
+                    !usedExisting.Contains(t.Id)
+                    && t.TransactionDate.Date == r.Date.Date
                     && t.Amount == amount
                     && t.TransactionType == txnType);
 
                 if (duplicate != null)
                 {
+                    usedExisting.Add(duplicate.Id);
                     var isSameContent = string.Equals(
                         (duplicate.Description ?? "").Trim(),
                         desc.Trim(),
@@ -850,7 +879,7 @@ public partial class BankService : IBankService
                         .FirstAsync(t => t.Id == duplicate.Id);
                     existingEntity.Description = desc;
                     existingEntity.Reference = r.Reference;
-                    existingEntity.BalanceAfter = r.Balance;
+                    existingEntity.BalanceAfter = r.Balance ?? existingEntity.BalanceAfter;
                     imported++;
                     continue;
                 }
@@ -862,7 +891,7 @@ public partial class BankService : IBankService
                     TransactionDate = r.Date,
                     TransactionType = txnType,
                     Amount = amount,
-                    BalanceAfter = r.Balance,
+                    BalanceAfter = r.Balance ?? 0,
                     Description = desc,
                     Reference = r.Reference
                 });
@@ -872,15 +901,21 @@ public partial class BankService : IBankService
             if (conflicts.Count > 0 && !request.ForceOverwrite)
             {
                 await dbTransaction.RollbackAsync();
-                return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts);
+                return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts, warnings);
             }
 
             // อัปเดต snapshot ยอดจริงทุกครั้งที่ไฟล์ผ่าน (แม้รายการซ้ำถูกข้ามหมด —
             // การอัพ statement ช่วงทับซ้อนก็ยังยืนยันยอด ณ วันล่าสุดได้)
-            account.StatementBalance = latestRow.Balance;
-            account.StatementBalanceDate = latestRow.Date;
-            account.StatementImportedAt = DateTime.UtcNow;
-            account.CurrentBalance = latestRow.Balance;
+            // ไม่มีแถวไหนมียอดเลย → คง snapshot เดิมไว้ ดีกว่าเขียนทับด้วยศูนย์ปลอม
+            if (latestRow != null)
+            {
+                account.StatementBalance = latestRow.Balance;
+                account.StatementBalanceDate = latestRow.Date;
+                account.StatementImportedAt = DateTime.UtcNow;
+                account.CurrentBalance = latestRow.Balance!.Value;
+            }
+            else
+                warnings.Add("⚠ ไฟล์ไม่มีคอลัมน์ยอดคงเหลือที่อ่านได้ — ยอดตามธนาคารบนการ์ดบัญชีไม่ถูกอัปเดต");
 
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();
@@ -895,7 +930,7 @@ public partial class BankService : IBankService
                 catch (Exception ex) { _logger?.LogWarning(ex, "Auto-match after import failed (non-critical)"); }
             }
 
-            return new ImportBankStatementResponse(imported, skipped, 0);
+            return new ImportBankStatementResponse(imported, skipped, 0, null, warnings);
         }
         catch
         {

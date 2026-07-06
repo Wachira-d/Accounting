@@ -72,7 +72,7 @@ public record ReconcileRequest(
 
 public record ImportBankStatementRequest(
     Guid BankAccountId,
-    string FileFormat,  // "CSV", "OFX"
+    string FileFormat,  // "CSV", "EXCEL"/"XLSX"
     string Base64Content,
     bool ForceOverwrite = false);
 
@@ -80,7 +80,10 @@ public record ImportBankStatementResponse(
     int Imported,
     int Skipped,
     int Conflicts,
-    List<ImportConflict>? ConflictDetails = null);
+    List<ImportConflict>? ConflictDetails = null,
+    // คำเตือนคุณภาพไฟล์ (เช่น ยอดคงเหลือไม่ต่อเนื่อง = ไฟล์ขาดรายการ) —
+    // นำเข้าสำเร็จแต่ผู้ใช้ควรรู้ว่ายอดอาจยังไม่ตรงธนาคาร
+    List<string>? Warnings = null);
 
 public record ImportConflict(
     int RowNumber,
