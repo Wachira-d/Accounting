@@ -98,6 +98,9 @@ public class DocumentTemplate : TenantEntity
     public bool ShowWatermark { get; set; } = false;
     public string? WatermarkText { get; set; }               // e.g. "สำเนา", "COPY", "DRAFT"
     public decimal WatermarkOpacity { get; set; } = 0.15m;
+    /// <summary>ตำแหน่งป้าย "ต้นฉบับ/สำเนา" บน PDF — "Watermark" = ลายน้ำ
+    /// กลางหน้า (ค่าเดิม), "TopRight"/"TopLeft" = ป้ายกรอบเล็กมุมบนของเอกสาร.</summary>
+    public string CopyLabelPosition { get; set; } = "Watermark";
 
     // ===== Font & Style =====
     /// <summary>Overall layout/structure of the document — controls the

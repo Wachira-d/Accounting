@@ -78,7 +78,17 @@ public partial class PdfGenerationService
                     or Accounting.Models.Enums.DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
         var isCopyPrint = !string.IsNullOrWhiteSpace(b.WatermarkText)
             && (b.WatermarkText!.Contains("สำเนา") || b.WatermarkText.Contains("COPY", StringComparison.OrdinalIgnoreCase));
-        if (isRd864Doc && !hasCustomTitle && !isCopyPrint)
+        // ตำแหน่งป้าย ต้นฉบับ/สำเนา ตั้งได้ต่อเทมเพลต: "Watermark" = ลายน้ำกลาง
+        // หน้า (พฤติกรรมเดิม), "TopRight"/"TopLeft" = ป้ายกรอบเล็กมุมบนเอกสาร
+        var labelPos = (template.CopyLabelPosition ?? "Watermark").Trim();
+        var cornerMode = labelPos is "TopRight" or "TopLeft";
+        string? cornerLabel = null;
+        if (cornerMode)
+        {
+            if (isCopyPrint) cornerLabel = lang == "en" ? "COPY" : "สำเนา";
+            else if (isRd864Doc && !hasCustomTitle) cornerLabel = lang == "en" ? "Original" : "ต้นฉบับ";
+        }
+        if (isRd864Doc && !hasCustomTitle && !isCopyPrint && cornerLabel == null)
             titleText += lang == "en" ? "  (Original)" : "  (ต้นฉบับ)";
 
         try
@@ -115,7 +125,9 @@ public partial class PdfGenerationService
                     // template.WatermarkOpacity แปลงเป็น hex 8-digit ARGB
                     // (เดิม hard-code Colors.Grey.Lighten3) — HTML CSS
                     // BuildCss line 1160 ก็เคารพค่านี้.
-                    else if (!string.IsNullOrWhiteSpace(b.WatermarkText))
+                    // corner mode + copy print → ป้ายมุมแทนลายน้ำ (ลายน้ำ
+                    // custom อื่นของเทมเพลต เช่น DRAFT ยังเป็นลายน้ำตามเดิม)
+                    else if (!string.IsNullOrWhiteSpace(b.WatermarkText) && !(cornerMode && isCopyPrint))
                     {
                         try
                         {
@@ -135,6 +147,16 @@ public partial class PdfGenerationService
                         // อื่นจะ render ต่อ ไม่ทำให้ทั้ง PDF ตกไป fallback
                         // ConvertHtmlToPdf (HTML→Blocks ที่หน้าตาเรียบเกินไป).
                         void Safe(Action a) { try { a(); } catch { /* skip failed section */ } }
+                        if (cornerLabel != null)
+                            Safe(() =>
+                            {
+                                // ป้าย ต้นฉบับ/สำเนา มุมบน — กรอบเล็กสีตาม accent
+                                var badge = col.Item().PaddingBottom(4);
+                                var aligned = labelPos == "TopLeft" ? badge.AlignLeft() : badge.AlignRight();
+                                aligned.Border(1).BorderColor(accent)
+                                    .PaddingVertical(1).PaddingHorizontal(12)
+                                    .Text(cornerLabel).FontSize(11).Bold().FontColor(accent);
+                            });
                         Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText));
                         Safe(() => ComposeContact(col, doc, template, accent));
                         Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, layout, accent));
