@@ -114,6 +114,7 @@ public record AddCompanyUserRequest(
     UserRole Role);
 
 public record UpdateUserRoleRequest(UserRole Role);
+public record UpdateMemberNameRequest(string FullName);
 
 public record CompanyMemberResponse(
     Guid UserId,

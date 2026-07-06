@@ -87,6 +87,15 @@ public class CompanyController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "เปลี่ยน Role สำเร็จ"));
     }
 
+    /// <summary>เจ้าของแก้ชื่อ-นามสกุลของสมาชิก (แก้ชื่อที่พิมพ์ผิดบนลายเซ็น/เอกสาร).</summary>
+    [HttpPut("{companyId:guid}/users/{targetUserId:guid}/name")]
+    public async Task<ActionResult<ApiResponse<string>>> UpdateMemberName(Guid companyId, Guid targetUserId, [FromBody] UpdateMemberNameRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.UpdateMemberNameAsync(companyId, userId, targetUserId, request.FullName);
+        return Ok(new ApiResponse<string>(true, null, "แก้ชื่อสมาชิกสำเร็จ"));
+    }
+
     [HttpDelete("{companyId:guid}/users/{targetUserId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> RemoveUser(Guid companyId, Guid targetUserId)
     {

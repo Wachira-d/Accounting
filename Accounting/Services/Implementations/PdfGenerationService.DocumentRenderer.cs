@@ -68,6 +68,13 @@ public partial class PdfGenerationService
         {
             titleText = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
         }
+        // ใบกำกับภาษีที่รับเงินตอนออก (cash sale) → ใบเสร็จในตัว
+        else if (!hasCustomTitle
+            && doc.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice
+            && doc.ServedAsReceipt)
+        {
+            titleText = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
+        }
         if (doc.IsDeposit)
             titleText += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบกำกับ/ใบเสร็จภาษี. สำเนา

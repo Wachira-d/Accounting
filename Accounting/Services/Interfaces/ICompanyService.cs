@@ -27,6 +27,7 @@ public interface ICompanyService
     Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request);
     Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId);
     Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole);
+    Task UpdateMemberNameAsync(Guid companyId, Guid ownerId, Guid targetUserId, string newFullName);
 
     /// <summary>Throws UnauthorizedAccessException if the user is not an Owner of the given
     /// company (or a platform SystemAdmin). Use to guard sensitive endpoints like period close,

@@ -83,6 +83,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         //  3. (Inside RenderDocumentPdfNative) last-resort HTML→QuestPDF
         //     parser path so a composition bug can never blank the document.
         var signers = await ResolveSignersAsync(document);
+        await ResolveServedAsReceiptAsync(companyId, document);
         // GL posting summary at the foot of the document — only when the
         // company turned it on (CompanySettings.ShowGlEntryOnDocument). Used
         // for internal audit. Was previously fetched CLIENT-side only, so the
@@ -161,6 +162,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
+        await ResolveServedAsReceiptAsync(companyId, document);
         var gl = settings?.ShowGlEntryOnDocument == true
             ? await LoadGlPostingAsync(companyId, document) : null;
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
@@ -815,6 +817,25 @@ public partial class PdfGenerationService : IPdfGenerationService
         doc.IsDeposit && doc.DepositOutputVatDeferred && doc.VatAmount != 0m
         && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
 
+    /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash
+    /// sale) และไม่มีใบเสร็จ/ใบสำคัญรับแยกอ้างถึง → ทำหน้าที่เป็นใบเสร็จในตัว
+    /// → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน". ถ้ามีใบเสร็จแยกออกให้แล้ว
+    /// (credit ที่ชำระภายหลังด้วยการแปลงเป็นใบเสร็จ) → คงเป็น "ใบกำกับภาษี".</summary>
+    private async Task ResolveServedAsReceiptAsync(Guid companyId, Document doc)
+    {
+        doc.ServedAsReceipt = false;
+        if (doc.DocumentType != DocumentType.TaxInvoice) return;
+        if (doc.CombinedInvoiceTaxInvoice) return;   // มีหัวรวมของตัวเองแล้ว
+        if (doc.Status != DocumentStatus.Paid || doc.BalanceDue > 0.01m) return;
+        // ชำระผ่านการออกใบเสร็จแยก (Receipt/RV อ้างใบนี้) → ใบเสร็จคือคนละใบ
+        var hasSeparateReceipt = await _db.Documents.AsNoTracking().AnyAsync(r =>
+            r.CompanyId == companyId && r.RelatedDocumentId == doc.Id
+            && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+            && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
+            && r.Status != DocumentStatus.Rejected && !r.IsDeleted);
+        doc.ServedAsReceipt = !hasSeparateReceipt;
+    }
+
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
@@ -915,6 +936,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             && doc.CombinedInvoiceTaxInvoice)
         {
             title = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
+        }
+        // ใบกำกับภาษีที่รับเงินตอนออก (cash sale) → ทำหน้าที่เป็นใบเสร็จในตัว
+        else if (!hasCustomTitle && doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt)
+        {
+            title = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
         }
         if (doc.IsDeposit)
             title += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";

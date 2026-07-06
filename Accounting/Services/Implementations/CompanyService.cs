@@ -460,6 +460,30 @@ public class CompanyService : ICompanyService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>เจ้าของแก้ชื่อ-นามสกุลของสมาชิกในบริษัท (รวมของตัวเอง) — ใช้
+    /// แก้ชื่อที่พิมพ์ผิดซึ่งไปโผล่บนลายเซ็น/เอกสาร (ชื่อบนเอกสาร =
+    /// SignatureName ?? FullName). เปลี่ยน FullName ของ account จริง จึงจำกัด
+    /// เฉพาะ Owner + log audit. target ต้องเป็นสมาชิกของบริษัทนี้.</summary>
+    public async Task UpdateMemberNameAsync(Guid companyId, Guid ownerId, Guid targetUserId, string newFullName)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+
+        var name = (newFullName ?? "").Trim();
+        if (name.Length < 2 || name.Length > 100)
+            throw new ArgumentException("ชื่อ-นามสกุลต้องมีความยาว 2-100 ตัวอักษร");
+
+        var isMember = await _db.CompanyUsers.AnyAsync(x => x.CompanyId == companyId && x.UserId == targetUserId);
+        if (!isMember) throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
+
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == targetUserId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ใช้");
+        var old = target.FullName;
+        target.FullName = name;
+        await _db.SaveChangesAsync();
+        _logger?.LogInformation("Owner {Owner} แก้ชื่อสมาชิก {Target} ในบริษัท {Company}: '{Old}' → '{New}'",
+            ownerId, targetUserId, companyId, old, name);
+    }
+
     public async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)
     {
         // Platform SystemAdmin bypasses company-level owner check

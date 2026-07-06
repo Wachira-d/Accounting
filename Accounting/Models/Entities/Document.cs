@@ -65,6 +65,14 @@ public class Document : TenantEntity
     /// เป็นทั้งใบแจ้งหนี้ (เรียกเก็บเงิน + เครดิตเทอม) และใบกำกับภาษีในใบเดียว.</summary>
     public bool CombinedInvoiceTaxInvoice { get; set; }
 
+    /// <summary>Transient (ไม่เก็บ DB) — ใบกำกับภาษีที่ "รับเงินตอนออกใบ" (cash
+    /// sale, ชำระครบ ณ วันออก และไม่มีใบเสร็จแยกอ้างถึง) ทำหน้าที่เป็นทั้ง
+    /// ใบกำกับภาษีและใบเสร็จรับเงินในใบเดียว → หัวกระดาษพิมพ์
+    /// "ใบกำกับภาษี/ใบเสร็จรับเงิน". คำนวณตอน render (GenerateDocumentPdf/Html)
+    /// ไม่ persist เพราะสถานะชำระเปลี่ยนได้.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool ServedAsReceipt { get; set; }
+
     /// <summary>Capability token สำหรับลิงก์ "ลูกค้ากดยอมรับใบเสนอราคาออนไลน์"
     /// — random hex 64 ตัว สร้างเมื่อผู้ใช้ขอลิงก์ (POST accept-link). ผู้ถือ
     /// ลิงก์ดู/ยอมรับใบเสนอราคาได้โดยไม่ต้อง login (read-only + accept เท่านั้น).</summary>
