@@ -343,7 +343,9 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">สาขา</label><input type="text" class="form-input" id="fBranch"></div>
-            <div class="form-group"><label class="form-label">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label" id="fOpeningLabel">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0">
+              <div class="text-xs text-gray-400 hidden" id="fOpeningHint">แก้ยอดเปิดบัญชีหลังสร้างไม่ได้ — ใช้ "เพิ่มรายการเคลื่อนไหว" หรือ JE ปรับปรุงแทน</div>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -2464,7 +2466,9 @@
         document.getElementById('fAccType').value = 'Savings';
         document.getElementById('fCurrency').value = 'THB';
         document.getElementById('fBranch').value = '';
-        document.getElementById('fOpening').value = '0';
+        const op = document.getElementById('fOpening');
+        op.value = '0'; op.disabled = false;
+        document.getElementById('fOpeningHint').classList.add('hidden');
         Layout.openModal('formModal');
       },
       openEdit(id) {
@@ -2478,7 +2482,10 @@
         document.getElementById('fAccType').value = a.accountType || 'Savings';
         document.getElementById('fCurrency').value = a.currency || 'THB';
         document.getElementById('fBranch').value = a.branchName || '';
-        document.getElementById('fOpening').value = a.openingBalance || 0;
+        // ยอดเปิดถูกรวมเข้า CurrentBalance ตอนสร้างแล้ว — แก้ย้อนหลังไม่ได้
+        const op = document.getElementById('fOpening');
+        op.value = a.currentBalance ?? 0; op.disabled = true;
+        document.getElementById('fOpeningHint').classList.remove('hidden');
         Layout.openModal('formModal');
       },
       async save() {

@@ -17,7 +17,11 @@ public record UpdateBankAccountRequest(
     string? AccountName,
     string? BranchName,
     bool? IsActive,
-    Guid? LinkedAccountId);
+    Guid? LinkedAccountId,
+    string? BankName = null,
+    string? AccountNumber = null,
+    string? AccountType = null,   // Savings / Current / Fixed — เปลี่ยนแล้วระบบย้ายบัญชีย่อยในผังให้ตรงกลุ่ม
+    string? Currency = null);
 
 public record BankAccountResponse(
     Guid Id,
