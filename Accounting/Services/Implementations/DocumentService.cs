@@ -594,6 +594,15 @@ public class DocumentService : IDocumentService
             // ใบสำคัญจ่าย (PaymentVoucher)  = "การดำเนินการจ่ายเงินจริง" —
             //   เงินออกเสมอ (GL: Cr เงินสด/ธนาคาร; ถ้าอ้างอิงเอกสารตั้งหนี้
             //   จะตัดเจ้าหนี้ให้ด้วย) จึงห้ามเป็น "เครดิต" แบบลอย ๆ
+            // ลิงก์เอกสารต้นทาง (จาก ConvertCoreAsync) — ต้องเซ็ตก่อน infer
+            // PaymentType/cash-settle/auto-approve เพราะทั้งหมดแยก "PV ตั้งต้น"
+            // กับ "PV settle เอกสารตั้งหนี้" ด้วย field นี้. เดิมเซ็ตหลังสร้าง →
+            // PV แปลงจากใบแจ้งหนี้ซื้อถูก auto-approve เป็น standalone cash
+            // ก่อนมีลิงก์ → settlement ไม่ทำงาน (PI ค้างชำระ) + JE ลงค่าใช้จ่าย
+            // ซ้ำแทนตัดเจ้าหนี้
+            if (request.RelatedDocumentId.HasValue)
+                doc.RelatedDocumentId = request.RelatedDocumentId;
+
             if (request.DocumentType == DocumentType.PaymentVoucher)
             {
                 // A standalone PV must represent real cash leaving the company.
@@ -1871,6 +1880,41 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ใบลดหนี้ต้องระบุเหตุผล (คืนสินค้า / ส่วนลด / ปรับยอด / ตัดยอด) ก่อนอนุมัติ");
 
+        // ===== §90/2 — บริษัทไม่จดทะเบียน VAT ห้ามออกใบกำกับภาษี/เรียกเก็บ =====
+        // VAT ขาย (hard block — เดิมเป็นแค่ warning กด acknowledge ผ่านได้).
+        // default VatRegistered=true → บริษัทที่ไม่เคยตั้งค่าไม่กระทบ; block
+        // เฉพาะที่ติ๊ก "ไม่จด" ชัดเจนในหน้าตั้งค่า. CN/DN ฝั่งซื้อ (supplier
+        // ออกให้เรา — related doc เป็น PI/Expense/GRN) ไม่ใช่การออกใบกำกับ
+        // ของเรา → ไม่ block.
+        var companyVatRegistered = await _db.CompanySettings.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => (bool?)c.VatRegistered)
+            .FirstOrDefaultAsync() ?? true;
+        if (!companyVatRegistered)
+        {
+            var purchaseSideCnDn = false;
+            if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+                && doc.RelatedDocumentId.HasValue)
+            {
+                var relType = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType)
+                    .FirstOrDefaultAsync();
+                purchaseSideCnDn = relType is DocumentType.PurchaseInvoice
+                    or DocumentType.Expense or DocumentType.GoodsReceiptNote;
+            }
+            var isSalesVatIssuance = doc.DocumentType == DocumentType.TaxInvoice
+                || (doc.VatAmount > 0 && !purchaseSideCnDn
+                    && doc.DocumentType is DocumentType.Invoice or DocumentType.Receipt
+                        or DocumentType.ReceiptVoucher or DocumentType.BillingNote
+                        or DocumentType.CreditNote or DocumentType.DebitNote);
+            if (isSalesVatIssuance)
+                throw new InvalidOperationException(
+                    "⛔ บริษัทยังไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม — ออกใบกำกับภาษี/เรียกเก็บ VAT ขายไม่ได้ (§90/2). " +
+                    "ถ้าจดทะเบียนแล้ว เปิด \"จดทะเบียนภาษีมูลค่าเพิ่ม\" ในหน้าตั้งค่าระบบบัญชี; " +
+                    "ถ้ายังไม่จด ให้ตั้ง VAT = 0 และใช้ใบแจ้งหนี้/ใบเสร็จแทนใบกำกับภาษี");
+        }
+
         // §86/4 hard-block (opt-in via CompanySettings.EnforceFullTaxInvoiceFields).
         // เมื่อบริษัทเปิด flag นี้ → block approval ของใบกำกับ/ใบเสร็จ/CN/DN
         // ที่ขาด field บังคับ (BuyerTaxId 13 หลัก + BuyerAddress + BuyerBranchCode 5 หลัก).
@@ -1888,7 +1932,12 @@ public class DocumentService : IDocumentService
         // เคลมภาษีซื้อไม่ได้.
         var mustEnforce864 = doc.DocumentType == DocumentType.TaxInvoice
             || (enforce864 && rd864Types.Contains(doc.DocumentType));
-        if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null)
+        // ยกเว้นลูกค้าเงินสด "ไม่ประสงค์รับใบกำกับภาษี" — ประกาศอธิบดีฯ ฉบับ 199
+        // บังคับเลขผู้เสียภาษี/สาขาผู้ซื้อเฉพาะเมื่อผู้ซื้อเป็นผู้ประกอบการจด VAT;
+        // ผู้ซื้อบุคคลธรรมดาที่ไม่แจ้งข้อมูล → ออกใบกำกับได้ (เคลมภาษีซื้อไม่ได้เอง)
+        // VAT ขายยังลงรายงาน/นำส่ง ภ.พ.30 ครบตามปกติ
+        if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null
+            && !doc.Contact.IsWalkInCustomer)
         {
             var missing = new List<string>();
             var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();
@@ -2153,6 +2202,19 @@ public class DocumentService : IDocumentService
                 }
 
                 await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
+
+                // เอกสาร settle ที่อ้างเอกสารตั้งหนี้ (PV/Receipt/RV/CIL แปลงมา)
+                // = การจ่าย/รับเงินจริง — JE ของมันแตะเงินสด/ธนาคารแล้ว ตัวมันเอง
+                // ต้องไม่ค้างชำระ (กันใบสำคัญจ่ายโชว์ "ค้าง" ทั้งที่จ่ายไปแล้ว)
+                if (doc.RelatedDocumentId.HasValue
+                    && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.Receipt
+                        or DocumentType.ReceiptVoucher or DocumentType.CertificateInLieu)
+                {
+                    doc.PaidAmount = doc.TotalAmount;
+                    doc.BalanceDue = 0m;
+                    doc.Status = DocumentStatus.Paid;
+                }
+
                 await ApplyProjectBillingAsync(companyId, doc, +1);
                 await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
 
@@ -4042,7 +4104,10 @@ public class DocumentService : IDocumentService
             // คงสกุลเงิน + เรตของเอกสารต้นทาง (เดิมไม่ส่ง → default THB ทำให้เอกสาร
             // ต่างสกุลเงินแปลงแล้วกลายเป็นบาท)
             Currency: source.Currency,
-            ExchangeRate: source.ExchangeRate), createdBy);
+            ExchangeRate: source.ExchangeRate,
+            // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
+            // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
+            RelatedDocumentId: source.Id), createdBy);
 
         // Link new document to source + propagate appendix/contract metadata
         var created = await _db.Documents.FindAsync(newDoc.Id);

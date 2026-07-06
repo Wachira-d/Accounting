@@ -539,6 +539,11 @@ public class Contact : TenantEntity
     /// เอกสาร (ใบแจ้งหนี้/ใบเสร็จ) ผ่าน LINE flex message. null = ลูกค้ายัง
     /// ไม่ผูก LINE → ระบบ fallback ไป email/print. PDPA: anonymize ตอน erase.</summary>
     public string? LineUserId { get; set; }
+    /// <summary>ลูกค้าเงินสดหน้าร้านที่ "ไม่ประสงค์รับใบกำกับภาษี" — ใช้เป็น
+    /// ผู้ซื้อกลางของใบกำกับขายปลีกจาก POS/API. ประกาศอธิบดีฯ ฉบับ 199 บังคับ
+    /// เลขผู้เสียภาษีผู้ซื้อเฉพาะเมื่อผู้ซื้อเป็นผู้ประกอบการ VAT — contact นี้
+    /// จึงได้รับยกเว้น hard-block §86/4 (เลข 13 หลัก/สาขา) ตอนอนุมัติ.</summary>
+    public bool IsWalkInCustomer { get; set; }
     public bool IsActive { get; set; } = true;
 
     // ───── Per-contact GL account overrides ─────

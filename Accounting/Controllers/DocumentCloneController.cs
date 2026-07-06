@@ -127,7 +127,9 @@ public class DocumentCloneController : ControllerBase
             PricesIncludeVat: src.PricesIncludeVat
         );
 
-        var createdBy = User.Identity?.Name ?? "system";
+        // ResolveSignersAsync (PDF ผู้จัดทำ) parse CreatedBy เป็น user GUID —
+        // Identity.Name เป็นชื่อ/อีเมล ทำให้เอกสารโคลนไม่มีลายเซ็นผู้จัดทำ
+        var createdBy = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var newDoc = await _docs.CreateDocumentAsync(companyId, req, createdBy);
         return Ok(new ApiResponse<object>(true, new
         {

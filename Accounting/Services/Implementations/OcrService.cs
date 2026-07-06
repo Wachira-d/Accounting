@@ -1019,10 +1019,20 @@ public class OcrService : IOcrService
             {
                 try
                 {
-                    var aiLineDesc = extractedData.Items
-                            .FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Description))?.Description
-                        ?? extractedData.ExpenseCategory
-                        ?? extractedData.VendorName ?? "";
+                    // ส่งเฉพาะ "ข้อมูลจริงจากบิล" ให้ AI — ห้าม fallback เป็น
+                    // ExpenseCategory ที่ rule-based เดาไว้ เพราะถ้าเดาผิด AI จะ
+                    // เห็นชื่อหมวดผิดเป็น "รายการในบิล" แล้วยืนยันกลับด้วย
+                    // confidence สูง (เคสจริง: บิล Makro อ่านรายการไม่ได้ →
+                    // resolver เดา "ค่าที่ปรึกษากฎหมาย/บัญชี" → AI ตอบ 54620
+                    // มั่นใจ 0.95 ทั้งที่ซื้อของ). รายการหลายบรรทัดส่ง 3 บรรทัด
+                    // แรกให้ AI เห็นภาพรวมตะกร้า ไม่ใช่ชิ้นแรกชิ้นเดียว
+                    var itemDescs = extractedData.Items
+                        .Where(i => !string.IsNullOrWhiteSpace(i.Description))
+                        .Select(i => i.Description!.Trim())
+                        .Take(3).ToList();
+                    var aiLineDesc = itemDescs.Count > 0
+                        ? string.Join(" | ", itemDescs)
+                        : extractedData.VendorName ?? "";
                     if (!string.IsNullOrWhiteSpace(aiLineDesc))
                     {
                         var localConf = (decimal)extractedData.FieldConfidence.GetValueOrDefault("DebitAccount", 0);

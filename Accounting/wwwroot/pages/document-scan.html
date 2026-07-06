@@ -748,6 +748,13 @@
       // drag is sometimes swallowed and the page asks the user to pick the file
       // manually (the "must click twice" bug previously reported).
       bindUpload() {
+        // Page.init() รันซ้ำได้ (loadCompanies → Page.init อีกรอบ, Layout.init
+        // คืน true ทั้งสองครั้ง) → ถ้าไม่ guard listener จะซ้อน 2 ชุด:
+        // คลิกเดียว input.click() ยิง 2 ครั้ง — ครั้งที่สองไม่มี user activation
+        // ไปตีกับ dialog ที่กำลังเปิด ทำให้ change ของการเลือกครั้งแรกหลุด
+        // = อาการ "ต้องกดเลือกไฟล์ 2 รอบถึงจะอัพโหลด"
+        if (this._uploadBound) return;
+        this._uploadBound = true;
         const zone = document.getElementById('uploadZone');
         const input = document.getElementById('fileInput');
 
@@ -990,6 +997,17 @@
         return new Promise(resolve => {
           this._duplicateResolve = resolve;
           this._duplicateFile = file;
+          // กัน promise ค้าง: ปิด modal ด้วย ESC (keyboard hook กลางของ Layout
+          // ถอด class ตรง ๆ ไม่ผ่านปุ่ม) → ถือว่า "ข้าม" มิฉะนั้น _dupModalChain
+          // ค้างถาวร ทุกไฟล์ถัดไปติดสถานะ "ตรวจสอบไฟล์ซ้ำ..." จนต้อง reload
+          const dupModal = document.getElementById('duplicateModal');
+          const dupObs = new MutationObserver(() => {
+            if (!dupModal.classList.contains('active')) {
+              dupObs.disconnect();
+              if (this._duplicateResolve) { this._duplicateResolve('skip'); this._duplicateResolve = null; }
+            }
+          });
+          dupObs.observe(dupModal, { attributes: true, attributeFilter: ['class'] });
           document.getElementById('duplicateBody').innerHTML = `
             <p style="margin-bottom:12px;line-height:1.6">เอกสารนี้อาจซ้ำกับไฟล์ที่เคยอัปโหลด:</p>
             <div style="padding:12px 16px;background:var(--gray-50);border-radius:var(--radius);margin-bottom:12px">
@@ -3561,7 +3579,12 @@
           paymentDate,
           paymentTermsDays: scan.paymentTermsDays || null,
           reference: scan.extractedDocumentNumber || null,
-          notes: scan.processingNotes ? `(จาก OCR) ${scan.processingNotes}` : null,
+          // ⚠ ห้ามใส่ processingNotes ลง notes — เป็น diagnostic ภายใน (Zone
+          // Analysis / Field Confidence / AI reasoning) ที่จะไปโผล่บน PDF
+          // เอกสารจริง. ดูรายละเอียด OCR ได้ในหน้า review (ส่วน "AI raw
+          // response") อยู่แล้ว. notes บนเอกสารเก็บแค่ marker สะอาดอ้างอิง
+          // ไฟล์ต้นทาง (ตรงกับ path auto-create ฝั่ง backend)
+          notes: scan.originalFileName ? `สร้างจากการสแกน OCR: ${scan.originalFileName}` : null,
           lines,
           currency,
           pricesIncludeVat,

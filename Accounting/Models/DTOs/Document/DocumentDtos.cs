@@ -14,6 +14,9 @@ public record CreateDocumentRequest(
     Guid? ProjectId = null,
     // Cost center / สาขา / แผนก — ไหลลง JE.DimensionId ตอน approve
     Guid? DimensionId = null,
+    // เอกสารต้นทาง (convert chain) — ต้องรู้ตั้งแต่ create เพราะ PaymentType
+    // inference / cash-settle / PV auto-approve แยกพฤติกรรมด้วย field นี้
+    Guid? RelatedDocumentId = null,
     Guid? BankAccountId = null,
     Guid? PaymentAccountId = null,
     Guid? ExpenseCategoryId = null,
