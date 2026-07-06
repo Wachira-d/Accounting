@@ -460,5 +460,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.ShowSignature, t.SignatureCount, t.ShowQrCode, t.QrCodeType, t.PromptPayId,
         t.LayoutStyle, t.FontFamily, t.Language, t.ShowBilingual,
         t.IsEtaxTemplate, t.AutoGenerateEtaxXml, t.DefaultCopies, t.CreatedAt,
-        t.ShowWatermark, t.WatermarkText, t.WatermarkOpacity, t.CopyLabelPosition);
+        t.ShowWatermark, t.WatermarkText, t.WatermarkOpacity, t.CopyLabelPosition,
+        t.PrimaryColor, t.AccentColor, t.TableHeaderTextColor, t.HeaderBackgroundColor,
+        t.TableStripedColor, t.TitleFontSize, t.BodyFontSize);
 }

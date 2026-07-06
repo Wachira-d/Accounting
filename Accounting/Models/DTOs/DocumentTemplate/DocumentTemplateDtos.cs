@@ -271,7 +271,17 @@ public record DocumentTemplateResponse(
     bool ShowWatermark = false,
     string? WatermarkText = null,
     decimal WatermarkOpacity = 0.15m,
-    string? CopyLabelPosition = null);
+    string? CopyLabelPosition = null,
+    // สี/ฟอนต์ที่หายไปจาก response เดิม — ทำให้หน้าตั้งค่าโหลดค่าว่างแล้ว
+    // "สีที่บันทึกเองหายตอนกลับเข้ามา"; เพิ่มครบเพื่อให้ editor + ช่องสีเอง
+    // สะท้อนค่าจริงที่เซฟไว้
+    string? PrimaryColor = null,
+    string? AccentColor = null,
+    string? TableHeaderTextColor = null,
+    string? HeaderBackgroundColor = null,
+    string? TableStripedColor = null,
+    string? TitleFontSize = null,
+    string? BodyFontSize = null);
 
 public record DocumentTemplateListResponse(
     Guid Id,

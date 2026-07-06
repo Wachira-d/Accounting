@@ -1296,7 +1296,7 @@ public class ImportExportService : IImportExportService
         {
             CompanyId = companyId,
             EmployeeCode = code,
-            TitleTh = row.GetValueOrDefault("TitleTh") ?? "",
+            TitleTh = Accounting.Helpers.ThaiTitleHelper.Normalize(row.GetValueOrDefault("TitleTh")),
             FirstNameTh = row.GetValueOrDefault("FirstNameTh") ?? throw new InvalidOperationException("FirstNameTh is required"),
             LastNameTh = row.GetValueOrDefault("LastNameTh") ?? throw new InvalidOperationException("LastNameTh is required"),
             FirstNameEn = row.GetValueOrDefault("FirstNameEn"),
