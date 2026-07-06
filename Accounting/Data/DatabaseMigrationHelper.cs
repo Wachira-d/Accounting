@@ -4298,6 +4298,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignatureBase64" text NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_DeliverySignToken" ON "Documents" ("DeliverySignToken") WHERE "DeliverySignToken" IS NOT NULL;""",
 
+            // ===== หัวเรื่องเอกสารตั้งเอง (ต่อประเภท + เงื่อนไข) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",
+
             // ===== ลูกค้าเงินสดไม่ประสงค์รับใบกำกับ (ผู้ซื้อกลางของใบกำกับขายปลีก) =====
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "IsWalkInCustomer" boolean NOT NULL DEFAULT false;""",
 

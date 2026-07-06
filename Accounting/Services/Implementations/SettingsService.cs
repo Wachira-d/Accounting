@@ -44,6 +44,8 @@ public class SettingsService : ISettingsService
         if (request.InvoiceFooter != null) settings.InvoiceFooter = request.InvoiceFooter;
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
+        if (request.DocumentTitleOverridesJson != null)
+            settings.DocumentTitleOverridesJson = string.IsNullOrWhiteSpace(request.DocumentTitleOverridesJson) ? null : request.DocumentTitleOverridesJson;
         if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
         if (request.EnforceManagerApproval.HasValue) settings.EnforceManagerApproval = request.EnforceManagerApproval.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
@@ -454,6 +456,7 @@ public class SettingsService : ISettingsService
         s.BookkeeperCpdNumber,
         // Print layout
         s.ShowGlEntryOnDocument,
+        s.DocumentTitleOverridesJson,
         // HR
         s.LeaveQuotasJson,
         s.EnforceManagerApproval,

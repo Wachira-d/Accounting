@@ -603,6 +603,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   3. fallback: QuestPDF native (Thai-safe layout)
 - รองรับ template per `DocumentType + IsDefault` flag
 - ลายเซ็น/ลายน้ำ/QR/รหัส GL footer (toggle ต่อบริษัท)
+- **หัวเรื่องเอกสาร — resolver กลาง `ComputeDocumentTitle`** (ใช้ทั้ง QuestPDF
+  native + HTML กัน logic drift). ครอบทุกเคสจริงทางบัญชี:
+  - หัวพื้นฐาน 16 ประเภท (`GetDocumentTitle`) — ทุกชนิดถูกต้องตามชื่อไทย
+  - **เงื่อนไข** (auto): ใบกำกับ+รับเงินตอนออก (ServedAsReceipt) / ใบเสร็จมี
+    VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน"; TaxInvoice+`CombinedInvoiceTaxInvoice`
+    → "ใบแจ้งหนี้/ใบกำกับภาษี"; มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ
+    (ไม่ upgrade); `IsDeposit` → ต่อท้าย "(เงินมัดจำ)"
+  - **ตั้งเองได้ทุกหัว** (พื้นฐาน + เงื่อนไข) ผ่าน
+    `CompanySettings.DocumentTitleOverridesJson` (คีย์ = ชื่อ enum +
+    `TaxInvoiceReceipt`/`CombinedInvoice`/`DepositSuffix`) — หน้าตั้งค่า →
+    เอกสาร → "หัวเรื่องเอกสาร"; per-template `CustomTitle` ยังชนะ base override
 
 ### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)
 - **Service**: `EtaxInvoiceService.GenerateAsync` (`:87`)

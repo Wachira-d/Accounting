@@ -817,6 +817,53 @@ public partial class PdfGenerationService : IPdfGenerationService
         doc.IsDeposit && doc.DepositOutputVatDeferred && doc.VatAmount != 0m
         && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
 
+    private static Dictionary<string, string> ParseTitleOverrides(CompanySettings? settings)
+    {
+        var json = settings?.DocumentTitleOverridesJson;
+        if (string.IsNullOrWhiteSpace(json)) return new();
+        try { return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new(); }
+        catch { return new(); }
+    }
+
+    /// <summary>ศูนย์กลางการคำนวณหัวเรื่องเอกสาร — ใช้ทั้ง QuestPDF native และ HTML
+    /// renderer (เดิม logic ซ้ำ 2 ที่ เสี่ยง drift). ครอบทุกเคสจริงทางบัญชี:
+    ///   • หัวพื้นฐานต่อประเภท (16 ชนิด) — ตั้งเองผ่าน settings หรือ template.CustomTitle
+    ///   • ใบกำกับ+รับเงินตอนออก / ใบเสร็จมี VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน" (§86/4)
+    ///   • ใบแจ้งหนี้+ใบกำกับรวมใบ → "ใบแจ้งหนี้/ใบกำกับภาษี"
+    ///   • มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ (ไม่ upgrade เป็นใบกำกับ)
+    ///   • มัดจำ → ต่อท้าย "(เงินมัดจำ)"
+    /// ทุกหัว (พื้นฐาน + เงื่อนไข) override ได้ผ่าน CompanySettings.DocumentTitleOverridesJson</summary>
+    internal static string ComputeDocumentTitle(Document doc, DocumentTemplate template, CompanySettings? settings, string lang)
+    {
+        var isEn = lang == "en";
+        var overrides = isEn ? new Dictionary<string, string>() : ParseTitleOverrides(settings);
+        string Ov(string key, string def) =>
+            overrides.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v) ? v.Trim() : def;
+
+        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
+        var baseTitle = Ov(doc.DocumentType.ToString(), defaultTitle);
+
+        // template.CustomTitle (หน้าเทมเพลต) ชนะ base override เมื่อผู้ใช้ตั้งจริง
+        var customTitle = isEn ? template.CustomTitleEn : template.CustomTitle;
+        var hasCustomTitle = !string.IsNullOrWhiteSpace(customTitle)
+            && customTitle != GetDocumentTitle(doc.DocumentType, isEn ? "en" : "th");
+        var title = hasCustomTitle ? customTitle! : baseTitle;
+
+        if (!hasCustomTitle)
+        {
+            if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
+                title = isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี");
+            else if (((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+                        && doc.VatAmount > 0 && !IsDeferredVatDeposit(doc))
+                     || (doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt))
+                title = isEn ? "Tax Invoice / Receipt" : Ov("TaxInvoiceReceipt", "ใบกำกับภาษี/ใบเสร็จรับเงิน");
+        }
+
+        if (doc.IsDeposit)
+            title += isEn ? " (Deposit)" : " " + Ov("DepositSuffix", "(เงินมัดจำ)");
+        return title;
+    }
+
     /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash
     /// sale) และไม่มีใบเสร็จ/ใบสำคัญรับแยกอ้างถึง → ทำหน้าที่เป็นใบเสร็จในตัว
     /// → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน". ถ้ามีใบเสร็จแยกออกให้แล้ว
@@ -910,40 +957,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
         sb.AppendLine("</div></div>");
 
-        // Document Title — Receipt/ReceiptVoucher ที่มี VAT > 0 ต้องพิมพ์เป็น
-        // ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4: ใบเสร็จที่มี VAT = ใบกำกับภาษีในตัว);
-        // มัดจำ (IsDeposit) → ต่อท้าย "(เงินมัดจำ)" ให้ลูกค้าทราบ.
-        // "custom title จริง" = ผู้ใช้ตั้งเอง ต่างจากชื่อประเภทมาตรฐาน. เทมเพลต
-        // default (in-memory + seed DB) เติม CustomTitle = ชื่อประเภทเสมอ จึงเช็ค
-        // null อย่างเดียวไม่พอ — ไม่งั้นหัวพิเศษ (Receipt+VAT / combined / ต้นฉบับ)
-        // ไม่ทำงาน. ถือว่าไม่ได้ตั้งเองเมื่อว่าง หรือเท่ากับชื่อประเภทมาตรฐาน.
-        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
-        var hasCustomTitle = !string.IsNullOrWhiteSpace(template.CustomTitle)
-            && template.CustomTitle != defaultTitle;
-        var title = hasCustomTitle ? template.CustomTitle! : defaultTitle;
-        if (!hasCustomTitle
-            && (doc.DocumentType == DocumentType.Receipt || doc.DocumentType == DocumentType.ReceiptVoucher)
-            && doc.VatAmount > 0
-            && !IsDeferredVatDeposit(doc))   // มัดจำ VAT พักรอ ≠ ใบกำกับภาษี
-        {
-            title = lang == "en"
-                ? "Tax Invoice / Receipt"
-                : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
-        }
-        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม.
-        if (!hasCustomTitle
-            && doc.DocumentType == DocumentType.TaxInvoice
-            && doc.CombinedInvoiceTaxInvoice)
-        {
-            title = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
-        }
-        // ใบกำกับภาษีที่รับเงินตอนออก (cash sale) → ทำหน้าที่เป็นใบเสร็จในตัว
-        else if (!hasCustomTitle && doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt)
-        {
-            title = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
-        }
-        if (doc.IsDeposit)
-            title += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
+        // Document Title — หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) คำนวณจาก
+        // resolver กลาง ComputeDocumentTitle (ตั้งเองได้ผ่าน settings) — เดิม logic
+        // ซ้ำกับ native renderer เสี่ยง drift
+        var title = ComputeDocumentTitle(doc, template, settings, lang);
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
         var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
                 or DocumentType.DebitNote or DocumentType.CreditNote

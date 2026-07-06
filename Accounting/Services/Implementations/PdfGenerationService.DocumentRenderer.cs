@@ -42,41 +42,9 @@ public partial class PdfGenerationService
         var stripe = SanitizeHex(template.TableStripedColor) ?? "#F8FAFC";
         var layout = (template.LayoutStyle ?? "Classic").Trim();
         var fontChain = GetFontFamilyChain(b.FontFamily);
-        // "custom title จริง" = ผู้ใช้ตั้งเองต่างจากชื่อประเภทมาตรฐาน. เทมเพลต
-        // default (ทั้ง in-memory และที่ seed ลง DB) เติม CustomTitle = ชื่อประเภท
-        // เสมอ จึงเช็ค null อย่างเดียวไม่ได้ (ไม่งั้น logic หัวพิเศษ Receipt+VAT /
-        // combined / "(ต้นฉบับ)" จะไม่ทำงานเลย). ถือว่า "ไม่ได้ตั้งเอง" เมื่อว่าง
-        // หรือเท่ากับชื่อประเภทมาตรฐาน.
-        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
-        var hasCustomTitle = !string.IsNullOrWhiteSpace(template.CustomTitle)
-            && template.CustomTitle != defaultTitle;
-        var titleText = hasCustomTitle ? template.CustomTitle! : defaultTitle;
-        // Receipt + VAT > 0 → ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4); IsDeposit → ต่อท้าย "(เงินมัดจำ)"
-        if (!hasCustomTitle
-            && (doc.DocumentType == Accounting.Models.Enums.DocumentType.Receipt
-                || doc.DocumentType == Accounting.Models.Enums.DocumentType.ReceiptVoucher)
-            && doc.VatAmount > 0
-            && !IsDeferredVatDeposit(doc))   // มัดจำ VAT พักรอ ≠ ใบกำกับภาษี
-        {
-            titleText = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
-        }
-        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม เพื่อใช้
-        // เป็นทั้งใบแจ้งหนี้ (เรียกเก็บ+เครดิตเทอม) และใบกำกับภาษีเต็มรูปในใบเดียว.
-        if (!hasCustomTitle
-            && doc.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice
-            && doc.CombinedInvoiceTaxInvoice)
-        {
-            titleText = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
-        }
-        // ใบกำกับภาษีที่รับเงินตอนออก (cash sale) → ใบเสร็จในตัว
-        else if (!hasCustomTitle
-            && doc.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice
-            && doc.ServedAsReceipt)
-        {
-            titleText = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
-        }
-        if (doc.IsDeposit)
-            titleText += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
+        // หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) จาก resolver กลาง —
+        // ตั้งเองได้ผ่าน settings; ใช้ร่วมกับ HTML renderer กัน logic drift
+        var titleText = ComputeDocumentTitle(doc, template, settings, lang);
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบกำกับ/ใบเสร็จภาษี. สำเนา
         // ใช้ WatermarkOverride ("สำเนา") ตอนสั่งพิมพ์สำเนา → ไม่ต้องมีป้ายซ้อน.
         var isRd864Doc = doc.DocumentType is Accounting.Models.Enums.DocumentType.TaxInvoice
