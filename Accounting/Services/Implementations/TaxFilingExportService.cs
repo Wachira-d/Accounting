@@ -399,6 +399,66 @@ public class TaxFilingExportService : ITaxFilingExportService
     }
 
     // =====================================================================
+    // สปส.1-10 (Excel) — ไฟล์แนบ "ส่งข้อมูลเงินสมทบ" ใน SSO e-Service
+    //
+    // โครงสร้างถอดแบบจากไฟล์จริงที่อัปโหลดผ่านระบบ สปส. สำเร็จ (ก.ค. 2569):
+    //   • sheet เดียว ชื่อ sheet = ลำดับที่สาขา 6 หลัก (สำนักงานใหญ่ = "000000")
+    //   • 6 คอลัมน์: เลขประจำตัวประชาชน (text) | คำนำหน้าชื่อ | ชื่อผู้ประกันตน |
+    //     นามสกุลผู้ประกันตน | ค่าจ้าง (ตัวเลข, ค่าจ้างจริงไม่ cap เพดาน) |
+    //     จำนวนเงินสมทบ (ตัวเลข, เฉพาะฝั่งลูกจ้าง ปัดเป็นบาทถ้วนตามที่หักจริง)
+    //   • ไม่มีแถวรวม/ข้อมูลบริษัท — หน้าเว็บ สปส. กรอกเลขบัญชีนายจ้าง/งวด/อัตราเอง
+    //
+    // หมายเหตุ: ไฟล์ .txt แบบ fixed-width (126/135 ตัวอักษร) เป็นคนละรูปแบบ —
+    // Excel เป็นช่องทางที่ระบบ e-Service รองรับและทดสอบผ่านแล้ว จึงใช้เป็นหลัก
+    // =====================================================================
+    public async Task<TaxFilingExportResult> ExportSso110ExcelAsync(Guid companyId, int year, int month)
+    {
+        var company = await GetCompanyAsync(companyId);
+        var thaiYear = year + 543;
+
+        var payrollRuns = await _db.PayrollRuns
+            .Include(p => p.Details).ThenInclude(d => d.Employee)
+            .Where(p => p.CompanyId == companyId && p.Year == year && p.Month == month
+                && p.Status != "Draft" && p.Status != "Voided")
+            .ToListAsync();
+
+        var allDetails = payrollRuns
+            .SelectMany(p => p.Details)
+            .Where(d => d.Employee.IsSubjectToSocialSecurity && d.SocialSecurityEmployee > 0)
+            .OrderBy(d => d.Employee.EmployeeCode)
+            .ToList();
+
+        // ลำดับที่สาขา สปส. = 6 หลัก (RD BranchCode 5 หลัก pad ซ้ายด้วย 0)
+        var branchSeq = (company.BranchCode ?? "00000").Trim().PadLeft(6, '0');
+        if (branchSeq.Length > 6) branchSeq = branchSeq[^6..];
+
+        var rows = allDetails.Select(d => new Dictionary<string, object?>
+        {
+            ["เลขประจำตัวประชาชน"] = (d.Employee.CitizenId ?? "").Trim(),
+            ["คำนำหน้าชื่อ"] = (d.Employee.TitleTh ?? "").Trim(),
+            ["ชื่อผู้ประกันตน"] = (d.Employee.FirstNameTh ?? "").Trim(),
+            ["นามสกุลผู้ประกันตน"] = (d.Employee.LastNameTh ?? "").Trim(),
+            ["ค่าจ้าง"] = Math.Round(d.GrossIncome, 2),
+            ["จำนวนเงินสมทบ"] = Math.Round(d.SocialSecurityEmployee, 2),
+        }).ToList();
+
+        using var ms = new MemoryStream();
+        MiniExcelLibs.MiniExcel.SaveAs(ms, rows, sheetName: branchSeq);
+
+        var totalWages = allDetails.Sum(d => d.GrossIncome);
+        var totalEmpContrib = allDetails.Sum(d => d.SocialSecurityEmployee);
+
+        return new TaxFilingExportResult(
+            "SSO110X", "สปส.1-10 (Excel)",
+            $"SocialSecurity_{thaiYear}_{month:D2}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ms.ToArray(),
+            allDetails.Count, totalWages, totalEmpContrib,
+            $"ไฟล์ Excel แนบ e-Service เดือน {month}/{year} ผู้ประกันตน {allDetails.Count} คน " +
+            $"เงินสมทบลูกจ้าง {totalEmpContrib:N2} บาท (sheet: {branchSeq})");
+    }
+
+    // =====================================================================
     // สปส.1-03 — ขึ้นทะเบียนผู้ประกันตน (พนักงานเข้าใหม่ภายในเดือนนั้น)
     // กฎหมาย: นายจ้างต้องแจ้งภายใน 30 วันนับจากวันเริ่มงาน (พ.ร.บ.ประกันสังคม §34)
     // Layout (pipe-delimited, อ้างอิงโครงสร้าง portal e-Service):
