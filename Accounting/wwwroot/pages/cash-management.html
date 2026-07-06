@@ -203,7 +203,7 @@
       async loadContacts() {
         try {
           const cid = Layout.getCompanyId();
-          const r = await fetch(`/api/companies/${cid}/contacts?pageSize=500`, { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
+          const r = await fetch(`/api/companies/${cid}/document/contacts?pageSize=500`, { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
           const j = await r.json();
           const items = j.data?.items || j.data || [];
           const opts = items.map(c => `<option value="${c.id}">${Layout.esc(c.name)} ${c.taxId ? `(${c.taxId})` : ''}</option>`).join('');
@@ -450,7 +450,7 @@
       // ===== Bulk Vendor Pay =====
       async loadVendorList() {
         const cid = Layout.getCompanyId();
-        const r = await fetch(`/api/companies/${cid}/contacts?isSupplier=true&pageSize=500`, {
+        const r = await fetch(`/api/companies/${cid}/document/contacts?isSupplier=true&pageSize=500`, {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
         const j = await r.json();
         const items = j.data?.items || j.data || [];

@@ -14,6 +14,25 @@ public class CompanySettings : TenantEntity
     /// แบบ irreversible — เปิดเฉพาะเมื่อรู้จริง ๆ ว่าทำอะไรอยู่.</summary>
     public bool AllowNegativeStock { get; set; } = false;
 
+    /// <summary>เปิดตั้งค่าเผื่อหนี้สงสัยจะสูญอัตโนมัติ (ECL — TFRS NPAEs
+    /// บทที่ 9). Opt-in: EclAllowanceJob จะ post ปรับปรุงค่าเผื่อสิ้นเดือน
+    /// (Dr 57130 / Cr 18100) จาก AR aging × loss rate ต่อ bucket.</summary>
+    public bool EclEnabled { get; set; } = false;
+
+    /// <summary>Loss rate (%) ต่อ aging bucket [0-30, 31-60, 61-90, 91-180,
+    /// 180+] เป็น JSON array 5 ตัว เช่น "[1,5,10,25,50]" — null = default.</summary>
+    public string? EclLossRatesJson { get; set; }
+
+    /// <summary>SoD (Segregation of Duties): ผู้สร้างเอกสารห้ามอนุมัติเอกสาร
+    /// ของตัวเอง (maker ≠ checker). Default ปิด — กิจการเจ้าของคนเดียวทำทุก
+    /// หน้าที่ได้ตามเดิม.</summary>
+    public bool SodBlockSelfApproval { get; set; } = false;
+
+    /// <summary>Commitment control ตอนอนุมัติ PO: "Off" (default) | "Warn"
+    /// (log เตือน) | "Block" (ห้ามอนุมัติเมื่อ actual+committed+ใบนี้ เกิน
+    /// budget ต่อบัญชี — override ได้ด้วย acknowledgeWarnings).</summary>
+    public string BudgetCommitmentMode { get; set; } = "Off";
+
     // Branding
     public string? LogoPath { get; set; }
     public string? LogoUrl { get; set; }

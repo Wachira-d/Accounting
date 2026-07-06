@@ -161,7 +161,7 @@
     </div>
 
     <!-- Import Modal -->
-    <div id="importModal" class="modal-overlay" style="display:none">
+    <div id="importModal" class="modal-overlay">
       <div class="modal" style="max-width:640px">
         <div class="modal-header">
           <h3 id="importTitle">นำเข้าสมุดรายวัน</h3>
@@ -933,9 +933,9 @@
         document.getElementById('importActionBtn').disabled = true;
         document.getElementById('importActionBtn').onclick = Import.validate;
         document.getElementById('importFooter').style.display = '';
-        document.getElementById('importModal').style.display = 'flex';
+        document.getElementById('importModal').classList.add('active');
       },
-      close() { document.getElementById('importModal').style.display = 'none'; },
+      close() { document.getElementById('importModal').classList.remove('active'); },
       async downloadTemplate() {
         Import._closeMenus();
         try {

@@ -17,7 +17,11 @@ public record UpdateBankAccountRequest(
     string? AccountName,
     string? BranchName,
     bool? IsActive,
-    Guid? LinkedAccountId);
+    Guid? LinkedAccountId,
+    string? BankName = null,
+    string? AccountNumber = null,
+    string? AccountType = null,   // Savings / Current / Fixed — เปลี่ยนแล้วระบบย้ายบัญชีย่อยในผังให้ตรงกลุ่ม
+    string? Currency = null);
 
 public record BankAccountResponse(
     Guid Id,
@@ -31,7 +35,13 @@ public record BankAccountResponse(
     Guid? LinkedAccountId,
     string? LinkedAccountCode,
     string? LinkedAccountName,
-    bool IsActive);
+    bool IsActive,
+    // ── ยอดจริงจาก statement ล่าสุด vs ยอดตามบัญชี (GL) ──
+    decimal? StatementBalance = null,      // ยอดคงเหลือแถวล่าสุดของ statement ที่นำเข้า
+    DateTime? StatementBalanceDate = null, // ยอด ณ วันที่
+    DateTime? StatementImportedAt = null,  // นำเข้าเมื่อ
+    decimal? BookBalance = null,           // ยอดตามบัญชี (GL จาก JE ที่ post แล้ว)
+    decimal? StatementDiff = null);        // StatementBalance − BookBalance (null = ยังไม่เคยนำเข้า)
 
 public record CreateBankTransactionRequest(
     Guid BankAccountId,
@@ -62,7 +72,7 @@ public record ReconcileRequest(
 
 public record ImportBankStatementRequest(
     Guid BankAccountId,
-    string FileFormat,  // "CSV", "OFX"
+    string FileFormat,  // "CSV", "EXCEL"/"XLSX"
     string Base64Content,
     bool ForceOverwrite = false);
 
@@ -70,7 +80,10 @@ public record ImportBankStatementResponse(
     int Imported,
     int Skipped,
     int Conflicts,
-    List<ImportConflict>? ConflictDetails = null);
+    List<ImportConflict>? ConflictDetails = null,
+    // คำเตือนคุณภาพไฟล์ (เช่น ยอดคงเหลือไม่ต่อเนื่อง = ไฟล์ขาดรายการ) —
+    // นำเข้าสำเร็จแต่ผู้ใช้ควรรู้ว่ายอดอาจยังไม่ตรงธนาคาร
+    List<string>? Warnings = null);
 
 public record ImportConflict(
     int RowNumber,

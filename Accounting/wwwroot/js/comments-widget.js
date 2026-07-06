@@ -19,7 +19,7 @@
   async function loadUsers(cid) {
     if (users) return users;
     try {
-      const r = await fetch(`/api/companies/${cid}/users?pageSize=200`, {
+      const r = await fetch(`/api/company/${cid}/users?pageSize=200`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
       const j = await r.json();
       users = j.data?.items || j.data || [];

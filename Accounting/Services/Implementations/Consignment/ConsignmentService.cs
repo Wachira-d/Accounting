@@ -100,6 +100,21 @@ public class ConsignmentService : IConsignmentService
             ReceivedAt = dispatchedAt,
         };
         _db.ConsignmentRecords.Add(record);
+        // ทุกจุดที่ขยับ CurrentStock ต้องมี StockMovement คู่กัน — ไม่งั้น
+        // stock card (SUM movements) จะ drift จาก CurrentStock ถาวร
+        _db.StockMovements.Add(new StockMovement
+        {
+            CompanyId = companyId,
+            ProductId = productId,
+            MovementDate = dispatchedAt,
+            MovementType = "OUT",
+            Quantity = quantity,
+            UnitCost = product.CostPrice,
+            BalanceAfter = product.CurrentStock,
+            Reference = $"CONSIGN-OUT-{record.Id.ToString()[..8]}",
+            Notes = "ส่งสินค้าฝากขาย (consignment outbound) — ของอยู่ที่ลูกค้า ยังเป็นกรรมสิทธิ์เรา",
+            CreatedBy = "ConsignmentService",
+        });
         await _db.SaveChangesAsync(ct);
         return record;
     }
@@ -132,14 +147,37 @@ public class ConsignmentService : IConsignmentService
             {
                 CompanyId = companyId,
                 ContactId = record.ContactId,
-                DocumentNumber = $"CON-{DateTime.UtcNow:yyyyMMdd}-{record.Id.ToString()[..6]}",
+                // ใช้ DRAFT- placeholder ตาม convention กลาง — ApproveDocumentAsync
+                // จะออกเลขจริงจาก series ตอนอนุมัติ (เดิมใช้ "CON-..." ซึ่งหลุด
+                // series → เลขเอกสารไม่ gap-free ตาม §86/4)
+                DocumentNumber = $"DRAFT-{Guid.NewGuid():N}"[..14],
                 DocumentType = docType,
                 DocumentDate = consumedAt,
+                SubTotal = amount,
+                VatAmount = 0m,
                 TotalAmount = amount,
                 BalanceDue = amount,
                 Status = Models.Enums.DocumentStatus.Draft,
+                Reference = $"CON-{record.Id.ToString()[..8]}",
                 Notes = $"[Auto-Consignment-{record.Direction}] {consumedQuantity} × {unitPrice:N2}",
                 CreatedBy = $"ConsignmentService:{record.Id}",
+                // ต้องมี line จริง — §86/4 บังคับ items ≥ 1 และ JE ตอน approve
+                // คำนวณจาก SubTotal/lines (เดิมสร้าง doc เปล่า TotalAmount ลอย ๆ
+                // → approve แล้ว JE ไม่ตรง / โดน validation block)
+                Lines = new List<Models.Entities.DocumentLine>
+                {
+                    new()
+                    {
+                        LineOrder = 1,
+                        Description = $"สินค้าฝากขาย ({record.Direction}) — บริโภคจริง",
+                        Quantity = consumedQuantity,
+                        Unit = "หน่วย",
+                        UnitPrice = unitPrice,
+                        Amount = amount,
+                        VatRate = 0m,
+                        VatAmount = 0m,
+                    },
+                },
             };
             _db.Documents.Add(doc);
         }

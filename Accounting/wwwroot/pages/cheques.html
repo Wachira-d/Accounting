@@ -136,7 +136,10 @@
           const api = Layout.api(); if (!api) return;
           const r = await api.get('/bank/accounts');
           const banks = r.data || [];
-          const opt = banks.map(b => `<option value="${b.id}">${b.accountName} (${b.bankName})</option>`).join('');
+          // เช็คออกได้เฉพาะบัญชีกระแสรายวัน — เรียงขึ้นก่อนและติดป้ายประเภทให้เห็นชัด
+          const typeLabel = t => t === 'Current' ? 'กระแสรายวัน' : t === 'Savings' ? 'ออมทรัพย์' : t === 'Fixed' ? 'ฝากประจำ' : (t || '');
+          banks.sort((a, b) => (a.accountType === 'Current' ? 0 : 1) - (b.accountType === 'Current' ? 0 : 1));
+          const opt = banks.map(b => `<option value="${b.id}">${b.accountName} (${b.bankName}${b.accountType ? ' · ' + typeLabel(b.accountType) : ''})</option>`).join('');
           document.getElementById('bookBank').innerHTML = opt || '<option>--</option>';
         } catch (e) { /* ignore */ }
       },

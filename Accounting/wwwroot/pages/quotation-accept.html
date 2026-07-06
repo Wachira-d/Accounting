@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ยอมรับใบเสนอราคา</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans Thai', sans-serif; background: #f1f5f9; color: #0f172a;
+           min-height: 100vh; display: flex; justify-content: center; padding: 24px 12px; }
+    .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 24px rgba(15,23,42,.08);
+            max-width: 640px; width: 100%; padding: 28px; height: fit-content; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .sub { color: #64748b; font-size: 13px; margin-bottom: 18px; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+    th { text-align: left; color: #64748b; font-weight: 500; font-size: 12px;
+         border-bottom: 1px solid #e2e8f0; padding: 6px 4px; }
+    td { padding: 8px 4px; border-bottom: 1px solid #f1f5f9; }
+    .num { text-align: right; }
+    .totals { margin-top: 8px; font-size: 14px; }
+    .totals div { display: flex; justify-content: space-between; padding: 3px 4px; }
+    .grand { font-weight: 700; font-size: 17px; border-top: 2px solid #0f172a; padding-top: 8px !important; }
+    .accept-box { margin-top: 22px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 16px; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px;
+            font-family: inherit; font-size: 14px; margin: 6px 0 12px; }
+    button { width: 100%; background: #16a34a; color: #fff; border: 0; border-radius: 10px;
+             padding: 13px; font-size: 16px; font-weight: 600; font-family: inherit; cursor: pointer; }
+    button:disabled { background: #94a3b8; cursor: default; }
+    .done { text-align: center; padding: 26px 10px; }
+    .done .big { font-size: 44px; }
+    .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
+    .badge { display: inline-block; background: #dcfce7; color: #166534; border-radius: 999px;
+             padding: 3px 12px; font-size: 12px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="err" id="loading">กำลังโหลด...</div>
+  </div>
+  <script>
+    const token = new URLSearchParams(location.search).get('token');
+    const card = document.getElementById('card');
+    const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    async function load() {
+      if (!token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
+      let r;
+      try { r = await fetch(`/api/public/quotation/${encodeURIComponent(token)}`); }
+      catch { card.innerHTML = '<div class="err">เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง</div>'; return; }
+      if (!r.ok) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว<br>กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่</div>'; return; }
+      const j = await r.json();
+      const q = j.data;
+      const accepted = !!q.acceptedAt;
+      card.innerHTML = `
+        <h1>ใบเสนอราคา ${esc(q.documentNumber)}</h1>
+        <div class="sub">จาก <strong>${esc(q.companyName || '')}</strong>
+          · ถึง ${esc(q.contactName || '-')}
+          · วันที่ ${new Date(q.documentDate).toLocaleDateString('th-TH')}</div>
+        ${accepted ? `<div class="badge">✓ ยอมรับแล้วโดย ${esc(q.acceptedBy)} เมื่อ ${new Date(q.acceptedAt).toLocaleString('th-TH')}</div>` : ''}
+        <table>
+          <thead><tr><th>รายการ</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม</th></tr></thead>
+          <tbody>
+            ${(q.lines || []).map(l => `<tr>
+              <td>${esc(l.description)}</td>
+              <td class="num">${money(l.quantity)} ${esc(l.unit || '')}</td>
+              <td class="num">${money(l.unitPrice)}</td>
+              <td class="num">${money(l.amount)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <div class="totals">
+          <div><span>รวมก่อนภาษี</span><span>${money(q.subTotal)}</span></div>
+          <div><span>ภาษีมูลค่าเพิ่ม</span><span>${money(q.vatAmount)}</span></div>
+          <div class="grand"><span>ยอดรวมทั้งสิ้น</span><span>${money(q.totalAmount)} ${esc(q.currency !== 'THB' ? q.currency : 'บาท')}</span></div>
+        </div>
+        ${accepted ? '' : `
+        <div class="accept-box">
+          <strong>ยอมรับใบเสนอราคานี้</strong>
+          <input id="accName" placeholder="ชื่อ-นามสกุลผู้ยอมรับ *" maxlength="200">
+          <input id="accNote" placeholder="หมายเหตุถึงผู้ขาย (ถ้ามี)" maxlength="500">
+          <button id="accBtn" onclick="accept()">✓ ยอมรับใบเสนอราคา</button>
+        </div>`}
+      `;
+    }
+
+    async function accept() {
+      const name = (document.getElementById('accName').value || '').trim();
+      if (!name) { alert('กรุณาระบุชื่อผู้ยอมรับ'); return; }
+      const btn = document.getElementById('accBtn');
+      btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+      try {
+        const r = await fetch(`/api/public/quotation/${encodeURIComponent(token)}/accept`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ acceptedBy: name, note: (document.getElementById('accNote').value || '').trim() || null }),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+        card.innerHTML = `<div class="done"><div class="big">🎉</div>
+          <h1>ยอมรับใบเสนอราคาเรียบร้อย</h1>
+          <div class="sub" style="margin-top:8px">ขอบคุณครับ — ผู้ขายได้รับการแจ้งเตือนแล้ว และจะติดต่อกลับเพื่อดำเนินการต่อ</div></div>`;
+      } catch (e) {
+        alert(e.message);
+        btn.disabled = false; btn.textContent = '✓ ยอมรับใบเสนอราคา';
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

@@ -201,6 +201,17 @@ public record InventoryValuationReport(
     decimal TotalValue,
     int TotalProducts);
 
+/// <summary>กระทบยอดมูลค่าสต๊อกการ์ด vs GL สินค้าคงเหลือ (115x) —
+/// perpetual inventory ต้องตรงกัน; ผลต่าง = ของหาย/เกิน หรือรายการที่ลง
+/// นอกระบบ (manual JE) ที่ต้องหาสาเหตุก่อนปิดงวด</summary>
+public record InventoryGlTieOutReport(
+    DateTime AsOf,
+    decimal StockCardValue,       // Σ(CurrentStock × avg cost จาก movements)
+    decimal GlInventoryBalance,   // Σ(Dr − Cr) ของผัง 115x ที่ Posted
+    decimal Difference,           // StockCardValue − GlInventoryBalance
+    int TrackedProducts,
+    string Interpretation);
+
 // ===== Stock Balance as-of-date (สินค้าคงเหลือ ณ วันที่) =====
 public record StockBalanceAsOfDateRequest(
     DateTime AsOfDate,

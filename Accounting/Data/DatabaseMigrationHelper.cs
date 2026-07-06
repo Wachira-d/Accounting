@@ -4100,6 +4100,14 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "PayerSignatureBase64" text NULL;""",
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "PayerSignatureName" varchar(200) NULL;""",
 
+            // ===== Payments: settlement-day FX rate (realized FX gain/loss) =====
+            // rate ณ วันชำระจริงของเอกสารสกุลต่างประเทศ — ต่างจาก rate เอกสาร →
+            // post กำไร/ขาดทุนอัตราแลกเปลี่ยนที่เกิดขึ้นจริง (42600/54950)
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NULL;""",
+            // ค่าธรรมเนียม marketplace/gateway/ธนาคาร ที่ถูกหักจากยอดโอน
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "FeeAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "FeeAccountId" uuid NULL;""",
+
             // ===== Contact: credit limit (วงเงินเครดิต) =====
             // null = ไม่จำกัด (เดิม). ใช้ดู AR เทียบเตือนตอนสร้าง Invoice ใหม่.
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "CreditLimit" numeric(18,2) NULL;""",
@@ -4260,6 +4268,40 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "LineId" varchar(100) NULL;""",
             // LINE OA basic id (@xxx) ต่อบริษัท — ทำลิงก์/QR เพิ่มเพื่อนให้พนักงาน
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineOaBasicId" varchar(100) NULL;""",
+
+            // ===== ECL — ค่าเผื่อหนี้สงสัยจะสูญอัตโนมัติ (TFRS NPAEs บทที่ 9) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EclLossRatesJson" text NULL;""",
+
+            // ===== SoD + Commitment control (internal control ระดับ ERP) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "SodBlockSelfApproval" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "BudgetCommitmentMode" varchar(10) NOT NULL DEFAULT 'Off';""",
+
+            // ===== Landed cost — ต้นทุนแฝงการซื้อ/นำเข้า เกลี่ยเข้าต้นทุนสินค้า =====
+            """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "IsLandedCost" boolean NOT NULL DEFAULT false;""",
+
+            // ===== Cost center / มิติ บนเอกสาร → ไหลลง JE (รายงาน P&L ต่อสาขา/แผนก) =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DimensionId" uuid NULL;""",
+
+            // ===== Quotation online accept (ลิงก์ลูกค้ากดยอมรับใบเสนอราคา) =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptToken" varchar(80) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptTokenExpiresAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedBy" varchar(200) NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_QuotationAcceptToken" ON "Documents" ("QuotationAcceptToken") WHERE "QuotationAcceptToken" IS NOT NULL;""",
+
+            // ===== Delivery e-sign (ลูกค้าเซ็นรับสินค้าออนไลน์ — Proof of Delivery) =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignToken" varchar(80) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignTokenExpiresAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignedAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignedBy" varchar(200) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignatureBase64" text NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Documents_DeliverySignToken" ON "Documents" ("DeliverySignToken") WHERE "DeliverySignToken" IS NOT NULL;""",
+
+            // ===== Snapshot ยอดจริงจาก statement ล่าสุด (แสดงคู่ยอด GL ให้เห็นผลต่าง) =====
+            """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalance" numeric(18,2) NULL;""",
+            """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementBalanceDate" timestamptz NULL;""",
+            """ALTER TABLE "BankAccounts" ADD COLUMN IF NOT EXISTS "StatementImportedAt" timestamptz NULL;""",
             // รหัสผูก LINE ระดับพนักงาน (6 หลัก, หมดอายุ 24 ชม.)
             """
             CREATE TABLE IF NOT EXISTS "EmployeeLineBindCodes" (

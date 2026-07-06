@@ -65,6 +65,28 @@ public class Document : TenantEntity
     /// เป็นทั้งใบแจ้งหนี้ (เรียกเก็บเงิน + เครดิตเทอม) และใบกำกับภาษีในใบเดียว.</summary>
     public bool CombinedInvoiceTaxInvoice { get; set; }
 
+    /// <summary>Capability token สำหรับลิงก์ "ลูกค้ากดยอมรับใบเสนอราคาออนไลน์"
+    /// — random hex 64 ตัว สร้างเมื่อผู้ใช้ขอลิงก์ (POST accept-link). ผู้ถือ
+    /// ลิงก์ดู/ยอมรับใบเสนอราคาได้โดยไม่ต้อง login (read-only + accept เท่านั้น).</summary>
+    public string? QuotationAcceptToken { get; set; }
+    /// <summary>วันหมดอายุของลิงก์ยอมรับ (default +30 วันจากที่สร้าง).</summary>
+    public DateTime? QuotationAcceptTokenExpiresAt { get; set; }
+    /// <summary>เวลาที่ลูกค้ากดยอมรับ (null = ยังไม่ยอมรับ).</summary>
+    public DateTime? QuotationAcceptedAt { get; set; }
+    /// <summary>ชื่อผู้กดยอมรับ (ลูกค้าพิมพ์เอง — บันทึกเป็นหลักฐาน).</summary>
+    public string? QuotationAcceptedBy { get; set; }
+
+    /// <summary>Capability token ลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (Proof of
+    /// Delivery) — ใช้กับใบส่งของ (DeliveryNote): ลูกค้าเปิดลิงก์บนมือถือ
+    /// วาดลายเซ็น + พิมพ์ชื่อ → ประทับลงช่อง "ผู้รับของ" บน PDF อัตโนมัติ.</summary>
+    public string? DeliverySignToken { get; set; }
+    public DateTime? DeliverySignTokenExpiresAt { get; set; }
+    public DateTime? DeliverySignedAt { get; set; }
+    public string? DeliverySignedBy { get; set; }
+    /// <summary>ภาพลายเซ็นผู้รับของ (data-url PNG จาก canvas) — render ลง
+    /// slot "ผู้รับของ" ของ PDF ใบส่งของ.</summary>
+    public string? DeliverySignatureBase64 { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense
@@ -174,6 +196,12 @@ public class Document : TenantEntity
     // enabling per-project P&L (see ProjectAccountingService.GetGlSummaryAsync).
     public Guid? ProjectId { get; set; }
     public Project? Project { get; set; }
+
+    /// <summary>Cost center / สาขา / แผนก (AccountingDimension) — ต่างจาก
+    /// Project: มิติเป็นหน่วยงาน "ถาวร" ตามโครงสร้างองค์กร (วัดต้นทุนต่อสาขา/
+    /// แผนกต่อเนื่อง) ส่วน Project เป็น "งานชั่วคราว" มีจบ (วัดกำไรต่องาน).
+    /// ไหลลง JournalEntry.DimensionId ตอน auto-post → รายงาน P&L ต่อมิติ.</summary>
+    public Guid? DimensionId { get; set; }
 
     // Bank account link — which bank account money flows in/out of.
     // Used for reconciliation and auto-posting to correct GL bank account.
@@ -454,6 +482,14 @@ public class DocumentLine : BaseEntity
     /// จะไม่นับเป็น Input VAT.</para>
     /// </summary>
     public bool IsVatClaimable { get; set; } = true;
+
+    /// <summary>Landed cost — บรรทัดต้นทุนแฝงของการซื้อ/นำเข้า (ค่าขนส่ง/
+    /// อากร/ประกันภัย/เคลียร์ของ) บน PI/GRN: มูลค่าถูก "เกลี่ย" เข้าต้นทุน
+    /// ต่อหน่วยของบรรทัดสินค้า TrackStock ในใบเดียวกัน (ถ่วงตามมูลค่า line)
+    /// → WAC/movement UnitCost รวมต้นทุนแฝง และ JE default เข้า 115
+    /// สินค้าคงเหลือ (ไม่ใช่ค่าใช้จ่าย) ตาม TFRS NPAEs บทที่ 8 (cost of
+    /// purchase = ราคาซื้อ + ต้นทุนจัดหาจนถึงสภาพพร้อมขาย).</summary>
+    public bool IsLandedCost { get; set; }
 
     /// <summary>เหตุผลที่ VAT บรรทัดนี้เคลมไม่ได้ — ใช้แสดงในรายงานสรรพากร
     /// + audit trail. ค่าที่ใช้บ่อย: "§82/5(3) ค่ารับรอง" / "§82/5(6)

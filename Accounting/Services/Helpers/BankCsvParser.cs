@@ -24,13 +24,14 @@ public static class BankCsvParser
         int DetailsCol,
         int ReferenceCol);
 
-    /// <summary>A parsed transaction row.</summary>
+    /// <summary>A parsed transaction row. Balance เป็น null เมื่อช่องว่าง/อ่านไม่ได้
+    /// — แยกจาก 0.00 จริง เพื่อไม่ให้ snapshot ยอดธนาคารโดนเขียนทับด้วยศูนย์ปลอม</summary>
     public record Row(
         DateTime Date,
         string Description,
         decimal Withdrawal,
         decimal Deposit,
-        decimal Balance,
+        decimal? Balance,
         string? Reference,
         string? Channel);
 
@@ -125,7 +126,7 @@ public static class BankCsvParser
 
             var deposit = ParseAmount(Get(map.DepositCol));
             var withdrawal = ParseAmount(Get(map.WithdrawalCol));
-            var balance = ParseAmount(Get(map.BalanceCol));
+            var balance = ParseAmountOrNull(Get(map.BalanceCol));
 
             // Single signed-amount column (some banks)
             if (deposit == 0 && withdrawal == 0 && map.AmountCol >= 0)
@@ -422,11 +423,16 @@ public static class BankCsvParser
         return false;
     }
 
-    public static decimal ParseAmount(string s)
+    public static decimal ParseAmount(string s) => ParseAmountOrNull(s) ?? 0;
+
+    /// <summary>เหมือน ParseAmount แต่คืน null เมื่อช่องว่าง/ขีด/อ่านไม่ได้ —
+    /// ให้ผู้เรียกแยก "ไม่มีข้อมูล" ออกจาก "ศูนย์บาทจริง" ได้ (สำคัญกับคอลัมน์
+    /// ยอดคงเหลือที่ใช้เป็น snapshot ยอดธนาคาร)</summary>
+    public static decimal? ParseAmountOrNull(string s)
     {
-        if (string.IsNullOrWhiteSpace(s)) return 0;
+        if (string.IsNullOrWhiteSpace(s)) return null;
         s = s.Trim();
-        if (s == "-" || s == "–" || s == "—") return 0;
+        if (s == "-" || s == "–" || s == "—") return null;
 
         var clean = Regex.Replace(s, @"[฿$€£¥\s,]", "");
 
@@ -448,6 +454,6 @@ public static class BankCsvParser
         if (decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out var v))
             return negative ? -v : v;
 
-        return 0;
+        return null;
     }
 }

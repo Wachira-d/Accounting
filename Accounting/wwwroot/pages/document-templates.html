@@ -441,7 +441,7 @@
         ['Quotation','ใบเสนอราคา'], ['Invoice','ใบแจ้งหนี้'], ['TaxInvoice','ใบกำกับภาษี'],
         ['Receipt','ใบเสร็จรับเงิน'], ['DeliveryNote','ใบส่งของ'], ['BillingNote','ใบวางบิล'],
         ['DebitNote','ใบเพิ่มหนี้'], ['CreditNote','ใบลดหนี้'], ['PurchaseOrder','ใบสั่งซื้อ'],
-        ['GoodsReceiptNote','ใบรับสินค้า'], ['PurchaseInvoice','ใบแจ้งหนี้ซื้อ'], ['Expense','บันทึกค่าใช้จ่าย'],
+        ['GoodsReceiptNote','ใบรับสินค้า'], ['PurchaseInvoice','ใบแจ้งหนี้ซื้อ'], ['Expense','ใบบันทึกค่าใช้จ่าย'],
         ['PaymentVoucher','ใบสำคัญจ่าย'], ['ReceiptVoucher','ใบสำคัญรับ'], ['CertificateInLieu','ใบรับรองแทนใบเสร็จ'],
       ],
       _typeLabel(t) { const f = this.DOC_TYPES.find(x => x[0] === t); return f ? f[1] : t; },
@@ -743,7 +743,7 @@
       async loadSampleDocs() {
         try {
           const cid = Layout.getCompanyId();
-          const r = await API.get(`/api/companies/${cid}/documents?pageSize=20`);
+          const r = await API.get(`/api/companies/${cid}/document?pageSize=20`);
           this.sampleDocs = r.data?.items || r.data || [];
           document.getElementById('sampleDoc').innerHTML = this.sampleDocs.length === 0
             ? '<option>— ยังไม่มีเอกสาร —</option>'

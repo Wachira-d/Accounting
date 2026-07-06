@@ -498,6 +498,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpi
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayoutService,

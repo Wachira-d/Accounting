@@ -152,6 +152,18 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     มี `CreatedDocumentId`) แล้วคืนเอกสารเดิมถ้ายังไม่ voided (`IntegrationService.cs`).
     `ProcessExpenseAsync`/`ProcessPaymentVoucherAsync` เดิม**ไม่มี** guard นี้ →
     เพิ่มแล้ว (เคยสร้าง expense ซ้ำเมื่อ retry)
+  - **Resync update** (`ResyncUpdate=true` บน inbound invoice/expense):
+    เจอ ExternalRef เดิม → แทน idempotent skip ระบบ "แก้เอกสาร + ปรับ JE"
+    สองโหมดตามสถานะงวด (contract ระบบต้นทางเช่น TakeTime):
+    • **งวดเปิด + JE เดิมใบเดียว → in-place**: แก้ JE ใบเดิม (เลข JE คงเดิม
+      แทนที่บรรทัดทั้งชุด อัปเดต totals/วันที่) — audit ผ่าน Notes + sync log
+    • **งวดปิด / มีหลาย JE → reversal**: กลับ JE เดิมทั้งชุด (คู่ Dr↔Cr,
+      ลิงก์ Original/ReversedBy) + post JE ใหม่
+    เลขเอกสารคงเดิมทั้งสองโหมด; response message ระบุโหมดชัด
+    ("(in-place)" / "(reversal)") ให้ระบบต้นทางแสดงผลถูก.
+    Guard: มีการชำระแล้ว / มี CN-DN ลูก / เดือนภาษียื่น ภ.พ.30 หรือ filing-lock
+    แล้ว → คืน error ชัดเจน (ให้ void+ส่งใหม่ หรือออก CN แทน); sync log
+    Status="Updated"
   - **CN/DN ผ่าน integration = ฝั่งขายเท่านั้น** (DTO มีแต่ field ลูกค้า) —
     `CreateCreditNoteJournalAsync`/`CreateDebitNoteJournalAsync` ลง AR/ภาษีขาย
     เสมอ; ใบลด/เพิ่มหนี้ฝั่งซื้อ sync ผ่าน expense reversal ไม่ผ่านช่องทางนี้
@@ -182,6 +194,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
 - **Cascade**: `CustomAppendix / RevenueContractId / PerformanceObligationId /
   FileAttachment` (`CascadeAttachmentsAsync :3077`)
+- **JE ของใบลูกดูประเภทต้นทาง (กันยอดเบิ้ล/ยอดหาย)**:
+  - Receipt/ReceiptVoucher: **settlement mode (Cr AR) เฉพาะเมื่อ source ตั้ง
+    ลูกหนี้จริง** (Invoice/TaxInvoice/DebitNote) — source เป็น
+    Quotation/BillingNote (operational ไม่มี JE) → ลง **standalone**:
+    Dr เงินสด / Cr รายได้ + VAT (เดิมเช็คแค่ `RelatedDocumentId.HasValue` →
+    Cr ลูกหนี้ผี + รายได้ไม่ถูกบันทึก)
+  - CertificateInLieu ที่อ้าง Expense/PI: **settlement เหมือน PV** — Dr AP /
+    Cr เงินสด (+WHT ตาม basis) — เดิม Dr ค่าใช้จ่ายซ้ำเสมอ = ค่าใช้จ่ายเบิ้ล
+    + เจ้าหนี้ค้างตลอดกาล; CIL เข้า settlementTypes (PaidAmount push + cap
+    + revert ตอน void) แล้ว
 
 ### 2.5 CMS (เว็บไซต์ของฉัน) — Storefront commerce + booking
 - **Order flow** (`CmsCommerceService.cs`):
@@ -239,6 +261,39 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - `AutoApprove=true` → ใบที่ generate ขึ้นจะถูก approve อัตโนมัติ (ทำตาม flow
   approve ปกติทุกขั้น — tax point, JE, stock, fixed asset)
 
+### 2.8 Quotation online accept (ลูกค้ากดยอมรับใบเสนอราคา)
+- **สร้างลิงก์** (ต้อง login): `POST /document/{id}/quotation-accept-link` —
+  เฉพาะ Quotation ที่อนุมัติแล้ว; token 64 hex อายุ 30 วัน เก็บบน
+  `Document.QuotationAcceptToken(+ExpiresAt)`; เรียกซ้ำ = revoke ลิงก์เก่า
+- **ฝั่งลูกค้า** (`PublicQuotationController`, AllowAnonymous):
+  `GET /api/public/quotation/{token}` ดูรายการ+ยอด (sanitized) และ
+  `POST .../accept` บันทึก `QuotationAcceptedAt/By` + stamp หลักฐานลง Notes
+  (append-only) — **ไม่ auto-convert** เป็น invoice (ผู้ขายกดแปลงเองหลังเห็น
+  การยอมรับ — กันเอกสารการเงินเกิดจาก anonymous click)
+- **หน้า**: `pages/quotation-accept.html` (standalone, ไม่ใช้ Layout)
+- ปุ่ม "🔗 ลิงก์ยอมรับ" ในหน้ารายการเอกสาร (Quotation Approved/Sent)
+
+### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
+- **สร้างลิงก์**: `POST /document/{id}/delivery-sign-link` — เฉพาะ DeliveryNote
+  ที่อนุมัติแล้ว; token 64 hex อายุ 14 วัน (`Document.DeliverySignToken`)
+- **ฝั่งลูกค้า**: `GET/POST /api/public/delivery/{token}(/sign)` — วาดลายเซ็น
+  บน canvas (มือถือ) + ชื่อผู้รับ → เก็บ `DeliverySignatureBase64/SignedAt/By`
+  + stamp Notes; ลายเซ็น**ประทับลงช่อง "ผู้รับของ" (slot 1) บน PDF อัตโนมัติ**
+  (`ResolveSignersAsync` override) พร้อมเวลาเซ็น (+07:00)
+- **หน้า**: `pages/delivery-sign.html` (standalone signature pad)
+- ปุ่ม "✍️ ลิงก์เซ็นรับ" ในหน้ารายการเอกสาร (DeliveryNote Approved/Sent)
+
+### 2.9 Consignment (ฝากขาย)
+- **Service**: `Services/Implementations/Consignment/ConsignmentService.cs`
+- **Outbound dispatch** (`DispatchOutboundAsync`): ลด `CurrentStock` ทันที
+  (ของอยู่ที่ลูกค้า กรรมสิทธิ์ยังเป็นเรา — ไม่มี GL) + **เขียน `StockMovement`
+  คู่เสมอ** (เพิ่งแก้ — เดิมขยับ stock เปล่า ทำ stock card drift)
+- **Consumption** (`RecordConsumptionAsync`): Inbound → สร้าง Draft
+  `PurchaseInvoice`, Outbound → Draft `Invoice`; เอกสารใช้ **`DRAFT-{guid}`
+  placeholder** ตาม convention กลาง (เดิมใช้เลข `CON-...` เองซึ่งหลุด series
+  gap-free §86/4) + มี `Lines` + `SubTotal` ครบให้ approve ผ่าน gate ปกติ;
+  ref consignment เก็บใน `Reference` (`CON-{id8}`)
+
 ---
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
@@ -251,6 +306,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **เลขเอกสารยังเป็น `DRAFT-{guid}`** (ไม่ออกเลขจริง กัน gap §86/4)
 
 ### 3.2 Approve (Draft/WaitingApproval → Approved) — **ขั้นสำคัญที่สุด**
+
+> **ทางเข้า approve มี 3 ทาง — ทุกทางวิ่งเข้า `ApproveDocumentAsync` เดียวกัน:**
+> ① ปุ่มอนุมัติ/บันทึกและอนุมัติ (ตรง) ② กฎอนุมัติตามวงเงิน (ApprovalService
+> gate — กฎ match แล้วปุ่มตรงถูกล็อคจน workflow ผ่าน) ③ ส่งเซ็นอนุมัติ
+> (SignatureApprovalService — เซ็นครบทุกคน → เรียก ApproveDocumentAsync
+> ให้อัตโนมัติ; **เดิมตั้ง Status ตรง ๆ ข้าม JE/สต๊อกทั้งหมด — แก้แล้ว**)
+> RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว
+> (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง)
 **`DocumentService.ApproveDocumentAsync` (`:1512`)** ทำตามลำดับ:
 
 1. **Permission + workflow gate** (`:1638`) — ตรวจ ApprovalWorkflow
@@ -273,18 +336,38 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    excess clamp ที่ใบปัจจุบันรับผิดชอบ. §82/5(6) vehicle warning bypass
    เมื่อ `CompanySettings.IsVehicleDealer=true`.
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
+   - **Header JE สืบทอด `ProjectId` + `DimensionId` จากเอกสาร** — โครงการ
+     (งานชั่วคราว วัดกำไรต่องาน) และ cost center/มิติ (สาขา/แผนกถาวร วัด
+     ต้นทุนตามโครงสร้าง) เป็นคนละแกน เลือกได้อิสระทั้งคู่ในฟอร์มสร้างเอกสาร
+     → รายงาน P&L ต่อมิติ (`getDimensionPnl`) มีข้อมูลจากเอกสารซื้อ-ขายจริง
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
+   - **sales COGS (perpetual — นโยบายเดียวกับ POS)**: Invoice/TaxInvoice
+     ที่มีบรรทัดสินค้า TrackStock → Dr ต้นทุนขาย (51110/511) /
+     Cr สินค้าคงเหลือ (11500/115) ที่ WAC ปัจจุบัน (`ComputeSalesCogsAsync`
+     — ตรงกับ UnitCost ที่ stock movement stamp); ข้ามเมื่อ `IsDeposit`
+     (ยังไม่ส่งมอบของ) หรือผัง 511/115 ไม่มี (log warning);
+     COGS เป็น THB ไม่ผ่านการแปลง FX. ใบลดหนี้ฝั่งขายแบบ **Reason=Return**
+     กลับ COGS ด้วย: Dr สินค้าคงเหลือ / Cr ต้นทุนขาย
    - purchase: Dr Expense + Dr Input VAT (11610 หรือ **11640** ถ้า §86/4
-     ไม่ครบ) / Cr AP
+     ไม่ครบ) / Cr AP — **บรรทัดสินค้า TrackStock ที่ user ไม่ได้เลือกบัญชี
+     เอง default เข้าสินค้าคงเหลือ** (`Product.InventoryAccountId` → 11500/115)
+     แทนค่าใช้จ่าย (perpetual — สมมาตรกับ COGS ตอนขาย; ใช้กับ PI standalone,
+     GRN, และ CN/DN ฝั่งซื้อ ผ่าน `BuildPurchaseLineAccountResolverAsync`)
    - cash receipt: Dr Cash/Bank / Cr AR (หรือ Cr 217xx ถ้า `IsDeposit`)
    - payment voucher: Dr AP/Expense / Cr Cash/Bank
    - WHT: Cr 21915/21916 ตามประเภทเงินได้
 8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync :4605`) —
    switch ตัดสินตาม `DocumentType` (`:4612`):
-   - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale)
+   - **OUT (−1)**: `Invoice` / `TaxInvoice` (sale); **CN ฝั่งซื้อแบบ Return**
+     (source = PI/Expense/CIL — เราคืนของให้ vendor = ของออกจากสต๊อกเรา)
    - **IN (+1)**: `GoodsReceiptNote` / `PurchaseInvoice` /
-     `CreditNote when Reason==Return`
+     `CreditNote when Reason==Return` (ฝั่งขาย — ลูกค้าคืนของ)
+   - **มัดจำ (`IsDeposit`) → ไม่ขยับสต๊อก** (ยังไม่ส่งมอบ — ใบส่งมอบจริง
+     เป็นผู้ตัด + ลง COGS)
+   - **ขา void กลับตาม movement ที่เกิดจริง** (net ต่อ product ของ
+     `DocumentId` เดิม, ต้นทุนเดิม) — ไม่ recompute จากกติกาปัจจุบัน →
+     เอกสารเก่าที่ขยับด้วยกติกาเดิมกลับได้ถูก + void ซ้ำเป็น no-op
    - `PurchaseInvoice` ที่ผูก GRN accrual แล้ว → **ข้าม** (กันนับซ้ำ
      `:4633`)
    - **No-op (`_ => 0`)**: ทุกประเภทอื่น — รวมถึง `Receipt`,
@@ -292,6 +375,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      เพราะ Invoice ที่ตามมาจะ trigger ให้ — กัน double-count `:4608`),
      `Quotation`, `PO`, `PR`, `BillingNote`, `DebitNote`, และ
      `CreditNote.Discount/Adjustment/Writeoff`
+   - **UnitCost ของ movement ตาม CostingMethod** (TFRS NPAEs บทที่ 8):
+     ซื้อเข้า (PI/GRN) = ต้นทุนจริง line net ต่อหน่วย + อัปเดต WAC running
+     average; ขายออก = `AverageUnitCost` ปัจจุบัน (เมื่อ WeightedAverage,
+     ไม่ใช่ `CostPrice` นิ่ง); void = ต้นทุนเดิมของ movement ต้นทาง
+     (ให้กลับรายการหักล้างมูลค่าเท่ากัน). POS ใช้ helper `EffectiveUnitCost`
+     เดียวกันทั้ง COGS JE / stock stamp / refund
 9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
    บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
    12310 → **group ตาม AccountId** → 1 group = 1 `FixedAsset` (TFRS for NPAEs
@@ -341,9 +430,34 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ### 3.4 Pay / Partial Pay
 - **Methods**: `CreatePaymentAsync` / `CreateMultiDocPaymentAsync`
   (`:534–541`)
+- **Allowlist ประเภทที่ชำระตรงได้** (`PayableDocumentTypes`): Invoice /
+  TaxInvoice / DebitNote / PurchaseInvoice / Expense เท่านั้น — ประเภทอื่น
+  block พร้อมเหตุผล:
+  - ใบวางบิล/ใบเสนอราคา/PO ฯลฯ (operational, ไม่มี JE ตอนอนุมัติ) → ชำระ
+    แล้ว Cr AR ที่ไม่เคยถูก Dr / เข้า branch ผิดฝั่ง — ต้องแปลงเป็น
+    Invoice/TaxInvoice/Receipt ก่อน
+  - Receipt / ReceiptVoucher / PaymentVoucher / CertificateInLieu = เอกสาร
+    เงินเข้า-ออก "จริงแล้ว" ตอนอนุมัติ → ชำระซ้ำ = เงินสดเบิ้ล
+- **Receipt/ReceiptVoucher force `PaymentType=Cash` ตอน create** — ใบเสร็จ
+  คือหลักฐานรับเงินแล้ว "เครดิต" ไม่มีความหมาย (เดิมปล่อย Credit ได้ →
+  BalanceDue ค้างทั้งที่เงินเข้า GL แล้ว → โผล่ aging ผิด + ถูกชำระซ้ำได้)
+- **DebitNote สองฝั่ง**: การชำระ + bank balance + void reversal ดูฝั่งจาก
+  เอกสารต้นทาง (`IsCashInflowDocAsync`) — ฝั่งซื้อ (source = PI/Expense/CIL)
+  = เงินออก Dr AP / Cr Cash (เดิมลงฝั่งเงินเข้าเสมอ — ผิดฝั่ง)
 - คำนวณ `BalanceDue = TotalAmount − TotalPaid`
 - → `PartiallyPaid` หรือ `Paid` อัตโนมัติ
 - post JE: Dr Cash/Bank / Cr AR (sales) หรือ Dr AP / Cr Cash/Bank (purchase)
+- **FX realized gain/loss**: เอกสารสกุลต่างประเทศใส่ `ExchangeRate` (rate วัน
+  ชำระ) บน payment ได้ — เงินสดเข้า-ออกที่ rate วันชำระ, AR/AP ตัดที่ rate
+  เอกสาร, ผลต่าง → 42600 กำไร / 54950 ขาดทุน (`ResolveFxGainLossAccountAsync`
+  รองรับ 42600/4901 + 54950/5901 + ค้นชื่อ); เก็บ rate บน `Payments.ExchangeRate`
+  เพื่อให้ void กลับยอดธนาคารด้วย rate เดิม; settlement Receipt/PV ข้ามใบที่
+  rate ต่างกัน (ใบเสร็จ rate วันรับ vs invoice rate วันแจ้ง) ก็ post FX diff
+  เช่นกัน; สิ้นงวด unrealized ใช้ `FxRevaluationService.PostAsync` (มีอยู่แล้ว)
+- **ค่าธรรมเนียมหักจากยอดโอน** (marketplace Shopee/Lazada, gateway, ธนาคาร):
+  `Payment.FeeAmount(+FeeAccountId)` — Amount คือเงินสุทธิที่เข้า, เอกสาร
+  ถูกล้างที่ Amount+Fee: JE Dr เงินสด + Dr ค่าธรรมเนียม (53200/ค้นชื่อ) /
+  Cr AR ยอดเต็ม; void คืน PaidAmount รวม fee; เฉพาะฝั่งขาย
 - WHT cert auto-issue (`WithholdingTaxCertService` — ถ้ามี WHT บนใบ)
 
 ### 3.5 Void / Cancel

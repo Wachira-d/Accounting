@@ -682,6 +682,21 @@ public partial class PdfGenerationService : IPdfGenerationService
         // (customer) keeps its index even when the approver hasn't signed.
         var signers = new List<DocumentSigner> { FromUser(creatorId), FromUser(approverId) };
 
+        // DELIVERY e-SIGN OVERRIDE (slot 1 = "ผู้รับของ") — ลูกค้าเซ็นรับสินค้า
+        // ออนไลน์ผ่านลิงก์ POD → ประทับลายเซ็น + ชื่อ + เวลาลงช่องผู้รับของ
+        if (doc.DocumentType == DocumentType.DeliveryNote
+            && !string.IsNullOrWhiteSpace(doc.DeliverySignatureBase64))
+        {
+            var rawSig = doc.DeliverySignatureBase64!.Trim();
+            var sigUri = rawSig.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                ? rawSig : "data:image/png;base64," + rawSig;
+            var signedTitle = doc.DeliverySignedAt is { } at
+                ? $"เซ็นรับออนไลน์ {at.AddHours(7):dd/MM/yyyy HH:mm} น."
+                : signers[1].Title;
+            signers[1] = new DocumentSigner(sigUri, TryDecodeBase64Image(rawSig),
+                doc.DeliverySignedBy ?? signers[1].Name, signedTitle);
+        }
+
         // PV "ผู้จ่ายเงิน" SIGNATURE OVERRIDE (slot 0). PaymentVoucher allows
         // the API caller to supply Payment.PayerSignatureBase64 per request —
         // used when the integrating service account has no signature on file.
@@ -2209,6 +2224,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         DocumentType.ReceiptVoucher => "Receipt Voucher",
         DocumentType.PurchaseRequisition => "Purchase Requisition",
         DocumentType.PurchaseOrder => "Purchase Order",
+        DocumentType.GoodsReceiptNote => "Goods Receipt Note",
         DocumentType.PurchaseInvoice => "Purchase Invoice",
         DocumentType.Expense => "Expense",
         DocumentType.PaymentVoucher => "Payment Voucher",
@@ -2227,6 +2243,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         DocumentType.ReceiptVoucher => "ใบสำคัญรับ",
         DocumentType.PurchaseRequisition => "ใบขอซื้อ",
         DocumentType.PurchaseOrder => "ใบสั่งซื้อ",
+        DocumentType.GoodsReceiptNote => "ใบรับสินค้า",
         DocumentType.PurchaseInvoice => "ใบแจ้งหนี้ซื้อ",
         DocumentType.Expense => "ใบบันทึกค่าใช้จ่าย",
         DocumentType.PaymentVoucher => "ใบสำคัญจ่าย",

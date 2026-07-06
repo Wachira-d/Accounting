@@ -14,7 +14,7 @@
       <div class="flex gap-2">
         <button class="btn btn-secondary" onclick="Page.openImport()"
                 data-tour-step="2"
-                data-tour-text="นำเข้า Statement CSV/Excel/OFX/MT940 ของ KBank/SCB/BBL/KTB/BAY/TTB — ระบบ map คอลัมน์ + parse วันที่ + ปี พ.ศ. อัตโนมัติ">นำเข้า Statement</button>
+                data-tour-text="นำเข้า Statement CSV/Excel ของ KBank/SCB/BBL/KTB/BAY/TTB — ระบบ map คอลัมน์ + parse วันที่ + ปี พ.ศ. อัตโนมัติ พร้อมอัปเดตยอดตามธนาคารบนการ์ดบัญชี">นำเข้า Statement</button>
         <button class="btn btn-secondary" onclick="Page.openGroupReconcile()" title="จับคู่หลายรายการธนาคารกับหลายเอกสารพร้อมหักล้าง (Net-off)">🔗 กลุ่มกระทบยอด</button>
         <button class="btn btn-secondary" onclick="Page.exportReconciliationReport()" title="ดาวน์โหลดรายงานการกระทบยอดเป็น Excel">📊 ส่งออกรายงาน</button>
         <button class="btn btn-secondary" onclick="Page.openConnections()">Open Banking</button>
@@ -343,12 +343,26 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">สาขา</label><input type="text" class="form-input" id="fBranch"></div>
-            <div class="form-group"><label class="form-label">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label" id="fOpeningLabel">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0">
+              <div class="text-xs text-gray-400 hidden" id="fOpeningHint">แก้ยอดเปิดบัญชีหลังสร้างไม่ได้ — ใช้ "เพิ่มรายการเคลื่อนไหว" หรือ JE ปรับปรุงแทน</div>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Diff Explain Modal (งบพิสูจน์ยอดเงินฝากแบบย่อ) -->
+    <div class="modal-overlay" id="diffExplainModal">
+      <div class="modal">
+        <div class="modal-header"><h3 class="modal-title">ทำไมยอดธนาคารกับยอดบัญชีไม่ตรงกัน?</h3><button class="modal-close" onclick="Layout.closeModal('diffExplainModal')">&times;</button></div>
+        <div class="modal-body" id="diffExplainBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('diffExplainModal')" data-i18n="common.close">ปิด</button>
+          <button class="btn btn-primary" id="diffExplainGoBtn">ไปกระทบยอด →</button>
         </div>
       </div>
     </div>
@@ -390,13 +404,10 @@
             <select class="form-select" id="impFormat">
               <option value="CSV">CSV (.csv)</option>
               <option value="EXCEL">Excel (.xlsx)</option>
-              <option value="OFX">OFX</option>
-              <option value="QIF">QIF</option>
-              <option value="MT940">MT940</option>
             </select>
           </div>
           <div class="form-group"><label class="form-label">ไฟล์ Statement *</label>
-            <input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.ofx,.qif,.mt940,.txt">
+            <input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.txt">
           </div>
           <div style="background:#f1f5f9;padding:10px;border-radius:6px;font-size:12px;color:#475569;line-height:1.5">
             <strong>📌 รูปแบบที่รองรับ:</strong><br>
@@ -711,11 +722,71 @@
               <div class="text-xs text-gray-500">${a.bankName} - ${a.accountNumber}</div>
               <div class="text-xs text-gray-400">${a.accountType === 'Savings' ? 'ออมทรัพย์' : a.accountType === 'Current' ? 'กระแสรายวัน' : a.accountType === 'Fixed' ? 'ฝากประจำ' : a.accountType || ''} | ${a.branchName || '-'}</div>
               ${a.linkedAccountCode ? `<div class="text-xs" style="color:var(--primary);margin-top:4px">ผังบัญชี: ${a.linkedAccountCode} ${a.linkedAccountName || ''}</div>` : ''}
-              <div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
-              <div class="text-xs text-gray-400">${a.currency || 'THB'}</div>
+              ${this.renderBalances(a)}
             </div>
           `).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ยอด 2 บรรทัด: ธนาคารจริง (statement ล่าสุด) เป็นตัวหลัก + ยอดตามบัญชี (GL)
+      // ผลต่าง > 0.01 = มีรายการยังไม่กระทบยอด/ยังไม่บันทึก → ป้ายเตือนชี้ไป tab กระทบยอด
+      renderBalances(a) {
+        const fmtD = d => { const t = new Date(d); return isNaN(t) ? '' : t.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }); };
+        if (a.statementBalance == null) {
+          // ยังไม่เคยอัพ statement — โชว์ยอดตามบัญชีแบบเดิม พร้อมชวนนำเข้า
+          return `<div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.currentBalance)}</div>
+              <div class="text-xs text-gray-400">${a.currency || 'THB'} · ยอดตามบัญชี (GL) — <span style="color:var(--primary)">นำเข้า statement เพื่อเทียบยอดธนาคารจริง</span></div>`;
+        }
+        const diff = a.statementDiff ?? (a.statementBalance - (a.bookBalance ?? a.currentBalance));
+        const hasDiff = Math.abs(diff) > 0.01;
+        return `<div class="text-2xl font-bold" style="margin-top:8px">${Layout.money(a.statementBalance)}</div>
+              <div class="text-xs text-gray-400">${a.currency || 'THB'} · 🏦 ยอดตามธนาคาร${a.statementBalanceDate ? ' ณ ' + fmtD(a.statementBalanceDate) : ''}</div>
+              <div class="text-xs" style="margin-top:2px;color:var(--text-secondary)">📒 ยอดตามบัญชี (GL): <b>${Layout.money(a.bookBalance ?? a.currentBalance)}</b></div>
+              ${hasDiff
+                ? `<div class="text-xs" style="margin-top:4px"><span class="badge badge-warning" style="cursor:pointer" title="คลิกดูสาเหตุที่ยอดไม่ตรงกัน" onclick="event.stopPropagation();Page.openDiffExplain('${a.id}')">⚠ ต่างกัน ${Layout.money(Math.abs(diff))} — ทำไม?</span> <a href="javascript:void(0)" onclick="event.stopPropagation();Page.selectAccount('${a.id}');document.querySelectorAll('.tab')[1]?.click()" style="color:var(--primary)">ไปกระทบยอด →</a></div>`
+                : `<div class="text-xs" style="margin-top:4px"><span class="badge badge-success">✓ ยอดตรงกัน</span></div>`}`;
+      },
+      // งบพิสูจน์ยอดเงินฝากแบบย่อ: แตกผลต่างเป็น (1) รายการใน statement ที่ยัง
+      // ไม่บันทึก/จับคู่ (2) ส่วนที่เหลือ = รายการฝั่งบัญชีที่ยังไม่ผ่านธนาคาร
+      // (เช็คค้างจ่าย/เงินฝากระหว่างทาง) หรือยอดยกมา/statement ไม่ครบช่วง
+      async openDiffExplain(id) {
+        const a = this.accounts.find(x => x.id === id);
+        if (!a || a.statementBalance == null) return;
+        const api = Layout.api(); if (!api) return;
+        const body = document.getElementById('diffExplainBody');
+        body.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">กำลังวิเคราะห์...</div>';
+        Layout.openModal('diffExplainModal');
+        let s = null;
+        try { const r = await api.getReconciliationSummary(id); s = r.data; } catch (e) { /* summary optional */ }
+        const stmt = a.statementBalance;
+        const book = a.bookBalance ?? a.currentBalance;
+        const diff = stmt - book;
+        const unIn = s?.unmatchedDeposits || 0;
+        const unOut = s?.unmatchedWithdrawals || 0;
+        const unCount = s?.unmatchedCount || 0;
+        const unmatchedNet = unIn - unOut;
+        const residual = diff - unmatchedNet;
+        const fmtD = d => { const t = new Date(d); return isNaN(t) ? '' : t.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }); };
+        const row = (label, val, bold) => `<div class="flex justify-between" style="padding:6px 0;border-bottom:1px dashed var(--border)${bold ? ';font-weight:600' : ''}"><span>${label}</span><span style="font-variant-numeric:tabular-nums">${val}</span></div>`;
+        body.innerHTML = `
+          <div class="text-sm">
+            ${row(`🏦 ยอดตามธนาคาร (statement ณ ${fmtD(a.statementBalanceDate)})`, Layout.money(stmt), true)}
+            ${row('📒 ยอดตามบัญชี (GL)', Layout.money(book), true)}
+            ${row('ผลต่างที่ต้องอธิบาย', (diff >= 0 ? '+' : '') + Layout.money(diff), true)}
+            <div style="margin-top:10px;color:var(--text-secondary);font-size:12px">สาเหตุที่ระบบตรวจพบ (รายการใน statement ที่ยังไม่กระทบยอด ${unCount} รายการ):</div>
+            ${row('เงินเข้าที่ยังไม่บันทึก/จับคู่', '+' + Layout.money(unIn))}
+            ${row('เงินออกที่ยังไม่บันทึก/จับคู่', '−' + Layout.money(unOut))}
+            ${row('คงเหลือที่ยังอธิบายไม่ได้', (residual >= 0 ? '+' : '') + Layout.money(residual), true)}
+            <div style="margin-top:10px;padding:10px;border-radius:6px;font-size:12px;line-height:1.6;background:${Math.abs(residual) < 0.01 ? 'rgba(16,185,129,.08)' : 'rgba(245,158,11,.08)'}">
+              ${Math.abs(residual) < 0.01
+                ? '✅ ผลต่างทั้งหมดมาจากรายการ statement ที่ยังไม่กระทบยอด — กด "ไปกระทบยอด" จับคู่/สร้าง JE ให้ครบ ยอดจะตรงกันพอดี'
+                : '⚠️ มีส่วนต่างที่ไม่ได้มาจากรายการค้างกระทบยอด — สาเหตุที่พบบ่อย:<br>• รายการบันทึกในบัญชีแล้วแต่ยังไม่ผ่านธนาคาร (เช็คสั่งจ่ายยังไม่ขึ้นเงิน / เงินฝากระหว่างทาง)<br>• ยอดยกมาใน GL ไม่ตรงกับยอดเปิดบัญชีจริง<br>• statement ที่นำเข้าไม่ครบช่วง (ขาดเดือนก่อนหน้า)<br>แนะนำ: นำเข้า statement ย้อนหลังให้ครบ แล้วสร้าง JE ปรับปรุงยอดยกมา 1 ครั้ง'}
+            </div>
+          </div>`;
+        document.getElementById('diffExplainGoBtn').onclick = () => {
+          Layout.closeModal('diffExplainModal');
+          this.selectAccount(id);
+          document.querySelectorAll('.tab')[1]?.click();
+        };
       },
       async selectAccount(id) {
         const acct = this.accounts.find(a => a.id === id);
@@ -2464,7 +2535,9 @@
         document.getElementById('fAccType').value = 'Savings';
         document.getElementById('fCurrency').value = 'THB';
         document.getElementById('fBranch').value = '';
-        document.getElementById('fOpening').value = '0';
+        const op = document.getElementById('fOpening');
+        op.value = '0'; op.disabled = false;
+        document.getElementById('fOpeningHint').classList.add('hidden');
         Layout.openModal('formModal');
       },
       openEdit(id) {
@@ -2478,7 +2551,10 @@
         document.getElementById('fAccType').value = a.accountType || 'Savings';
         document.getElementById('fCurrency').value = a.currency || 'THB';
         document.getElementById('fBranch').value = a.branchName || '';
-        document.getElementById('fOpening').value = a.openingBalance || 0;
+        // ยอดเปิดถูกรวมเข้า CurrentBalance ตอนสร้างแล้ว — แก้ย้อนหลังไม่ได้
+        const op = document.getElementById('fOpening');
+        op.value = a.currentBalance ?? 0; op.disabled = true;
+        document.getElementById('fOpeningHint').classList.remove('hidden');
         Layout.openModal('formModal');
       },
       async save() {
@@ -2595,6 +2671,10 @@
                   : 'นำเข้า Statement สำเร็จ';
                 Layout.toast(msg, 'success');
               }
+
+              // คำเตือนคุณภาพไฟล์จาก backend (เช่น ยอดคงเหลือไม่ต่อเนื่อง = ไฟล์ขาดรายการ)
+              const warns = stats?.warnings || [];
+              warns.forEach(w => Layout.toast(w, 'warning', 10000));
 
               // 1) Refresh accounts (balance may have changed)
               await this.loadAccounts();

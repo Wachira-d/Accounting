@@ -65,6 +65,9 @@ public partial class BankService : IBankService
         if (request.OpeningBalance < 0)
             throw new ArgumentException("ยอดเปิดบัญชีต้องไม่ติดลบ");
 
+        if (!string.IsNullOrWhiteSpace(request.AccountType) && !ValidBankAccountTypes.Contains(request.AccountType))
+            throw new ArgumentException("ประเภทบัญชีต้องเป็น Savings (ออมทรัพย์), Current (กระแสรายวัน) หรือ Fixed (ฝากประจำ)");
+
         var linkedAccountId = request.LinkedAccountId;
 
         if (!linkedAccountId.HasValue)
@@ -98,14 +101,19 @@ public partial class BankService : IBankService
         return MapToResponse(account);
     }
 
+    private static readonly string[] ValidBankAccountTypes = { "Savings", "Current", "Fixed" };
+
+    /// <summary>รหัสกลุ่มเงินฝากในผังบัญชีตามประเภทบัญชีธนาคาร</summary>
+    private static string ParentCodeForAccountType(string? accountType) => accountType switch
+    {
+        "Current" => "11121",
+        "Fixed" => "11123",
+        _ => "11122" // Savings as default
+    };
+
     private async Task<ChartOfAccount?> AutoCreateLinkedAccountAsync(Guid companyId, CreateBankAccountRequest request)
     {
-        var parentCode = request.AccountType switch
-        {
-            "Current" => "11121",
-            "Fixed" => "11123",
-            _ => "11122" // Savings as default
-        };
+        var parentCode = ParentCodeForAccountType(request.AccountType);
 
         var parent = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == parentCode && a.IsActive);
@@ -187,17 +195,23 @@ public partial class BankService : IBankService
             // Use GL-computed balance when a linked COA is set (authoritative source).
             // Fall back to stored CurrentBalance when no COA is linked (pure manual tracking).
             var displayBalance = a.LinkedAccountId.HasValue ? gl : a.CurrentBalance;
+            // ยอดตามธนาคาร (statement ล่าสุด) เทียบยอดตามบัญชี — ผลต่าง = งานกระทบยอดที่ค้าง
+            var bookBalance = a.LinkedAccountId.HasValue ? gl : a.CurrentBalance;
             return new BankAccountResponse(
                 a.Id, a.AccountName, a.BankName, a.AccountNumber,
                 a.BranchName, a.AccountType, a.Currency, displayBalance,
                 a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
-                a.IsActive);
+                a.IsActive,
+                a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt,
+                bookBalance,
+                a.StatementBalance.HasValue ? a.StatementBalance.Value - bookBalance : null);
         }).ToList();
     }
 
     public async Task<BankAccountResponse> UpdateBankAccountAsync(Guid companyId, Guid accountId, UpdateBankAccountRequest request)
     {
         var account = await _db.Set<BankAccount>()
+            .Include(a => a.LinkedAccount)
             .FirstOrDefaultAsync(a => a.Id == accountId && a.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
@@ -206,8 +220,95 @@ public partial class BankService : IBankService
         if (request.IsActive.HasValue) account.IsActive = request.IsActive.Value;
         if (request.LinkedAccountId.HasValue) account.LinkedAccountId = request.LinkedAccountId.Value;
 
+        if (!string.IsNullOrWhiteSpace(request.BankName))
+            account.BankName = request.BankName;
+
+        if (!string.IsNullOrWhiteSpace(request.AccountNumber))
+        {
+            if (request.AccountNumber.Length < 5 || request.AccountNumber.Length > 20)
+                throw new ArgumentException("เลขที่บัญชีต้องมีความยาว 5-20 ตัวอักษร");
+            account.AccountNumber = request.AccountNumber;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Currency))
+        {
+            if (request.Currency.Length != 3 || request.Currency != request.Currency.ToUpperInvariant())
+                throw new ArgumentException("สกุลเงินต้องเป็นรหัส 3 ตัวอักษรพิมพ์ใหญ่ (เช่น THB, USD)");
+            account.Currency = request.Currency;
+        }
+
+        var typeChanged = false;
+        if (!string.IsNullOrWhiteSpace(request.AccountType) && request.AccountType != account.AccountType)
+        {
+            if (!ValidBankAccountTypes.Contains(request.AccountType))
+                throw new ArgumentException("ประเภทบัญชีต้องเป็น Savings (ออมทรัพย์), Current (กระแสรายวัน) หรือ Fixed (ฝากประจำ)");
+            account.AccountType = request.AccountType;
+            typeChanged = true;
+        }
+
+        // บัญชีย่อยในผังที่ระบบสร้างให้อัตโนมัติ → ปรับตามข้อมูลใหม่
+        // (ย้ายกลุ่ม 11121/11122/11123 เมื่อเปลี่ยนประเภท + ชื่อธนาคาร/เลขบัญชีใหม่)
+        // JE อ้าง AccountId ไม่ใช่รหัสบัญชี — เปลี่ยนรหัส/parent ไม่กระทบรายการที่ลงแล้ว
+        await SyncLinkedAccountAsync(companyId, account, typeChanged);
+
         await _db.SaveChangesAsync();
         return MapToResponse(account);
+    }
+
+    /// <summary>
+    /// ทำให้บัญชีย่อยในผังบัญชี (ที่ AutoCreateLinkedAccountAsync สร้าง) สอดคล้อง
+    /// กับข้อมูลบัญชีธนาคารหลังแก้ไข — เฉพาะบัญชีที่ IsSystemAccount และอยู่ใต้กลุ่ม
+    /// เงินฝากธนาคาร (11121/11122/11123) เท่านั้น; บัญชีที่ผู้ใช้เลือกผูกเองไม่ถูกแตะ
+    /// </summary>
+    private async Task SyncLinkedAccountAsync(Guid companyId, BankAccount account, bool typeChanged)
+    {
+        if (!account.LinkedAccountId.HasValue) return;
+
+        var linked = account.LinkedAccount
+            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == account.LinkedAccountId.Value && a.CompanyId == companyId);
+        if (linked == null || !linked.IsSystemAccount || linked.ParentAccountId == null) return;
+
+        var currentParent = await _db.ChartOfAccounts
+            .FirstOrDefaultAsync(a => a.Id == linked.ParentAccountId.Value && a.CompanyId == companyId);
+        if (currentParent == null || currentParent.AccountCode is not ("11121" or "11122" or "11123"))
+            return; // ไม่ใช่บัญชีที่ระบบสร้างใต้กลุ่มเงินฝาก — ไม่ยุ่ง
+
+        var targetParent = currentParent;
+        if (typeChanged)
+        {
+            var targetCode = ParentCodeForAccountType(account.AccountType);
+            if (targetCode != currentParent.AccountCode)
+            {
+                targetParent = await _db.ChartOfAccounts
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == targetCode && a.IsActive)
+                    ?? throw new InvalidOperationException(
+                        $"ไม่พบบัญชีผังบัญชีหลัก {targetCode} สำหรับประเภท {account.AccountType} — " +
+                        "กรุณาสร้างบัญชีกลุ่มเงินฝากธนาคารในผังบัญชีก่อน");
+
+                var siblings = await _db.ChartOfAccounts
+                    .Where(a => a.CompanyId == companyId && a.ParentAccountId == targetParent.Id)
+                    .Select(a => a.AccountCode)
+                    .ToListAsync();
+                var nextSeq = 1;
+                foreach (var code in siblings)
+                {
+                    var suffix = code.Replace(targetCode + "-", "");
+                    if (int.TryParse(suffix, out var num) && num >= nextSeq)
+                        nextSeq = num + 1;
+                }
+
+                linked.ParentAccountId = targetParent.Id;
+                linked.Level = targetParent.Level + 1;
+                linked.AccountCode = $"{targetCode}-{nextSeq:D3}";
+            }
+        }
+
+        var maskedNumber = account.AccountNumber.Length >= 4
+            ? "xxx-" + account.AccountNumber[^4..]
+            : account.AccountNumber;
+        linked.AccountName = $"{targetParent.AccountName} - {account.BankName} {maskedNumber}";
+        linked.AccountNameEn = $"{targetParent.AccountNameEn ?? targetParent.AccountName} - {account.BankName} {maskedNumber}";
+        linked.Description = $"สร้างอัตโนมัติจากบัญชีธนาคาร: {account.BankName} {account.AccountNumber}";
     }
 
     public async Task<BankTransactionResponse> CreateTransactionAsync(Guid companyId, CreateBankTransactionRequest request)
@@ -690,11 +791,44 @@ public partial class BankService : IBankService
         var conflicts = new List<ImportConflict>();
         int imported = 0, skipped = 0;
 
+        // ยอดคงเหลือ "ล่าสุดจริง" ของ statement — ห้ามใช้แถวสุดท้ายของไฟล์ตรง ๆ
+        // เพราะธนาคารไทยหลายแห่ง export แบบใหม่→เก่า (ยอดแถวสุดท้าย = ยอดเก่าสุด)
+        // ใช้แถวที่วันที่มากสุด "ที่มียอดคงเหลือจริง" (Balance=null คือช่องว่าง);
+        // หลายแถววันเดียวกันเคารพลำดับในไฟล์ (เก่า→ใหม่เอาแถวท้าย, ใหม่→เก่าเอาแถวแรก)
+        var newestFirst = parsedRows.Count > 1 && parsedRows[0].Date > parsedRows[^1].Date;
+        BankCsvParser.Row? latestRow = null;
+        var balanceRows = parsedRows.Where(r => r.Balance.HasValue).ToList();
+        if (balanceRows.Count > 0)
+        {
+            var maxDate = balanceRows.Max(r => r.Date);
+            latestRow = newestFirst
+                ? balanceRows.First(r => r.Date == maxDate)
+                : balanceRows.Last(r => r.Date == maxDate);
+        }
+
+        // ตรวจความต่อเนื่องของยอด: balance แถวถัดไปต้อง = แถวก่อน + ฝาก − ถอน
+        // จุดที่ไม่ต่อเนื่อง = ไฟล์ขาดรายการ (ตัดหน้า/กรองบางประเภทออกตอน export)
+        // → เตือน เพราะนำเข้าต่อไปเฉย ๆ จะได้ยอดบัญชีที่ไม่มีวันตรงกับธนาคาร
+        var chronological = newestFirst ? Enumerable.Reverse(parsedRows).ToList() : parsedRows;
+        var continuityBreaks = 0;
+        for (var ci = 1; ci < chronological.Count; ci++)
+        {
+            var prevBal = chronological[ci - 1].Balance;
+            var curBal = chronological[ci].Balance;
+            if (!prevBal.HasValue || !curBal.HasValue) continue;
+            var expected = prevBal.Value + chronological[ci].Deposit - chronological[ci].Withdrawal;
+            if (Math.Abs(expected - curBal.Value) > 0.01m) continuityBreaks++;
+        }
+        var warnings = new List<string>();
+        if (continuityBreaks > 0)
+            warnings.Add($"⚠ ยอดคงเหลือในไฟล์ไม่ต่อเนื่อง {continuityBreaks} จุด — ไฟล์อาจขาดรายการ " +
+                "(ถูกตัดหน้า/กรองบางประเภทออกตอน export) ยอดบัญชีอาจไม่ตรงธนาคารจนกว่าจะนำเข้าครบ");
+
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
-            decimal? lastBalance = null;
             var rowNum = 0;
+            var usedExisting = new HashSet<Guid>();
             foreach (var r in parsedRows)
             {
                 rowNum++;
@@ -709,13 +843,18 @@ public partial class BankService : IBankService
                 var txnType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal;
 
                 // Check for duplicates: same date + amount + type
+                // จับคู่แบบใช้ครั้งเดียว — statement มี 2 รายการยอดเท่ากันวันเดียวกัน
+                // ได้จริง (เช่น PromptPay 55 บาท 2 ครั้ง) ห้ามให้ทั้งคู่ชนแถวเดิม
+                // แถวเดียวแล้วหายไป 1 รายการ
                 var duplicate = existingTxns.FirstOrDefault(t =>
-                    t.TransactionDate.Date == r.Date.Date
+                    !usedExisting.Contains(t.Id)
+                    && t.TransactionDate.Date == r.Date.Date
                     && t.Amount == amount
                     && t.TransactionType == txnType);
 
                 if (duplicate != null)
                 {
+                    usedExisting.Add(duplicate.Id);
                     var isSameContent = string.Equals(
                         (duplicate.Description ?? "").Trim(),
                         desc.Trim(),
@@ -724,7 +863,6 @@ public partial class BankService : IBankService
                     if (isSameContent)
                     {
                         skipped++;
-                        lastBalance = r.Balance;
                         continue;
                     }
 
@@ -733,7 +871,6 @@ public partial class BankService : IBankService
                         conflicts.Add(new ImportConflict(
                             rowNum, r.Date, amount,
                             desc, duplicate.Description, duplicate.Id));
-                        lastBalance = r.Balance;
                         continue;
                     }
 
@@ -742,9 +879,8 @@ public partial class BankService : IBankService
                         .FirstAsync(t => t.Id == duplicate.Id);
                     existingEntity.Description = desc;
                     existingEntity.Reference = r.Reference;
-                    existingEntity.BalanceAfter = r.Balance;
+                    existingEntity.BalanceAfter = r.Balance ?? existingEntity.BalanceAfter;
                     imported++;
-                    lastBalance = r.Balance;
                     continue;
                 }
 
@@ -755,22 +891,31 @@ public partial class BankService : IBankService
                     TransactionDate = r.Date,
                     TransactionType = txnType,
                     Amount = amount,
-                    BalanceAfter = r.Balance,
+                    BalanceAfter = r.Balance ?? 0,
                     Description = desc,
                     Reference = r.Reference
                 });
                 imported++;
-                lastBalance = r.Balance;
             }
 
             if (conflicts.Count > 0 && !request.ForceOverwrite)
             {
                 await dbTransaction.RollbackAsync();
-                return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts);
+                return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts, warnings);
             }
 
-            if (imported > 0 && lastBalance.HasValue)
-                account.CurrentBalance = lastBalance.Value;
+            // อัปเดต snapshot ยอดจริงทุกครั้งที่ไฟล์ผ่าน (แม้รายการซ้ำถูกข้ามหมด —
+            // การอัพ statement ช่วงทับซ้อนก็ยังยืนยันยอด ณ วันล่าสุดได้)
+            // ไม่มีแถวไหนมียอดเลย → คง snapshot เดิมไว้ ดีกว่าเขียนทับด้วยศูนย์ปลอม
+            if (latestRow != null)
+            {
+                account.StatementBalance = latestRow.Balance;
+                account.StatementBalanceDate = latestRow.Date;
+                account.StatementImportedAt = DateTime.UtcNow;
+                account.CurrentBalance = latestRow.Balance!.Value;
+            }
+            else
+                warnings.Add("⚠ ไฟล์ไม่มีคอลัมน์ยอดคงเหลือที่อ่านได้ — ยอดตามธนาคารบนการ์ดบัญชีไม่ถูกอัปเดต");
 
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();
@@ -785,7 +930,7 @@ public partial class BankService : IBankService
                 catch (Exception ex) { _logger?.LogWarning(ex, "Auto-match after import failed (non-critical)"); }
             }
 
-            return new ImportBankStatementResponse(imported, skipped, 0);
+            return new ImportBankStatementResponse(imported, skipped, 0, null, warnings);
         }
         catch
         {
@@ -798,7 +943,8 @@ public partial class BankService : IBankService
         a.Id, a.AccountName, a.BankName, a.AccountNumber,
         a.BranchName, a.AccountType, a.Currency, a.CurrentBalance,
         a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
-        a.IsActive);
+        a.IsActive,
+        a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt);
 
     private static BankTransactionResponse MapTransactionToResponse(BankTransaction t) => new(
         t.Id, t.BankAccountId, t.TransactionDate, t.TransactionType,

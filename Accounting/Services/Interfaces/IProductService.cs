@@ -41,6 +41,7 @@ public interface IProductService
 
     // Inventory Valuation
     Task<InventoryValuationReport> GetInventoryValuationAsync(Guid companyId);
+    Task<InventoryGlTieOutReport> GetInventoryGlTieOutAsync(Guid companyId);
 
     // Stock Balance as of Date (สินค้าคงเหลือ ณ วันที่)
     Task<StockBalanceAsOfDateReport> GetStockBalanceAsOfDateAsync(Guid companyId, StockBalanceAsOfDateRequest request);

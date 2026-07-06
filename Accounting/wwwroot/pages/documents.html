@@ -146,17 +146,19 @@
       <!-- Revenue tabs -->
       <div class="tab tab-revenue" data-type="Invoice" onclick="Page.setType(this)">ใบแจ้งหนี้</div>
       <div class="tab tab-revenue" data-type="TaxInvoice" onclick="Page.setType(this)">ใบกำกับภาษี</div>
-      <div class="tab tab-revenue" data-type="Receipt" onclick="Page.setType(this)">ใบเสร็จ</div>
+      <div class="tab tab-revenue" data-type="Receipt" onclick="Page.setType(this)">ใบเสร็จรับเงิน</div>
       <div class="tab tab-revenue" data-type="Quotation" onclick="Page.setType(this)">ใบเสนอราคา</div>
       <div class="tab tab-revenue" data-type="DeliveryNote" onclick="Page.setType(this)">ใบส่งของ</div>
       <div class="tab tab-revenue" data-type="BillingNote" onclick="Page.setType(this)">ใบวางบิล</div>
       <div class="tab tab-revenue" data-type="CreditNote" onclick="Page.setType(this)">ใบลดหนี้</div>
+      <div class="tab tab-revenue" data-type="DebitNote" onclick="Page.setType(this)">ใบเพิ่มหนี้</div>
       <div class="tab tab-revenue" data-type="ReceiptVoucher" onclick="Page.setType(this)">ใบสำคัญรับ</div>
       <!-- Expense tabs -->
       <div class="tab tab-expense" data-type="PurchaseRequisition" onclick="Page.setType(this)">ใบขอซื้อ</div>
       <div class="tab tab-expense" data-type="PurchaseOrder" onclick="Page.setType(this)">ใบสั่งซื้อ</div>
+      <div class="tab tab-expense" data-type="GoodsReceiptNote" onclick="Page.setType(this)">ใบรับสินค้า</div>
       <div class="tab tab-expense" data-type="PurchaseInvoice" onclick="Page.setType(this)">ใบแจ้งหนี้ซื้อ</div>
-      <div class="tab tab-expense" data-type="Expense" onclick="Page.setType(this)">ค่าใช้จ่าย</div>
+      <div class="tab tab-expense" data-type="Expense" onclick="Page.setType(this)">ใบบันทึกค่าใช้จ่าย</div>
       <div class="tab tab-expense" data-type="PaymentVoucher" onclick="Page.setType(this)">ใบสำคัญจ่าย</div>
       <div class="tab tab-expense" data-type="CertificateInLieu" onclick="Page.setType(this)">ใบรับรองแทนใบเสร็จ</div>
     </div>
@@ -404,6 +406,10 @@
             <div class="form-group">
               <label class="form-label" data-help="ใช้เมื่อต้องการให้รายงานแยกตามโครงการ/งาน เช่น 'รีโนเวทห้องประชุม' ระบบจะสรุปรายรับ-รายจ่ายต่อโครงการให้อัตโนมัติ">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
               <select class="form-select" id="fProject"><option value="">— ไม่ระบุโครงการ —</option></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-help="Cost center: สาขา/แผนก (หน่วยงานถาวร — วัดต้นทุนตามโครงสร้างองค์กร) ต่างจากโครงการที่เป็นงานชั่วคราวมีจบ · ไหลลงบัญชีอัตโนมัติ → ดูกำไร-ขาดทุนต่อสาขา/แผนกได้ที่เมนู สาขา & มิติ">สาขา / แผนก (Cost Center)</label>
+              <select class="form-select" id="fDimension"><option value="">— ไม่ระบุ —</option></select>
             </div>
             <div class="form-group"><label class="form-label" data-help="หมายเลขอ้างอิงภายในหรือเลข PO ของลูกค้า — แสดงบนเอกสารที่พิมพ์" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
@@ -756,7 +762,8 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+          <button class="btn btn-outline" onclick="Page.save()" title="บันทึกเป็นฉบับร่าง (เลข DRAFT) — แก้ไขต่อ/รอผู้มีสิทธิ์อนุมัติ">บันทึกร่าง</button>
+          <button class="btn btn-primary" onclick="Page.save(true)" title="บันทึก + อนุมัติทันที (ออกเลขเอกสารจริง ลงบัญชี ตัดสต๊อก) — จบในคลิกเดียว">✓ บันทึกและอนุมัติ</button>
         </div>
       </div>
     </div>
@@ -3243,7 +3250,7 @@
         const q = (query || '').trim();
         if (!q) { Layout.toast('พิมพ์ชื่อหรือเลขผู้เสียภาษีก่อน', 'error'); return; }
         // Sales-side docs → customer; purchase-side → supplier.
-        const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
+        const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
         const docType = document.getElementById('fDocType')?.value || '';
         const isSupplier = expenseTypes.has(docType);
         const isTaxId = /^\d{13}$/.test(q);
@@ -3306,6 +3313,17 @@
           `<option value="${p.id}">${this.escapeHtml(p.code)} — ${this.escapeHtml(p.name)}</option>`
         ).join('');
         // Form selector (create/edit)
+        // Cost center dropdown — โหลดคู่กับโครงการ (cache ไว้เหมือนกัน)
+        try {
+          const dimSel = document.getElementById('fDimension');
+          if (dimSel && dimSel.options.length <= 1) {
+            const dres = await Layout.api().getDimensions();
+            const dims = dres?.data?.items || dres?.data || [];
+            dimSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' +
+              dims.filter(d => d.isActive !== false).map(d =>
+                `<option value="${d.id}">${Layout.esc(d.code ? d.code + ' - ' : '')}${Layout.esc(d.name)}</option>`).join('');
+          }
+        } catch { /* ไม่มีสิทธิ์/ฟีเจอร์ปิด — ปล่อยว่าง */ }
         const fSel = document.getElementById('fProject');
         if (fSel) fSel.innerHTML = '<option value="">— ไม่ระบุโครงการ —</option>' + optionsHtml;
         // Toolbar filter
@@ -3877,6 +3895,7 @@
         const _att = document.getElementById('fAttachments'); if (_att) _att.value = '';
         const _attPv = document.getElementById('fAttachmentsPreview'); if (_attPv) _attPv.innerHTML = '';
         const fp = document.getElementById('fProject'); if (fp) fp.value = '';
+        const fd = document.getElementById('fDimension'); if (fd) fd.value = '';
         // Clear CertificateInLieu fields
         if (document.getElementById('fCertReason')) document.getElementById('fCertReason').value = '';
         if (document.getElementById('fCertifierName')) document.getElementById('fCertifierName').value = '';
@@ -3920,7 +3939,7 @@
           // Re-tag the line table for selling-vs-cost defaults on the typeahead.
           const linesTbl = document.getElementById('linesTable');
           if (linesTbl) {
-            const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
+            const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
             linesTbl.dataset.docSide = expenseTypes.has(d.documentType) ? 'expense' : 'revenue';
           }
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
@@ -3969,6 +3988,8 @@
           document.getElementById('fCustomTerms').value = d.customTermsAndConditions || '';
           const fp = document.getElementById('fProject');
           if (fp) fp.value = d.projectId || '';
+          const fd = document.getElementById('fDimension');
+          if (fd) fd.value = d.dimensionId || '';
           // แหล่งเงิน + หมวดค่าใช้จ่าย — hydrate ผ่าน helper ที่ bulletproof
           // (เพิ่ม option ถ้าหาย + mark userTouched กัน async suggest ทับ)
           this._hydratePaymentAndCategory(d);
@@ -4158,7 +4179,7 @@
           if (btn) { btn.disabled = false; btn.textContent = '⟲ ดึงรายการจาก OCR'; }
         }
       },
-      async save() {
+      async save(approveAfter = false) {
         const api = Layout.api(); if (!api) return;
         // Strict mode: every line must come from the product picker, not a
         // free-text description. The checkbox lives next to "+ เพิ่มรายการ".
@@ -4259,6 +4280,7 @@
           }
         }
         const projectId = document.getElementById('fProject')?.value || null;
+        const dimensionId = document.getElementById('fDimension')?.value || null;
         const pcVal = document.getElementById('fPaymentChannel')?.value || '';
         let bankAccountId = null, paymentAccountId = null;
         if (pcVal.startsWith('bank:')) bankAccountId = pcVal.substring(5);
@@ -4286,6 +4308,7 @@
           customFooterNotes: document.getElementById('fCustomFooterNotes').value || null,
           customTermsAndConditions: document.getElementById('fCustomTerms').value || null,
           projectId,
+          dimensionId,
           bankAccountId,
           paymentAccountId,
           expenseCategoryId,
@@ -4500,6 +4523,25 @@
               }
             } catch (e) {
               Layout.toast('สร้างเอกสารแล้ว แต่บันทึกชำระไม่สำเร็จ: ' + e.message + ' — โปรดกด "💰 บันทึกชำระเงิน" ในหน้ารายละเอียดแทน', 'warning', 8000);
+            }
+          }
+
+          // "บันทึกและอนุมัติ" — จบใน 1 คลิก: ออกเลขจริง + ลง GL + ตัดสต๊อก.
+          // ข้ามถ้า flow อื่น (ส่งอีเมล/รับเงินสด) อนุมัติไปแล้ว; ไม่มีสิทธิ์
+          // → เอกสารยังถูกบันทึกเป็นร่าง + แจ้งชัดเจน (ไม่ยิง 403)
+          if (approveAfter && savedDocId
+              && !['Approved', 'Sent', 'PartiallyPaid', 'Paid'].includes(savedStatus)) {
+            const _adt = document.getElementById('fDocType')?.value;
+            if (!this._canApproveDoc(_adt)) {
+              Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);
+            } else {
+              try {
+                await api.approveDocument(savedDocId);
+                Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
+              } catch (ae) {
+                Layout.toast('บันทึกเป็นร่างแล้ว แต่อนุมัติไม่ผ่าน: '
+                  + (ae.message || 'กรุณาตรวจข้อมูล (§86/4) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
+              }
             }
           }
 
@@ -4794,6 +4836,12 @@
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
             actions += ` <button class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
+            if (d.documentType === 'Quotation') {
+              actions += ` <button class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
+            }
+            if (d.documentType === 'DeliveryNote') {
+              actions += ` <button class="btn btn-secondary" onclick="Page.deliverySignLink('${d.id}')" title="สร้างลิงก์ให้ลูกค้าเซ็นรับสินค้าออนไลน์ (POD — อายุ 14 วัน) ลายเซ็นประทับลงช่อง ผู้รับของ บน PDF อัตโนมัติ">✍️ ลิงก์เซ็นรับ</button>`;
+            }
           }
           // e-Tax generation: shown for VAT-eligible types (TaxInvoice / Receipt /
           // DebitNote / CreditNote) once approved, when no e-Tax record exists yet.
@@ -4825,7 +4873,7 @@
           if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
             // can trace the guidance "→ ปุ่มไหน" without hunting.
-            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
+            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
           }
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
@@ -4888,6 +4936,23 @@
               // is on at the server. Null/undefined when AI is disabled
               // or unreachable — modal falls back to plain warning text.
               this._showApprovalWarnings(id, e.body.data.warnings, e.body.data.aiHints, () => tryApprove(true));
+              return;
+            }
+            // เอกสารเข้ากฎอนุมัติหลายขั้น (workflow gate) → เดิมเป็นทางตัน
+            // (error เฉย ๆ ไม่มีปุ่มไปต่อ) — เสนอส่งเข้าคิวขออนุมัติทันที
+            const msg = e.message || '';
+            if (msg.includes('workflow') || msg.includes('ต้องผ่าน multi-level')
+                || msg.includes('ผ่านการอนุมัติ')) {
+              if (confirm('เอกสารนี้เข้ากฎอนุมัติหลายขั้น (ตามวงเงิน/ประเภท)\n\nส่งเข้าคิวขออนุมัติเลยหรือไม่? ผู้อนุมัติตามกฎจะได้รับแจ้งเตือน')) {
+                try {
+                  await api.submitForApproval('Document', id);
+                  Layout.closeModal('detailModal');
+                  Layout.toast('ส่งขออนุมัติแล้ว — ติดตามสถานะได้ที่เมนู "กฎอนุมัติตามวงเงิน (Workflow)"', 'success', 7000);
+                  await this.load();
+                } catch (se) {
+                  Layout.toast('ส่งขออนุมัติไม่สำเร็จ: ' + se.message, 'error');
+                }
+              }
               return;
             }
             Layout.toast(e.message, 'error');
@@ -5323,7 +5388,49 @@
           await this.load();
         } catch (e2) { Layout.toast(e2.message || 'ลบไม่สำเร็จ', 'error'); }
       },
-      async recordPayment(docId, balanceDue, sourceWht = 0, sourceTotal = 0) {
+      // สร้างลิงก์ลูกค้าเซ็นรับสินค้าออนไลน์ (POD) → คัดลอกเข้า clipboard
+      async deliverySignLink(docId) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/document/${docId}/delivery-sign-link`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'สร้างลิงก์ไม่สำเร็จ');
+          const url = j.data.url;
+          try { await navigator.clipboard.writeText(url); } catch {}
+          if (j.data.signedAt) {
+            Layout.toast(`ลูกค้าเซ็นรับไปแล้วโดย ${j.data.signedBy} — ลิงก์ใหม่คัดลอกแล้ว`, 'info');
+          } else {
+            Layout.toast('คัดลอกลิงก์แล้ว — ส่งให้ลูกค้าเซ็นรับสินค้าได้เลย (อายุ 14 วัน)', 'success');
+          }
+          prompt('ลิงก์เซ็นรับสินค้า (คัดลอกแล้ว):', url);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // สร้างลิงก์ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ → คัดลอกเข้า clipboard
+      async quotationAcceptLink(docId) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const r = await fetch(`/api/companies/${cid}/document/${docId}/quotation-accept-link`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+          });
+          const j = await r.json();
+          if (!j.success) throw new Error(j.message || 'สร้างลิงก์ไม่สำเร็จ');
+          const url = j.data.url;
+          try { await navigator.clipboard.writeText(url); } catch {}
+          if (j.data.acceptedAt) {
+            Layout.toast(`ลูกค้ายอมรับใบนี้ไปแล้วเมื่อ ${new Date(j.data.acceptedAt).toLocaleString('th-TH')} — ลิงก์ใหม่คัดลอกแล้ว`, 'info');
+          } else {
+            Layout.toast('คัดลอกลิงก์แล้ว — ส่งให้ลูกค้ากดยอมรับได้เลย (อายุ 30 วัน)', 'success');
+          }
+          prompt('ลิงก์ยอมรับใบเสนอราคา (คัดลอกแล้ว):', url);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async recordPayment(docId, balanceDue, sourceWht = 0, sourceTotal = 0, currency = 'THB', docRate = 1) {
         // Inline payment-recording modal. The previous prompt-based flow
         // hardcoded paymentMethod='Transfer' which didn't match the
         // PaymentMethod enum (BankTransfer / Cash / PromptPay / Cheque /
@@ -5390,6 +5497,17 @@
                     <div id="rpWhtHint" class="form-help" style="color:#854d0e"></div>
                   </div>
                 </div>
+                <div id="rpFxRow" style="display:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:10px 12px">
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label" style="color:#3730a3">อัตราแลกเปลี่ยน ณ วันชำระ (THB ต่อ 1 หน่วย)</label>
+                    <input id="rpFxRate" class="form-input" type="number" step="0.000001" min="0" style="border-color:#a5b4fc">
+                    <div id="rpFxHint" class="form-help" style="color:#3730a3"></div>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">ค่าธรรมเนียมหักจากยอดโอน — ถ้ามี <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(marketplace/gateway/ธนาคาร — เอกสารถูกล้างที่ ยอดรับ+ค่าธรรมเนียม)</span></label>
+                  <input id="rpFee" class="form-input" type="number" step="0.01" min="0" placeholder="0.00">
+                </div>
                 <div class="form-group">
                   <label class="form-label">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</label>
                   <input id="rpRef" class="form-input" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ">
@@ -5414,6 +5532,7 @@
         amountEl.max = balanceDue;
         dateEl.value = today;
         document.getElementById('rpRef').value = '';
+        document.getElementById('rpFee').value = '';
         document.getElementById('rpNotes').value = '';
         document.getElementById('rpMethod').value = 'BankTransfer';
         // Populate the bank-override dropdown with the company's bank
@@ -5474,6 +5593,17 @@
         recalcWht();
         amountEl.removeEventListener('input', recalcWht);
         amountEl.addEventListener('input', recalcWht);
+        // เอกสารสกุลต่างประเทศ → เปิดช่อง rate วันชำระ (default = rate เอกสาร)
+        // ต่างจาก rate เอกสาร → backend post กำไร/ขาดทุนอัตราแลกเปลี่ยน realized
+        const rpFxRow = document.getElementById('rpFxRow');
+        const rpFxRate = document.getElementById('rpFxRate');
+        const isFxDoc = (currency || 'THB') !== 'THB';
+        rpFxRow.style.display = isFxDoc ? 'block' : 'none';
+        if (isFxDoc) {
+          rpFxRate.value = Number(docRate || 1).toFixed(6);
+          document.getElementById('rpFxHint').textContent =
+            `สกุล ${currency} — rate ตอนออกเอกสาร: ${Number(docRate).toFixed(4)} · ใส่ rate จริงวันรับ/จ่ายเงิน ถ้าต่างระบบจะลงกำไร/ขาดทุนอัตราแลกเปลี่ยนให้อัตโนมัติ`;
+        }
         const submit = document.getElementById('rpSubmit');
         // Replace handler each open so docId / balanceDue close over the
         // right values (and we don't pile up listeners across opens).
@@ -5501,6 +5631,11 @@
               withholdingTaxAmount: (sourceWht > 0)
                 ? (parseFloat(document.getElementById('rpWht').value || '0') || 0)
                 : null,
+              exchangeRate: ((currency || 'THB') !== 'THB')
+                ? (parseFloat(document.getElementById('rpFxRate').value || '0') || null)
+                : null,
+              feeAmount: (parseFloat(document.getElementById('rpFee').value || '0') || 0) > 0
+                ? parseFloat(document.getElementById('rpFee').value) : null,
             });
             Layout.toast('บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success');
             wrap.classList.remove('active');

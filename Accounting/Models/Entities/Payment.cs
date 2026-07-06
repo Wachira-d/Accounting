@@ -66,6 +66,23 @@ public class Payment : TenantEntity
     /// Document.ProjectId.</summary>
     public Guid? ProjectId { get; set; }
 
+    /// <summary>อัตราแลกเปลี่ยน ณ วันชำระจริง (settlement-day rate) — เฉพาะ
+    /// เอกสารสกุลต่างประเทศ. เมื่อต่างจาก rate ของเอกสาร (วันแจ้งหนี้) ระบบ
+    /// post กำไร/ขาดทุนจากอัตราแลกเปลี่ยนที่เกิดขึ้นจริง (realized FX G/L)
+    /// อัตโนมัติ: เงินสดเข้า-ออกที่ rate นี้, AR/AP ตัดที่ rate เอกสาร,
+    /// ผลต่าง → 42600 (กำไร) / 54950 (ขาดทุน). Null = ใช้ rate เอกสาร
+    /// (พฤติกรรมเดิม — ไม่มี FX diff). เก็บไว้บน row เพื่อให้การ void
+    /// กลับยอดธนาคารด้วย rate เดียวกับตอนบันทึก.</summary>
+    public decimal? ExchangeRate { get; set; }
+
+    /// <summary>ค่าธรรมเนียมที่ถูกหักจากยอดโอน (marketplace Shopee/Lazada,
+    /// payment gateway, ค่าธรรมเนียมธนาคาร) — ลูกค้าชำระเต็มแต่เงินเข้าสุทธิ.
+    /// JE: Dr เงินสด (Amount) + Dr ค่าธรรมเนียม (FeeAmount) / Cr AR
+    /// (Amount+FeeAmount) → เอกสารถูกล้างที่ยอดเต็ม, ค่าธรรมเนียมเข้า P&L.</summary>
+    public decimal FeeAmount { get; set; }
+    /// <summary>ผังบัญชีค่าธรรมเนียม — null = default 53xxx/ค้นชื่อ "ค่าธรรมเนียม".</summary>
+    public Guid? FeeAccountId { get; set; }
+
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000
     /// cheque that pays invoice A 5K + B 6K + C 4K). When this list

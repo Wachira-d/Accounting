@@ -597,8 +597,11 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var ram = XNamespace.Get($"urn:etda:uncefact:data:standard:{ramSuffix}:2");
 
         // TypeCode per UN/EDIFACT 1001 + ETDA Schematron-validated codelist
+        // ใบแจ้งหนี้/ใบกำกับภาษี (combined header) ต้องใช้ T02 ให้ชื่อใน XML
+        // ตรงกับหัวกระดาษ PDF (TypeCode-name pairing บังคับ exact ตาม Schematron)
         var docTypeCode = doc.DocumentType switch
         {
+            DocumentType.TaxInvoice when doc.CombinedInvoiceTaxInvoice => "T02",  // ใบแจ้งหนี้/ใบกำกับภาษี
             DocumentType.TaxInvoice => "388",
             DocumentType.Receipt => "T03",       // ใบเสร็จรับเงิน/ใบกำกับภาษี
             DocumentType.DebitNote => "80",
@@ -609,6 +612,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // DCN equivalents — exact strings, no extra qualifiers
         var docTypeName = doc.DocumentType switch
         {
+            DocumentType.TaxInvoice when doc.CombinedInvoiceTaxInvoice => "ใบแจ้งหนี้/ใบกำกับภาษี",
             DocumentType.TaxInvoice => "ใบกำกับภาษี",
             DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",   // exact match required
             DocumentType.DebitNote => "ใบเพิ่มหนี้",
