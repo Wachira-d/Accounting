@@ -3313,7 +3313,17 @@
           `<option value="${p.id}">${this.escapeHtml(p.code)} — ${this.escapeHtml(p.name)}</option>`
         ).join('');
         // Form selector (create/edit)
-        // Cost center dropdown — โหลดคู่กับโครงการ (cache ไว้เหมือนกัน)
+        const fSel = document.getElementById('fProject');
+        if (fSel) fSel.innerHTML = '<option value="">— ไม่ระบุโครงการ —</option>' + optionsHtml;
+        // Toolbar filter
+        const filt = document.getElementById('projectFilter');
+        if (filt) filt.innerHTML = '<option value="">ทุกโครงการ</option>' + optionsHtml;
+        // Cost center dropdown — โหลดแยกแบบ async fire-and-forget เพื่อไม่ให้
+        // dropdown โครงการต้องรอ (และไม่ทำให้ฟังก์ชันนี้กลายเป็น async ทั้งตัว)
+        this.populateDimensions();
+      },
+      async populateDimensions() {
+        // Cost center dropdown — โหลดคู่กับโครงการ (cache ผ่านจำนวน option)
         try {
           const dimSel = document.getElementById('fDimension');
           if (dimSel && dimSel.options.length <= 1) {
@@ -3324,11 +3334,6 @@
                 `<option value="${d.id}">${Layout.esc(d.code ? d.code + ' - ' : '')}${Layout.esc(d.name)}</option>`).join('');
           }
         } catch { /* ไม่มีสิทธิ์/ฟีเจอร์ปิด — ปล่อยว่าง */ }
-        const fSel = document.getElementById('fProject');
-        if (fSel) fSel.innerHTML = '<option value="">— ไม่ระบุโครงการ —</option>' + optionsHtml;
-        // Toolbar filter
-        const filt = document.getElementById('projectFilter');
-        if (filt) filt.innerHTML = '<option value="">ทุกโครงการ</option>' + optionsHtml;
       },
       escapeHtml(s) {
         return String(s ?? '').replace(/[&<>"']/g, c =>
