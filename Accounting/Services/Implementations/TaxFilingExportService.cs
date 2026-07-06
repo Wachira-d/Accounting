@@ -432,21 +432,52 @@ public class TaxFilingExportService : ITaxFilingExportService
         var branchSeq = (company.BranchCode ?? "00000").Trim().PadLeft(6, '0');
         if (branchSeq.Length > 6) branchSeq = branchSeq[^6..];
 
-        var rows = allDetails.Select(d => new Dictionary<string, object?>
+        // ป้องกันโดนปฏิเสธรายแถวจาก e-Service — ตรวจ + ซ่อมข้อมูลก่อนเขียนไฟล์:
+        //   • คำนำหน้าอังกฤษ (Mrs./Mr./Miss หลุดมาจาก import) → แปลงไทย,
+        //     เดาจากเพศเมื่อจำเป็น; ยังไม่เข้าชุดที่ สปส. รับ → แจ้งเตือน
+        //   • เลขบัตร: ตัดขีด/ช่องว่างเหลือแต่ตัวเลข; ไม่ครบ 13 หลัก → แจ้งเตือน
+        //   • ชื่อ/นามสกุลว่าง → แจ้งเตือน
+        var issues = new List<string>();
+        var rows = new List<Dictionary<string, object?>>();
+        var rowNo = 1; // แถวข้อมูลใน Excel เริ่มที่ 2 (แถว 1 = หัวตาราง)
+        foreach (var d in allDetails)
         {
-            ["เลขประจำตัวประชาชน"] = (d.Employee.CitizenId ?? "").Trim(),
-            ["คำนำหน้าชื่อ"] = (d.Employee.TitleTh ?? "").Trim(),
-            ["ชื่อผู้ประกันตน"] = (d.Employee.FirstNameTh ?? "").Trim(),
-            ["นามสกุลผู้ประกันตน"] = (d.Employee.LastNameTh ?? "").Trim(),
-            ["ค่าจ้าง"] = Math.Round(d.GrossIncome, 2),
-            ["จำนวนเงินสมทบ"] = Math.Round(d.SocialSecurityEmployee, 2),
-        }).ToList();
+            rowNo++;
+            var emp = d.Employee;
+            var title = Accounting.Helpers.ThaiTitleHelper.NormalizeForSso(emp.TitleTh, emp.Gender);
+            var citizenId = new string((emp.CitizenId ?? "").Where(char.IsDigit).ToArray());
+            var firstName = (emp.FirstNameTh ?? "").Trim();
+            var lastName = (emp.LastNameTh ?? "").Trim();
+
+            if (!Accounting.Helpers.ThaiTitleHelper.IsValidForSso(title))
+                issues.Add($"แถว {rowNo} ({firstName}): คำนำหน้า \"{(string.IsNullOrWhiteSpace(title) ? "(ว่าง)" : title)}\" ไม่อยู่ในชุดที่ สปส. รับ (นาย/นาง/นางสาว) — แก้ที่ข้อมูลพนักงาน");
+            if (citizenId.Length != 13)
+                issues.Add($"แถว {rowNo} ({firstName}): เลขบัตร {citizenId.Length} หลัก (ต้อง 13 หลัก)");
+            if (firstName.Length == 0 || lastName.Length == 0)
+                issues.Add($"แถว {rowNo}: ชื่อหรือนามสกุลว่าง");
+
+            rows.Add(new Dictionary<string, object?>
+            {
+                ["เลขประจำตัวประชาชน"] = citizenId,
+                ["คำนำหน้าชื่อ"] = title,
+                ["ชื่อผู้ประกันตน"] = firstName,
+                ["นามสกุลผู้ประกันตน"] = lastName,
+                ["ค่าจ้าง"] = Math.Round(d.GrossIncome, 2),
+                ["จำนวนเงินสมทบ"] = Math.Round(d.SocialSecurityEmployee, 2),
+            });
+        }
 
         using var ms = new MemoryStream();
         MiniExcelLibs.MiniExcel.SaveAs(ms, rows, sheetName: branchSeq);
 
         var totalWages = allDetails.Sum(d => d.GrossIncome);
         var totalEmpContrib = allDetails.Sum(d => d.SocialSecurityEmployee);
+        var summary = $"ไฟล์ Excel แนบ e-Service เดือน {month}/{year} ผู้ประกันตน {allDetails.Count} คน " +
+            $"เงินสมทบลูกจ้าง {totalEmpContrib:N2} บาท (sheet: {branchSeq})";
+        if (issues.Count > 0)
+            summary += "\n⚠ ควรแก้ก่อนยื่น มิฉะนั้น สปส. จะปฏิเสธรายแถว:\n• " +
+                string.Join("\n• ", issues.Take(8)) +
+                (issues.Count > 8 ? $"\n• …และอีก {issues.Count - 8} รายการ" : "");
 
         return new TaxFilingExportResult(
             "SSO110X", "สปส.1-10 (Excel)",
@@ -454,8 +485,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ms.ToArray(),
             allDetails.Count, totalWages, totalEmpContrib,
-            $"ไฟล์ Excel แนบ e-Service เดือน {month}/{year} ผู้ประกันตน {allDetails.Count} คน " +
-            $"เงินสมทบลูกจ้าง {totalEmpContrib:N2} บาท (sheet: {branchSeq})");
+            summary);
     }
 
     // =====================================================================

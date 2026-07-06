@@ -225,7 +225,7 @@ public class PayrollService : IPayrollService
         {
             CompanyId = companyId,
             EmployeeCode = request.EmployeeCode,
-            TitleTh = request.TitleTh,
+            TitleTh = Accounting.Helpers.ThaiTitleHelper.Normalize(request.TitleTh), // กัน "Mrs." หลุดไปไฟล์ยื่น สปส./สรรพากร
             FirstNameTh = request.FirstNameTh,
             LastNameTh = request.LastNameTh,
             FirstNameEn = request.FirstNameEn,
@@ -458,7 +458,7 @@ public class PayrollService : IPayrollService
                     {
                         CompanyId = companyId,
                         EmployeeCode = r.EmployeeCode,
-                        TitleTh = r.TitleTh,
+                        TitleTh = Accounting.Helpers.ThaiTitleHelper.Normalize(r.TitleTh),
                         FirstNameTh = r.FirstNameTh,
                         LastNameTh = r.LastNameTh,
                         FirstNameEn = r.FirstNameEn,

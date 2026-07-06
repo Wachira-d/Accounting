@@ -261,6 +261,7 @@ public class TaxFilingExportController : ControllerBase
             "PP36" => await _exportService.ExportPp36Async(companyId, year, month),
             "PND54" => await _exportService.ExportPnd54Async(companyId, year, month),
             "SSO110" => await _exportService.ExportSso110Async(companyId, year, month),
+            "SSO110X" => await _exportService.ExportSso110ExcelAsync(companyId, year, month),
             "SPS103" => await _exportService.ExportSps103Async(companyId, year, month),
             "SPS609" => await _exportService.ExportSps609Async(companyId, year, month),
             "PND51" => await _exportService.ExportPnd51Async(companyId, year),

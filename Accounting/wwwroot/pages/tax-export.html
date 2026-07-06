@@ -97,7 +97,7 @@
         </div>
         <div style="margin-top:12px;display:flex;gap:8px">
           <button class="btn btn-primary btn-sm" onclick="Page.download('sso110excel')">ดาวน์โหลด Excel (แนบ e-Service)</button>
-          <button class="btn btn-secondary btn-sm" onclick="Page.preview('SSO110')">ดูตัวอย่าง</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('SSO110X')">ดูตัวอย่าง / ตรวจก่อนยื่น</button>
         </div>
       </div>
 
@@ -242,10 +242,11 @@
             .catch(e => Layout.toast(e.message, 'error'));
         }
       },
+      escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); },
       async preview(formCode) {
         const api = Layout.api(); if (!api) return;
         const { year, month } = this.getYM();
-        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10' };
+        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10', SSO110X:'สปส.1-10 (Excel)' };
         document.getElementById('previewTitle').textContent = `ตัวอย่างข้อมูล ${formNames[formCode] || formCode}`;
         try {
           // Fetch actual file content
@@ -258,10 +259,14 @@
             case 'PND1K': url = api.exportPnd1k(year); break;
             case 'PP30': url = api.exportPp30(year, month); break;
             case 'SSO110': url = api.exportSso110(year, month); break;
+            // SSO110X = ไฟล์ Excel (binary) — ไม่ดึงเนื้อไฟล์มาแสดง ใช้สรุป/คำเตือนพอ
           }
-          const token = localStorage.getItem('token');
-          const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` }});
-          const text = await r.text();
+          let text = '(ไฟล์ Excel — ตรวจสรุปและคำเตือนด้านบน แล้วกดดาวน์โหลดเพื่อแนบใน e-Service)';
+          if (url) {
+            const token = localStorage.getItem('token');
+            const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` }});
+            text = await r.text();
+          }
 
           // Summary
           const res = await api.previewTaxExport(formCode, year, m);
@@ -272,10 +277,10 @@
               <div><span class="text-gray-500 text-xs">รายได้/ฐานรวม</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
               <div><span class="text-gray-500 text-xs">ภาษี/สมทบรวม</span><div class="text-lg font-bold text-danger">${Layout.money(d.totalTax)}</div></div>
             </div>
-            <div class="text-sm text-gray-500" style="margin-top:8px">${d.summary || ''}</div>`;
+            <div class="text-sm" style="margin-top:8px;white-space:pre-line;color:${(d.summary || '').includes('⚠') ? '#b45309' : 'var(--text-secondary)'}">${this.escapeHtml(d.summary || '')}</div>`;
 
           document.getElementById('previewData').textContent = text;
-          document.getElementById('previewDownloadBtn').onclick = () => this.download(formCode.toLowerCase());
+          document.getElementById('previewDownloadBtn').onclick = () => this.download(formCode === 'SSO110X' ? 'sso110excel' : formCode.toLowerCase());
           Layout.openModal('previewModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
