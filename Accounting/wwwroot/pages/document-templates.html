@@ -119,6 +119,25 @@
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:18px">
+        <h3 style="margin:0 0 4px">3️⃣ ตำแหน่งป้าย "ต้นฉบับ / สำเนา"</h3>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px">ตั้งครั้งเดียวใช้กับทุกเอกสาร — ถ้าเอกสารประเภทไหนต้องการต่างออกไป ค่อยกด "ปรับแต่ง" รายเอกสารด้านล่าง</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div>
+            <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">รูปแบบป้าย</label>
+            <select id="gCopyLabelPos" style="min-width:220px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              <option value="Watermark">ลายน้ำกลางหน้า (ค่าเดิม)</option>
+              <option value="TopRight">ป้ายมุมขวาบน</option>
+              <option value="TopLeft">ป้ายมุมซ้ายบน</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="Page.applyGlobalCopyLabel()">ใช้กับทุกเอกสาร</button>
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:8px">
+          โหมดป้ายมุม: "สำเนา" เป็นกรอบเล็กมุมเอกสารแทนลายน้ำ · "ต้นฉบับ" (ใบกำกับภาษี §86/4) ย้ายจากท้ายชื่อเอกสารไปมุมเดียวกัน
+        </div>
+      </div>
+
       <h3 style="margin:18px 0 10px">📄 เอกสารแต่ละประเภท — กด "ปรับแต่ง" เพื่อแก้รายเอกสาร</h3>
       <div id="galleryGrid" class="gallery-grid"></div>
     </div>
@@ -679,6 +698,13 @@
         return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111111' : '#FFFFFF';
       },
 
+      async applyGlobalCopyLabel() {
+        const pos = document.getElementById('gCopyLabelPos').value || 'Watermark';
+        const label = { Watermark: 'ลายน้ำกลางหน้า', TopRight: 'ป้ายมุมขวาบน', TopLeft: 'ป้ายมุมซ้ายบน' }[pos] || pos;
+        if (!confirm(`ตั้งตำแหน่งป้าย ต้นฉบับ/สำเนา เป็น "${label}" กับเอกสารทุกประเภท?\n(ปรับรายเอกสารทีหลังได้)`)) return;
+        await this._applyToAll({ copyLabelPosition: pos }, `ป้าย "${label}"`);
+      },
+
       async applyCustomColor() {
         const accent = this._validHex(document.getElementById('cAccentHex').value);
         const head = this._validHex(document.getElementById('cHeadHex').value);
@@ -740,6 +766,9 @@
           setPair('cAccent', 'cAccentHex', full.accentColor);
           setPair('cHead', 'cHeadHex', full.tableHeaderColor);
           setPair('cStripe', 'cStripeHex', full.tableStripedColor);
+          // ตำแหน่งป้าย ต้นฉบับ/สำเนา ระดับ global — สะท้อนค่าที่ใช้อยู่
+          const gp = document.getElementById('gCopyLabelPos');
+          if (gp && full.copyLabelPosition) gp.value = full.copyLabelPosition;
         } catch { /* คงค่า default เมื่อดึงไม่ได้ */ }
       },
 
