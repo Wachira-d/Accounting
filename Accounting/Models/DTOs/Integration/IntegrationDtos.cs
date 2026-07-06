@@ -105,7 +105,12 @@ public record InboundInvoiceRequest(
     /// post JE ใหม่ — เลขเอกสารคงเดิม. เงื่อนไข: ยังไม่มีการชำระ, ไม่มี CN/DN
     /// อ้างถึง, งวด VAT ของเดือนภาษีเดิมยังไม่ยื่น/ล็อก — ไม่ผ่านเงื่อนไขจะได้
     /// error ชัดเจน (ให้ void แล้วส่งใหม่ หรือออก CN แทน).</summary>
-    bool ResyncUpdate = false);
+    bool ResyncUpdate = false,
+    /// <summary>ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี (ขายปลีกหน้าร้าน) — เมื่อ true
+    /// ระบบผูกเอกสารกับผู้ติดต่อกลาง "ลูกค้าเงินสด (ไม่ประสงค์รับใบกำกับภาษี)"
+    /// โดยไม่ต้องส่ง customerName/customerTaxId. ไม่ส่ง flag แต่เว้นข้อมูล
+    /// ลูกค้าว่างทั้งหมด = พฤติกรรมเดียวกัน (นัยเดียวกัน).</summary>
+    bool BuyerDeclinedTaxInvoice = false);
 
 /// <summary>
 /// Base64-encoded file attachment for external integrations. Server enforces:

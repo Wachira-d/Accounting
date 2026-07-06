@@ -519,7 +519,16 @@ public class IntegrationService : IIntegrationService
             }
 
             // Resolve or create contact
-            var contact = await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, request.CustomerTaxId);
+            // ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี (ขายปลีก) — flag ชัดเจน หรือไม่ส่ง
+            // ข้อมูลลูกค้าเลย → ผูกกับผู้ติดต่อกลาง "ลูกค้าเงินสด" (ยกเว้น §86/4
+            // ฝั่งผู้ซื้อตามประกาศอธิบดีฯ ฉบับ 199 — บังคับเลขเฉพาะผู้ซื้อจด VAT)
+            var anonymousBuyer = request.BuyerDeclinedTaxInvoice
+                || (string.IsNullOrWhiteSpace(request.CustomerExternalId)
+                    && string.IsNullOrWhiteSpace(request.CustomerName)
+                    && string.IsNullOrWhiteSpace(request.CustomerTaxId));
+            var contact = anonymousBuyer
+                ? await GetOrCreateWalkInContactAsync(companyId)
+                : await ResolveContactAsync(companyId, request.CustomerExternalId, request.CustomerName, request.CustomerTaxId);
 
             // Get next document number
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.TaxInvoice, request.DocumentDate);
@@ -1094,6 +1103,31 @@ public class IntegrationService : IIntegrationService
     }
 
     // ===== Helpers =====
+
+    /// <summary>ผู้ติดต่อกลางสำหรับ "ลูกค้าเงินสด ไม่ประสงค์รับใบกำกับภาษี" —
+    /// สร้างครั้งเดียวต่อบริษัท ใช้ซ้ำทุกใบ. Address "-" ให้ §86/4 มีค่าพิมพ์
+    /// บนใบกำกับ (แนวปฏิบัติค้าปลีกที่สรรพากรยอมรับ — ผู้ซื้อเคลมภาษีซื้อไม่ได้
+    /// อยู่แล้วซึ่งตรงตามที่ผู้ซื้อเลือกเอง).</summary>
+    private async Task<Contact> GetOrCreateWalkInContactAsync(Guid companyId)
+    {
+        var walkIn = await _db.Set<Contact>().FirstOrDefaultAsync(
+            c => c.CompanyId == companyId && c.IsWalkInCustomer && !c.IsDeleted);
+        if (walkIn != null) return walkIn;
+
+        walkIn = new Contact
+        {
+            CompanyId = companyId,
+            Name = "ลูกค้าเงินสด (ไม่ประสงค์รับใบกำกับภาษี)",
+            Address = "-",
+            IsCustomer = true,
+            IsActive = true,
+            IsWalkInCustomer = true,
+            ContactType = ContactType.Individual,
+        };
+        _db.Set<Contact>().Add(walkIn);
+        await _db.SaveChangesAsync();
+        return walkIn;
+    }
 
     private async Task<Contact> ResolveContactAsync(Guid companyId, string? externalId, string? name, string? taxId)
     {

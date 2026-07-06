@@ -4298,6 +4298,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignatureBase64" text NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_DeliverySignToken" ON "Documents" ("DeliverySignToken") WHERE "DeliverySignToken" IS NOT NULL;""",
 
+            // ===== ลูกค้าเงินสดไม่ประสงค์รับใบกำกับ (ผู้ซื้อกลางของใบกำกับขายปลีก) =====
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "IsWalkInCustomer" boolean NOT NULL DEFAULT false;""",
+
             // ===== ตำแหน่งป้าย ต้นฉบับ/สำเนา บน PDF (ลายน้ำกลางหน้า หรือป้ายมุมบน) =====
             """ALTER TABLE "DocumentTemplates" ADD COLUMN IF NOT EXISTS "CopyLabelPosition" varchar(20) NOT NULL DEFAULT 'Watermark';""",
 

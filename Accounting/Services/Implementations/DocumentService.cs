@@ -1888,7 +1888,12 @@ public class DocumentService : IDocumentService
         // เคลมภาษีซื้อไม่ได้.
         var mustEnforce864 = doc.DocumentType == DocumentType.TaxInvoice
             || (enforce864 && rd864Types.Contains(doc.DocumentType));
-        if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null)
+        // ยกเว้นลูกค้าเงินสด "ไม่ประสงค์รับใบกำกับภาษี" — ประกาศอธิบดีฯ ฉบับ 199
+        // บังคับเลขผู้เสียภาษี/สาขาผู้ซื้อเฉพาะเมื่อผู้ซื้อเป็นผู้ประกอบการจด VAT;
+        // ผู้ซื้อบุคคลธรรมดาที่ไม่แจ้งข้อมูล → ออกใบกำกับได้ (เคลมภาษีซื้อไม่ได้เอง)
+        // VAT ขายยังลงรายงาน/นำส่ง ภ.พ.30 ครบตามปกติ
+        if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null
+            && !doc.Contact.IsWalkInCustomer)
         {
             var missing = new List<string>();
             var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();
