@@ -207,6 +207,16 @@ public class TaxFilingExportController : ControllerBase
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
+    /// <summary>Export สปส.1-10 เป็น Excel สำหรับแนบใน SSO e-Service
+    /// (ส่งข้อมูลเงินสมทบ → แนบไฟล์) — sensitive (payroll).</summary>
+    [HttpGet("sso110-excel")]
+    public async Task<IActionResult> ExportSso110Excel(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var block = await CheckPayrollAsync(companyId); if (block != null) return block;
+        var result = await _exportService.ExportSso110ExcelAsync(companyId, year, month);
+        return File(result.FileData, result.ContentType, result.FileName);
+    }
+
     /// <summary>Export สปส.1-03 (ขึ้นทะเบียนผู้ประกันตน) — sensitive (payroll).</summary>
     [HttpGet("sps103")]
     public async Task<IActionResult> ExportSps103(Guid companyId, [FromQuery] int year, [FromQuery] int month)

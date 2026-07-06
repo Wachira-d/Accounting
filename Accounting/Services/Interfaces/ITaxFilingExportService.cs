@@ -28,6 +28,10 @@ public interface ITaxFilingExportService
     // สปส.1-10 - SSO monthly contribution report
     Task<TaxFilingExportResult> ExportSso110Async(Guid companyId, int year, int month);
 
+    /// <summary>สปส.1-10 (Excel) — ไฟล์แนบ "ส่งข้อมูลเงินสมทบ" ใน SSO e-Service
+    /// (โครงสร้างถอดจากไฟล์ที่อัปโหลดผ่านระบบจริง — ใช้เป็นช่องทางหลักในการยื่น).</summary>
+    Task<TaxFilingExportResult> ExportSso110ExcelAsync(Guid companyId, int year, int month);
+
     /// <summary>สปส.1-03 — ขึ้นทะเบียนผู้ประกันตน (พนักงานเข้าใหม่ภายในเดือน
     /// นั้น). แจ้งภายใน 30 วันนับจากวันเริ่มงาน (§34).</summary>
     Task<TaxFilingExportResult> ExportSps103Async(Guid companyId, int year, int month);

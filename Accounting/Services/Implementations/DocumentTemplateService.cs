@@ -215,6 +215,7 @@ public class DocumentTemplateService : IDocumentTemplateService
             ShowWatermark = source.ShowWatermark,
             WatermarkText = source.WatermarkText,
             WatermarkOpacity = source.WatermarkOpacity,
+            CopyLabelPosition = source.CopyLabelPosition,
             LayoutStyle = source.LayoutStyle,
             FontFamily = source.FontFamily,
             BodyFontSize = source.BodyFontSize,
@@ -343,6 +344,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowWatermark.HasValue) t.ShowWatermark = r.ShowWatermark.Value;
         if (r.WatermarkText != null) t.WatermarkText = r.WatermarkText;
         if (r.WatermarkOpacity.HasValue) t.WatermarkOpacity = r.WatermarkOpacity.Value;
+        if (r.CopyLabelPosition != null) t.CopyLabelPosition = r.CopyLabelPosition;
         if (r.LayoutStyle != null) t.LayoutStyle = r.LayoutStyle;
         if (r.FontFamily != null) t.FontFamily = r.FontFamily;
         if (r.BodyFontSize != null) t.BodyFontSize = r.BodyFontSize;
@@ -428,6 +430,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowWatermark.HasValue) t.ShowWatermark = r.ShowWatermark.Value;
         if (r.WatermarkText != null) t.WatermarkText = r.WatermarkText;
         if (r.WatermarkOpacity.HasValue) t.WatermarkOpacity = r.WatermarkOpacity.Value;
+        if (r.CopyLabelPosition != null) t.CopyLabelPosition = r.CopyLabelPosition;
         if (r.LayoutStyle != null) t.LayoutStyle = r.LayoutStyle;
         if (r.FontFamily != null) t.FontFamily = r.FontFamily;
         if (r.BodyFontSize != null) t.BodyFontSize = r.BodyFontSize;
@@ -456,5 +459,6 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.FooterNotes, t.ShowPaymentTerms, t.ShowBankDetails,
         t.ShowSignature, t.SignatureCount, t.ShowQrCode, t.QrCodeType, t.PromptPayId,
         t.LayoutStyle, t.FontFamily, t.Language, t.ShowBilingual,
-        t.IsEtaxTemplate, t.AutoGenerateEtaxXml, t.DefaultCopies, t.CreatedAt);
+        t.IsEtaxTemplate, t.AutoGenerateEtaxXml, t.DefaultCopies, t.CreatedAt,
+        t.ShowWatermark, t.WatermarkText, t.WatermarkOpacity, t.CopyLabelPosition);
 }

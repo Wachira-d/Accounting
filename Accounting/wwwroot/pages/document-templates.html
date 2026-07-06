@@ -334,6 +334,17 @@
               <div><label>ข้อความ</label><input id="watermarkText" placeholder="DRAFT / COPY / สำเนา" onchange="Page.markDirty()"></div>
               <div><label>Opacity (0-1)</label><input id="watermarkOpacity" type="number" step="0.05" min="0.05" max="0.5" onchange="Page.markDirty()"></div>
             </div>
+            <div class="editor-row single">
+              <label>ตำแหน่งป้าย "ต้นฉบับ / สำเนา"</label>
+              <select id="copyLabelPosition" onchange="Page.markDirty()">
+                <option value="Watermark">ลายน้ำกลางหน้า (ค่าเดิม)</option>
+                <option value="TopRight">ป้ายมุมขวาบน</option>
+                <option value="TopLeft">ป้ายมุมซ้ายบน</option>
+              </select>
+              <div style="font-size:11px;color:#94a3b8;margin-top:2px">
+                ใช้กับป้าย ต้นฉบับ/สำเนา ตอนพิมพ์ PDF — โหมดป้ายมุม: "สำเนา" เป็นกรอบเล็กมุมเอกสารแทนลายน้ำ และ "ต้นฉบับ" ย้ายจากท้ายชื่อเอกสารไปมุมเดียวกัน
+              </div>
+            </div>
           </div>
         </div>
 
@@ -478,6 +489,13 @@
             this.templates.push(tpl);
           } catch (e) { Layout.toast('สร้างเทมเพลตไม่สำเร็จ: ' + e.message, 'error'); return; }
         }
+        // list endpoint ส่งแค่ field ย่อ — ดึงตัวเต็มก่อนเติมฟอร์ม ไม่งั้น
+        // watermark/ตำแหน่งป้าย/ค่าอื่นโหลดว่างแล้วโดนบันทึกทับ
+        try {
+          const cid2 = Layout.getCompanyId();
+          const full = await API.get(`/api/companies/${cid2}/document-templates/${tpl.id}`);
+          if (full.data) tpl = full.data;
+        } catch (e) { /* ใช้ตัวย่อไปก่อน */ }
         this.current = tpl;
         this._fillForm(tpl);
         document.getElementById('tplDocType').value = docType;
@@ -765,8 +783,13 @@
 
       async selectTemplate() {
         const id = document.getElementById('tplSelect').value;
-        const tpl = this.templates.find(t => t.id === id);
+        let tpl = this.templates.find(t => t.id === id);
         if (!tpl) return;
+        try {
+          const cid2 = Layout.getCompanyId();
+          const full = await API.get(`/api/companies/${cid2}/document-templates/${tpl.id}`);
+          if (full.data) tpl = full.data;
+        } catch (e) { /* ใช้ตัวย่อไปก่อน */ }
         this.current = tpl;
         this._fillForm(tpl);
         document.getElementById('tplDocType').value = tpl.documentType;
@@ -793,7 +816,7 @@
          'signatureCount','signatureLabel1','signatureLabel1En',
          'signatureLabel2','signatureLabel2En','signatureLabel3','signatureLabel3En',
          'stampImagePath',
-         'watermarkText','watermarkOpacity',
+         'watermarkText','watermarkOpacity','copyLabelPosition',
          'customTitle','customTitleEn',
          'footerNotes','footerNotesEn','bankDetailsText',
          'paperSize','orientation','marginTop','marginBottom','marginLeft','marginRight',
@@ -920,6 +943,7 @@
           showWatermark: getCheck('showWatermark'),
           watermarkText: get('watermarkText') || null,
           watermarkOpacity: Number(get('watermarkOpacity') || 0.15),
+          copyLabelPosition: get('copyLabelPosition') || 'Watermark',
           customTitle: get('customTitle') || null,
           customTitleEn: get('customTitleEn') || null,
           footerNotes: get('footerNotes') || null,

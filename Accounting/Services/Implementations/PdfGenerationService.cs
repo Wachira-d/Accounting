@@ -825,10 +825,28 @@ public partial class PdfGenerationService : IPdfGenerationService
         // plain class selectors, but the STRUCTURE didn't).
         sb.AppendLine($"<div class='doc-root layout-{layout}'>");
 
+        // สถานะ copy print + ตำแหน่งป้าย ต้นฉบับ/สำเนา (Watermark = ลายน้ำกลาง
+        // หน้าแบบเดิม, TopRight/TopLeft = ป้ายกรอบเล็กมุมบน) — คำนวณก่อน เพราะใช้
+        // ทั้งตอน render ลายน้ำและตอนต่อท้ายหัวเอกสาร
+        var isCopyPrintWm = !string.IsNullOrWhiteSpace(watermark)
+            && (watermark!.Contains("สำเนา") || watermark.Contains("COPY", StringComparison.OrdinalIgnoreCase));
+        var copyLabelPos = (template.CopyLabelPosition ?? "Watermark").Trim();
+        var copyCornerMode = copyLabelPos is "TopRight" or "TopLeft";
+        var badgeAccent = SanitizeHex(template.AccentColor) ?? "#444444";
+        string CornerBadge(string text) =>
+            $"<div style='position:absolute;top:8mm;{(copyLabelPos == "TopLeft" ? "left" : "right")}:10mm;" +
+            $"border:1.5px solid {badgeAccent};border-radius:3px;padding:1px 12px;" +
+            $"font-weight:bold;font-size:14px;color:{badgeAccent};z-index:5'>{text}</div>";
+
         // เอกสารยกเลิก → ลายน้ำ "ยกเลิก" สีแดงเด่น (priority เหนือ watermark ปกติ)
         if (doc.Status == DocumentStatus.Voided)
         {
             sb.AppendLine("<div class='watermark watermark-void'>ยกเลิก</div>");
+        }
+        else if (copyCornerMode && isCopyPrintWm)
+        {
+            // ป้าย "สำเนา" มุมบนแทนลายน้ำ (ตามตั้งค่าเทมเพลต)
+            sb.AppendLine(CornerBadge(lang == "en" ? "COPY" : "สำเนา"));
         }
         else if (template.ShowWatermark || watermark != null)
         {
@@ -894,10 +912,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
                 or DocumentType.DebitNote or DocumentType.CreditNote
             || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
-        var isCopyPrint = !string.IsNullOrWhiteSpace(watermark)
-            && (watermark!.Contains("สำเนา") || watermark.Contains("COPY", StringComparison.OrdinalIgnoreCase));
+        var isCopyPrint = isCopyPrintWm;
         if (isRd864Doc && !hasCustomTitle && !isCopyPrint)
-            title += lang == "en" ? " (Original)" : " (ต้นฉบับ)";
+        {
+            if (copyCornerMode)
+                sb.AppendLine(CornerBadge(lang == "en" ? "Original" : "ต้นฉบับ"));
+            else
+                title += lang == "en" ? " (Original)" : " (ต้นฉบับ)";
+        }
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
 
         // Document Info

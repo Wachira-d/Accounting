@@ -118,7 +118,9 @@ public record CreateDocumentTemplateRequest(
 
     // Copy
     int? DefaultCopies,
-    string? CopyLabels);
+    string? CopyLabels,
+    // ตำแหน่งป้าย ต้นฉบับ/สำเนา: Watermark (ลายน้ำกลางหน้า) / TopRight / TopLeft
+    string? CopyLabelPosition = null);
 
 public record UpdateDocumentTemplateRequest(
     string? Name,
@@ -222,7 +224,8 @@ public record UpdateDocumentTemplateRequest(
     string? QrCodeCustomData,
 
     int? DefaultCopies,
-    string? CopyLabels);
+    string? CopyLabels,
+    string? CopyLabelPosition = null);
 
 public record DocumentTemplateResponse(
     Guid Id,
@@ -263,7 +266,12 @@ public record DocumentTemplateResponse(
     bool IsEtaxTemplate,
     bool AutoGenerateEtaxXml,
     int DefaultCopies,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // Watermark + ตำแหน่งป้าย ต้นฉบับ/สำเนา (optional ท้าย record — ไม่กระทบ caller เดิม)
+    bool ShowWatermark = false,
+    string? WatermarkText = null,
+    decimal WatermarkOpacity = 0.15m,
+    string? CopyLabelPosition = null);
 
 public record DocumentTemplateListResponse(
     Guid Id,

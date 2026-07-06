@@ -353,6 +353,7 @@ const API = {
       exportPnd1k: (year) => `${base}/tax-filing-export/pnd1k?year=${year}`,
       exportPp30: (year, month) => `${base}/tax-filing-export/pp30?year=${year}&month=${month}`,
       exportSso110: (year, month) => `${base}/tax-filing-export/sso110?year=${year}&month=${month}`,
+      exportSso110Excel: (year, month) => `${base}/tax-filing-export/sso110-excel?year=${year}&month=${month}`,
       previewTaxExport: (formCode, year, month) => API.get(`${base}/tax-filing-export/preview/${formCode}?year=${year}&month=${month || 0}`),
       // WHT
       getWhtCerts: (q = '') => API.get(`${base}/withholding-tax-certs${q}`),

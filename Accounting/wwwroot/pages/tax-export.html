@@ -91,8 +91,12 @@
           <span class="badge badge-warning">ประกันสังคม</span>
         </div>
         <div class="text-sm text-gray-500" id="previewSSO110">กำหนดยื่น: ภายในวันที่ 15 ของเดือนถัดไป</div>
+        <div class="text-xs" style="margin-top:6px;color:var(--text-secondary)">
+          📌 ใช้ไฟล์ <b>Excel</b> แนบใน e-Service เมนู "ส่งข้อมูลเงินสมทบ" → เลือกวิธีแนบไฟล์
+          (โครงสร้างตรงกับไฟล์ที่ระบบ สปส. รับจริง — เลขบัตร/คำนำหน้า/ชื่อ/สกุล/ค่าจ้าง/เงินสมทบ)
+        </div>
         <div style="margin-top:12px;display:flex;gap:8px">
-          <button class="btn btn-primary btn-sm" onclick="Page.download('sso110')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-primary btn-sm" onclick="Page.download('sso110excel')">ดาวน์โหลด Excel (แนบ e-Service)</button>
           <button class="btn btn-secondary btn-sm" onclick="Page.preview('SSO110')">ดูตัวอย่าง</button>
         </div>
       </div>
@@ -205,6 +209,7 @@
           case 'pnd1k': url = api.exportPnd1k(year); break;
           case 'pp30': url = api.exportPp30(year, month); break;
           case 'sso110': url = api.exportSso110(year, month); break;
+          case 'sso110excel': url = api.exportSso110Excel(year, month); break;
           case 'pnd51': {
             const cid = Layout.getCompanyId();
             url = `/api/companies/${cid}/tax-filing-export/pnd51?year=${year}`;
@@ -217,14 +222,19 @@
           fetch(url, { headers: { 'Authorization': `Bearer ${token}` }})
             .then(r => {
               if (!r.ok) throw new Error('Export failed');
+              // ใช้ชื่อไฟล์จาก Content-Disposition ของ server ก่อน (เช่น
+              // SocialSecurity_2569_06.xlsx ตาม convention ที่ e-Service คุ้น)
+              // fallback = <FORM>_<yyyyMM>.<ext ตาม form>
+              const cd = r.headers.get('Content-Disposition') || '';
+              const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+              this._dlName = m ? decodeURIComponent(m[1])
+                : `${formCode.toUpperCase()}_${year}${month ? String(month).padStart(2,'0') : ''}${formCode === 'sso110excel' ? '.xlsx' : '.txt'}`;
               return r.blob();
             })
             .then(blob => {
               const a = document.createElement('a');
               a.href = URL.createObjectURL(blob);
-              a.download = url.split('/').pop().split('?')[0] || `${formCode}.txt`;
-              // Extract filename from Content-Disposition if available
-              a.download = `${formCode.toUpperCase()}_${year}${month ? String(month).padStart(2,'0') : ''}.txt`;
+              a.download = this._dlName;
               a.click();
               URL.revokeObjectURL(a.href);
               Layout.toast('ดาวน์โหลดสำเร็จ');
