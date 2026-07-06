@@ -913,13 +913,16 @@ public partial class PdfGenerationService : IPdfGenerationService
                 or DocumentType.DebitNote or DocumentType.CreditNote
             || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
         var isCopyPrint = isCopyPrintWm;
-        if (isRd864Doc && !hasCustomTitle && !isCopyPrint)
+        // ป้าย "ต้นฉบับ" ทุกประเภทเอกสาร (สอดคล้อง renderer หลัก) — สำเนา
+        // จัดการโดย watermark/corner badge ด้านบนแล้ว
+        if (!isCopyPrint)
         {
             if (copyCornerMode)
                 sb.AppendLine(CornerBadge(lang == "en" ? "Original" : "ต้นฉบับ"));
             else
                 title += lang == "en" ? " (Original)" : " (ต้นฉบับ)";
         }
+        _ = isRd864Doc;
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
 
         // Document Info

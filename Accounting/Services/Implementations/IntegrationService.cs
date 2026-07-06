@@ -518,6 +518,26 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
+            // ===== §90/2 — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี =====
+            // endpoint นี้สร้าง TaxInvoice เสมอ — บริษัทที่ติ๊ก "ไม่จด VAT"
+            // ต้องถูกปฏิเสธพร้อมทางแก้ ไม่ใช่ปล่อยใบกำกับหลุดออกไป (ความผิด
+            // ทั้งค่าปรับและต้องนำส่ง VAT ที่เรียกเก็บ)
+            var vatRegistered = await _db.CompanySettings.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+                .Select(c => (bool?)c.VatRegistered)
+                .FirstOrDefaultAsync() ?? true;
+            if (!vatRegistered)
+            {
+                log.Status = "Failed";
+                log.ErrorMessage = "Company not VAT-registered (§90/2)";
+                log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                await SaveSyncLog(log, integrationId);
+                return new InboundSyncResponse(false,
+                    "บริษัทยังไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม — ออกใบกำกับภาษีผ่าน API ไม่ได้ (§90/2). " +
+                    "ถ้าจดทะเบียนแล้ว เปิด \"จดทะเบียนภาษีมูลค่าเพิ่ม\" ในหน้าตั้งค่าระบบบัญชีของ NextAcc",
+                    null, null, null, null, null);
+            }
+
             // Resolve or create contact
             // ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี (ขายปลีก) — flag ชัดเจน หรือไม่ส่ง
             // ข้อมูลลูกค้าเลย → ผูกกับผู้ติดต่อกลาง "ลูกค้าเงินสด" (ยกเว้น §86/4

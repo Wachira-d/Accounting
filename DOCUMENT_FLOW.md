@@ -178,6 +178,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ### 2.4 Convert (แปลงเอกสาร)
 - **Method**: `DocumentService.ConvertDocumentAsync` (full) / `ConvertDocumentPartialAsync`
   (partial — qty subset) — `DocumentService.cs:3082` / `:3122`
+- **RelatedDocumentId ส่งเข้า CreateDocumentAsync ตั้งแต่ create** (ผ่าน
+  CreateDocumentRequest) — ไม่ใช่เซ็ตทีหลัง เพราะ PaymentType inference /
+  cash-settle / PV auto-approve ใช้ field นี้แยก "PV ตั้งต้น" กับ "PV settle
+  ใบแจ้งหนี้ซื้อ" (บั๊กเดิม: PV แปลงจาก PI โดน auto-approve เป็น standalone
+  cash ก่อนมีลิงก์ → PI ค้างชำระตลอด + JE ลงค่าใช้จ่ายซ้ำ)
 - **กันสร้างซ้ำ**: `ComputeConsumptionAsync` (`:3104`) — ตรวจ axis
   (`Delivery` / `Billing` / `None`) ที่ source line ถูกใช้ไปเท่าไหร่แล้ว
 - **คู่ที่แปลงได้** (`DocumentService.ValidConversions :2808`) — exact:
@@ -325,6 +330,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 1. **Permission + workflow gate** (`:1638`) — ตรวจ ApprovalWorkflow
    (multi-level), credit limit ของลูกค้า (AR/AP advanced)
+   - **§90/2 hard-block**: `CompanySettings.VatRegistered=false` → ห้ามอนุมัติ
+     ใบกำกับภาษี (ทุกกรณี) และเอกสารขายที่ VatAmount > 0 (Invoice/Receipt/RV/
+     BillingNote/CN/DN ฝั่งขาย — CN/DN ฝั่งซื้อที่ related เป็น PI/Expense/GRN
+     ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน
+   - **Settlement doc self-paid**: PV/Receipt/RV/CIL ที่มี RelatedDocumentId
+     (แปลงมาจากเอกสารตั้งหนี้) เมื่ออนุมัติ → ตัวมันเอง PaidAmount=Total,
+     Status=Paid (เป็นเอกสารการจ่าย/รับเงินจริง ไม่ใช่ลูกหนี้/เจ้าหนี้ใหม่)
 2. **AI warning collection** (`:1528`) — AI rule-based ตรวจหา anomaly
    (ราคาผิดปกติ, vendor ไม่ตรงประเภท ฯลฯ)
 3. **ออกเลขจริง** (`:1742`) — `DocumentNumberGenerator.NextAsync` — gap-free

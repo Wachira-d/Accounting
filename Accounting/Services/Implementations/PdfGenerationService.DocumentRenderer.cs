@@ -86,10 +86,14 @@ public partial class PdfGenerationService
         if (cornerMode)
         {
             if (isCopyPrint) cornerLabel = lang == "en" ? "COPY" : "สำเนา";
-            else if (isRd864Doc && !hasCustomTitle) cornerLabel = lang == "en" ? "Original" : "ต้นฉบับ";
+            else cornerLabel = lang == "en" ? "Original" : "ต้นฉบับ";
         }
-        if (isRd864Doc && !hasCustomTitle && !isCopyPrint && cornerLabel == null)
+        // ป้าย "ต้นฉบับ" แสดงทุกประเภทเอกสาร (กฎหมายบังคับเฉพาะเอกสารชุด
+        // §86/4 แต่แนวปฏิบัติ PEAK/Flow พิมพ์ทุกใบ — ผู้ใช้แยกต้นฉบับ/สำเนา
+        // ได้ทันทีโดยไม่ต้องเดา); custom title ยังต่อท้ายให้เว้นแต่โหมดมุม
+        if (!isCopyPrint && cornerLabel == null)
             titleText += lang == "en" ? "  (Original)" : "  (ต้นฉบับ)";
+        _ = isRd864Doc; // คงตัวแปรไว้ให้อ่าน context ด้านบนง่าย
 
         try
         {
