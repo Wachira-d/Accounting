@@ -1051,6 +1051,10 @@
           pa.insertAdjacentHTML('afterbegin', ExportUtil.renderButtons('(f)=>Page.exportAll(f)'));
         }
         const api = Layout.api(); if (!api) return;
+        // โหลดสถานะจด VAT — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี/เก็บ VAT ขาย (§90/2)
+        try { const sr = await api.getSettings(); this._vatRegistered = sr?.data?.vatRegistered !== false; }
+        catch { this._vatRegistered = true; }
+        this.applyVatRegistrationLock();
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
         // Load active projects (for the document → project tagging dropdown).
         // ProjectId on a document propagates to JournalEntry on auto-post, so
@@ -1891,6 +1895,25 @@
         if (!(contact?.address || contact?.subDistrict || contact?.province)) missing.push('ที่อยู่');
         if (missing.length)
           Layout.toast('⚠️ ใบกำกับภาษี §86/4 ต้องมี: ' + missing.join(' · ') + ' — เติมข้อมูลลูกค้าก่อนอนุมัติ', 'error', 9000);
+      },
+
+      // §90/2 — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี/เก็บ VAT ขาย. ปิดตัวเลือก
+      // ใบกำกับภาษีในฟอร์มสร้าง (ฝั่ง approve มี hard-block อีกชั้น) + ป้ายบอกเหตุ
+      applyVatRegistrationLock() {
+        if (this._vatRegistered) return;
+        const sel = document.getElementById('fDocType');
+        if (!sel) return;
+        // ใบกำกับภาษี เป็นเอกสาร VAT ขายโดยตรง → ปิด. ใบเพิ่ม/ลดหนี้ (ฝั่งขาย)
+        // ก็มี VAT ขาย แต่ปล่อยไว้ (ปกติใช้กับใบกำกับเดิม — ถ้าไม่มีใบกำกับก็ออกไม่ได้อยู่แล้ว)
+        const opt = [...sel.options].find(o => o.value === 'TaxInvoice');
+        if (opt) {
+          opt.disabled = true;
+          opt.textContent = 'ใบกำกับภาษี (บริษัทยังไม่ได้จด VAT — ออกไม่ได้)';
+        }
+        if (sel.value === 'TaxInvoice') { sel.value = 'Invoice'; this.onDocTypeChange?.(); }
+        const hint = document.getElementById('docTypeHint');
+        if (hint) hint.insertAdjacentHTML('afterend',
+          '<div id="vatLockHint" style="margin-top:6px;padding:8px 12px;background:#fef2f2;border-left:3px solid #ef4444;border-radius:6px;font-size:12px;color:#991b1b;line-height:1.5">🔒 บริษัทยังไม่ได้ตั้งค่า "จดทะเบียนภาษีมูลค่าเพิ่ม" — ออกใบกำกับภาษี/เก็บ VAT ขายไม่ได้ (§90/2). เปิดได้ที่ ตั้งค่า → ภาษี</div>');
       },
 
       onContactChange() {

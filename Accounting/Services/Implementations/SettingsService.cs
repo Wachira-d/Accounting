@@ -63,6 +63,11 @@ public class SettingsService : ISettingsService
         if (request.AutoCloseMonthEnd.HasValue) settings.AutoCloseMonthEnd = request.AutoCloseMonthEnd.Value;
         if (request.MonthEndClosingDay.HasValue) settings.MonthEndClosingDay = request.MonthEndClosingDay.Value;
         if (request.PreventPostToClosedPeriod.HasValue) settings.PreventPostToClosedPeriod = request.PreventPostToClosedPeriod.Value;
+        if (request.SodBlockSelfApproval.HasValue) settings.SodBlockSelfApproval = request.SodBlockSelfApproval.Value;
+        if (request.BudgetCommitmentMode != null && request.BudgetCommitmentMode is "Off" or "Warn" or "Block")
+            settings.BudgetCommitmentMode = request.BudgetCommitmentMode;
+        if (request.AllowNegativeStock.HasValue) settings.AllowNegativeStock = request.AllowNegativeStock.Value;
+        if (request.EclEnabled.HasValue) settings.EclEnabled = request.EclEnabled.Value;
 
         // e-Tax settings
         if (request.EtaxEnabled.HasValue) settings.EtaxEnabled = request.EtaxEnabled.Value;
@@ -460,7 +465,12 @@ public class SettingsService : ISettingsService
         // HR
         s.LeaveQuotasJson,
         s.EnforceManagerApproval,
-        s.IsVehicleDealer);
+        s.IsVehicleDealer,
+        // Internal control
+        s.SodBlockSelfApproval,
+        s.BudgetCommitmentMode,
+        s.AllowNegativeStock,
+        s.EclEnabled);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,
