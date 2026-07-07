@@ -36,6 +36,16 @@ public class CompanySettings : TenantEntity
     // Branding
     public string? LogoPath { get; set; }
     public string? LogoUrl { get; set; }
+    // ตราประทับบริษัท (company seal) — อัปโหลดครั้งเดียวใช้ทุกเอกสาร. ประทับบน
+    // PDF เฉพาะเอกสารที่ "อนุมัติแล้ว" (ผู้มีอำนาจอนุมัติ = ประทับตรา) — Draft/
+    // รออนุมัติ ไม่ประทับ. ขนาด/ตำแหน่งตั้งได้ (วางในโซนลายเซ็น/ผู้อนุมัติ).
+    public string? StampPath { get; set; }
+    public string? StampUrl { get; set; }
+    public decimal StampWidthMm { get; set; } = 32;          // mm (0 = auto ตามสัดส่วน)
+    public decimal StampHeightMm { get; set; } = 32;         // mm
+    /// <summary>ตำแหน่งตราในโซนลายเซ็น/ผู้อนุมัติ: "Right" (ค่าเริ่มต้น),
+    /// "Left", "Center". ประทับเหนือช่องลงนามเสมอ (จุดที่ผู้อนุมัติเซ็น).</summary>
+    public string StampAlign { get; set; } = "Right";
     public string? PrimaryColor { get; set; }
     public string? SecondaryColor { get; set; }
 

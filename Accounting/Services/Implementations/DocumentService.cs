@@ -588,6 +588,7 @@ public class DocumentService : IDocumentService
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
+                BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
                 CreatedBy = createdBy
             };
 
@@ -1179,6 +1180,7 @@ public class DocumentService : IDocumentService
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
         if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
         if (request.DepositAppliedDrivesJournal.HasValue) doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
+        if (request.BuyerDeclinedTaxInvoice.HasValue) doc.BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice.Value;
         if (request.CombinedInvoiceTaxInvoice.HasValue)
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
@@ -1967,7 +1969,8 @@ public class DocumentService : IDocumentService
         var isDeferredVatDeposit = doc.IsDeposit && doc.DepositOutputVatDeferred
             && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
         if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null
-            && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit)
+            && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit
+            && !doc.BuyerDeclinedTaxInvoice)
         {
             var missing = new List<string>();
             var taxIdDigits = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
@@ -1986,9 +1989,26 @@ public class DocumentService : IDocumentService
                 if (buyerBrDigits.Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
             }
             if (missing.Count > 0)
-                throw new InvalidOperationException(
-                    $"⛔ §86/4: ใบกำกับขาด field บังคับ — {string.Join(", ", missing)}. " +
-                    "เปิด setting 'บังคับ §86/4 ครบทุก field' ไว้ → ต้องเติมก่อนอนุมัติ");
+            {
+                // หลักบัญชี: "เอกสารที่ §86/4 ไม่ครบ = ไม่ใช่ใบกำกับภาษีเต็มรูป จึง
+                // ไม่ควรมีหัวว่า 'ใบกำกับภาษี'" — แต่การจัดการต่างกันตามชนิดผู้ซื้อ:
+                //
+                //  • ผู้ซื้อ "นิติบุคคล" (จด VAT) → ตั้งใจจะเอาไปเคลมภาษีซื้อ การ
+                //    downgrade เป็นใบเสร็จเงียบ ๆ จะทำให้ผู้ซื้อเสียสิทธิเคลม →
+                //    block + ชี้ทางออกชัดเจน (เติมข้อมูล หรือ ติ๊กไม่ประสงค์รับ)
+                //    ผู้ใช้ไม่ตัน มีทางไปต่อเสมอ
+                //  • ผู้ซื้อ "บุคคลธรรมดา/ไม่มีเลขภาษี" (ขายปลีก) → ไม่ต้องใช้ใบกำกับ
+                //    เต็มรูปอยู่แล้ว → auto ตั้ง BuyerDeclinedTaxInvoice=true → หัว
+                //    downgrade เป็น "ใบเสร็จรับเงิน" เอง, ไม่ block. VAT ขายยังลง
+                //    ภ.พ.30 ครบ (ภาระภาษีไม่ขึ้นกับหัวเอกสาร) ผู้ซื้อเคลมภาษีซื้อไม่ได้
+                if (isJuristicBuyer)
+                    throw new InvalidOperationException(
+                        $"⛔ §86/4: ใบกำกับภาษีเต็มรูปต้องมี {string.Join(", ", missing)} " +
+                        "(ผู้ซื้อนิติบุคคล). เติมข้อมูลผู้ซื้อให้ครบ หรือ ติ๊ก " +
+                        "'☑ ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี' เพื่อออกเป็นใบเสร็จรับเงิน " +
+                        "(VAT ยังนำส่ง ภ.พ.30 ครบ — ผู้ซื้อเคลมภาษีซื้อไม่ได้)");
+                doc.BuyerDeclinedTaxInvoice = true;
+            }
         }
 
         // Enforce CompanySettings.RequireApprovalForDocuments: เกินวงเงิน →

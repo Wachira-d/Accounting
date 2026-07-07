@@ -263,6 +263,12 @@
                   <span style="display:block;color:#64748b;font-size:11px">ต้องมีเลขภาษี/สาขา/ที่อยู่ผู้ซื้อครบ (§86/4)</span>
                 </span>
               </label>
+              <label id="fDeclineTaxRow" style="display:none;margin-top:8px;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer">
+                <input type="checkbox" id="fBuyerDeclinedTaxInvoice" style="margin-top:3px">
+                <span>ผู้ซื้อ <b>ไม่ประสงค์รับใบกำกับภาษี</b> — ออกเป็น <b>"ใบเสร็จรับเงิน"</b> (ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อครบ)
+                  <span style="display:block;color:#64748b;font-size:11px">VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ — นำส่งภาษีได้ปกติ · ผู้ซื้อเคลมภาษีซื้อไม่ได้</span>
+                </span>
+              </label>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
@@ -1897,8 +1903,17 @@
           || (tid.length === 13 && tid.startsWith('0'));
         if (isJuristic && !contact?.branchCode) missing.push('รหัสสาขา (00000=สนญ.)');
         if (!(contact?.address || contact?.subDistrict || contact?.province)) missing.push('ที่อยู่');
-        if (missing.length)
-          Layout.toast('⚠️ ใบกำกับภาษี §86/4 ต้องมี: ' + missing.join(' · ') + ' — เติมข้อมูลลูกค้าก่อนอนุมัติ', 'error', 9000);
+        if (missing.length) {
+          // นิติบุคคล = ต้องเติมให้ครบ (ผู้ซื้อจะเคลมภาษีซื้อ) ไม่งั้น approve ถูก block
+          // + มีทางออกให้ติ๊ก "ไม่ประสงค์รับใบกำกับ". บุคคลธรรมดา = ระบบ downgrade เป็น
+          // ใบเสร็จให้เองตอน approve (ไม่ block) — เตือนเบา ๆ พอ
+          if (isJuristic)
+            Layout.toast('⚠️ ใบกำกับภาษีเต็มรูป §86/4 (นิติบุคคล) ต้องมี: ' + missing.join(' · ')
+              + ' — เติมให้ครบ หรือ ติ๊ก "ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี" เพื่อออกเป็นใบเสร็จ', 'error', 9000);
+          else
+            Layout.toast('ℹ️ ข้อมูล §86/4 ไม่ครบ (' + missing.join(' · ')
+              + ') — บุคคลธรรมดา ระบบจะออกเป็น "ใบเสร็จรับเงิน" ให้ (VAT นำส่งครบ)', 'info', 7000);
+        }
       },
 
       // §90/2 — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี/เก็บ VAT ขาย. ปิดตัวเลือก
@@ -2801,6 +2816,16 @@
           combinedRow.style.display = canCombine ? 'flex' : 'none';
           if (!canCombine) {
             const cb = document.getElementById('fCombinedTaxInvoice');
+            if (cb) cb.checked = false;
+          }
+        }
+        // "ผู้ซื้อไม่ประสงค์รับใบกำกับ" — เฉพาะเอกสารฝั่งขายที่มี VAT (ออกใบกำกับได้)
+        const declineRow = document.getElementById('fDeclineTaxRow');
+        if (declineRow) {
+          const canDecline = ['TaxInvoice', 'Receipt', 'ReceiptVoucher'].includes(docType);
+          declineRow.style.display = canDecline ? 'flex' : 'none';
+          if (!canDecline) {
+            const cb = document.getElementById('fBuyerDeclinedTaxInvoice');
             if (cb) cb.checked = false;
           }
         }
@@ -4134,6 +4159,8 @@
           // onDocTypeChange; แค่ติ๊กกล่องคืน).
           const fComb = document.getElementById('fCombinedTaxInvoice');
           if (fComb) fComb.checked = !!d.combinedInvoiceTaxInvoice;
+          const fDecl = document.getElementById('fBuyerDeclinedTaxInvoice');
+          if (fDecl) fDecl.checked = !!d.buyerDeclinedTaxInvoice;
           const fDep = document.getElementById('fIsDeposit');
           if (fDep) {
             fDep.checked = !!d.isDeposit;
@@ -4334,6 +4361,7 @@
         const payload = {
           documentType: _effectiveDocType,
           combinedInvoiceTaxInvoice: _combineTax,
+          buyerDeclinedTaxInvoice: document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false,
           documentDate: document.getElementById('fDate').value,
           dueDate: document.getElementById('fDueDate').value || null,
           deliveryDate: document.getElementById('fDeliveryDate')?.value || null,

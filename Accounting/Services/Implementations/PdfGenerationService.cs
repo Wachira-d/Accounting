@@ -859,7 +859,12 @@ public partial class PdfGenerationService : IPdfGenerationService
             && customTitle != GetDocumentTitle(doc.DocumentType, isEn ? "en" : "th");
         var title = hasCustomTitle ? customTitle! : baseTitle;
 
-        if (!hasCustomTitle)
+        // ผู้ซื้อไม่ประสงค์รับใบกำกับ (per-doc flag หรือ ลูกค้าเงินสด walk-in) +
+        // ข้อมูล §86/4 ไม่ครบ → คงเป็น "ใบเสร็จรับเงิน" ไม่ upgrade เป็นใบกำกับเต็มรูป
+        // (VAT ยังลง ภ.พ.30 ครบ — นำส่งภาษีได้ตามปกติ เพราะภาระ VAT ขายไม่ขึ้นกับ
+        // หัวเอกสาร) ผู้ซื้อเคลมภาษีซื้อไม่ได้
+        var buyerDeclined = doc.BuyerDeclinedTaxInvoice || (doc.Contact?.IsWalkInCustomer ?? false);
+        if (!hasCustomTitle && !buyerDeclined)
         {
             if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
                 title = isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี");
@@ -868,6 +873,10 @@ public partial class PdfGenerationService : IPdfGenerationService
                      || (doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt))
                 title = isEn ? "Tax Invoice / Receipt" : Ov("TaxInvoiceReceipt", "ใบกำกับภาษี/ใบเสร็จรับเงิน");
         }
+        // declined + doc type ที่ base = "ใบกำกับภาษี" (TaxInvoice) → ลงเป็นใบเสร็จ
+        else if (!hasCustomTitle && doc.BuyerDeclinedTaxInvoice
+                 && doc.DocumentType == DocumentType.TaxInvoice)
+            title = isEn ? "Receipt" : "ใบเสร็จรับเงิน";
 
         if (doc.IsDeposit)
             title += isEn ? " (Deposit)" : " " + Ov("DepositSuffix", "(เงินมัดจำ)");
@@ -1135,6 +1144,25 @@ public partial class PdfGenerationService : IPdfGenerationService
         // their display name + title below the role label, so a fully approved
         // document prints REAL signatures (matches the e-Tax export). Missing
         // images degrade to a blank line + label.
+        // ตราประทับบริษัท — ประทับเหนือช่องลงนาม เฉพาะเอกสารที่อนุมัติแล้ว
+        // (ผู้มีอำนาจอนุมัติ = ประทับตรา). เงื่อนไขเดียวกับช่องลายเซ็นผู้อนุมัติ.
+        if (template.ShowCompanyStamp)
+        {
+            var stampApproved = doc.Status is not (DocumentStatus.Draft
+                or DocumentStatus.WaitingApproval or DocumentStatus.Rejected);
+            var stampSrc = stampApproved
+                ? (TryLogoDataUri(settings?.StampPath) ?? settings?.StampUrl)
+                : null;
+            if (!string.IsNullOrEmpty(stampSrc))
+            {
+                var sw = settings?.StampWidthMm ?? 32m; if (sw <= 0) sw = 32m;
+                var sh = settings?.StampHeightMm ?? 32m; if (sh <= 0) sh = 32m;
+                var align = (settings?.StampAlign) switch { "Left" => "left", "Center" => "center", _ => "right" };
+                sb.AppendLine($"<div style='text-align:{align};margin-top:8px'>"
+                    + $"<img src='{stampSrc}' alt='ตราประทับ' style='width:{sw}mm;height:{sh}mm;object-fit:contain;display:inline-block'/></div>");
+            }
+        }
+
         if (template.ShowSignature)
         {
             sb.AppendLine("<div class='signatures'>");
@@ -1917,10 +1945,17 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// disabled toggle each degrades to "skip that part" without throwing, so
     /// PDF generation can never be broken by branding data.
     /// </summary>
-    private static PdfBranding BuildBranding(DocumentTemplate template, CompanySettings? settings, string? watermarkOverride)
+    private static PdfBranding BuildBranding(DocumentTemplate template, CompanySettings? settings,
+        string? watermarkOverride, bool stampAllowed = false)
     {
         byte[]? logo = template.ShowLogo ? TryReadImage(settings?.LogoPath) : null;
-        byte[]? stamp = template.ShowCompanyStamp ? TryReadImage(template.StampImagePath) : null;
+        // ตราประทับ: ประทับเฉพาะเอกสารที่อนุมัติแล้ว (stampAllowed) — Draft/รออนุมัติ
+        // ไม่ประทับ (ผู้มีอำนาจอนุมัติ = ประทับตรา). รูปมาจาก CompanySettings.StampPath
+        // (ตราบริษัทกลาง ใช้ทุกเอกสาร) fallback template.StampImagePath (ของเดิม).
+        // template.ShowCompanyStamp = ปิด/เปิดต่อเทมเพลตได้.
+        byte[]? stamp = (stampAllowed && template.ShowCompanyStamp)
+            ? (TryReadImage(settings?.StampPath) ?? TryReadImage(template.StampImagePath))
+            : null;
 
         var sigLabels = new List<string>();
         if (template.ShowSignature)
@@ -1946,7 +1981,10 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             LogoHeightMm: Clamp((float)template.LogoHeight, 5f, 60f, 18f),
             ShowSignature: template.ShowSignature && sigLabels.Count > 0,
             SignatureLabels: sigLabels.ToArray(),
-            StampBytes: stamp);
+            StampBytes: stamp,
+            StampWidthMm: Clamp((float)(settings?.StampWidthMm ?? 32m), 0f, 120f, 32f),
+            StampHeightMm: Clamp((float)(settings?.StampHeightMm ?? 32m), 5f, 120f, 32f),
+            StampAlign: (settings?.StampAlign ?? "Right").Trim());
     }
 
     /// <summary>Build a base64 data-URI for the logo from its file path so it
@@ -2026,7 +2064,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         string? FontFamily = null,
         byte[]? LogoBytes = null, string? LogoPosition = null, float LogoHeightMm = 18f,
         bool ShowSignature = false, string[]? SignatureLabels = null,
-        byte[]? StampBytes = null);
+        byte[]? StampBytes = null, float StampWidthMm = 32f, float StampHeightMm = 32f,
+        string? StampAlign = "Right");
 
     private enum HtmlBlockType { Title, Header, Text, BoldText, TableHeader, TableRow, Separator, Space }
 

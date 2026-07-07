@@ -80,6 +80,11 @@ public class SettingsService : ISettingsService
             settings.BudgetCommitmentMode = request.BudgetCommitmentMode;
         if (request.AllowNegativeStock.HasValue) settings.AllowNegativeStock = request.AllowNegativeStock.Value;
         if (request.EclEnabled.HasValue) settings.EclEnabled = request.EclEnabled.Value;
+        // ตราประทับบริษัท — ขนาด/ตำแหน่ง (clamp กันค่าเพี้ยน; รูปอัปโหลดแยก endpoint)
+        if (request.StampWidthMm.HasValue) settings.StampWidthMm = Math.Clamp(request.StampWidthMm.Value, 0m, 120m);
+        if (request.StampHeightMm.HasValue) settings.StampHeightMm = Math.Clamp(request.StampHeightMm.Value, 5m, 120m);
+        if (request.StampAlign != null && request.StampAlign is "Right" or "Left" or "Center")
+            settings.StampAlign = request.StampAlign;
 
         // e-Tax settings
         if (request.EtaxEnabled.HasValue) settings.EtaxEnabled = request.EtaxEnabled.Value;
@@ -192,6 +197,65 @@ public class SettingsService : ISettingsService
             File.Delete(settings.LogoPath);
         settings.LogoPath = null;
         settings.LogoUrl = null;
+        await _db.SaveChangesAsync();
+    }
+
+    // ===== ตราประทับบริษัท (company seal) — mirror ของ logo แต่ใช้ ImageProfile.Logo
+    // (คงความโปร่งใส PNG — ตราส่วนใหญ่พื้นหลังโปร่ง) เก็บลง /uploads/stamps/{companyId} =====
+    public async Task<CompanySettingsResponse> UploadStampAsync(Guid companyId, Stream fileStream, string fileName, string contentType)
+    {
+        var settings = await GetOrCreateSettingsAsync(companyId);
+
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml" };
+        if (!allowedTypes.Contains(contentType.ToLower()))
+            throw new InvalidOperationException("รองรับเฉพาะไฟล์ PNG, JPEG, GIF, WebP, SVG เท่านั้น (แนะนำ PNG พื้นหลังโปร่งใส)");
+
+        var webRoot = _env.WebRootPath
+            ?? Path.Combine(_env.ContentRootPath ?? Directory.GetCurrentDirectory(), "wwwroot");
+
+        try
+        {
+            if (!string.IsNullOrEmpty(settings.StampPath) && File.Exists(settings.StampPath))
+                File.Delete(settings.StampPath);
+        }
+        catch { /* old file may be locked / missing — keep going */ }
+
+        var dir = Path.Combine(webRoot, "uploads", "stamps", companyId.ToString());
+        var web = $"/uploads/stamps/{companyId}";
+        ProcessedImageResult processed;
+        try
+        {
+            processed = await _images.ProcessAndSaveAsync(fileStream, contentType, fileName, dir, web, ImageProfile.Logo);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new InvalidOperationException(
+                $"ระบบไม่มีสิทธิ์เขียนไฟล์ลงโฟลเดอร์ uploads ({dir}) — โปรดติดต่อผู้ดูแลระบบเพื่อเพิ่มสิทธิ์", ex);
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            throw new InvalidOperationException(
+                $"ไม่พบโฟลเดอร์ปลายทาง ({dir}) — โปรดให้ผู้ดูแลระบบสร้างโฟลเดอร์ก่อน", ex);
+        }
+        catch (IOException ex)
+        {
+            throw new InvalidOperationException($"บันทึกไฟล์ไม่สำเร็จ: {ex.Message}", ex);
+        }
+
+        settings.StampPath = processed.AbsolutePath;
+        settings.StampUrl = processed.RelativeUrl;
+        await _db.SaveChangesAsync();
+
+        return MapToResponse(companyId, settings);
+    }
+
+    public async Task DeleteStampAsync(Guid companyId)
+    {
+        var settings = await GetOrCreateSettingsAsync(companyId);
+        if (!string.IsNullOrEmpty(settings.StampPath) && File.Exists(settings.StampPath))
+            File.Delete(settings.StampPath);
+        settings.StampPath = null;
+        settings.StampUrl = null;
         await _db.SaveChangesAsync();
     }
 
@@ -482,7 +546,12 @@ public class SettingsService : ISettingsService
         s.SodBlockSelfApproval,
         s.BudgetCommitmentMode,
         s.AllowNegativeStock,
-        s.EclEnabled);
+        s.EclEnabled,
+        // ตราประทับบริษัท
+        s.StampUrl,
+        s.StampWidthMm,
+        s.StampHeightMm,
+        s.StampAlign);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

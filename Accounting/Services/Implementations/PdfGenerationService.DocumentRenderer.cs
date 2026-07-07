@@ -33,7 +33,12 @@ public partial class PdfGenerationService
     {
         EnsureThaiFontsRegistered();
         var lang = langOverride ?? template.Language ?? "th";
-        var b = BuildBranding(template, settings, watermarkOverride);
+        // ตราประทับบริษัท: ประทับเฉพาะเอกสารที่อนุมัติแล้ว (ผู้มีอำนาจอนุมัติ = ประทับตรา)
+        // — เงื่อนไขเดียวกับช่องลายเซ็นผู้อนุมัติ (Draft/รออนุมัติ/ถูกปฏิเสธ = ไม่ประทับ)
+        var stampAllowed = doc.Status is not (Accounting.Models.Enums.DocumentStatus.Draft
+            or Accounting.Models.Enums.DocumentStatus.WaitingApproval
+            or Accounting.Models.Enums.DocumentStatus.Rejected);
+        var b = BuildBranding(template, settings, watermarkOverride, stampAllowed);
 
         var accent = b.AccentColor ?? "#1F2937";
         var primary = b.PrimaryColor ?? "#1F2937";
@@ -768,9 +773,24 @@ public partial class PdfGenerationService
 
         DocumentSigner? signerAt(int i) => signers != null && i < signers.Count ? signers[i] : null;
 
-        // Stamp above signatures (optional, defensive).
+        // ตราประทับเหนือช่องลงนาม (จุดที่ผู้อนุมัติเซ็น) — ขนาด/ตำแหน่งตั้งได้.
+        // ประทับเฉพาะเอกสารอนุมัติแล้ว (BuildBranding gate ด้วย stampAllowed).
         if (b.StampBytes is { Length: > 0 })
-            try { col.Item().PaddingTop(20).AlignRight().Height(22, Unit.Millimetre).Image(b.StampBytes).FitArea(); } catch { }
+            try
+            {
+                var stampW = b.StampWidthMm > 0 ? b.StampWidthMm : 32f;
+                var stampH = b.StampHeightMm > 0 ? b.StampHeightMm : 32f;
+                var cell = col.Item().PaddingTop(14);
+                cell = b.StampAlign switch
+                {
+                    "Left" => cell.AlignLeft(),
+                    "Center" => cell.AlignCenter(),
+                    _ => cell.AlignRight(),
+                };
+                cell.Width(stampW, Unit.Millimetre).Height(stampH, Unit.Millimetre)
+                    .Image(b.StampBytes).FitArea();
+            }
+            catch { /* stamp decorative — ห้าม break PDF */ }
 
         col.Item().PaddingTop(b.StampBytes != null ? 6 : 40).Row(r =>
         {

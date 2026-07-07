@@ -167,13 +167,32 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - **CN/DN ผ่าน integration = ฝั่งขายเท่านั้น** (DTO มีแต่ field ลูกค้า) —
     `CreateCreditNoteJournalAsync`/`CreateDebitNoteJournalAsync` ลง AR/ภาษีขาย
     เสมอ; ใบลด/เพิ่มหนี้ฝั่งซื้อ sync ผ่าน expense reversal ไม่ผ่านช่องทางนี้
-  - **ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี (ขายปลีก)**: `BuyerDeclinedTaxInvoice=true`
-    หรือเว้น customer fields ว่างทั้งหมด → ผูกกับผู้ติดต่อกลาง
-    "ลูกค้าเงินสด (ไม่ประสงค์รับใบกำกับภาษี)" (`Contact.IsWalkInCustomer=true`,
-    Address "-", สร้างครั้งเดียวต่อบริษัทผ่าน `GetOrCreateWalkInContactAsync`).
-    contact นี้ได้รับยกเว้น hard-block §86/4 ฝั่งผู้ซื้อตอน approve
-    (ประกาศอธิบดีฯ ฉบับ 199: เลขผู้เสียภาษี/สาขาผู้ซื้อบังคับเฉพาะผู้ซื้อจด
-    VAT) — VAT ขายลงรายงาน/ภ.พ.30 ครบตามปกติ, ผู้ซื้อเคลมภาษีซื้อไม่ได้
+  - **ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี (ขายปลีก)** — 2 ทางเข้า:
+    1. **Per-doc checkbox** `Document.BuyerDeclinedTaxInvoice=true` (UI ช่อง
+       `#fBuyerDeclinedTaxInvoice` สำหรับ TaxInvoice/Receipt/ReceiptVoucher) —
+       ผู้ใช้ติ๊กเองต่อใบ; ใช้กับลูกค้าที่ระบุตัวตนก็ได้ (มีชื่อ/ชื่อเล่น) ไม่บังคับ
+       ผูก walk-in contact.
+    2. **Walk-in contact** — เว้น customer fields ว่างทั้งหมด → ผูกผู้ติดต่อกลาง
+       "ลูกค้าเงินสด (ไม่ประสงค์รับใบกำกับภาษี)" (`Contact.IsWalkInCustomer=true`,
+       Address "-", สร้างครั้งเดียวต่อบริษัทผ่าน `GetOrCreateWalkInContactAsync`).
+    ทั้งสองทางได้รับยกเว้น hard-block §86/4 ฝั่งผู้ซื้อตอน approve
+    (`ApproveDocumentAsync` gate: `!doc.BuyerDeclinedTaxInvoice &&
+    !Contact.IsWalkInCustomer`). นอกจากนี้ **branch code (§86/4 ประกาศ 199)
+    บังคับเฉพาะผู้ซื้อนิติบุคคล** (`ContactType==JuristicPerson` หรือ TaxId 13 หลัก
+    ขึ้นต้น "0") — บุคคลธรรมดาไม่บังคับสาขา.
+    3. **Auto-downgrade (ไม่ block ทางตัน)** — เมื่อ §86/4 ผู้ซื้อไม่ครบตอน approve
+       (`DocumentService.cs:~1991`): **แยกตามชนิดผู้ซื้อ** — (a) **นิติบุคคล** (ตั้งใจ
+       เคลมภาษีซื้อ) → **block + ชี้ทางออก** ("เติมข้อมูล หรือ ติ๊กไม่ประสงค์รับใบกำกับ
+       เพื่อออกเป็นใบเสร็จ") กัน downgrade เงียบ ๆ ที่ทำให้ผู้ซื้อเสียสิทธิ; (b)
+       **บุคคลธรรมดา/ไม่มีเลขภาษี** (ขายปลีก) → ระบบ **auto ตั้ง
+       `BuyerDeclinedTaxInvoice=true`** เอง → หัว downgrade เป็น "ใบเสร็จรับเงิน",
+       **ไม่ block** (หลัก: เอกสาร §86/4 ไม่ครบ = ไม่ใช่ใบกำกับเต็มรูป จึงไม่ควรมีหัวว่า
+       "ใบกำกับภาษี"). VAT ขายยังลง ภ.พ.30 ครบ.
+    **หัวเอกสาร**: `ComputeDocumentTitle` เมื่อ `buyerDeclined` (per-doc flag หรือ
+    walk-in) → ไม่ upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน"; ถ้า DocumentType=
+    TaxInvoice + `BuyerDeclinedTaxInvoice` → downgrade หัวเป็น "ใบเสร็จรับเงิน".
+    VAT ขายลงรายงาน/ภ.พ.30 ครบตามปกติ (ภาระ VAT ไม่ขึ้นกับหัวเอกสาร),
+    ผู้ซื้อเคลมภาษีซื้อไม่ได้
 
 ### 2.4 Convert (แปลงเอกสาร)
 - **Method**: `DocumentService.ConvertDocumentAsync` (full) / `ConvertDocumentPartialAsync`
@@ -1039,7 +1058,9 @@ pre-line). (b) รายละเอียดรายการรองรั�
 _รอบ 40 (ชุด invoice/tax-invoice ครบวงจร): (a) เครดิตเทอมต่อลูกค้า —
 Contact.PaymentDueDays/PaymentTerms → เติมวันครบกำหนดอัตโนมัติตอนสร้างเอกสารขาย.
 (b) §86/4 บังคับตอนอนุมัติ — enforce864 default true; TaxInvoice บังคับ field ผู้ซื้อ
-เสมอ (เลขภาษี13/ที่อยู่/สาขา5) ไม่ว่า flag → ใบไม่ครบ block. (c) ป้าย "ต้นฉบับ" บน PDF
+(เลขภาษี13/ที่อยู่) → ใบไม่ครบ block. **ยกเว้น**: (i) `BuyerDeclinedTaxInvoice`/walk-in
+→ ข้าม gate ทั้งชุด; (ii) branch code (สาขา5) บังคับเฉพาะผู้ซื้อนิติบุคคล
+(ประกาศ 199) บุคคลธรรมดาไม่บังคับ (ดู §2.3 ผู้ซื้อไม่ประสงค์รับใบกำกับ). (c) ป้าย "ต้นฉบับ" บน PDF
 — ใบกำกับ/ใบเสร็จภาษี/CN/DN เติม "(ต้นฉบับ)" (สำเนา=WatermarkOverride) ทั้ง
 QuestPDF+HTML. (d) หัว PDF ต่อชนิด GetDocumentTitle ถูกต้องอยู่แล้ว. (e) auto-receipt:
 ชำระครบบน Invoice/TaxInvoice → prompt "ออกใบเสร็จรับเงิน" → convertDocument→Receipt
@@ -1130,12 +1151,22 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
-_Last verified against codebase: 2026-07-06 — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-07 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
 _PII encrypt+ (Bank/SSN), audit-log DB trigger, §86/4 hard-block opt-in,_
 _ภ.ง.ด.51 SME bracket, PDPA Wave 3 (RoPA/Consent/PiiAccessLog/Breach)._
+_รอบ 42: ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี — per-doc checkbox_
+_`BuyerDeclinedTaxInvoice` (นอกจาก walk-in contact) ยกเว้น §86/4 gate +_
+_downgrade หัว TaxInvoice → "ใบเสร็จรับเงิน"; branch code (§86/4) บังคับเฉพาะ_
+_ผู้ซื้อนิติบุคคล บุคคลธรรมดาไม่บังคับ (ประกาศอธิบดีฯ 199). VAT → ภ.พ.30 ครบ._
+_รอบ 43: §86/4 smart-lock — ไม่ block ทางตัน: บุคคลธรรมดา/ไม่มีเลขภาษีที่ข้อมูล_
+_ไม่ครบ → auto ตั้ง BuyerDeclinedTaxInvoice (ออกเป็นใบเสร็จ, VAT ครบ); นิติบุคคล_
+_→ block + ชี้ทางออก (เติม/ติ๊กไม่รับใบกำกับ). + ตราประทับบริษัท (company seal):_
+_อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
+_(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
+_(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
 _รอบ 16 (audit ยอดเบิ้ล/double-count + concurrency): supersede block,_
 _deposit-apply settlement JE, settlement receipt กันนับซ้ำในรายงานรายได้,_
 _POS tip fix, POS refund discountFactor, Integration idempotency (expense/PV_

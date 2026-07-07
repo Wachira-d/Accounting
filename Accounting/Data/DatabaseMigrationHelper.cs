@@ -218,6 +218,13 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxXmlOutputPath" varchar(500) NULL;
             """,
 
+            // ===== ตราประทับบริษัท (company seal) =====
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampPath" varchar(500) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampUrl" varchar(500) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampWidthMm" numeric(6,2) NOT NULL DEFAULT 32;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampHeightMm" numeric(6,2) NOT NULL DEFAULT 32;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampAlign" varchar(20) NOT NULL DEFAULT 'Right';""",
+
             // ===== Recurring late-fee accrual policy =====
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeRatePerDay" numeric(8,4) NOT NULL DEFAULT 0.05;""",
@@ -4302,6 +4309,7 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedRef" varchar(100) NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedDrivesJournal" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BuyerDeclinedTaxInvoice" boolean NOT NULL DEFAULT false;""",
 
             // ===== หัวเรื่องเอกสารตั้งเอง (ต่อประเภท + เงื่อนไข) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",

@@ -832,6 +832,8 @@ const API = {
       updateSettings: (d) => API.put(`${base}/settings`, d),
       uploadLogo: (formData) => API.upload(`${base}/settings/logo`, formData),
       deleteLogo: () => API.del(`${base}/settings/logo`),
+      uploadStamp: (formData) => API.upload(`${base}/settings/stamp`, formData),
+      deleteStamp: () => API.del(`${base}/settings/stamp`),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
       // Email config
       getEmailConfig: () => API.get(`${base}/email-config`),

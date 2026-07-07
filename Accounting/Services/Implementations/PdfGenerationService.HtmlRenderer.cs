@@ -133,10 +133,22 @@ public partial class PdfGenerationService
                         }
                     }
 
-                    // Optional company stamp above the signature row.
+                    // Optional company stamp above the signature row (size/align configurable).
                     if (stamp != null)
                     {
-                        try { col.Item().PaddingTop(16).AlignRight().Height(22, Unit.Millimetre).Image(stamp); }
+                        try
+                        {
+                            var sw = branding?.StampWidthMm > 0 ? branding.StampWidthMm : 32f;
+                            var sh = branding?.StampHeightMm > 0 ? branding.StampHeightMm : 32f;
+                            var cell = col.Item().PaddingTop(14);
+                            cell = (branding?.StampAlign) switch
+                            {
+                                "Left" => cell.AlignLeft(),
+                                "Center" => cell.AlignCenter(),
+                                _ => cell.AlignRight(),
+                            };
+                            cell.Width(sw, Unit.Millimetre).Height(sh, Unit.Millimetre).Image(stamp);
+                        }
                         catch { /* stamp is decorative */ }
                     }
 
