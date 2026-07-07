@@ -189,27 +189,25 @@ public class DocumentEmailService : IDocumentEmailService
             }
             else
             {
-                try
-                {
-                    var (generatedPdf, _) = await _etaxService.GeneratePdfA3Async(companyId, etaxInvoiceId);
-                    pdfBytes = generatedPdf;
-                    log.PdfFilePath = etax.PdfFilePath;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate PDF/A-3 for e-Tax {Ref}; sending without PDF", etax.EtaxRefNumber);
-                }
+                // e-Tax by Email บังคับแนบ PDF/A-3 (ฝัง XML) ตามกฎ ETDA/สรรพากร —
+                // ถ้าสร้างไม่สำเร็จ ต้อง "ล้มการส่ง" ไม่ใช่ส่งอีเมลเปล่าไม่มีเอกสาร
+                // (เดิม swallow → ส่งอีเมลที่ไม่ครบตามกฎหมายเงียบ ๆ). fail loud ให้
+                // ผู้ใช้แก้ต้นเหตุ (เช่น XML ว่าง) ก่อนส่ง
+                var (generatedPdf, _) = await _etaxService.GeneratePdfA3Async(companyId, etaxInvoiceId);
+                pdfBytes = generatedPdf;
+                log.PdfFilePath = etax.PdfFilePath;
             }
 
-            if (pdfBytes != null)
+            if (pdfBytes == null || pdfBytes.Length == 0)
+                throw new InvalidOperationException(
+                    "สร้าง PDF/A-3 (e-Tax) ไม่สำเร็จ — ไม่ส่งอีเมลที่ขาดเอกสารตามกฎหมาย " +
+                    "โปรดตรวจสอบข้อมูล e-Tax ของเอกสารนี้แล้วลองใหม่");
+            msg.Attachments.Add(new EmailAttachment
             {
-                msg.Attachments.Add(new EmailAttachment
-                {
-                    FileName = $"{etax.EtaxRefNumber}.pdf",
-                    ContentType = "application/pdf",
-                    Content = pdfBytes
-                });
-            }
+                FileName = $"{etax.EtaxRefNumber}.pdf",
+                ContentType = "application/pdf",
+                Content = pdfBytes
+            });
         }
 
         var result = await sender.SendAsync(msg);

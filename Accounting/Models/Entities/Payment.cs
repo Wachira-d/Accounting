@@ -83,6 +83,10 @@ public class Payment : TenantEntity
     /// <summary>ผังบัญชีค่าธรรมเนียม — null = default 53xxx/ค้นชื่อ "ค่าธรรมเนียม".</summary>
     public Guid? FeeAccountId { get; set; }
 
+    /// <summary>ใบเสร็จรับเงิน (Document) ที่ออกคู่กับการชำระนี้ (ตอนติ๊ก "ออก
+    /// ใบเสร็จรับเงิน"). ตอน void payment → ใบเสร็จนี้ถูก void ตามด้วย.</summary>
+    public Guid? ReceiptDocumentId { get; set; }
+
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000
     /// cheque that pays invoice A 5K + B 6K + C 4K). When this list

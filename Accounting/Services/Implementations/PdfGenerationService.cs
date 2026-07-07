@@ -859,11 +859,15 @@ public partial class PdfGenerationService : IPdfGenerationService
             && customTitle != GetDocumentTitle(doc.DocumentType, isEn ? "en" : "th");
         var title = hasCustomTitle ? customTitle! : baseTitle;
 
-        // ผู้ซื้อไม่ประสงค์รับใบกำกับ (per-doc flag หรือ ลูกค้าเงินสด walk-in) +
-        // ข้อมูล §86/4 ไม่ครบ → คงเป็น "ใบเสร็จรับเงิน" ไม่ upgrade เป็นใบกำกับเต็มรูป
-        // (VAT ยังลง ภ.พ.30 ครบ — นำส่งภาษีได้ตามปกติ เพราะภาระ VAT ขายไม่ขึ้นกับ
-        // หัวเอกสาร) ผู้ซื้อเคลมภาษีซื้อไม่ได้
-        var buyerDeclined = doc.BuyerDeclinedTaxInvoice || (doc.Contact?.IsWalkInCustomer ?? false);
+        // ผู้ซื้อไม่ประสงค์รับใบกำกับ (per-doc flag / ลูกค้าเงินสด walk-in) **หรือ**
+        // ข้อมูล §86/4 ฝั่งผู้ซื้อไม่ครบจริง → หัวต้องไม่มีคำว่า "ใบกำกับภาษี"
+        // (เอกสาร §86/4 ไม่ครบ = ไม่ใช่ใบกำกับเต็มรูปตามกฎหมาย จึงคงเป็น
+        // "ใบเสร็จรับเงิน") VAT ยังลง ภ.พ.30 ครบ ผู้ซื้อเคลมภาษีซื้อไม่ได้.
+        // เช็คความครบตรงกับ ApproveDocumentAsync gate: taxid 13 หลัก + ที่อยู่ +
+        // (สาขา 5 หลัก เฉพาะนิติบุคคล). ประเมินเฉพาะเอกสารที่มี VAT.
+        var buyerDeclined = doc.BuyerDeclinedTaxInvoice
+            || (doc.Contact?.IsWalkInCustomer ?? false)
+            || Buyer864Incomplete(doc);
         if (!hasCustomTitle && !buyerDeclined)
         {
             if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
@@ -873,14 +877,38 @@ public partial class PdfGenerationService : IPdfGenerationService
                      || (doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt))
                 title = isEn ? "Tax Invoice / Receipt" : Ov("TaxInvoiceReceipt", "ใบกำกับภาษี/ใบเสร็จรับเงิน");
         }
-        // declined + doc type ที่ base = "ใบกำกับภาษี" (TaxInvoice) → ลงเป็นใบเสร็จ
-        else if (!hasCustomTitle && doc.BuyerDeclinedTaxInvoice
-                 && doc.DocumentType == DocumentType.TaxInvoice)
+        // declined/ไม่ครบ + base = "ใบกำกับภาษี" (TaxInvoice) → downgrade เป็นใบเสร็จ
+        else if (!hasCustomTitle && doc.DocumentType == DocumentType.TaxInvoice)
             title = isEn ? "Receipt" : "ใบเสร็จรับเงิน";
 
         if (doc.IsDeposit)
             title += isEn ? " (Deposit)" : " " + Ov("DepositSuffix", "(เงินมัดจำ)");
         return title;
+    }
+
+    /// <summary>ข้อมูลผู้ซื้อ §86/4 ไม่ครบพอจะเป็น "ใบกำกับภาษีเต็มรูป" หรือไม่ —
+    /// ใช้ตัดสินหัวเอกสาร (ไม่ครบ = ไม่โชว์ "ใบกำกับภาษี"). เกณฑ์ตรงกับ
+    /// ApproveDocumentAsync: ต้องมีเลขภาษี 13 หลัก + ที่อยู่ + (สาขา 5 หลัก เฉพาะ
+    /// นิติบุคคล — บุคคลธรรมดาไม่มีสาขา). ประเมินเฉพาะเอกสารที่มี VAT + ไม่ใช่มัดจำ
+    /// VAT พักรอ (ยังไม่ใช่ใบกำกับ). Contact ไม่ถูกโหลด/ไม่มี = ถือว่าไม่ครบ.</summary>
+    private static bool Buyer864Incomplete(Document doc)
+    {
+        if (doc.VatAmount <= 0) return false;
+        if (IsDeferredVatDeposit(doc)) return false;   // มัดจำพักรอ — ยังไม่ใช่ใบกำกับ
+        var c = doc.Contact;
+        if (c == null) return true;                    // ไม่มีข้อมูลผู้ซื้อ
+        if (c.IsWalkInCustomer) return true;
+        var tid = new string((c.TaxId ?? "").Where(char.IsDigit).ToArray());
+        if (tid.Length != 13) return true;
+        if (string.IsNullOrWhiteSpace(c.Address)) return true;
+        var isJuristic = c.ContactType == ContactType.JuristicPerson
+            || (tid.Length == 13 && tid.StartsWith("0"));
+        if (isJuristic)
+        {
+            var br = new string((c.BranchCode ?? "").Where(char.IsDigit).ToArray());
+            if (br.Length != 5) return true;
+        }
+        return false;
     }
 
     /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash
@@ -1064,8 +1092,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ห้ามบอกลูกค้าว่าเก็บ VAT แล้ว) แสดงเฉพาะยอดรวมสุทธิ
         var hideVatBreakdown = IsDeferredVatDeposit(doc);
         sb.AppendLine("<div class='summary'>");
-        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
+        // ส่วนลดท้ายบิล: SubTotal เก็บเป็นยอด "หลังหักท้ายบิล" → แสดง "ยอดรวมก่อน VAT"
+        // เป็นยอดก่อนหัก (SubTotal + BillDiscount) แล้วโชว์บรรทัด "ส่วนลดท้ายบิล"
+        var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
+        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{preBillSubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
+        if (doc.BillDiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดท้ายบิล</span><span>({doc.BillDiscountAmount:N2})</span></div>");
         if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         // หักเงินมัดจำ (display-only): ยอดรวมทั้งสิ้น → หักมัดจำ → ยอดชำระสุทธิ

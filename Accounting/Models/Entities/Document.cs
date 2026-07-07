@@ -161,6 +161,14 @@ public class Document : TenantEntity
     /// เพื่อกัน double-reverse ช่วง transition — ระบบภายนอกเปิดเมื่อเลิกส่ง JV แยก.</summary>
     public bool DepositAppliedDrivesJournal { get; set; }
 
+    /// <summary>true = ใบเสร็จรับเงินที่ออกเป็น "หลักฐาน" คู่กับ Payment (ตอน
+    /// บันทึกชำระเงินใบกำกับ/ใบแจ้งหนี้เครดิต) — Payment ลง JE (Dr เงินสด/Cr ลูกหนี้)
+    /// + ตัด AR ให้แล้ว ใบนี้จึง **ไม่ลง JE ซ้ำ ไม่ตัดหนี้ซ้ำ ไม่คิด VAT ซ้ำ**
+    /// (VAT อยู่ที่ใบกำกับต้นทาง). ใช้เพื่อพิมพ์ใบเสร็จลงวันที่รับเงินจริง.</summary>
+    public bool IsSettlementReceipt { get; set; }
+    /// <summary>Payment ต้นทางที่ออกใบเสร็จหลักฐานนี้ (คู่กับ IsSettlementReceipt).</summary>
+    public Guid? SettlementPaymentId { get; set; }
+
     /// <summary>ยอดมัดจำ (รวม VAT) ที่คืนให้ลูกค้าแล้ว (กรณียกเลิกการจอง).
     /// RefundDepositAsync gen reversal JE + ออกใบลดหนี้กลับ output VAT.
     /// 0 = ยังไม่คืน.</summary>
@@ -260,7 +268,13 @@ public class Document : TenantEntity
     /// rate that was shown to the user on the document.</summary>
     public decimal ExchangeRate { get; set; } = 1m;
     public decimal SubTotal { get; set; }
+    /// <summary>ผลรวมส่วนลด "รายบรรทัด" (Σ DocumentLine.DiscountAmount).</summary>
     public decimal DiscountAmount { get; set; }
+    /// <summary>ส่วนลด "ท้ายบิล" (จากยอดรวม) — % ที่ผู้ใช้กรอก (0 = ใช้โหมดยอดบาท).</summary>
+    public decimal BillDiscountPercent { get; set; }
+    /// <summary>ส่วนลดท้ายบิลที่หักจริง (ex-VAT, เฉลี่ย pro-rata ลงบรรทัดแล้ว).
+    /// SubTotal เป็นยอด "หลังหักท้ายบิล" → ยอดก่อนหัก = SubTotal + BillDiscountAmount.</summary>
+    public decimal BillDiscountAmount { get; set; }
     public decimal VatAmount { get; set; }
     public decimal WithholdingTaxAmount { get; set; }
     public decimal TotalAmount { get; set; }

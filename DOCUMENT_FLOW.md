@@ -188,9 +188,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
        `BuyerDeclinedTaxInvoice=true`** เอง → หัว downgrade เป็น "ใบเสร็จรับเงิน",
        **ไม่ block** (หลัก: เอกสาร §86/4 ไม่ครบ = ไม่ใช่ใบกำกับเต็มรูป จึงไม่ควรมีหัวว่า
        "ใบกำกับภาษี"). VAT ขายยังลง ภ.พ.30 ครบ.
-    **หัวเอกสาร**: `ComputeDocumentTitle` เมื่อ `buyerDeclined` (per-doc flag หรือ
-    walk-in) → ไม่ upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน"; ถ้า DocumentType=
-    TaxInvoice + `BuyerDeclinedTaxInvoice` → downgrade หัวเป็น "ใบเสร็จรับเงิน".
+    **หัวเอกสาร**: `ComputeDocumentTitle` เมื่อ `buyerDeclined` — per-doc flag,
+    walk-in, **หรือ `Buyer864Incomplete(doc)`** (ข้อมูล §86/4 ผู้ซื้อไม่ครบจริง:
+    เลขภาษี≠13 / ไม่มีที่อยู่ / นิติบุคคลไม่มีสาขา5 — เกณฑ์เดียวกับ approve gate,
+    เฉพาะเอกสารมี VAT ไม่ใช่มัดจำพักรอ) → ไม่ upgrade เป็น "ใบกำกับภาษี/ใบเสร็จ
+    รับเงิน"; ถ้า DocumentType=TaxInvoice → downgrade หัวเป็น "ใบเสร็จรับเงิน".
+    (กันเคสเอกสารที่ข้อมูลไม่ครบแต่หัวยังขึ้น "ใบกำกับภาษี" — ผิด §86/4)
     VAT ขายลงรายงาน/ภ.พ.30 ครบตามปกติ (ภาระ VAT ไม่ขึ้นกับหัวเอกสาร),
     ผู้ซื้อเคลมภาษีซื้อไม่ได้
 
@@ -1167,6 +1170,30 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 47: e-Tax PDF/A-3 — แก้บั๊ก /Size ผิด (trailer /Size = maxObj+1 แต่ add_
+_object เลข maxObj+1..+4 → embedded XML objects นอกช่วง → สรรพากร "ประมวลผล_
+_เอกสารแนบไม่ได้"). แก้เป็น newOffsets.Keys.Max()+1. นี่คือสาเหตุหลักที่ RD reject._
+_รอบ 46: e-Tax PDF/A-3 — แก้ compliance ให้ผ่าน validator: (1) trailer เพิ่ม /ID_
+_(incremental update คง file id เดิม — PDF/A บังคับ), (2) XMP เพิ่ม field มาตรฐาน_
+_ครบ (dc:title/creator/description, pdf:Producer/Keywords, xmp:CreatorTool/Create_
+_Date/ModifyDate) ตรงกับ Info dict + วันที่ capture ครั้งเดียว, (3) FindMaxObj_
+_fallback สแกน object header กัน XML ไม่ถูกฝังเงียบ. + DocumentEmailService:_
+_ส่ง e-Tax by Email ถ้าสร้าง PDF/A-3 ไม่ได้ → **fail loud** (เดิม swallow ส่ง_
+_อีเมลเปล่าไม่มีเอกสารตามกฎหมาย). หมายเหตุ: วิธี robust สุดคือใช้ PDF/A library_
+_(ETDA reference ใช้ iTextSharp) — ปัจจุบัน QuestPDF(A-2b)+injector ยังเปราะ._
+_รอบ 45: บันทึกชำระเงิน → ออก "ใบเสร็จรับเงิน" หลักฐานอัตโนมัติ (default เปิด_
+_ฝั่งขาย Invoice/TaxInvoice/DebitNote). `Document.IsSettlementReceipt=true` +_
+_`SettlementPaymentId`, `Payment.ReceiptDocumentId`. ใบนี้ **evidence-only**:_
+_Payment ลง Dr เงินสด/Cr ลูกหนี้ + ตัด AR แล้ว → ใบเสร็จ **ไม่ลง JE ซ้ำ ไม่ตัด_
+_หนี้ซ้ำ ไม่คิด VAT ซ้ำ** (VAT อยู่ที่ใบกำกับ, VatAmount=0) สร้างตรงเป็น Status=_
+_Paid ไม่ผ่าน ApproveDocumentAsync. void payment → void ใบเสร็จตาม. เลิกใช้_
+_convert Invoice→Receipt เป็นทางตัดหนี้ (กันเบิ้ล). `CreateSettlementReceiptAsync`._
+_รอบ 44: หัวเอกสาร downgrade ตาม `Buyer864Incomplete` จริง (ไม่ใช่แค่ flag) —_
+_ข้อมูล §86/4 ผู้ซื้อไม่ครบ = ห้ามขึ้น "ใบกำกับภาษี". + ส่วนลดท้ายบิล (จากยอด_
+_รวม): `Document.BillDiscountPercent/Amount` — `ComputeLineAmounts(extraDiscount)`_
+_เฉลี่ย pro-rata (ex-VAT) ลงบรรทัด → VAT/WHT รายบรรทัดถูกต้องแม้ mixed-rate._
+_SubTotal = หลังหักท้ายบิล (คง invariant Σ line.Amount); PDF แสดง "ยอดรวมก่อน_
+_VAT" = SubTotal+BillDiscount + บรรทัด "ส่วนลดท้ายบิล". `AllocateBillDiscount`._
 _รอบ 16 (audit ยอดเบิ้ล/double-count + concurrency): supersede block,_
 _deposit-apply settlement JE, settlement receipt กันนับซ้ำในรายงานรายได้,_
 _POS tip fix, POS refund discountFactor, Integration idempotency (expense/PV_

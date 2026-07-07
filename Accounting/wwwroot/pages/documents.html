@@ -620,8 +620,16 @@
                aligned ตรงกันเป๊ะทุกแถว ไม่ปริ้นออกไปทางขวาแบบไม่สมดุล -->
           <div style="margin-top:16px;display:flex;justify-content:flex-end">
             <div style="width:320px;max-width:100%;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px">
-              <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:14px">
+              <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:14px;align-items:center">
                 <span style="color:var(--gray-500)">ยอดรวมก่อน VAT</span><strong id="sumSubTotal" style="text-align:right">0.00</strong>
+                <span style="color:var(--gray-500)" title="ส่วนลดจากยอดรวม — ระบบเฉลี่ยลงแต่ละรายการให้ VAT ถูกต้อง">ส่วนลดท้ายบิล</span>
+                <span style="display:flex;gap:4px;justify-content:flex-end;align-items:center">
+                  <input type="number" id="fBillDiscount" inputmode="decimal" value="0" min="0" step="0.01" oninput="Page.calcSum()" style="width:84px;text-align:right;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
+                  <select id="fBillDiscountMode" onchange="Page.calcSum()" style="width:42px;padding:4px 2px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px" title="% = เปอร์เซ็นต์ของยอดรวม • ฿ = ยอดบาท">
+                    <option value="amt">฿</option>
+                    <option value="pct">%</option>
+                  </select>
+                </span>
                 <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
               </div>
@@ -3764,10 +3772,22 @@
           const lineTotalEl = row.querySelector('[data-f="lineTotal"]');
           if (lineTotalEl) lineTotalEl.textContent = Layout.money(net + lineVat);
         });
+        // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata: net แต่ละบรรทัดลดตามสัดส่วน
+        // → VAT/WHT ลดตามสัดส่วนเดียวกัน (เพราะเป็นเชิงเส้นต่อ net). ตรงกับ backend.
+        const billMode = document.getElementById('fBillDiscountMode')?.value || 'amt';
+        const billVal = parseFloat(document.getElementById('fBillDiscount')?.value) || 0;
+        let billDisc = billMode === 'pct' ? r2(sub * billVal / 100) : r2(billVal);
+        billDisc = Math.max(0, Math.min(billDisc, sub));
+        if (billDisc > 0 && sub > 0) {
+          const ratio = (sub - billDisc) / sub;
+          vat = r2(vat * ratio);
+          wht = r2(wht * ratio);
+        }
+        // sumSubTotal = "ยอดรวมก่อน VAT" (ก่อนหักท้ายบิล) = sub
         document.getElementById('sumSubTotal').textContent = Layout.money(sub);
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
-        const totalCalc = sub + vat - wht;
+        const totalCalc = (sub - billDisc) + vat - wht;
         document.getElementById('sumTotal').textContent = Layout.money(totalCalc);
         // #10 — amount in words (Thai baht) ใต้ยอดสุทธิ
         const wordsEl = document.getElementById('sumTotalWords');
@@ -3969,6 +3989,9 @@
         if (document.getElementById('fPaymentDate')) document.getElementById('fPaymentDate').value = '';
         const certSection = document.getElementById('certInLieuSection');
         if (certSection) certSection.style.display = 'none';
+        // reset ส่วนลดท้ายบิล สำหรับเอกสารใหม่
+        if (document.getElementById('fBillDiscount')) document.getElementById('fBillDiscount').value = 0;
+        if (document.getElementById('fBillDiscountMode')) document.getElementById('fBillDiscountMode').value = 'amt';
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
         this.addLine();
@@ -4161,6 +4184,13 @@
           if (fComb) fComb.checked = !!d.combinedInvoiceTaxInvoice;
           const fDecl = document.getElementById('fBuyerDeclinedTaxInvoice');
           if (fDecl) fDecl.checked = !!d.buyerDeclinedTaxInvoice;
+          // ส่วนลดท้ายบิล — % → โหมด pct; ไม่งั้นโหมด ฿ (ยอด ex-VAT ที่หักจริง)
+          const fBillD = document.getElementById('fBillDiscount');
+          const fBillM = document.getElementById('fBillDiscountMode');
+          if (fBillD && fBillM) {
+            if (d.billDiscountPercent > 0) { fBillM.value = 'pct'; fBillD.value = d.billDiscountPercent; }
+            else { fBillM.value = 'amt'; fBillD.value = d.billDiscountAmount || 0; }
+          }
           const fDep = document.getElementById('fIsDeposit');
           if (fDep) {
             fDep.checked = !!d.isDeposit;
@@ -4362,6 +4392,11 @@
           documentType: _effectiveDocType,
           combinedInvoiceTaxInvoice: _combineTax,
           buyerDeclinedTaxInvoice: document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false,
+          // ส่วนลดท้ายบิล (จากยอดรวม) — โหมด % → billDiscountPercent, โหมด ฿ → billDiscountAmount
+          billDiscountPercent: (document.getElementById('fBillDiscountMode')?.value === 'pct')
+            ? (parseFloat(document.getElementById('fBillDiscount')?.value) || 0) : 0,
+          billDiscountAmount: (document.getElementById('fBillDiscountMode')?.value !== 'pct')
+            ? (parseFloat(document.getElementById('fBillDiscount')?.value) || 0) : 0,
           documentDate: document.getElementById('fDate').value,
           dueDate: document.getElementById('fDueDate').value || null,
           deliveryDate: document.getElementById('fDeliveryDate')?.value || null,
@@ -4920,16 +4955,16 @@
               && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')
               && !hasEtaxId) {
             actions += ` <button class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
-            actions += ` <button class="btn btn-secondary" onclick="Page.sendEtaxEmailOneClick('${d.id}')" title="สร้าง e-Tax + ส่งอีเมลให้ลูกค้า (แนบ PDF/A-3 ฝัง XML + CC สรรพากร) ในคลิกเดียว">📧 ส่ง e-Tax อีเมล</button>`;
           }
-          // ส่งอีเมลปกติ (แนบ PDF) — เอกสารฝั่งขายที่อนุมัติแล้วเท่านั้น (กันส่ง Draft).
-          // ให้เลือกส่งแบบธรรมดาได้ นอกเหนือจาก e-Tax by Email ด้านบน.
+          // ส่งอีเมล — เปิดหน้าต่างกรอก ผู้รับ/CC/หัวข้อ/ข้อความ + ติ๊กส่งแบบ e-Tax ได้.
+          // เอกสารฝั่งขายที่อนุมัติแล้วเท่านั้น (กันส่ง Draft). e-Tax option แสดง
+          // เมื่อชนิดเอกสารออก e-Tax ได้ (§86) — ติ๊กแล้วระบบสร้าง e-Tax + แนบ XML ให้
           const salesEmailTypes = ['Invoice', 'TaxInvoice', 'Receipt', 'ReceiptVoucher',
             'Quotation', 'BillingNote', 'CreditNote', 'DebitNote', 'DeliveryNote'];
-          if (salesEmailTypes.includes(d.documentType)
-              && (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid')) {
-            const _defTo = (d.contact?.email || d.contactEmail || '').replace(/'/g, '');
-            actions += ` <button class="btn btn-secondary" onclick="Page.sendDocEmailPrompt('${d.id}','${_defTo}')" title="ส่งเอกสาร (PDF) ให้ลูกค้าทางอีเมล">📧 ส่งอีเมล</button>`;
+          const _approvedForEmail = (d.status === 'Approved' || d.status === 'Sent' || d.status === 'PartiallyPaid' || d.status === 'Paid');
+          if (salesEmailTypes.includes(d.documentType) && _approvedForEmail) {
+            const _etaxOk = etaxEligibleTypes.includes(d.documentType);
+            actions += ` <button class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}', ${_etaxOk}, false)" title="ส่งเอกสารให้ลูกค้าทางอีเมล — กรอกข้อมูล + เลือกส่งแบบ e-Tax ได้">📧 ส่งอีเมล</button>`;
           }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
@@ -5245,36 +5280,103 @@
        * failed (e.g. cert misconfigured) and the user fixed the issue.
        */
       /** 1 คลิก: สร้าง e-Tax (XML ฝัง PDF/A-3) → ส่งอีเมลลูกค้า + CC สรรพากร */
-      async sendEtaxEmailOneClick(id) {
+      // wrapper เดิม — เปิด modal ส่งอีเมล (e-Tax pre-check)
+      async sendEtaxEmailOneClick(id) { this.openSendEmailModal(id, true, true); },
+      async sendDocEmailPrompt(id, _defaultTo) { this.openSendEmailModal(id, false, false); },
+      /**
+       * หน้าต่างส่งอีเมลแบบเต็ม — กรอก ผู้รับ/สำเนา(CC)/หัวข้อ/ข้อความ + ติ๊ก
+       * "ส่งแบบ e-Tax" ได้ (แนบ PDF/A-3 + XML + สำเนาสรรพากร). แทน prompt เดิม
+       * ที่ถามแค่อีเมล. etaxEligible = ชนิดเอกสารออก e-Tax ได้ (§86) + อนุมัติแล้ว.
+       */
+      openSendEmailModal(id, etaxEligible, preferEtax) {
         const d = this._currentDoc;
-        const defaultTo = d?.contactEmail || d?.contact?.email || d?.emailTo || '';
-        const to = window.prompt('ส่ง e-Tax ทางอีเมลไปยัง (อีเมลลูกค้า):', defaultTo);
-        if (!to) return;
+        const defTo = (d?.contact?.email || d?.contactEmail || d?.emailTo || '');
+        const docNum = d?.documentNumber || '';
+        const hasEtaxId = !!d?.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
+        const defSubject = `${docNum ? docNum + ' ' : ''}จาก ${d?.companyName || 'บริษัท'}`.trim();
+        const defBody = `เรียน ${d?.contact?.name || d?.contactName || 'ลูกค้า'}\n\nบริษัทขอนำส่งเอกสาร ${docNum} มาพร้อมอีเมลนี้ (ไฟล์แนบ PDF)\nหากมีข้อสงสัยกรุณาติดต่อกลับ\n\nขอแสดงความนับถือ`;
+        let wrap = document.getElementById('sendEmailModal');
+        if (!wrap) {
+          wrap = document.createElement('div');
+          wrap.id = 'sendEmailModal';
+          wrap.className = 'modal-overlay';
+          wrap.innerHTML = `
+            <div class="modal" style="max-width:520px">
+              <div class="modal-header">
+                <h3 class="modal-title">📧 ส่งเอกสารทางอีเมล</h3>
+                <button class="modal-close" onclick="document.getElementById('sendEmailModal').classList.remove('active')">&times;</button>
+              </div>
+              <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div class="form-group" style="margin:0"><label class="form-label">ถึง (อีเมลผู้รับ) <span class="req">*</span></label>
+                  <input id="seTo" class="form-input" type="email" placeholder="customer@email.com"></div>
+                <div class="form-group" style="margin:0"><label class="form-label">สำเนา (CC) <span style="color:var(--gray-500);font-weight:normal;font-size:11px">คั่นหลายอีเมลด้วย ,</span></label>
+                  <input id="seCc" class="form-input" type="text" placeholder="(ไม่บังคับ)"></div>
+                <div class="form-group" style="margin:0"><label class="form-label">หัวข้อ</label>
+                  <input id="seSubject" class="form-input" type="text"></div>
+                <div class="form-group" style="margin:0"><label class="form-label">ข้อความ</label>
+                  <textarea id="seBody" class="form-input" rows="5" style="resize:vertical"></textarea></div>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="seAttachPdf" checked> แนบไฟล์ PDF</label>
+                <div id="seEtaxRow" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px">
+                  <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600"><input type="checkbox" id="seEtax"> 🧾 ส่งแบบ e-Tax Invoice</label>
+                  <div style="font-size:11px;color:#0369a1;margin-top:4px">แนบ PDF/A-3 ฝัง XML (ETDA) + ส่งสำเนาให้สรรพากร (csemail@etax.teda.th) ตามข้อกำหนด e-Tax by Email</div>
+                </div>
+                <div id="seError" style="display:none;color:#dc2626;font-size:12px"></div>
+              </div>
+              <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-outline" onclick="document.getElementById('sendEmailModal').classList.remove('active')">ยกเลิก</button>
+                <button class="btn btn-primary" id="seSendBtn">ส่งอีเมล</button>
+              </div>
+            </div>`;
+          document.body.appendChild(wrap);
+        }
+        // populate
+        wrap.querySelector('#seTo').value = defTo;
+        wrap.querySelector('#seCc').value = '';
+        wrap.querySelector('#seSubject').value = defSubject;
+        wrap.querySelector('#seBody').value = defBody;
+        wrap.querySelector('#seAttachPdf').checked = true;
+        wrap.querySelector('#seEtaxRow').style.display = etaxEligible ? 'block' : 'none';
+        wrap.querySelector('#seEtax').checked = !!(etaxEligible && preferEtax);
+        wrap.querySelector('#seError').style.display = 'none';
+        wrap.querySelector('#seSendBtn').onclick = () => this._submitSendEmail(id, hasEtaxId);
+        wrap.classList.add('active');
+        setTimeout(() => wrap.querySelector('#seTo').focus(), 50);
+      },
+      async _submitSendEmail(id, hasEtaxId) {
+        const wrap = document.getElementById('sendEmailModal');
+        const err = wrap.querySelector('#seError');
+        const to = wrap.querySelector('#seTo').value.trim();
+        if (!to) { err.textContent = 'กรุณากรอกอีเมลผู้รับ'; err.style.display = 'block'; return; }
+        const cc = wrap.querySelector('#seCc').value.trim() || null;
+        const subject = wrap.querySelector('#seSubject').value.trim() || null;
+        const body = wrap.querySelector('#seBody').value.trim() || null;
+        const attachPdf = wrap.querySelector('#seAttachPdf').checked;
+        const asEtax = wrap.querySelector('#seEtax').checked;
         const api = Layout.api(); if (!api) return;
+        const btn = wrap.querySelector('#seSendBtn'); btn.disabled = true;
         try {
-          Layout.toast('กำลังสร้าง e-Tax + ส่งอีเมล ...', 'info');
-          const companyId = Layout.getCompanyId();
-          const gen = await API.post(`/api/companies/${companyId}/etax/generate`, { documentId: id, signDigitally: false });
-          const etaxId = gen?.data?.id;
-          if (!etaxId) throw new Error(gen?.message || 'สร้าง e-Tax ไม่สำเร็จ');
-          await api.sendEtaxByEmail(etaxId, { to, includePdf: true, includeXml: true, includeRdTimestamp: true });
-          Layout.toast('ส่ง e-Tax ทางอีเมลสำเร็จ (แนบ PDF/A-3 + XML · CC สรรพากร)', 'success', 7000);
+          if (asEtax) {
+            Layout.toast('กำลังสร้าง e-Tax + ส่งอีเมล ...', 'info');
+            const companyId = Layout.getCompanyId();
+            let etaxId = this._currentDoc?.etaxInvoiceId;
+            if (!hasEtaxId) {
+              const gen = await API.post(`/api/companies/${companyId}/etax/generate`, { documentId: id, signDigitally: false });
+              etaxId = gen?.data?.id;
+              if (!etaxId) throw new Error(gen?.message || 'สร้าง e-Tax ไม่สำเร็จ');
+            }
+            await api.sendEtaxByEmail(etaxId, { to, cc, subject, body, includePdf: true, includeXml: true, includeRdTimestamp: true });
+            Layout.toast('ส่ง e-Tax ทางอีเมลสำเร็จ (แนบ PDF/A-3 + XML · สำเนาสรรพากร)', 'success', 7000);
+          } else {
+            Layout.toast('กำลังส่งอีเมล ...', 'info');
+            await api.sendDocumentEmail(id, { to, cc, subject, body, attachPdf, attachXml: false });
+            Layout.toast('ส่งอีเมลสำเร็จ', 'success');
+          }
+          wrap.classList.remove('active');
           await this.detail(id);
           await this.load();
-        } catch (e) { Layout.toast('ส่ง e-Tax อีเมลไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
-      },
-      /** ส่งเอกสาร (PDF) ทางอีเมลแบบธรรมดา — เฉพาะเอกสารที่อนุมัติแล้ว
-       * (backend บล็อกเอกสาร Draft ให้อีกชั้น). */
-      async sendDocEmailPrompt(id, defaultTo) {
-        const to = window.prompt('ส่งเอกสารทางอีเมลไปยัง (อีเมลลูกค้า):', defaultTo || '');
-        if (!to) return;
-        const api = Layout.api(); if (!api) return;
-        try {
-          Layout.toast('กำลังส่งอีเมล ...', 'info');
-          await api.sendDocumentEmail(id, { to, attachPdf: true });
-          Layout.toast('ส่งอีเมลสำเร็จ', 'success');
-          await this.load();
-        } catch (e) { Layout.toast('ส่งอีเมลไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
+        } catch (e) {
+          err.textContent = 'ส่งไม่สำเร็จ: ' + (e.message || ''); err.style.display = 'block';
+        } finally { btn.disabled = false; }
       },
       async generateEtax(id) {
         if (!confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้')) return;
@@ -5583,6 +5685,11 @@
                   <label class="form-label">หมายเหตุ</label>
                   <input id="rpNotes" class="form-input" type="text">
                 </div>
+                <label id="rpIssueReceiptRow" style="display:flex;gap:8px;align-items:flex-start;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;font-size:13px">
+                  <input type="checkbox" id="rpIssueReceipt" checked style="margin-top:2px">
+                  <span><b>ออกใบเสร็จรับเงินให้ลูกค้า</b> (ลงวันที่รับเงินจริง)<br>
+                  <span style="color:#15803d;font-size:11px">ใบเสร็จอ้างอิงใบกำกับ/ใบแจ้งหนี้เดิม · VAT รับรู้ที่ใบกำกับแล้วไม่คิดซ้ำ · ไม่ลง JE ซ้ำ</span></span>
+                </label>
               </div>
               <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="document.getElementById('rpModal').classList.remove('active')">ยกเลิก</button>
@@ -5602,6 +5709,13 @@
         document.getElementById('rpFee').value = '';
         document.getElementById('rpNotes').value = '';
         document.getElementById('rpMethod').value = 'BankTransfer';
+        // ออกใบเสร็จรับเงิน — เฉพาะฝั่งขาย (ลูกค้าจ่ายเรา). ฝั่งซื้อ (PV/Expense) ซ่อน
+        const _rpDt = this._currentDoc?.documentType;
+        const _salesSide = _rpDt === 'Invoice' || _rpDt === 'TaxInvoice' || _rpDt === 'DebitNote';
+        const rpIssueRow = document.getElementById('rpIssueReceiptRow');
+        if (rpIssueRow) rpIssueRow.style.display = _salesSide ? 'flex' : 'none';
+        const rpIssueCb = document.getElementById('rpIssueReceipt');
+        if (rpIssueCb) rpIssueCb.checked = _salesSide;   // default เปิดสำหรับฝั่งขาย
         // Populate the bank-override dropdown with the company's bank
         // accounts. Default option (empty value) keeps the doc's channel.
         const rpBank = document.getElementById('rpBankOverride');
@@ -5703,17 +5817,17 @@
                 : null,
               feeAmount: (parseFloat(document.getElementById('rpFee').value || '0') || 0) > 0
                 ? parseFloat(document.getElementById('rpFee').value) : null,
+              // ออกใบเสร็จรับเงินหลักฐานคู่กับการชำระ (default เปิดฝั่งขาย) —
+              // backend สร้าง Receipt อ้างอิงเอกสาร ไม่ลง JE ซ้ำ ลงวันที่รับเงิน
+              issueReceiptDocument: document.getElementById('rpIssueReceipt')?.checked || false,
             });
-            Layout.toast('บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success');
+            const _issued = document.getElementById('rpIssueReceipt')?.checked;
+            Layout.toast(_issued
+              ? 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ + ออกใบเสร็จรับเงินให้แล้ว'
+              : 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success', 6000);
             wrap.classList.remove('active');
             Layout.closeModal('detailModal');
             await this.load();
-            // ชำระครบ + เป็น Invoice/TaxInvoice → เสนอออกใบเสร็จรับเงิน (Receipt)
-            // ให้ลูกค้า (VAT รับรู้แล้วที่ใบเดิม — Receipt เป็นหลักฐานรับเงิน)
-            const _dt = this._currentDoc?.documentType;
-            if (amount >= (balanceDue - 0.01) && (_dt === 'Invoice' || _dt === 'TaxInvoice')) {
-              this._offerIssueReceipt(docId, _dt);
-            }
           } catch (e) {
             Layout.toast(e.message, 'error');
           } finally {

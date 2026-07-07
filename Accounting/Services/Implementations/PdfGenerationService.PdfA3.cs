@@ -170,6 +170,9 @@ public partial class PdfGenerationService
 
         var xmlBytes = System.Text.Encoding.UTF8.GetBytes(xmlContent);
         var xmlFileName = $"{metadata.EtaxRefNumber}.xml";
+        // จับ timestamp ครั้งเดียว ใช้ทั้ง Info dict (WithMetadata) และ XMP — PDF/A
+        // บังคับวันที่ใน XMP ต้องตรงกับ Info dict (ไม่งั้น veraPDF/ETDA validator fail)
+        var now = DateTime.UtcNow;
 
         var document = QuestPDF.Fluent.Document.Create(container =>
         {
@@ -194,14 +197,14 @@ public partial class PdfGenerationService
             Keywords = "e-Tax, ETDA, Thailand, Tax Invoice, PDF/A-3",
             Producer = "NextAcc e-Tax PDF/A-3 Generator (QuestPDF)",
             Creator = "NextAcc",
-            CreationDate = DateTime.UtcNow,
-            ModifiedDate = DateTime.UtcNow
+            CreationDate = now,
+            ModifiedDate = now
         });
 
         document.WithSettings(new DocumentSettings { PdfA = true });
 
         var pdfBytes = document.GeneratePdf();
-        var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName);
+        var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName, now);
         return PdfAttachmentInjector.AttachXml(pdfBytes, xmlFileName, xmlBytes,
             "e-Tax XML data per ETDA Recommendation 3-2560 v2.0",
             etdaXmpMetadata: etdaXmp);
@@ -214,7 +217,7 @@ public partial class PdfGenerationService
     /// properties — required for ETDA validator to recognize the embedded XML payload.
     /// PDF/A part=3, conformance=U (Unicode level for Thai text).
     /// </summary>
-    private static string BuildEtdaXmpMetadata(EtaxPdfMetadata m, string xmlFileName)
+    private static string BuildEtdaXmpMetadata(EtaxPdfMetadata m, string xmlFileName, DateTime now)
     {
         // Per ETDA template: namespace URI is fixed regardless of doc type
         // (xmlns:rsm = "urn:etda:uncefact:data:standard:Invoice_CrossIndustryInvoice:2#")
@@ -237,13 +240,28 @@ public partial class PdfGenerationService
         sb.Append("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"NextAcc e-Tax\">");
         sb.Append("<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">");
 
-        // Core PDF/A-3 identification
+        // Core PDF/A-3 identification + standard XMP properties. **ต้องตรงกับ Info
+        // dict (WithMetadata)** ทุก field ที่ตั้ง — เพราะ injector แทน XMP ของ QuestPDF
+        // ทั้งก้อน ถ้าขาด dc:title/xmp:CreateDate/pdf:Producer ฯลฯ → PDF/A metadata
+        // inconsistency → validator fail. ค่าตรงกับ WithMetadata ด้านบนเป๊ะ.
+        var title = XmlEscape($"{m.DocumentTypeNameTh} {m.DocumentNumber}");
+        var author = XmlEscape(m.SellerName ?? "");
+        var subject = XmlEscape($"e-Tax XML embedded: {xmlFileName}");
+        var iso = now.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
         sb.Append("<rdf:Description rdf:about=\"\"");
         sb.Append(" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"");
         sb.Append(" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"");
         sb.Append(" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\"");
         sb.Append(" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">");
         sb.Append("<dc:format>application/pdf</dc:format>");
+        sb.Append($"<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">{title}</rdf:li></rdf:Alt></dc:title>");
+        sb.Append($"<dc:creator><rdf:Seq><rdf:li>{author}</rdf:li></rdf:Seq></dc:creator>");
+        sb.Append($"<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">{subject}</rdf:li></rdf:Alt></dc:description>");
+        sb.Append("<pdf:Producer>NextAcc e-Tax PDF/A-3 Generator (QuestPDF)</pdf:Producer>");
+        sb.Append("<pdf:Keywords>e-Tax, ETDA, Thailand, Tax Invoice, PDF/A-3</pdf:Keywords>");
+        sb.Append("<xmp:CreatorTool>NextAcc</xmp:CreatorTool>");
+        sb.Append($"<xmp:CreateDate>{iso}</xmp:CreateDate>");
+        sb.Append($"<xmp:ModifyDate>{iso}</xmp:ModifyDate>");
         sb.Append("<pdfaid:part>3</pdfaid:part>");
         sb.Append("<pdfaid:conformance>U</pdfaid:conformance>");
         sb.Append("</rdf:Description>");
