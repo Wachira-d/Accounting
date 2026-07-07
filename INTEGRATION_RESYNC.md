@@ -179,6 +179,23 @@ Dr 21913 ภาษีขายรอเรียกเก็บ   32.71   ← �
   217xx/21913 จะถูกกลับ 2 รอบ. ระหว่างที่ยังไม่พร้อม ให้คงโหมด display-only
   (flag=false) + JV แยกเหมือนเดิม (GL ถูกต้องอยู่แล้ว)
 
+### 9.2 Resync / void ใบเช็คเอาท์ (drives mode) — ใบมัดจำถูก un-realize ให้อัตโนมัติ
+
+**ไม่ต้อง void ใบมัดจำ** ตอน resync — ใบมัดจำ (เงินรับจริง 500) อยู่นิ่ง
+resync แตะเฉพาะ "ใบเช็คเอาท์". NextAcc คุมสถานะ realized ของใบมัดจำผ่าน
+lifecycle ของใบเช็คเอาท์ (ยืนยันจากโค้ด `VoidDocumentAsync` §7c):
+
+| จังหวะ | ใบมัดจำ (ไม่ถูก void) |
+|---|---|
+| **สร้าง**ใบเช็คเอาท์ (drives) | mark realized: `DepositRealizedAmount += ฐาน`, `DepositAppliedToDocumentId = เช็คเอาท์`, VAT deferred → recognized |
+| **void** ใบเช็คเอาท์ | JE reversal กลับ 217xx/21913 ใน GL **+ un-realize subledger อัตโนมัติ**: `DepositRealizedAmount −= ฐาน`, ถ้าไม่ครบ → `DepositRealizedAt = null`, VAT → un-recognize, `DepositAppliedToDocumentId = null` |
+| **สร้างใหม่** (resync) อ้าง `depositAppliedRef` เดิม | re-realize สะอาด (มัดจำกลับเป็น "คงค้าง" แล้ว → หักได้อีกครั้ง) |
+
+⟹ วงจร CREATE → VOID → CREATE ของ resync ทำงานถูกต้อง 100% ในโหมด drives —
+GL ถูกทุกสเต็ป, subledger ใบมัดจำแม่นยำ (ไม่ค้าง realized ผี, ไม่ double).
+ข้อยกเว้นเดียวที่ต้อง void ใบมัดจำจริง = **ยกเลิกการจอง/คืนมัดจำ** (flow แยก
+RefundDeposit) ไม่ใช่การ resync เช็คเอาท์
+
 ## 10. ประเภทที่รองรับ / ยังไม่รองรับ
 
 | Endpoint | Resync update |

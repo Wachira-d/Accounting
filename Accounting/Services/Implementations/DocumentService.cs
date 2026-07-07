@@ -3076,6 +3076,38 @@ public class DocumentService : IDocumentService
                     doc.DepositAppliedToDocumentId = null;
                 }
 
+                // 7c) UN-realize ใบมัดจำ เมื่อ void "ใบรับเงินที่ขับ JE ด้วยมัดจำ"
+                //     (depositAppliedDrivesJournal) — ใบมัดจำเองไม่ถูก void (เงิน
+                //     รับจริงยังอยู่) แต่สถานะ realized ของมันถูกคุมโดย lifecycle
+                //     ของใบเช็คเอาท์นี้. JE reversal (step 2) กลับ 217xx/21913 ใน GL
+                //     แล้ว แต่ subledger ของใบมัดจำ (DepositRealizedAmount/At,
+                //     DepositAppliedToDocumentId) ต้อง un-mark เองเพื่อให้ resync
+                //     (สร้างใบใหม่อ้างมัดจำเดิม) re-realize ได้ถูกต้อง.
+                if (!doc.IsDeposit && doc.DepositAppliedDrivesJournal
+                    && doc.DepositAppliedAmount > 0 && !string.IsNullOrWhiteSpace(doc.DepositAppliedRef))
+                {
+                    var deposit = await _db.Documents.FirstOrDefaultAsync(d =>
+                        d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                        && d.DocumentNumber == doc.DepositAppliedRef);
+                    if (deposit != null)
+                    {
+                        var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
+                        var depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
+                        deposit.DepositRealizedAmount = Math.Max(0m, deposit.DepositRealizedAmount - depBase);
+                        // ยังไม่ realized ครบ → เคลียร์วันปิด (กลับเป็น "มัดจำคงค้าง")
+                        if (deposit.SubTotal - deposit.DepositRealizedAmount > 0.005m)
+                            deposit.DepositRealizedAt = null;
+                        // ถ้าใบนี้เป็นผู้รับรู้ VAT deferred ของมัดจำ → un-recognize
+                        if (deposit.DepositAppliedToDocumentId == doc.Id)
+                        {
+                            if (deposit.DepositOutputVatDeferred)
+                                deposit.DepositOutputVatRecognizedAt = null;
+                            deposit.DepositAppliedToDocumentId = null;
+                        }
+                        deposit.UpdatedAt = DateTime.UtcNow;
+                    }
+                }
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
