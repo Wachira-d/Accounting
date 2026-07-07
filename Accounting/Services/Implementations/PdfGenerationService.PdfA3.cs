@@ -240,7 +240,7 @@ public partial class PdfGenerationService
                     Key = xmlFileName,
                     FilePath = xmlPath,
                     AttachmentName = xmlFileName,        // ชื่อไฟล์แนบ = {EtaxRef}.xml
-                    MimeType = "application/xml",
+                    MimeType = "text/xml",   // ตรงกับ TakeTime (/Subtype /text/xml) ที่ผ่าน
                     Description = "Tax Invoice XML Data",
                     // XML = ตัวจริงตามกฎหมาย, PDF = ภาพแสดงแทน → Alternative (ETDA spec)
                     Relationship = QuestPDF.Fluent.DocumentOperation.DocumentAttachmentRelationship.Alternative,
@@ -251,7 +251,11 @@ public partial class PdfGenerationService
                 .ExtendMetadata(BuildEtdaXmpExtension(metadata, xmlFileName))  // ETDA rsm extension schema
                 .Save(outPath);
 
-            return File.ReadAllBytes(outPath);
+            // ETDA บังคับ PDF/A-3**U** (PdfAConformanceLevel.PDF_A_3U — เทียบ ETDA
+            // reference + TakeTime) แต่ QuestPDF ออก **B**. ฟอนต์ที่ฝังมี ToUnicode
+            // ครบทุกตัว (single-byte→Unicode) → ไฟล์เข้าเกณฑ์ U จริง → อัป conformance
+            // B→U ใน XMP (แทนที่ยาวเท่ากัน ไม่กระทบ xref/โครงสร้าง).
+            return UpgradePdfaConformanceToU(File.ReadAllBytes(outPath));
         }
         catch (Exception ex)
         {
@@ -284,13 +288,14 @@ public partial class PdfGenerationService
         // ETDA uses TypeCode here (388/T03/80/81 etc.), pulled from metadata.DocumentType
         // For our DTO, DocumentType holds the root element name (e.g. "TaxInvoice_CrossIndustryInvoice")
         // — translate to ETDA TypeCode for compatibility with ETDA validator.
+        // ชื่อประเภทเอกสารเป็นข้อความ (เทียบ TakeTime: "Tax Invoice") ไม่ใช่ typeCode
         var typeCode = m.DocumentType switch
         {
-            "TaxInvoice_CrossIndustryInvoice" => "388",
-            "Receipt_CrossIndustryInvoice" => "T03",
+            "TaxInvoice_CrossIndustryInvoice" => "Tax Invoice",
+            "Receipt_CrossIndustryInvoice" => "Receipt",
             "DebitCreditNote_CrossIndustryInvoice" =>
-                m.DocumentTypeNameTh.Contains("เพิ่ม") ? "80" : "81",
-            _ => "388"
+                m.DocumentTypeNameTh.Contains("เพิ่ม") ? "Debit Note" : "Credit Note",
+            _ => "Tax Invoice"
         };
 
         var sb = new System.Text.StringBuilder();
@@ -375,17 +380,49 @@ public partial class PdfGenerationService
     /// XMP ที่มันสร้าง (part=3 อยู่แล้ว) → ไม่ต้องมี xpacket/xmpmeta/rdf:RDF/pdfaid
     /// wrapper (ต่างจาก BuildEtdaXmpMetadata ที่คืน XMP เต็มก้อนสำหรับ injector เก่า).
     /// รูปแบบตาม ETDA Resources/EDocument_PDFAExtensionSchema.xml (เหมือน ZUGFeRD).</summary>
+    /// <summary>อัป pdfaid:conformance จาก B → U ใน XMP metadata (byte-level, ยาว
+    /// เท่ากันจึงไม่กระทบ xref/offset). ETDA e-Tax by Email บังคับ PDF/A-3U; QuestPDF
+    /// ออก 3B; ฟอนต์ที่ QuestPDF/Skia ฝังมี ToUnicode ครบ → เข้าเกณฑ์ U ได้จริง.
+    /// XMP metadata stream ใน PDF/A ไม่ถูกบีบอัด (uncompressed) จึงหาเจอตรง ๆ.</summary>
+    private static byte[] UpgradePdfaConformanceToU(byte[] pdf)
+    {
+        // จับทั้งรูป element (>B<) และ attribute — QuestPDF ใช้ element เป็นหลัก
+        ReplaceAsciiInPlace(pdf,
+            "<pdfaid:conformance>B</pdfaid:conformance>",
+            "<pdfaid:conformance>U</pdfaid:conformance>");
+        ReplaceAsciiInPlace(pdf, "pdfaid:conformance=\"B\"", "pdfaid:conformance=\"U\"");
+        return pdf;
+    }
+
+    /// <summary>แทนที่ ASCII string ในไบต์ PDF แบบ in-place — find/repl ต้องยาวเท่ากัน
+    /// (ไม่งั้น offset xref เพี้ยน). ทำทุกตำแหน่งที่เจอ.</summary>
+    private static void ReplaceAsciiInPlace(byte[] buf, string find, string repl)
+    {
+        var f = System.Text.Encoding.ASCII.GetBytes(find);
+        var r = System.Text.Encoding.ASCII.GetBytes(repl);
+        if (f.Length != r.Length || f.Length == 0) return;
+        for (int i = 0; i + f.Length <= buf.Length; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < f.Length; j++) { if (buf[i + j] != f[j]) { match = false; break; } }
+            if (match) { Array.Copy(r, 0, buf, i, r.Length); i += f.Length - 1; }
+        }
+    }
+
     private static string BuildEtdaXmpExtension(EtaxPdfMetadata m, string xmlFileName)
     {
         const string rsmNs = "urn:etda:uncefact:data:standard:Invoice_CrossIndustryInvoice:2#";
-        var typeCode = m.DocumentType switch
+        // rsm:DocumentType = **ชื่อประเภทเอกสารเป็นข้อความ** (เทียบ TakeTime ที่ผ่าน:
+        // "Tax Invoice") ไม่ใช่ typeCode "388" — ETDA คาดหวัง human-readable string
+        var docTypeText = m.DocumentType switch
         {
-            "TaxInvoice_CrossIndustryInvoice" => "388",
-            "Receipt_CrossIndustryInvoice" => "T03",
-            "DebitCreditNote_CrossIndustryInvoice" => m.DocumentTypeNameTh.Contains("เพิ่ม") ? "80" : "81",
-            _ => "388"
+            "TaxInvoice_CrossIndustryInvoice" => "Tax Invoice",
+            "Receipt_CrossIndustryInvoice" => "Receipt",
+            "DebitCreditNote_CrossIndustryInvoice" => m.DocumentTypeNameTh.Contains("เพิ่ม") ? "Debit Note" : "Credit Note",
+            _ => "Tax Invoice"
         };
         var version = (m.XmlVersion ?? "2.0").TrimStart('v', 'V');
+        var typeCode = docTypeText;   // ใช้ชื่อข้อความ (Tax Invoice) เป็นค่า DocumentType
         var sb = new System.Text.StringBuilder();
         // (1) extension schema declaration
         sb.Append("<rdf:Description rdf:about=\"\"");

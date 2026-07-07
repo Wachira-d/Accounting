@@ -754,7 +754,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         {
             new XAttribute(XNamespace.Xmlns + "rsm", rsm),
             new XAttribute(XNamespace.Xmlns + "ram", ram),
-            new XAttribute(XNamespace.Xmlns + "xsi", xsi)
+            new XAttribute(XNamespace.Xmlns + "xsi", xsi),
+            // xsi:schemaLocation = namespace ของ root (ตรงกับ TakeTime/ETDA reference)
+            new XAttribute(xsi + "schemaLocation", rsm.NamespaceName)
         };
         if (additionalRef != null)
             rootAttrs.Add(new XAttribute(XNamespace.Xmlns + "udt", udt));
@@ -790,6 +792,33 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     /// <summary>ISO 8601 with 3-digit fractional seconds — matches ETDA reference samples.</summary>
     private static string FormatIso(DateTime dt) =>
         dt.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture);
+
+    /// <summary>ram:DefinedTradeContact (email + โทร) ตาม ETDA — ตรงกับ TakeTime.
+    /// null เมื่อไม่มีทั้ง email/phone (ผู้เรียกใส่เป็น content แล้ว null จะถูกข้าม).
+    /// ลำดับ: EmailURIUniversalCommunication ก่อน TelephoneUniversalCommunication.</summary>
+    private static XElement? BuildDefinedTradeContact(XNamespace ram, string? email, string? phone)
+    {
+        var children = new List<object>();
+        if (!string.IsNullOrWhiteSpace(email))
+            children.Add(new XElement(ram + "EmailURIUniversalCommunication",
+                new XElement(ram + "URIID", email!.Trim())));
+        var ph = FormatEtdaPhone(phone);
+        if (ph != null)
+            children.Add(new XElement(ram + "TelephoneUniversalCommunication",
+                new XElement(ram + "CompleteNumber", ph)));
+        return children.Count == 0 ? null : new XElement(ram + "DefinedTradeContact", children);
+    }
+
+    /// <summary>เบอร์ไทยรูปแบบ ETDA: ตัด 0 นำหน้า + ใส่ "+66-" (ตรง TakeTime:
+    /// 0634161496 → +66-634161496). null เมื่อไม่มีเลข.</summary>
+    private static string? FormatEtdaPhone(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return null;
+        var d = new string(phone.Where(char.IsDigit).ToArray());
+        if (d.Length == 0) return null;
+        if (d.StartsWith("0")) d = d.Substring(1);
+        return "+66-" + d;
+    }
 
     /// <summary>
     /// Compose ID per Schematron rules:
@@ -905,6 +934,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 new XElement(ram + "ID",
                     new XAttribute("schemeID", taxIdSchemeId),
                     taxId)),
+            // email + โทร (หลัง TaxRegistration ก่อน Address — ตาม TakeTime/ETDA)
+            BuildDefinedTradeContact(ram, company.Email, company.Phone),
             new XElement(ram + "PostalTradeAddress",
                 new XElement(ram + "PostcodeCode", postCode),
                 !string.IsNullOrEmpty(company.BuildingName)
@@ -979,6 +1010,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 new XElement(ram + "ID",
                     new XAttribute("schemeID", schemeId),
                     txId)),
+            // email + โทร ผู้ซื้อ (ถ้ามี) — ตาม TakeTime/ETDA
+            BuildDefinedTradeContact(ram, contact.Email, contact.Phone),
             new XElement(ram + "PostalTradeAddress", addressElements.Where(e => e != null)));
     }
 
