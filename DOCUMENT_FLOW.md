@@ -1170,6 +1170,11 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 49: dashboard เงินมัดจำ (`GetDepositsAsync`) — เดิมกรอง `IsDeposit=true`_
+_อย่างเดียว → พลาดมัดจำที่สร้างผ่าน integration (ลง JE เอง Cr 215xx/217xx ผ่าน_
+_mapping DEPOSIT_RECEIVED โดยไม่ set IsDeposit) → หน้าเงินมัดจำโชว์ 0. เพิ่มการ_
+_ตรวจจาก GL จริง (เอกสาร Receipt/RV ที่มี JE posted Cr 215xx/217xx ไม่ reverse)_
+_union กับ native → สะท้อนความจริงทางบัญชี ไม่พึ่งแค่ธง._
 _รอบ 48: e-Tax PDF/A-3 — เปลี่ยนวิธีฝัง XML จาก hand-rolled injector (2 xref,_
 _XMP ซ้อน → strict parser/สรรพากรหา XML ไม่เจอ = "XML หาย") → **QuestPDF native_
 _`DocumentOperation.AddAttachment()` + `ExtendMetadata()`** (qpdf single-pass,_
