@@ -1580,12 +1580,41 @@ public class DocumentService : IDocumentService
 
     public async Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null)
     {
+        // (1) เอกสารมัดจำ native — ติดธง IsDeposit ตอนสร้างในระบบ
         var rows = await _db.Documents.AsNoTracking()
             .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && d.IsDeposit
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
-            .OrderByDescending(d => d.DocumentDate)
             .ToListAsync();
+
+        // (2) เอกสารที่ "เป็นมัดจำจริงตาม GL" แต่ไม่ได้ติดธง IsDeposit — เช่นใบเสร็จ
+        //     ที่สร้างผ่าน integration (ระบบภายนอกลง JE เอง Cr 215xx/217xx ผ่าน
+        //     account mapping DEPOSIT_RECEIVED โดยไม่ set IsDeposit) → dashboard เดิม
+        //     กรอง IsDeposit=true จึงพลาด. ตรวจจากการลงบัญชีจริง (Cr เงินมัดจำ/ขายรอ
+        //     รับรู้) เพื่อให้ dashboard สะท้อนความจริงทางบัญชี ไม่พึ่งแค่ธง.
+        var nativeIds = rows.Select(r => r.Id).ToHashSet();
+        var glDepositDocIds = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => !l.IsDeleted && l.CreditAmount > 0
+                && (l.Account.AccountCode.StartsWith("215") || l.Account.AccountCode.StartsWith("217"))
+                && l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.ReversedByEntryId == null
+                && l.JournalEntry.SourceDocumentId != null)
+            .Select(l => l.JournalEntry.SourceDocumentId!.Value)
+            .Distinct()
+            .ToListAsync();
+        var extraIds = glDepositDocIds.Where(id => !nativeIds.Contains(id)).ToList();
+        if (extraIds.Count > 0)
+        {
+            var extra = await _db.Documents.AsNoTracking()
+                .Include(d => d.Contact)
+                .Where(d => d.CompanyId == companyId && extraIds.Contains(d.Id)
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                    && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
+                .ToListAsync();
+            rows.AddRange(extra);
+        }
+        rows = rows.OrderByDescending(d => d.DocumentDate).ToList();
 
         var now = DateTime.UtcNow;
         var list = rows.Select(d =>
