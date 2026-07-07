@@ -641,17 +641,27 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         Guid? creatorId = Guid.TryParse(doc.CreatedBy, out var cId) ? cId : null;
 
-        // Real approver from the approval audit trail (preferred over UpdatedBy).
-        var approverId = await _db.DocumentApprovals.AsNoTracking()
-            .Where(a => a.DocumentId == doc.Id
-                        && a.Status == ApprovalStatus.Approved
-                        && a.ApproverUserId != null
-                        && (a.ApprovalType == "Internal" || a.ApproverRole == "Approver"))
-            .OrderByDescending(a => a.StepOrder).ThenByDescending(a => a.ApprovedAt)
-            .Select(a => a.ApproverUserId)
-            .FirstOrDefaultAsync();
-        if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
-            approverId = uId;
+        // ช่อง "ผู้อนุมัติ" ต้องมีลายเซ็นเฉพาะเอกสารที่อนุมัติจริงแล้ว. Draft /
+        // รออนุมัติ / ถูกปฏิเสธ = ยังไม่มีผู้อนุมัติ → เว้นว่าง. เดิม fallback ไป
+        // doc.UpdatedBy ทำให้ Draft ที่เจ้าของแก้ล่าสุดโชว์ลายเซ็นเจ้าของใน
+        // ช่องผู้อนุมัติ ทั้งที่ยังไม่มีใครอนุมัติ.
+        var isApproved = doc.Status is not (DocumentStatus.Draft
+            or DocumentStatus.WaitingApproval or DocumentStatus.Rejected);
+        Guid? approverId = null;
+        if (isApproved)
+        {
+            // Real approver from the approval audit trail (preferred over UpdatedBy).
+            approverId = await _db.DocumentApprovals.AsNoTracking()
+                .Where(a => a.DocumentId == doc.Id
+                            && a.Status == ApprovalStatus.Approved
+                            && a.ApproverUserId != null
+                            && (a.ApprovalType == "Internal" || a.ApproverRole == "Approver"))
+                .OrderByDescending(a => a.StepOrder).ThenByDescending(a => a.ApprovedAt)
+                .Select(a => a.ApproverUserId)
+                .FirstOrDefaultAsync();
+            if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
+                approverId = uId;
+        }
 
         var userIds = new List<Guid>();
         if (creatorId.HasValue) userIds.Add(creatorId.Value);
