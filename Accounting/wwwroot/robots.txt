@@ -1,0 +1,23 @@
+# NextAcc — robots.txt
+User-agent: *
+Allow: /$
+Allow: /index.html
+Allow: /contact.html
+Allow: /register.html
+Allow: /login.html
+Allow: /booking.html
+Allow: /storefront.html
+
+# Private app / authenticated areas — no SEO value, keep out of the index
+Disallow: /app.html
+Disallow: /pages/
+Disallow: /admin/
+Disallow: /portal.html
+Disallow: /vendor-portal.html
+Disallow: /mobile-expense.html
+Disallow: /accept-invitation.html
+Disallow: /reset-password.html
+Disallow: /change-password.html
+Disallow: /api/
+
+Sitemap: https://nextacc.net/sitemap.xml
