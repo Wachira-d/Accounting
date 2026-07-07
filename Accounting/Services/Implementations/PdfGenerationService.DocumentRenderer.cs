@@ -620,9 +620,13 @@ public partial class PdfGenerationService
                 });
             }
             var hideVatBreakdown = IsDeferredVatDeposit(doc);
-            if (t.ShowSubTotal && !hideVatBreakdown) Row("ยอดรวมก่อน VAT", doc.SubTotal.ToString("N2"));
+            // ส่วนลดท้ายบิล: SubTotal = หลังหักท้ายบิล → โชว์ยอดก่อนหัก + บรรทัดส่วนลด
+            var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
+            if (t.ShowSubTotal && !hideVatBreakdown) Row("ยอดรวมก่อน VAT", preBillSubTotal.ToString("N2"));
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
                 Row("ส่วนลดรวม", doc.DiscountAmount.ToString("N2"));
+            if (doc.BillDiscountAmount > 0)
+                Row("ส่วนลดท้ายบิล", $"({doc.BillDiscountAmount:N2})");
             if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown)
                 Row("ภาษีมูลค่าเพิ่ม 7%", doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)

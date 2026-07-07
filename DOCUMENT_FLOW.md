@@ -1170,6 +1170,12 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 44: หัวเอกสาร downgrade ตาม `Buyer864Incomplete` จริง (ไม่ใช่แค่ flag) —_
+_ข้อมูล §86/4 ผู้ซื้อไม่ครบ = ห้ามขึ้น "ใบกำกับภาษี". + ส่วนลดท้ายบิล (จากยอด_
+_รวม): `Document.BillDiscountPercent/Amount` — `ComputeLineAmounts(extraDiscount)`_
+_เฉลี่ย pro-rata (ex-VAT) ลงบรรทัด → VAT/WHT รายบรรทัดถูกต้องแม้ mixed-rate._
+_SubTotal = หลังหักท้ายบิล (คง invariant Σ line.Amount); PDF แสดง "ยอดรวมก่อน_
+_VAT" = SubTotal+BillDiscount + บรรทัด "ส่วนลดท้ายบิล". `AllocateBillDiscount`._
 _รอบ 16 (audit ยอดเบิ้ล/double-count + concurrency): supersede block,_
 _deposit-apply settlement JE, settlement receipt กันนับซ้ำในรายงานรายได้,_
 _POS tip fix, POS refund discountFactor, Integration idempotency (expense/PV_

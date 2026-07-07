@@ -24,6 +24,10 @@ public record CreateDocumentRequest(
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
     bool? BuyerDeclinedTaxInvoice = null,
+    // ส่วนลดท้ายบิล (จากยอดรวม) — กรอกอย่างใดอย่างหนึ่ง: % หรือ ยอดบาท (ex-VAT).
+    // ระบบเฉลี่ย pro-rata ลงบรรทัดให้ VAT ถูกต้อง
+    decimal? BillDiscountPercent = null,
+    decimal? BillDiscountAmount = null,
     Guid? BankAccountId = null,
     Guid? PaymentAccountId = null,
     Guid? ExpenseCategoryId = null,
@@ -203,7 +207,10 @@ public record UpdateDocumentRequest(
     decimal? DepositAppliedAmount = null,
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
-    bool? BuyerDeclinedTaxInvoice = null);
+    bool? BuyerDeclinedTaxInvoice = null,
+    // ส่วนลดท้ายบิล (จากยอดรวม) — null = คงค่าเดิม
+    decimal? BillDiscountPercent = null,
+    decimal? BillDiscountAmount = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -338,6 +345,8 @@ public record DocumentResponse(
     ContactBrief Contact,
     decimal SubTotal,
     decimal DiscountAmount,
+    decimal BillDiscountPercent,
+    decimal BillDiscountAmount,
     decimal VatAmount,
     decimal WithholdingTaxAmount,
     decimal TotalAmount,

@@ -1092,8 +1092,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ห้ามบอกลูกค้าว่าเก็บ VAT แล้ว) แสดงเฉพาะยอดรวมสุทธิ
         var hideVatBreakdown = IsDeferredVatDeposit(doc);
         sb.AppendLine("<div class='summary'>");
-        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
+        // ส่วนลดท้ายบิล: SubTotal เก็บเป็นยอด "หลังหักท้ายบิล" → แสดง "ยอดรวมก่อน VAT"
+        // เป็นยอดก่อนหัก (SubTotal + BillDiscount) แล้วโชว์บรรทัด "ส่วนลดท้ายบิล"
+        var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
+        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{preBillSubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
+        if (doc.BillDiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดท้ายบิล</span><span>({doc.BillDiscountAmount:N2})</span></div>");
         if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         // หักเงินมัดจำ (display-only): ยอดรวมทั้งสิ้น → หักมัดจำ → ยอดชำระสุทธิ

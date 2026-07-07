@@ -260,7 +260,13 @@ public class Document : TenantEntity
     /// rate that was shown to the user on the document.</summary>
     public decimal ExchangeRate { get; set; } = 1m;
     public decimal SubTotal { get; set; }
+    /// <summary>ผลรวมส่วนลด "รายบรรทัด" (Σ DocumentLine.DiscountAmount).</summary>
     public decimal DiscountAmount { get; set; }
+    /// <summary>ส่วนลด "ท้ายบิล" (จากยอดรวม) — % ที่ผู้ใช้กรอก (0 = ใช้โหมดยอดบาท).</summary>
+    public decimal BillDiscountPercent { get; set; }
+    /// <summary>ส่วนลดท้ายบิลที่หักจริง (ex-VAT, เฉลี่ย pro-rata ลงบรรทัดแล้ว).
+    /// SubTotal เป็นยอด "หลังหักท้ายบิล" → ยอดก่อนหัก = SubTotal + BillDiscountAmount.</summary>
+    public decimal BillDiscountAmount { get; set; }
     public decimal VatAmount { get; set; }
     public decimal WithholdingTaxAmount { get; set; }
     public decimal TotalAmount { get; set; }

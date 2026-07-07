@@ -254,7 +254,12 @@ public class DocumentService : IDocumentService
     /// revenue/expense.</summary>
     private readonly record struct LineAmounts(decimal NetAmount, decimal DiscountAmount, decimal VatAmount, decimal WhtAmount);
 
-    private static LineAmounts ComputeLineAmounts(DocumentLineRequest line, bool pricesIncludeVat)
+    /// <param name="extraDiscount">ส่วนลด "ท้ายบิล" (จากยอดรวม) ที่เฉลี่ยลงบรรทัดนี้
+    /// แบบ pro-rata — เป็นยอด **ex-VAT** ที่หักออกจาก net ของบรรทัดหลังคิดส่วนลด
+    /// รายบรรทัดแล้ว → VAT/WHT คิดใหม่บนฐานที่ลดลง (mixed-rate ถูกต้อง). 0 = ไม่มี.
+    /// DiscountAmount ที่คืนยังเป็น "ส่วนลดรายบรรทัด" ล้วน ไม่รวมท้ายบิล (กัน
+    /// double-count ตอน edit round-trip; ท้ายบิลเก็บแยกที่ Document.BillDiscountAmount).</param>
+    private static LineAmounts ComputeLineAmounts(DocumentLineRequest line, bool pricesIncludeVat, decimal extraDiscount = 0m)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
         var gross = Math.Round(line.Quantity * line.UnitPrice, 2, R);
@@ -286,9 +291,59 @@ public class DocumentService : IDocumentService
             net = afterDiscount;
             vatAmt = line.VatRate > 0 ? Math.Round(net * line.VatRate / 100, 2, R) : 0m;
         }
+        // ส่วนลดท้ายบิล (เฉลี่ย pro-rata) — หักจาก net (ex-VAT) แล้วคิด VAT/WHT ใหม่
+        // บนฐานที่ลดลง → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรากัน. ถ้ามี VatAmountOverride
+        // (integration คิด VAT เอง) คง VAT เดิม (best-effort — เคสรวมกันแทบไม่มี).
+        if (extraDiscount > 0m && net > 0m)
+        {
+            var reduce = Math.Min(Math.Round(extraDiscount, 2, R), net);
+            net -= reduce;
+            if (!line.VatAmountOverride.HasValue)
+                vatAmt = line.VatRate > 0 ? Math.Round(net * line.VatRate / 100, 2, R) : 0m;
+        }
         // WHT is always computed on the ex-VAT base (Thai rule).
         var whtAmt = Math.Round(net * line.WithholdingTaxRate / 100, 2, R);
         return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
+    }
+
+    /// <summary>เฉลี่ยส่วนลด "ท้ายบิล" (จากยอดรวม) ลงแต่ละบรรทัดแบบ pro-rata ตาม
+    /// สัดส่วน net (ex-VAT) ก่อนหักท้ายบิล. คืน array ยอดส่วนลด ex-VAT ต่อบรรทัด
+    /// (index ตรงกับ request.Lines). billPercent > 0 = คิดเป็น % ของยอดรวม;
+    /// ไม่งั้นใช้ billAmount (บาท) clamp ไม่ให้เกินยอดรวม. remainder ปัดเศษลง
+    /// บรรทัดสุดท้ายที่มียอด เพื่อให้ผลรวม = ส่วนลดที่ตั้งใจเป๊ะ.</summary>
+    private static decimal[] AllocateBillDiscount(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat,
+        decimal billPercent, decimal billAmount)
+    {
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        var alloc = new decimal[lines.Count];
+        var baseNet = new decimal[lines.Count];
+        decimal totalBase = 0m;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            baseNet[i] = ComputeLineAmounts(lines[i], pricesIncludeVat).NetAmount;
+            if (baseNet[i] > 0m) totalBase += baseNet[i];
+        }
+        if (totalBase <= 0m) return alloc;
+
+        decimal billDisc = billPercent > 0m
+            ? Math.Round(totalBase * billPercent / 100m, 2, R)
+            : Math.Round(billAmount, 2, R);
+        billDisc = Math.Min(Math.Max(billDisc, 0m), totalBase);
+        if (billDisc <= 0m) return alloc;
+
+        decimal running = 0m;
+        int lastIdx = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (baseNet[i] <= 0m) continue;
+            alloc[i] = Math.Round(billDisc * baseNet[i] / totalBase, 2, R);
+            running += alloc[i];
+            lastIdx = i;
+        }
+        if (lastIdx >= 0 && running != billDisc)
+            alloc[lastIdx] += billDisc - running;   // เก็บเศษปัดที่บรรทัดสุดท้าย
+        return alloc;
     }
 
     /// <summary>ยุบ VAT-split phantom lines — choke point สุดท้ายครอบคลุมทุก
@@ -733,11 +788,15 @@ public class DocumentService : IDocumentService
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
             doc.IsForeignService = request.IsForeignService;
+            // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
+            // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
+            var billAlloc = AllocateBillDiscount(request.Lines ?? [], request.PricesIncludeVat,
+                request.BillDiscountPercent ?? 0m, request.BillDiscountAmount ?? 0m);
             int lineIdx = -1;
             foreach (var line in request.Lines ?? [])
             {
                 lineIdx++;
-                var amt = ComputeLineAmounts(line, request.PricesIncludeVat);
+                var amt = ComputeLineAmounts(line, request.PricesIncludeVat, billAlloc[lineIdx]);
 
                 subTotal += amt.NetAmount;
                 totalDiscount += amt.DiscountAmount;
@@ -790,6 +849,11 @@ public class DocumentService : IDocumentService
 
             doc.SubTotal = subTotal;
             doc.DiscountAmount = totalDiscount;
+            // ส่วนลดท้ายบิล: เก็บ % ที่กรอก + ยอด ex-VAT ที่หักจริง (Σ ที่เฉลี่ยลงบรรทัด)
+            // subTotal เป็น "หลังหักท้ายบิลแล้ว" (= Σ line.Amount คงตัว invariant) →
+            // PDF แสดง "รวมก่อนหักท้ายบิล" = SubTotal + BillDiscountAmount
+            doc.BillDiscountPercent = request.BillDiscountPercent ?? 0m;
+            doc.BillDiscountAmount = billAlloc.Sum();
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = subTotal + totalVat - totalWht;
@@ -954,7 +1018,7 @@ public class DocumentService : IDocumentService
         return new DocumentResponse(stub.Id, stub.DocumentNumber, stub.DocumentType, stub.Status,
             stub.DocumentDate, stub.DueDate,
             new ContactBrief(Guid.Empty, "[ซ่อน]", null),
-            0, 0, 0, 0, 0, 0, 0, null, null,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, null, null,
             new List<DocumentLineResponse>(), stub.CreatedAt,
             Sensitivity: stub.Sensitivity,
             IsRedacted: true,
@@ -994,7 +1058,7 @@ public class DocumentService : IDocumentService
                 : new DocumentResponse(it.Id, it.DocumentNumber, it.DocumentType, it.Status,
                     it.DocumentDate, it.DueDate,
                     new ContactBrief(Guid.Empty, "[ซ่อน]", null),
-                    0, 0, 0, 0, 0, 0, 0, null, null,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, null, null,
                     new List<DocumentLineResponse>(), it.CreatedAt,
                     Sensitivity: it.Sensitivity,
                     IsRedacted: true,
@@ -1251,11 +1315,17 @@ public class DocumentService : IDocumentService
                 .Where(c => c.CompanyId == companyId && !c.IsDeleted)
                 .Select(c => (bool?)c.VatRegistered).FirstOrDefaultAsync() ?? true;
 
+            // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata เหมือนตอน create.
+            // request ไม่ส่งค่ามา (null) = คงค่าเดิมของเอกสาร
+            var updBillPct = request.BillDiscountPercent ?? doc.BillDiscountPercent;
+            var updBillAmt = request.BillDiscountAmount
+                ?? (request.BillDiscountPercent.HasValue ? 0m : doc.BillDiscountAmount);
+            var updBillAlloc = AllocateBillDiscount(request.Lines, doc.PricesIncludeVat, updBillPct, updBillAmt);
             int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
                 updLineIdx++;
-                var amt = ComputeLineAmounts(line, doc.PricesIncludeVat);
+                var amt = ComputeLineAmounts(line, doc.PricesIncludeVat, updBillAlloc[updLineIdx]);
 
                 subTotal += amt.NetAmount;
                 totalDiscount += amt.DiscountAmount;
@@ -1306,6 +1376,8 @@ public class DocumentService : IDocumentService
 
             doc.SubTotal = subTotal;
             doc.DiscountAmount = totalDiscount;
+            doc.BillDiscountPercent = updBillPct;
+            doc.BillDiscountAmount = updBillAlloc.Sum();
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = subTotal + totalVat - totalWht;
@@ -7864,7 +7936,8 @@ public class DocumentService : IDocumentService
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(d.Contact.Id, d.Contact.Name, d.Contact.TaxId),
-        d.SubTotal, d.DiscountAmount, d.VatAmount, d.WithholdingTaxAmount,
+        d.SubTotal, d.DiscountAmount, d.BillDiscountPercent, d.BillDiscountAmount,
+        d.VatAmount, d.WithholdingTaxAmount,
         d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Reference, d.Notes,
         d.Lines.OrderBy(l => l.LineOrder).Select(l => new DocumentLineResponse(
             l.Id, l.LineOrder, l.Description, l.Quantity, l.Unit,
