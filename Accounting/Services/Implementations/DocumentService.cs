@@ -8140,7 +8140,7 @@ public class DocumentService : IDocumentService
         d.Id, d.DocumentNumber, d.DocumentType, d.Status,
         d.DocumentDate, d.DueDate,
         new ContactBrief(Guid.Empty, "[ซ่อน]", null),
-        0, 0, 0, 0, 0, 0, 0, null, null,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, null, null,
         new List<DocumentLineResponse>(), d.CreatedAt,
         Sensitivity: d.Sensitivity,
         IsRedacted: true,
