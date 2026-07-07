@@ -1170,7 +1170,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (gl != null && gl.Lines.Count > 0)
         {
             var en = (langOverride ?? template.Language) == "en";
-            sb.AppendLine("<div style='margin-top:16px;border-top:1px solid #cbd5e1;padding-top:5px;font-size:10.5px;color:#334155'>");
+            // "การบันทึกบัญชี" ขึ้นหน้าใหม่เสมอ (page-break-before) — กัน Dr/Cr ถูก
+            // ตัดคนละหน้า; หน้า 1 = เอกสารลูกค้า, หน้า 2 = บันทึกบัญชีภายใน
+            sb.AppendLine("<div style='page-break-before:always;break-before:page;margin-top:16px;border-top:1px solid #cbd5e1;padding-top:5px;font-size:10.5px;color:#334155'>");
             // JE EntryNumber ใช้ counter ของ JV/PV/RV ที่ต่างกับ DocumentNumber
             // (เช่น doc PV-202606-0017 → JE PV-202606-0026 → สับสน). ใช้ doc
             // number เป็น reference แทน + แสดง JE no เฉพาะ entry ที่ persist จริง
