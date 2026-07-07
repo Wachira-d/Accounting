@@ -141,8 +141,16 @@ public class Document : TenantEntity
     /// ระบบภายนอกส่งค่านี้มาตอนสร้างใบ = ยอดมัดจำที่หัก; renderer หักจาก
     /// TotalAmount → ยอดชำระสุทธิ. 0 = ไม่มีการหักมัดจำ.</summary>
     public decimal DepositAppliedAmount { get; set; }
-    /// <summary>เลขใบมัดจำ/อ้างอิงที่นำมาหัก (แสดงในวงเล็บบนบรรทัด "หักเงินมัดจำ").</summary>
+    /// <summary>เลขใบมัดจำ/อ้างอิงที่นำมาหัก (แสดงในวงเล็บบนบรรทัด "หักเงินมัดจำ").
+    /// เมื่อ DepositAppliedDrivesJournal=true ใช้ค่านี้ค้นใบมัดจำ (DocumentNumber)
+    /// เพื่อกลับบัญชี deferred ของใบนั้น.</summary>
     public string? DepositAppliedRef { get; set; }
+    /// <summary>true = ให้ DepositAppliedAmount "ขับ JE" ของใบรับเงินนี้: Dr เงินสด
+    /// สุทธิ (Total−Applied) + กลับ 217xx/21913 ของใบมัดจำที่อ้าง (DepositAppliedRef)
+    /// → JE self-contained ในใบเดียว (ไม่ต้องมี JV แยก). false (default) = display
+    /// only (การรับรู้มัดจำทำผ่าน RealizeDeposit/JV ภายนอกเหมือนเดิม). opt-in
+    /// เพื่อกัน double-reverse ช่วง transition — ระบบภายนอกเปิดเมื่อเลิกส่ง JV แยก.</summary>
+    public bool DepositAppliedDrivesJournal { get; set; }
 
     /// <summary>ยอดมัดจำ (รวม VAT) ที่คืนให้ลูกค้าแล้ว (กรณียกเลิกการจอง).
     /// RefundDepositAsync gen reversal JE + ออกใบลดหนี้กลับ output VAT.

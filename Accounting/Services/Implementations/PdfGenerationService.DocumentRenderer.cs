@@ -820,6 +820,9 @@ public partial class PdfGenerationService
     {
         if (gl == null || gl.Lines.Count == 0) return;
         var en = lang == "en";
+        // "การบันทึกบัญชี" ขึ้นหน้าใหม่เสมอ — กัน Dr/Cr ถูกตัดคนละหน้า และแยก
+        // หน้าเอกสารลูกค้า (หน้า 1) ออกจากส่วนบันทึกบัญชีภายใน (หน้า 2)
+        col.Item().PageBreak();
         col.Item().PaddingTop(14).BorderTop(0.6f).BorderColor("#CBD5E1").PaddingTop(5).Column(c =>
         {
             c.Item().Text(t =>

@@ -22,6 +22,7 @@ public record CreateDocumentRequest(
     // "ยอดชำระสุทธิ". line ยังเป็นการขายเต็มจำนวน (ห้าม line ติดลบ)
     decimal? DepositAppliedAmount = null,
     string? DepositAppliedRef = null,
+    bool? DepositAppliedDrivesJournal = null,
     Guid? BankAccountId = null,
     Guid? PaymentAccountId = null,
     Guid? ExpenseCategoryId = null,
@@ -199,7 +200,8 @@ public record UpdateDocumentRequest(
     // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — แก้ได้ตอน Draft เท่านั้น.
     bool? CombinedInvoiceTaxInvoice = null,
     decimal? DepositAppliedAmount = null,
-    string? DepositAppliedRef = null);
+    string? DepositAppliedRef = null,
+    bool? DepositAppliedDrivesJournal = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
