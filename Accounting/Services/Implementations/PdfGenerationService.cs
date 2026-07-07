@@ -83,6 +83,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         //  3. (Inside RenderDocumentPdfNative) last-resort HTML→QuestPDF
         //     parser path so a composition bug can never blank the document.
         var signers = await ResolveSignersAsync(document);
+        await ResolveServedAsReceiptAsync(companyId, document);
         // GL posting summary at the foot of the document — only when the
         // company turned it on (CompanySettings.ShowGlEntryOnDocument). Used
         // for internal audit. Was previously fetched CLIENT-side only, so the
@@ -161,6 +162,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
+        await ResolveServedAsReceiptAsync(companyId, document);
         var gl = settings?.ShowGlEntryOnDocument == true
             ? await LoadGlPostingAsync(companyId, document) : null;
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl);
@@ -806,6 +808,81 @@ public partial class PdfGenerationService : IPdfGenerationService
         catch { return null; }
     }
 
+    /// <summary>ใบเสร็จ/ใบสำคัญรับ "เงินมัดจำ" ที่ VAT ยังพักรอ (21913 — tax point
+    /// ยังไม่เกิดตาม §78) ยังไม่ใช่ใบกำกับภาษี: เอกสารที่ลูกค้าเห็นต้องไม่โชว์
+    /// บรรทัด VAT และหัวเรื่องต้องไม่ใช่ "ใบกำกับภาษี" — JE ภายในยังแยก net/21913
+    /// ถูกต้องตามเดิม (คนละเรื่องกับการแสดงผล). ตรงข้าม: มัดจำที่ tax point เกิด
+    /// แล้ว (21911, DepositOutputVatDeferred=false) = ใบกำกับภาษีจริง → โชว์ VAT.</summary>
+    internal static bool IsDeferredVatDeposit(Document doc) =>
+        doc.IsDeposit && doc.DepositOutputVatDeferred && doc.VatAmount != 0m
+        && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
+
+    private static Dictionary<string, string> ParseTitleOverrides(CompanySettings? settings)
+    {
+        var json = settings?.DocumentTitleOverridesJson;
+        if (string.IsNullOrWhiteSpace(json)) return new();
+        try { return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new(); }
+        catch { return new(); }
+    }
+
+    /// <summary>ศูนย์กลางการคำนวณหัวเรื่องเอกสาร — ใช้ทั้ง QuestPDF native และ HTML
+    /// renderer (เดิม logic ซ้ำ 2 ที่ เสี่ยง drift). ครอบทุกเคสจริงทางบัญชี:
+    ///   • หัวพื้นฐานต่อประเภท (16 ชนิด) — ตั้งเองผ่าน settings หรือ template.CustomTitle
+    ///   • ใบกำกับ+รับเงินตอนออก / ใบเสร็จมี VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน" (§86/4)
+    ///   • ใบแจ้งหนี้+ใบกำกับรวมใบ → "ใบแจ้งหนี้/ใบกำกับภาษี"
+    ///   • มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ (ไม่ upgrade เป็นใบกำกับ)
+    ///   • มัดจำ → ต่อท้าย "(เงินมัดจำ)"
+    /// ทุกหัว (พื้นฐาน + เงื่อนไข) override ได้ผ่าน CompanySettings.DocumentTitleOverridesJson</summary>
+    internal static string ComputeDocumentTitle(Document doc, DocumentTemplate template, CompanySettings? settings, string lang)
+    {
+        var isEn = lang == "en";
+        var overrides = isEn ? new Dictionary<string, string>() : ParseTitleOverrides(settings);
+        string Ov(string key, string def) =>
+            overrides.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v) ? v.Trim() : def;
+
+        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
+        var baseTitle = Ov(doc.DocumentType.ToString(), defaultTitle);
+
+        // template.CustomTitle (หน้าเทมเพลต) ชนะ base override เมื่อผู้ใช้ตั้งจริง
+        var customTitle = isEn ? template.CustomTitleEn : template.CustomTitle;
+        var hasCustomTitle = !string.IsNullOrWhiteSpace(customTitle)
+            && customTitle != GetDocumentTitle(doc.DocumentType, isEn ? "en" : "th");
+        var title = hasCustomTitle ? customTitle! : baseTitle;
+
+        if (!hasCustomTitle)
+        {
+            if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
+                title = isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี");
+            else if (((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+                        && doc.VatAmount > 0 && !IsDeferredVatDeposit(doc))
+                     || (doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt))
+                title = isEn ? "Tax Invoice / Receipt" : Ov("TaxInvoiceReceipt", "ใบกำกับภาษี/ใบเสร็จรับเงิน");
+        }
+
+        if (doc.IsDeposit)
+            title += isEn ? " (Deposit)" : " " + Ov("DepositSuffix", "(เงินมัดจำ)");
+        return title;
+    }
+
+    /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash
+    /// sale) และไม่มีใบเสร็จ/ใบสำคัญรับแยกอ้างถึง → ทำหน้าที่เป็นใบเสร็จในตัว
+    /// → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน". ถ้ามีใบเสร็จแยกออกให้แล้ว
+    /// (credit ที่ชำระภายหลังด้วยการแปลงเป็นใบเสร็จ) → คงเป็น "ใบกำกับภาษี".</summary>
+    private async Task ResolveServedAsReceiptAsync(Guid companyId, Document doc)
+    {
+        doc.ServedAsReceipt = false;
+        if (doc.DocumentType != DocumentType.TaxInvoice) return;
+        if (doc.CombinedInvoiceTaxInvoice) return;   // มีหัวรวมของตัวเองแล้ว
+        if (doc.Status != DocumentStatus.Paid || doc.BalanceDue > 0.01m) return;
+        // ชำระผ่านการออกใบเสร็จแยก (Receipt/RV อ้างใบนี้) → ใบเสร็จคือคนละใบ
+        var hasSeparateReceipt = await _db.Documents.AsNoTracking().AnyAsync(r =>
+            r.CompanyId == companyId && r.RelatedDocumentId == doc.Id
+            && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+            && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
+            && r.Status != DocumentStatus.Rejected && !r.IsDeleted);
+        doc.ServedAsReceipt = !hasSeparateReceipt;
+    }
+
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null)
@@ -880,34 +957,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
         sb.AppendLine("</div></div>");
 
-        // Document Title — Receipt/ReceiptVoucher ที่มี VAT > 0 ต้องพิมพ์เป็น
-        // ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4: ใบเสร็จที่มี VAT = ใบกำกับภาษีในตัว);
-        // มัดจำ (IsDeposit) → ต่อท้าย "(เงินมัดจำ)" ให้ลูกค้าทราบ.
-        // "custom title จริง" = ผู้ใช้ตั้งเอง ต่างจากชื่อประเภทมาตรฐาน. เทมเพลต
-        // default (in-memory + seed DB) เติม CustomTitle = ชื่อประเภทเสมอ จึงเช็ค
-        // null อย่างเดียวไม่พอ — ไม่งั้นหัวพิเศษ (Receipt+VAT / combined / ต้นฉบับ)
-        // ไม่ทำงาน. ถือว่าไม่ได้ตั้งเองเมื่อว่าง หรือเท่ากับชื่อประเภทมาตรฐาน.
-        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
-        var hasCustomTitle = !string.IsNullOrWhiteSpace(template.CustomTitle)
-            && template.CustomTitle != defaultTitle;
-        var title = hasCustomTitle ? template.CustomTitle! : defaultTitle;
-        if (!hasCustomTitle
-            && (doc.DocumentType == DocumentType.Receipt || doc.DocumentType == DocumentType.ReceiptVoucher)
-            && doc.VatAmount > 0)
-        {
-            title = lang == "en"
-                ? "Tax Invoice / Receipt"
-                : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
-        }
-        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม.
-        if (!hasCustomTitle
-            && doc.DocumentType == DocumentType.TaxInvoice
-            && doc.CombinedInvoiceTaxInvoice)
-        {
-            title = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
-        }
-        if (doc.IsDeposit)
-            title += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
+        // Document Title — หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) คำนวณจาก
+        // resolver กลาง ComputeDocumentTitle (ตั้งเองได้ผ่าน settings) — เดิม logic
+        // ซ้ำกับ native renderer เสี่ยง drift
+        var title = ComputeDocumentTitle(doc, template, settings, lang);
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
         var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
                 or DocumentType.DebitNote or DocumentType.CreditNote
@@ -988,10 +1041,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine("</tbody></table>");
 
         // Summary
+        // มัดจำ VAT พักรอ → ซ่อนบรรทัด ยอดก่อน VAT + VAT (ยังไม่ใช่ใบกำกับภาษี
+        // ห้ามบอกลูกค้าว่าเก็บ VAT แล้ว) แสดงเฉพาะยอดรวมสุทธิ
+        var hideVatBreakdown = IsDeferredVatDeposit(doc);
         sb.AppendLine("<div class='summary'>");
-        if (template.ShowSubTotal) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
+        if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{doc.SubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
-        if (template.ShowVatSummary && doc.VatAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
+        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         sb.AppendLine($"<div class='sum-row total'><span>ยอดรวมสุทธิ</span><span>{doc.TotalAmount:N2}</span></div>");
 
@@ -1002,6 +1058,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                 : ConvertToThaiWords(doc.TotalAmount);
             sb.AppendLine($"<div class='amount-words'>({words})</div>");
         }
+        if (hideVatBreakdown)
+            sb.AppendLine("<div style='margin-top:8px;font-size:11px;color:#555;font-style:italic'>* เอกสารนี้ไม่ใช่ใบกำกับภาษี — ใบกำกับภาษีจะออกให้เมื่อมีการใช้บริการ/ชำระครบถ้วน</div>");
         sb.AppendLine("</div>");
 
         // CertificateInLieu — reason, certifier, witness, payment date

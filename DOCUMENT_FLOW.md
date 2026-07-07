@@ -333,7 +333,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - **§90/2 hard-block**: `CompanySettings.VatRegistered=false` → ห้ามอนุมัติ
      ใบกำกับภาษี (ทุกกรณี) และเอกสารขายที่ VatAmount > 0 (Invoice/Receipt/RV/
      BillingNote/CN/DN ฝั่งขาย — CN/DN ฝั่งซื้อที่ related เป็น PI/Expense/GRN
-     ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน
+     ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน; ฟอร์ม
+     สร้างเอกสาร (documents.html) ปิดตัวเลือกใบกำกับภาษี + ป้ายเตือน
+   - **ภาษีซื้อฝั่งไม่จด VAT**: บริษัท `VatRegistered=false` → ทุกบรรทัดถูกบังคับ
+     `IsVatClaimable=false` ตอน create/update (DocumentService) → posting รวม
+     VAT เข้าต้นทุน/ค่าใช้จ่าย ไม่เข้า 11610/11640 (เคลมภาษีซื้อไม่ได้). เมนู
+     ภ.พ.30/ภ.พ.30 ย้อนหลัง/ภาษีซื้อรอ (nav `vatOnly:true`) ถูกซ่อนใน layout.js
    - **Settlement doc self-paid**: PV/Receipt/RV/CIL ที่มี RelatedDocumentId
      (แปลงมาจากเอกสารตั้งหนี้) เมื่ออนุมัติ → ตัวมันเอง PaidAmount=Total,
      Status=Paid (เป็นเอกสารการจ่าย/รับเงินจริง ไม่ใช่ลูกหนี้/เจ้าหนี้ใหม่)
@@ -361,6 +366,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      → รายงาน P&L ต่อมิติ (`getDimensionPnl`) มีข้อมูลจากเอกสารซื้อ-ขายจริง
    - sales: Dr AR / Cr Revenue + Cr Output VAT (21911 หรือ 21913 ถ้า
      deposit deferred)
+   - **มัดจำ VAT พักรอ (21913) — การแสดงผล ≠ การลงบัญชี**: ใบเสร็จ/ใบสำคัญรับ
+     ที่ `IsDeposit && DepositOutputVatDeferred` ยังไม่ใช่ใบกำกับภาษี (tax point
+     ยังไม่เกิด §78) → PDF/HTML **ซ่อนบรรทัด "ยอดก่อน VAT" + "VAT 7%"**, หัวเรื่อง
+     ไม่ขึ้น "ใบกำกับภาษี", บรรทัดรายการพิมพ์ยอดรวม VAT (Amount+VatAmount) ให้เท่า
+     ยอดสุทธิ, ใส่หมายเหตุ "ไม่ใช่ใบกำกับภาษี" (`PdfGenerationService.IsDeferredVatDeposit`);
+     **JE ยังแยก net/21913 ตามเดิม** (คนละเรื่อง) และ **ยกเว้น §86/4 gate** ตอน
+     approve (ไม่บังคับ TaxId/ที่อยู่ผู้ซื้อ — ใบกำกับจริงออกตอนใช้บริการค่อยบังคับ).
+     ตรงข้าม: มัดจำ tax point เกิดแล้ว (21911) = ใบกำกับจริง → โชว์ VAT ครบ
    - **sales COGS (perpetual — นโยบายเดียวกับ POS)**: Invoice/TaxInvoice
      ที่มีบรรทัดสินค้า TrackStock → Dr ต้นทุนขาย (51110/511) /
      Cr สินค้าคงเหลือ (11500/115) ที่ WAC ปัจจุบัน (`ComputeSalesCogsAsync`
@@ -595,6 +608,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   3. fallback: QuestPDF native (Thai-safe layout)
 - รองรับ template per `DocumentType + IsDefault` flag
 - ลายเซ็น/ลายน้ำ/QR/รหัส GL footer (toggle ต่อบริษัท)
+- **หัวเรื่องเอกสาร — resolver กลาง `ComputeDocumentTitle`** (ใช้ทั้ง QuestPDF
+  native + HTML กัน logic drift). ครอบทุกเคสจริงทางบัญชี:
+  - หัวพื้นฐาน 16 ประเภท (`GetDocumentTitle`) — ทุกชนิดถูกต้องตามชื่อไทย
+  - **เงื่อนไข** (auto): ใบกำกับ+รับเงินตอนออก (ServedAsReceipt) / ใบเสร็จมี
+    VAT → "ใบกำกับภาษี/ใบเสร็จรับเงิน"; TaxInvoice+`CombinedInvoiceTaxInvoice`
+    → "ใบแจ้งหนี้/ใบกำกับภาษี"; มัดจำ VAT พักรอ (21913) → คงเป็นใบเสร็จ
+    (ไม่ upgrade); `IsDeposit` → ต่อท้าย "(เงินมัดจำ)"
+  - **ตั้งเองได้ทุกหัว** (พื้นฐาน + เงื่อนไข) ผ่าน
+    `CompanySettings.DocumentTitleOverridesJson` (คีย์ = ชื่อ enum +
+    `TaxInvoiceReceipt`/`CombinedInvoice`/`DepositSuffix`) — หน้าตั้งค่า →
+    เอกสาร → "หัวเรื่องเอกสาร"; per-template `CustomTitle` ยังชนะ base override
 
 ### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)
 - **Service**: `EtaxInvoiceService.GenerateAsync` (`:87`)

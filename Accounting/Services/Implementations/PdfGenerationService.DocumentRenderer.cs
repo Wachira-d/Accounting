@@ -42,33 +42,9 @@ public partial class PdfGenerationService
         var stripe = SanitizeHex(template.TableStripedColor) ?? "#F8FAFC";
         var layout = (template.LayoutStyle ?? "Classic").Trim();
         var fontChain = GetFontFamilyChain(b.FontFamily);
-        // "custom title จริง" = ผู้ใช้ตั้งเองต่างจากชื่อประเภทมาตรฐาน. เทมเพลต
-        // default (ทั้ง in-memory และที่ seed ลง DB) เติม CustomTitle = ชื่อประเภท
-        // เสมอ จึงเช็ค null อย่างเดียวไม่ได้ (ไม่งั้น logic หัวพิเศษ Receipt+VAT /
-        // combined / "(ต้นฉบับ)" จะไม่ทำงานเลย). ถือว่า "ไม่ได้ตั้งเอง" เมื่อว่าง
-        // หรือเท่ากับชื่อประเภทมาตรฐาน.
-        var defaultTitle = GetDocumentTitle(doc.DocumentType, lang);
-        var hasCustomTitle = !string.IsNullOrWhiteSpace(template.CustomTitle)
-            && template.CustomTitle != defaultTitle;
-        var titleText = hasCustomTitle ? template.CustomTitle! : defaultTitle;
-        // Receipt + VAT > 0 → ใบกำกับภาษี/ใบเสร็จรับเงิน (§86/4); IsDeposit → ต่อท้าย "(เงินมัดจำ)"
-        if (!hasCustomTitle
-            && (doc.DocumentType == Accounting.Models.Enums.DocumentType.Receipt
-                || doc.DocumentType == Accounting.Models.Enums.DocumentType.ReceiptVoucher)
-            && doc.VatAmount > 0)
-        {
-            titleText = lang == "en" ? "Tax Invoice / Receipt" : "ใบกำกับภาษี/ใบเสร็จรับเงิน";
-        }
-        // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — type=TaxInvoice แต่พิมพ์หัวรวม เพื่อใช้
-        // เป็นทั้งใบแจ้งหนี้ (เรียกเก็บ+เครดิตเทอม) และใบกำกับภาษีเต็มรูปในใบเดียว.
-        if (!hasCustomTitle
-            && doc.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice
-            && doc.CombinedInvoiceTaxInvoice)
-        {
-            titleText = lang == "en" ? "Invoice / Tax Invoice" : "ใบแจ้งหนี้/ใบกำกับภาษี";
-        }
-        if (doc.IsDeposit)
-            titleText += lang == "en" ? " (Deposit)" : " (เงินมัดจำ)";
+        // หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) จาก resolver กลาง —
+        // ตั้งเองได้ผ่าน settings; ใช้ร่วมกับ HTML renderer กัน logic drift
+        var titleText = ComputeDocumentTitle(doc, template, settings, lang);
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบกำกับ/ใบเสร็จภาษี. สำเนา
         // ใช้ WatermarkOverride ("สำเนา") ตอนสั่งพิมพ์สำเนา → ไม่ต้องมีป้ายซ้อน.
         var isRd864Doc = doc.DocumentType is Accounting.Models.Enums.DocumentType.TaxInvoice
@@ -589,9 +565,14 @@ public partial class PdfGenerationService
                 // ราคารวม VAT: amount ที่แสดง = qty × price − discount (รวม
                 // VAT) เพื่อให้สอดคล้องกับ label header. backend Amount เป็น
                 // ex-VAT สำหรับ GL/ภพ.30 ไม่กระทบ.
-                var printedAmount = doc.PricesIncludeVat
-                    ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
-                    : line.Amount;
+                // มัดจำ VAT พักรอ: พิมพ์ยอดบรรทัดแบบรวม VAT (Amount ex + VatAmount)
+                // เพื่อให้บรรทัดรวมเท่ายอดสุทธิที่ลูกค้าจ่ายจริง (ไม่มีบรรทัด VAT
+                // แยกให้เห็น)
+                var printedAmount = IsDeferredVatDeposit(doc)
+                    ? Math.Round(line.Amount + line.VatAmount, 2)
+                    : doc.PricesIncludeVat
+                        ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
+                        : line.Amount;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
                 Td(line.Description ?? "");
                 Td(line.Quantity.ToString("N2"), "right");
@@ -633,15 +614,21 @@ public partial class PdfGenerationService
                     if (total) { valTxt.Bold().FontColor(filledTotal ? "#FFFFFF" : accent); }
                 });
             }
-            if (t.ShowSubTotal) Row("ยอดรวมก่อน VAT", doc.SubTotal.ToString("N2"));
+            var hideVatBreakdown = IsDeferredVatDeposit(doc);
+            if (t.ShowSubTotal && !hideVatBreakdown) Row("ยอดรวมก่อน VAT", doc.SubTotal.ToString("N2"));
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
                 Row("ส่วนลดรวม", doc.DiscountAmount.ToString("N2"));
-            if (t.ShowVatSummary && doc.VatAmount > 0)
+            if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown)
                 Row("ภาษีมูลค่าเพิ่ม 7%", doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
                 Row("ภาษีหัก ณ ที่จ่าย", $"({doc.WithholdingTaxAmount:N2})");
             Row("ยอดรวมสุทธิ", doc.TotalAmount.ToString("N2"), total: true);
         });
+
+        // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)
+        if (IsDeferredVatDeposit(doc))
+            col.Item().PaddingTop(6).Text("* เอกสารนี้ไม่ใช่ใบกำกับภาษี — ใบกำกับภาษีจะออกให้เมื่อมีการใช้บริการ/ชำระครบถ้วน")
+                .FontSize(9).Italic().FontColor("#555");
 
         if (t.ShowAmountInWords)
         {

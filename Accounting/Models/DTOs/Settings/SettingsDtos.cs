@@ -79,6 +79,8 @@ public record UpdateCompanySettingsRequest(
 
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool? ShowGlEntryOnDocument = null,
+    // หัวเรื่องเอกสารตั้งเอง (JSON dict — ต่อประเภท + เงื่อนไข). null = ไม่แก้
+    string? DocumentTitleOverridesJson = null,
 
     // Annual leave quotas per LeaveType — JSON e.g.
     //   {"Annual":6,"Sick":30,"Personal":3,"Maternity":98}
@@ -91,7 +93,12 @@ public record UpdateCompanySettingsRequest(
 
     // §82/5(6) vehicle dealer override — บริษัทค้ารถ/อู่ซ่อม → ยกเว้น
     // warning เมื่อ VAT ค่าน้ำมัน/ซ่อม/เช่ารถยนต์นั่ง (รถเป็น inventory).
-    bool? IsVehicleDealer = null);
+    bool? IsVehicleDealer = null,
+    // ===== การควบคุมภายใน (เปิด/ปิดได้) =====
+    bool? SodBlockSelfApproval = null,      // แยกหน้าที่: ห้ามคนสร้างอนุมัติเอกสารตัวเอง
+    string? BudgetCommitmentMode = null,    // Off / Warn / Block — คุมงบผูกพัน (PO/PI/Expense)
+    bool? AllowNegativeStock = null,        // อนุญาตให้สต๊อกติดลบ (default: ไม่อนุญาต)
+    bool? EclEnabled = null);               // เปิดงานตั้งค่าเผื่อหนี้สงสัยจะสูญ (ECL) รายเดือน
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -157,6 +164,7 @@ public record CompanySettingsResponse(
 
     // Print the document's posted GL entry (Dr/Cr) as a footer table.
     bool ShowGlEntryOnDocument = false,
+    string? DocumentTitleOverridesJson = null,
 
     // Per-company annual leave quota override (JSON by LeaveType).
     string? LeaveQuotasJson = null,
@@ -165,7 +173,12 @@ public record CompanySettingsResponse(
 
     // §82/5(6) vehicle dealer override (default false → ระบบเตือนตาม
     // ประกาศอธิบดี 42)
-    bool IsVehicleDealer = false);
+    bool IsVehicleDealer = false,
+    // Internal control toggles
+    bool SodBlockSelfApproval = false,
+    string BudgetCommitmentMode = "Off",
+    bool AllowNegativeStock = false,
+    bool EclEnabled = false);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

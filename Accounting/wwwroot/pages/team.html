@@ -217,6 +217,12 @@
           const lastLogin = m.lastLoginAt ? Page.timeAgo(m.lastLoginAt) : 'ยังไม่เคยเข้าใช้';
 
           let actions = '';
+          // เจ้าของแก้ชื่อสมาชิกได้ทุกคน (รวมตัวเอง) — ใช้แก้ชื่อพิมพ์ผิดที่ไป
+          // โผล่บนลายเซ็น/เอกสาร. ปุ่มนี้แสดงแยกจากบล็อกจัดการ role ด้านล่าง
+          // (ซึ่งยังห้ามแก้ role/ลบตัวเอง)
+          const nameEditBtn = isOwner
+            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="แก้ชื่อ-นามสกุล (ที่แสดงบนลายเซ็น/เอกสาร)" onclick="Page.editMemberName('${m.userId}','${(m.fullName||'').replace(/'/g,'&apos;')}')">&#9998; ชื่อ</button>`
+            : '';
           // Owners can manage any other member, including demoting another Owner.
           // Self-edit / self-remove is always blocked — UI never offers it.
           if (isOwner && !isMe) {
@@ -244,6 +250,7 @@
             </div>
             <div class="member-actions">
               <span class="role-badge ${r.cls}">${r.icon} ${r.label}</span>
+              ${nameEditBtn}
               ${actions}
             </div>
           </div>`;
@@ -285,6 +292,20 @@
         try {
           await api.updateMemberRole(userId, newRole);
           Layout.toast(newRole === 'Owner' ? '⭐ ยกระดับเป็นเจ้าของสำเร็จ' : 'เปลี่ยนบทบาทสำเร็จ');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async editMemberName(userId, currentName) {
+        const name = prompt('แก้ชื่อ-นามสกุล (จะแสดงบนลายเซ็น/เอกสารเมื่อผู้ใช้ยังไม่ตั้งชื่อใต้ลายเซ็นเอง):', currentName || '');
+        if (name === null) return;                       // ยกเลิก
+        const trimmed = name.trim();
+        if (trimmed.length < 2) { Layout.toast('ชื่อต้องยาวอย่างน้อย 2 ตัวอักษร', 'error'); return; }
+        if (trimmed === (currentName || '').trim()) return;   // ไม่เปลี่ยน
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.updateMemberName(userId, trimmed);
+          Layout.toast('แก้ชื่อสมาชิกสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

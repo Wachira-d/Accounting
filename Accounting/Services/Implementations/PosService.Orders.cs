@@ -1318,7 +1318,10 @@ public partial class PosService
     private async Task<decimal> GetCompanyVatRateAsync(Guid companyId)
     {
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
-        return company?.VatRate ?? 7;
+        // บริษัทไม่จด VAT → คิด 0% (ห้ามเก็บ/ลง output VAT — §90/2). POS ลง JE
+        // เอง (21911) ไม่ผ่าน ApproveDocumentAsync จึงต้องกันที่ต้นทางตรงนี้
+        if (company is not { IsVatRegistered: true }) return 0m;
+        return company.VatRate;
     }
 
     private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder, decimal vatRate)

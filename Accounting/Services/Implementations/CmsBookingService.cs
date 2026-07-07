@@ -485,6 +485,11 @@ public class CmsBookingService : ICmsBookingService
         // เมื่อลูกค้าใช้บริการจริง → ใช้ RealizeDepositAsync ตัด 217xx → 41000
         var isDeposit = svc.BookingType == BookingType.PrePayment;
 
+        // บริษัทไม่จด VAT → ไม่คิด VAT ขายในเอกสารจอง (§90/2) มิฉะนั้นเอกสาร
+        // จะติด hard-block ตอน approve และการจองจะ sync ไม่ผ่าน
+        var bookingVatRate = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => (bool?)c.IsVatRegistered).FirstOrDefaultAsync() == true ? 7m : 0m;
+
         var request = new Models.DTOs.Document.CreateDocumentRequest(
             DocumentType: docType,
             DocumentDate: DateTime.UtcNow,
@@ -505,7 +510,7 @@ public class CmsBookingService : ICmsBookingService
                     // เดิมใช้ svc.Price เต็ม → เงินสด/หนี้สินรอรับรู้สูงเกินจริง.
                     UnitPrice: isDeposit ? booking.DepositAmount : svc.Price,
                     DiscountPercent: 0m,
-                    VatRate: 7m,
+                    VatRate: bookingVatRate,
                     WithholdingTaxRate: 0m,
                     AccountId: null,
                     ProductCode: svc.Product?.Code)

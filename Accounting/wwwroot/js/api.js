@@ -1021,6 +1021,7 @@ const API = {
       getMembers: () => API.get(`/api/company/${companyId}/users`),
       addMember: (email, role) => API.post(`/api/company/${companyId}/users`, { email, role }),
       updateMemberRole: (userId, role) => API.put(`/api/company/${companyId}/users/${userId}/role`, { role }),
+      updateMemberName: (userId, fullName) => API.put(`/api/company/${companyId}/users/${userId}/name`, { fullName }),
       removeMember: (userId) => API.del(`/api/company/${companyId}/users/${userId}`),
       getUsageDetail: () => API.get(`/api/subscription/${companyId}/usage/detail`),
     };

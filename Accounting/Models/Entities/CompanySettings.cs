@@ -55,6 +55,14 @@ public class CompanySettings : TenantEntity
     // from the document's posted Journal Entry.
     public bool ShowGlEntryOnDocument { get; set; } = false;
 
+    /// <summary>หัวเรื่องเอกสารที่ผู้ใช้ตั้งเอง — JSON dict คีย์เป็นชื่อ enum
+    /// DocumentType (Quotation/Invoice/TaxInvoice/…) สำหรับหัวพื้นฐานต่อประเภท
+    /// + คีย์เงื่อนไข: "TaxInvoiceReceipt" (ใบกำกับ+รับเงินตอนออก), "CombinedInvoice"
+    /// (ใบแจ้งหนี้/ใบกำกับ), "DepositSuffix" (ต่อท้ายมัดจำ). ค่าว่าง/ไม่มีคีย์ =
+    /// ใช้ default ในระบบ. ใช้เฉพาะภาษาไทย (en ใช้ default). resolver:
+    /// PdfGenerationService.ComputeDocumentTitle</summary>
+    public string? DocumentTitleOverridesJson { get; set; }
+
     // HR — annual leave quota per LeaveType, stored as JSON:
     //   {"Annual": 6, "Sick": 30, "Personal": 3, "Maternity": 98}
     // Null / missing keys fall back to the Thai labor-law minimums in

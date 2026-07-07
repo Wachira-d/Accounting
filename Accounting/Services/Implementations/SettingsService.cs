@@ -44,10 +44,24 @@ public class SettingsService : ISettingsService
         if (request.InvoiceFooter != null) settings.InvoiceFooter = request.InvoiceFooter;
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
+        if (request.DocumentTitleOverridesJson != null)
+            settings.DocumentTitleOverridesJson = string.IsNullOrWhiteSpace(request.DocumentTitleOverridesJson) ? null : request.DocumentTitleOverridesJson;
         if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
         if (request.EnforceManagerApproval.HasValue) settings.EnforceManagerApproval = request.EnforceManagerApproval.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
         if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
+        // Sync กลับไปที่ Company.IsVatRegistered/VatRate — flag คู่ที่ POS/
+        // ECommerce/AI อ่าน ต้องตรงกับ CompanySettings เสมอ (ดูหมายเหตุใน
+        // CompanyService.UpdateCompany) มิฉะนั้นบางช่องทางคิด VAT บางช่องบล็อก
+        if (request.VatRegistered.HasValue || request.DefaultVatRate.HasValue)
+        {
+            var comp = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
+            if (comp != null)
+            {
+                if (request.VatRegistered.HasValue) comp.IsVatRegistered = request.VatRegistered.Value;
+                if (request.DefaultVatRate.HasValue) comp.VatRate = request.DefaultVatRate.Value;
+            }
+        }
         if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
         if (request.IsVehicleDealer.HasValue) settings.IsVehicleDealer = request.IsVehicleDealer.Value;
         if (request.EmailFromName != null) settings.EmailFromName = request.EmailFromName;
@@ -61,6 +75,11 @@ public class SettingsService : ISettingsService
         if (request.AutoCloseMonthEnd.HasValue) settings.AutoCloseMonthEnd = request.AutoCloseMonthEnd.Value;
         if (request.MonthEndClosingDay.HasValue) settings.MonthEndClosingDay = request.MonthEndClosingDay.Value;
         if (request.PreventPostToClosedPeriod.HasValue) settings.PreventPostToClosedPeriod = request.PreventPostToClosedPeriod.Value;
+        if (request.SodBlockSelfApproval.HasValue) settings.SodBlockSelfApproval = request.SodBlockSelfApproval.Value;
+        if (request.BudgetCommitmentMode != null && request.BudgetCommitmentMode is "Off" or "Warn" or "Block")
+            settings.BudgetCommitmentMode = request.BudgetCommitmentMode;
+        if (request.AllowNegativeStock.HasValue) settings.AllowNegativeStock = request.AllowNegativeStock.Value;
+        if (request.EclEnabled.HasValue) settings.EclEnabled = request.EclEnabled.Value;
 
         // e-Tax settings
         if (request.EtaxEnabled.HasValue) settings.EtaxEnabled = request.EtaxEnabled.Value;
@@ -454,10 +473,16 @@ public class SettingsService : ISettingsService
         s.BookkeeperCpdNumber,
         // Print layout
         s.ShowGlEntryOnDocument,
+        s.DocumentTitleOverridesJson,
         // HR
         s.LeaveQuotasJson,
         s.EnforceManagerApproval,
-        s.IsVehicleDealer);
+        s.IsVehicleDealer,
+        // Internal control
+        s.SodBlockSelfApproval,
+        s.BudgetCommitmentMode,
+        s.AllowNegativeStock,
+        s.EclEnabled);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

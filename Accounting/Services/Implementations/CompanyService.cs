@@ -237,6 +237,21 @@ public class CompanyService : ICompanyService
         if (request.IsSetupComplete.HasValue) company.IsSetupComplete = request.IsSetupComplete.Value;
 
         company.UpdatedBy = userId.ToString();
+
+        // Sync สถานะ VAT/เรตไปที่ CompanySettings ด้วย — ระบบมี 2 flag
+        // (Company.IsVatRegistered อ่านโดย POS/ECommerce/AI, CompanySettings.
+        // VatRegistered อ่านโดย DocumentService/Integration §90/2 + ภาษีซื้อ)
+        // ถ้าไม่ sync จะแตกกัน: หน้าหนึ่งคิด VAT อีกหน้าบล็อก → บัญชีเพี้ยน
+        if (request.IsVatRegistered.HasValue || request.VatRate.HasValue)
+        {
+            var cs = await _db.CompanySettings.FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
+            if (cs != null)
+            {
+                if (request.IsVatRegistered.HasValue) cs.VatRegistered = request.IsVatRegistered.Value;
+                if (request.VatRate.HasValue) cs.DefaultVatRate = request.VatRate.Value;
+            }
+        }
+
         await _db.SaveChangesAsync();
 
         return await GetByIdAsync(companyId, userId);
@@ -458,6 +473,30 @@ public class CompanyService : ICompanyService
 
         cu.Role = newRole;
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>เจ้าของแก้ชื่อ-นามสกุลของสมาชิกในบริษัท (รวมของตัวเอง) — ใช้
+    /// แก้ชื่อที่พิมพ์ผิดซึ่งไปโผล่บนลายเซ็น/เอกสาร (ชื่อบนเอกสาร =
+    /// SignatureName ?? FullName). เปลี่ยน FullName ของ account จริง จึงจำกัด
+    /// เฉพาะ Owner + log audit. target ต้องเป็นสมาชิกของบริษัทนี้.</summary>
+    public async Task UpdateMemberNameAsync(Guid companyId, Guid ownerId, Guid targetUserId, string newFullName)
+    {
+        await EnsureOwnerAccessAsync(companyId, ownerId);
+
+        var name = (newFullName ?? "").Trim();
+        if (name.Length < 2 || name.Length > 100)
+            throw new ArgumentException("ชื่อ-นามสกุลต้องมีความยาว 2-100 ตัวอักษร");
+
+        var isMember = await _db.CompanyUsers.AnyAsync(x => x.CompanyId == companyId && x.UserId == targetUserId);
+        if (!isMember) throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
+
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == targetUserId)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ใช้");
+        var old = target.FullName;
+        target.FullName = name;
+        await _db.SaveChangesAsync();
+        _logger?.LogInformation("Owner {Owner} แก้ชื่อสมาชิก {Target} ในบริษัท {Company}: '{Old}' → '{New}'",
+            ownerId, targetUserId, companyId, old, name);
     }
 
     public async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)

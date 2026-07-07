@@ -136,7 +136,7 @@
       <div class="form-row">
         <div class="form-group" style="flex:1">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
-            <input type="checkbox" id="cVatRegistered">
+            <input type="checkbox" id="cVatRegistered" onchange="var o=document.getElementById('sVatRegistered');if(o)o.checked=this.checked">
             <span>จดทะเบียนภาษีมูลค่าเพิ่ม (VAT)</span>
           </label>
         </div>
@@ -280,6 +280,16 @@
         </div>
       </div>
 
+      <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
+      <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🏷️ หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง)</h3>
+      <p style="color:#64748b;margin:0 0 14px;font-size:13px">
+        ปล่อยว่าง = ใช้ชื่อมาตรฐาน (แสดงเป็น placeholder). ตั้งได้ทั้งหัวพื้นฐานต่อประเภท และหัวแบบมีเงื่อนไขทางบัญชี — มีผลกับ PDF/พิมพ์ทุกฉบับ (ภาษาไทย)
+      </p>
+      <div style="font-size:12.5px;font-weight:600;color:#334155;margin-bottom:8px">หัวแบบมีเงื่อนไข (ทางบัญชี)</div>
+      <div id="titleOverridesVariantGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px"></div>
+      <div style="font-size:12.5px;font-weight:600;color:#334155;margin-bottom:8px">หัวพื้นฐานต่อประเภทเอกสาร</div>
+      <div id="titleOverridesBaseGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px"></div>
+
       <!-- Email Templates -->
       <h3 class="card-title" style="margin:24px 0 16px;border-top:1px solid #e2e8f0;padding-top:20px">เทมเพลตอีเมล</h3>
       <div class="form-row">
@@ -295,7 +305,7 @@
       <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าภาษี</h3>
       <div class="form-row">
         <div class="form-group"><label class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
-        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" checked><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
+        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" checked onchange="var o=document.getElementById('cVatRegistered');if(o)o.checked=this.checked"><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
       </div>
       <div class="form-row" style="margin-top:12px">
         <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
@@ -638,6 +648,21 @@
       <h3 class="card-title" style="margin-bottom:16px">การอนุมัติและการเข้าถึง</h3>
       <div class="form-group form-checkbox"><input type="checkbox" id="sRequireApproval"><label for="sRequireApproval">ต้องอนุมัติเอกสารก่อนส่ง</label></div>
       <div class="form-group"><label class="form-label">จำนวนเงินขั้นต่ำที่ต้องอนุมัติ</label><input type="number" class="form-input" id="sApprovalThreshold" step="0.01"></div>
+
+      <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0">🛡️ การควบคุมภายใน (Internal Control)</h4>
+      <p style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;line-height:1.5">ตัวช่วยลดความเสี่ยงทุจริต/ผิดพลาด — ค่าเริ่มต้นปิดไว้เพื่อให้บริษัทที่ใช้งานอยู่ทำงานเหมือนเดิม</p>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sSodBlockSelfApproval"><label for="sSodBlockSelfApproval">แยกหน้าที่ (SoD) — ห้ามคนสร้างเอกสารอนุมัติเอกสารของตัวเอง</label></div>
+      <div class="form-group">
+        <label class="form-label">คุมงบผูกพัน (Budget Commitment) — เมื่อสร้าง PO/ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายเกินงบ</label>
+        <select class="form-select" id="sBudgetCommitmentMode" style="max-width:280px">
+          <option value="Off">ปิด — ไม่ตรวจงบ</option>
+          <option value="Warn">เตือน — แจ้งเตือนแต่ให้ผ่านได้</option>
+          <option value="Block">บล็อก — เกินงบอนุมัติไม่ได้</option>
+        </select>
+      </div>
+      <div class="form-group form-checkbox"><input type="checkbox" id="sAllowNegativeStock"><label for="sAllowNegativeStock">อนุญาตให้สต๊อกติดลบ (ขายเกินจำนวนคงเหลือได้) — ปิดไว้ = บล็อกการตัดสต๊อกเกินยอด</label></div>
+      <div class="form-group form-checkbox advanced-only"><input type="checkbox" id="sEclEnabled"><label for="sEclEnabled">เปิดการตั้งค่าเผื่อหนี้สงสัยจะสูญ (ECL) อัตโนมัติรายเดือน <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">TFRS NPAEs</span></label></div>
+
       <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0">API Access</h4>
       <div class="form-group form-checkbox"><input type="checkbox" id="sEnableApiAccess"><label for="sEnableApiAccess">เปิดใช้งาน API Access (สร้าง API Key เชื่อมต่อระบบภายนอก)</label></div>
       <div class="form-group"><label class="form-label">จำนวน API Key สูงสุด</label><input type="number" class="form-input" id="sMaxApiKeys" value="5" min="1" max="20" style="max-width:120px"></div>
@@ -880,6 +905,44 @@
         } catch(e) {
           el.innerHTML = `<div style="color:#dc2626;padding:20px">⚠️ ${e.message}</div>`;
         }
+      },
+
+      // ===== หัวเรื่องเอกสารตั้งเอง =====
+      // คีย์ต้องตรงกับ PdfGenerationService.ComputeDocumentTitle (enum name + คีย์เงื่อนไข)
+      TITLE_VARIANTS: [
+        { k: 'TaxInvoiceReceipt', label: 'ใบกำกับ+รับเงินตอนออก / ใบเสร็จมี VAT', def: 'ใบกำกับภาษี/ใบเสร็จรับเงิน' },
+        { k: 'CombinedInvoice', label: 'ใบแจ้งหนี้ + ใบกำกับภาษี รวมใบเดียว', def: 'ใบแจ้งหนี้/ใบกำกับภาษี' },
+        { k: 'DepositSuffix', label: 'ต่อท้ายเอกสารเงินมัดจำ', def: '(เงินมัดจำ)' },
+      ],
+      TITLE_BASE: [
+        ['Quotation','ใบเสนอราคา'],['Invoice','ใบแจ้งหนี้'],['Receipt','ใบเสร็จรับเงิน'],
+        ['TaxInvoice','ใบกำกับภาษี'],['DebitNote','ใบเพิ่มหนี้'],['CreditNote','ใบลดหนี้'],
+        ['DeliveryNote','ใบส่งของ'],['BillingNote','ใบวางบิล'],['ReceiptVoucher','ใบสำคัญรับ'],
+        ['PurchaseRequisition','ใบขอซื้อ'],['PurchaseOrder','ใบสั่งซื้อ'],['GoodsReceiptNote','ใบรับสินค้า'],
+        ['PurchaseInvoice','ใบแจ้งหนี้ซื้อ'],['Expense','ใบบันทึกค่าใช้จ่าย'],['PaymentVoucher','ใบสำคัญจ่าย'],
+        ['CertificateInLieu','ใบรับรองแทนใบเสร็จรับเงิน'],
+      ],
+      renderTitleOverrides(json) {
+        let ov = {};
+        try { ov = json ? JSON.parse(json) : {}; } catch { ov = {}; }
+        const esc = s => String(s).replace(/"/g, '&quot;');
+        const field = (k, label, def) =>
+          `<div class="form-group" style="margin:0">
+             <label class="form-label" style="font-size:12px;color:#475569">${label}</label>
+             <input type="text" class="form-input" data-title-key="${k}" placeholder="${esc(def)}" value="${esc(ov[k] || '')}">
+           </div>`;
+        const vg = document.getElementById('titleOverridesVariantGrid');
+        if (vg) vg.innerHTML = this.TITLE_VARIANTS.map(v => field(v.k, v.label, v.def)).join('');
+        const bg = document.getElementById('titleOverridesBaseGrid');
+        if (bg) bg.innerHTML = this.TITLE_BASE.map(([k, def]) => field(k, def, def)).join('');
+      },
+      collectTitleOverrides() {
+        const ov = {};
+        document.querySelectorAll('[data-title-key]').forEach(el => {
+          const v = (el.value || '').trim();
+          if (v) ov[el.getAttribute('data-title-key')] = v;   // เก็บเฉพาะที่ตั้งจริง
+        });
+        return Object.keys(ov).length ? JSON.stringify(ov) : '';   // '' = ล้างกลับ default
       },
 
       async loadSignature() {
@@ -1651,6 +1714,7 @@
           document.getElementById('sReceiptFooter').value = s.receiptFooter || '';
           document.getElementById('sShowGlEntryOnDocument').checked = !!s.showGlEntryOnDocument;
           document.getElementById('sEnforceManagerApproval').checked = !!s.enforceManagerApproval;
+          this.renderTitleOverrides(s.documentTitleOverridesJson);
           // Email
           document.getElementById('sEmailFromName').value = s.emailFromName || '';
           document.getElementById('sEmailReplyTo').value = s.emailReplyTo || '';
@@ -1690,6 +1754,10 @@
           // Approval
           document.getElementById('sRequireApproval').checked = s.requireApprovalForDocuments || false;
           document.getElementById('sApprovalThreshold').value = s.approvalThresholdAmount || '';
+          document.getElementById('sSodBlockSelfApproval').checked = !!s.sodBlockSelfApproval;
+          document.getElementById('sBudgetCommitmentMode').value = s.budgetCommitmentMode || 'Off';
+          document.getElementById('sAllowNegativeStock').checked = !!s.allowNegativeStock;
+          document.getElementById('sEclEnabled').checked = !!s.eclEnabled;
           // API Access
           document.getElementById('sEnableApiAccess').checked = s.enableApiAccess || false;
           document.getElementById('sMaxApiKeys').value = s.maxApiKeys || 5;
@@ -1761,6 +1829,7 @@
             receiptFooter: document.getElementById('sReceiptFooter').value || null,
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
             enforceManagerApproval: document.getElementById('sEnforceManagerApproval').checked,
+            documentTitleOverridesJson: this.collectTitleOverrides(),
             // Email
             emailFromName: document.getElementById('sEmailFromName').value || null,
             emailReplyTo: document.getElementById('sEmailReplyTo').value || null,
@@ -1795,6 +1864,10 @@
             // Approval
             requireApprovalForDocuments: document.getElementById('sRequireApproval').checked,
             approvalThresholdAmount: parseFloat(document.getElementById('sApprovalThreshold').value) || null,
+            sodBlockSelfApproval: document.getElementById('sSodBlockSelfApproval').checked,
+            budgetCommitmentMode: document.getElementById('sBudgetCommitmentMode').value,
+            allowNegativeStock: document.getElementById('sAllowNegativeStock').checked,
+            eclEnabled: document.getElementById('sEclEnabled').checked,
             // API Access
             enableApiAccess: document.getElementById('sEnableApiAccess').checked,
             maxApiKeys: parseInt(document.getElementById('sMaxApiKeys').value) || 5,
