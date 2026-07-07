@@ -622,7 +622,18 @@ public partial class PdfGenerationService
                 Row("ภาษีมูลค่าเพิ่ม 7%", doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
                 Row("ภาษีหัก ณ ที่จ่าย", $"({doc.WithholdingTaxAmount:N2})");
-            Row("ยอดรวมสุทธิ", doc.TotalAmount.ToString("N2"), total: true);
+            // หักเงินมัดจำ (display-only): แสดง ยอดรวม → หักมัดจำ → ยอดชำระสุทธิ
+            // JE ไม่เกี่ยว (การรับรู้มัดจำทำแยกแล้ว) — บรรทัดขายยังเต็มจำนวน
+            if (doc.DepositAppliedAmount > 0)
+            {
+                Row("ยอดรวมทั้งสิ้น", doc.TotalAmount.ToString("N2"));
+                var depLabel = string.IsNullOrWhiteSpace(doc.DepositAppliedRef)
+                    ? "หักเงินมัดจำ" : $"หักเงินมัดจำ ({doc.DepositAppliedRef})";
+                Row(depLabel, $"({doc.DepositAppliedAmount:N2})");
+                Row("ยอดชำระสุทธิ", (doc.TotalAmount - doc.DepositAppliedAmount).ToString("N2"), total: true);
+            }
+            else
+                Row("ยอดรวมสุทธิ", doc.TotalAmount.ToString("N2"), total: true);
         });
 
         // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)

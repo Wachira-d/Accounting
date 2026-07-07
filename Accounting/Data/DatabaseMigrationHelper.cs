@@ -4298,6 +4298,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignatureBase64" text NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_DeliverySignToken" ON "Documents" ("DeliverySignToken") WHERE "DeliverySignToken" IS NOT NULL;""",
 
+            // ===== หักเงินมัดจำบนใบรับเงินสุดท้าย (display-only) =====
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedRef" varchar(100) NULL;""",
+
             // ===== หัวเรื่องเอกสารตั้งเอง (ต่อประเภท + เงื่อนไข) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",
 

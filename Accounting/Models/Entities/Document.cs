@@ -134,6 +134,16 @@ public class Document : TenantEntity
     /// ภ.พ.30 จนกว่าจะเกิด tax point แล้ว reclassify 21913 → 21911.</para></summary>
     public bool DepositOutputVatDeferred { get; set; }
 
+    /// <summary>ยอดเงินมัดจำ (รวม VAT) ที่นำมา "หัก" บนเอกสารรับเงินฉบับสุดท้าย
+    /// เพื่อแสดงบรรทัด "หักเงินมัดจำ" + "ยอดชำระสุทธิ" บนใบ — DISPLAY ONLY:
+    /// ไม่กระทบ JE (การรับรู้มัดจำ/กลับ 21913 ทำผ่าน RealizeDeposit/adjustment
+    /// แยกอยู่แล้ว) และไม่ใช้ DocumentLine ติดลบ (validator ปฏิเสธ UnitPrice&lt;0).
+    /// ระบบภายนอกส่งค่านี้มาตอนสร้างใบ = ยอดมัดจำที่หัก; renderer หักจาก
+    /// TotalAmount → ยอดชำระสุทธิ. 0 = ไม่มีการหักมัดจำ.</summary>
+    public decimal DepositAppliedAmount { get; set; }
+    /// <summary>เลขใบมัดจำ/อ้างอิงที่นำมาหัก (แสดงในวงเล็บบนบรรทัด "หักเงินมัดจำ").</summary>
+    public string? DepositAppliedRef { get; set; }
+
     /// <summary>ยอดมัดจำ (รวม VAT) ที่คืนให้ลูกค้าแล้ว (กรณียกเลิกการจอง).
     /// RefundDepositAsync gen reversal JE + ออกใบลดหนี้กลับ output VAT.
     /// 0 = ยังไม่คืน.</summary>

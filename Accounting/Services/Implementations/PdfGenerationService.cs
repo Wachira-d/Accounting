@@ -641,17 +641,27 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         Guid? creatorId = Guid.TryParse(doc.CreatedBy, out var cId) ? cId : null;
 
-        // Real approver from the approval audit trail (preferred over UpdatedBy).
-        var approverId = await _db.DocumentApprovals.AsNoTracking()
-            .Where(a => a.DocumentId == doc.Id
-                        && a.Status == ApprovalStatus.Approved
-                        && a.ApproverUserId != null
-                        && (a.ApprovalType == "Internal" || a.ApproverRole == "Approver"))
-            .OrderByDescending(a => a.StepOrder).ThenByDescending(a => a.ApprovedAt)
-            .Select(a => a.ApproverUserId)
-            .FirstOrDefaultAsync();
-        if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
-            approverId = uId;
+        // ช่อง "ผู้อนุมัติ" ต้องมีลายเซ็นเฉพาะเอกสารที่อนุมัติจริงแล้ว. Draft /
+        // รออนุมัติ / ถูกปฏิเสธ = ยังไม่มีผู้อนุมัติ → เว้นว่าง. เดิม fallback ไป
+        // doc.UpdatedBy ทำให้ Draft ที่เจ้าของแก้ล่าสุดโชว์ลายเซ็นเจ้าของใน
+        // ช่องผู้อนุมัติ ทั้งที่ยังไม่มีใครอนุมัติ.
+        var isApproved = doc.Status is not (DocumentStatus.Draft
+            or DocumentStatus.WaitingApproval or DocumentStatus.Rejected);
+        Guid? approverId = null;
+        if (isApproved)
+        {
+            // Real approver from the approval audit trail (preferred over UpdatedBy).
+            approverId = await _db.DocumentApprovals.AsNoTracking()
+                .Where(a => a.DocumentId == doc.Id
+                            && a.Status == ApprovalStatus.Approved
+                            && a.ApproverUserId != null
+                            && (a.ApprovalType == "Internal" || a.ApproverRole == "Approver"))
+                .OrderByDescending(a => a.StepOrder).ThenByDescending(a => a.ApprovedAt)
+                .Select(a => a.ApproverUserId)
+                .FirstOrDefaultAsync();
+            if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
+                approverId = uId;
+        }
 
         var userIds = new List<Guid>();
         if (creatorId.HasValue) userIds.Add(creatorId.Value);
@@ -1049,7 +1059,16 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
         if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
-        sb.AppendLine($"<div class='sum-row total'><span>ยอดรวมสุทธิ</span><span>{doc.TotalAmount:N2}</span></div>");
+        // หักเงินมัดจำ (display-only): ยอดรวมทั้งสิ้น → หักมัดจำ → ยอดชำระสุทธิ
+        if (doc.DepositAppliedAmount > 0)
+        {
+            sb.AppendLine($"<div class='sum-row'><span>ยอดรวมทั้งสิ้น</span><span>{doc.TotalAmount:N2}</span></div>");
+            var depLabel = string.IsNullOrWhiteSpace(doc.DepositAppliedRef) ? "หักเงินมัดจำ" : $"หักเงินมัดจำ ({WebUtility.HtmlEncode(doc.DepositAppliedRef)})";
+            sb.AppendLine($"<div class='sum-row'><span>{depLabel}</span><span>({doc.DepositAppliedAmount:N2})</span></div>");
+            sb.AppendLine($"<div class='sum-row total'><span>ยอดชำระสุทธิ</span><span>{doc.TotalAmount - doc.DepositAppliedAmount:N2}</span></div>");
+        }
+        else
+            sb.AppendLine($"<div class='sum-row total'><span>ยอดรวมสุทธิ</span><span>{doc.TotalAmount:N2}</span></div>");
 
         if (template.ShowAmountInWords)
         {
