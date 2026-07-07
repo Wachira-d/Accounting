@@ -1170,6 +1170,13 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 48: e-Tax PDF/A-3 — เปลี่ยนวิธีฝัง XML จาก hand-rolled injector (2 xref,_
+_XMP ซ้อน → strict parser/สรรพากรหา XML ไม่เจอ = "XML หาย") → **QuestPDF native_
+_`DocumentOperation.AddAttachment()` + `ExtendMetadata()`** (qpdf single-pass,_
+_xref เดียว, XMP เดียว, /AF ถูก — เหมือน iTextSharp ที่ TakeTime ใช้)._
+_`AttachEtaxXmlNative` (temp file + fallback injector ถ้า native ล้ม),_
+_`BuildEtdaXmpExtension` (rsm schema สำหรับ ExtendMetadata). ใช้ทั้ง_
+_BuildEtaxPdfA3WithEmbeddedXml + GenerateDocumentPdfAsync._
 _รอบ 47: e-Tax PDF/A-3 — แก้บั๊ก /Size ผิด (trailer /Size = maxObj+1 แต่ add_
 _object เลข maxObj+1..+4 → embedded XML objects นอกช่วง → สรรพากร "ประมวลผล_
 _เอกสารแนบไม่ได้"). แก้เป็น newOffsets.Keys.Max()+1. นี่คือสาเหตุหลักที่ RD reject._

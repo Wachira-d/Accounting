@@ -50,6 +50,11 @@ public partial class PdfGenerationService
     private static bool _fontsRegistered;
     private static readonly object _fontLock = new();
 
+    /// <summary>ชื่อไฟล์ XML ที่ฝังใน PDF/A-3 — บังคับตามข้อกำหนด ETDA e-Tax Invoice
+    /// by Email (สรรพากรค้นไฟล์แนบด้วยชื่อนี้). อ้างอิง ETDA/e-TaxInvoice-PDFgen +
+    /// ตรงกับไฟล์ TakeTime ที่ส่งผ่าน (/F=/UF=ETDA-invoice.xml).</summary>
+    internal const string EtdaEmbeddedXmlFileName = "ETDA-invoice.xml";
+
     private static void EnsureThaiFontsRegistered()
     {
         if (_fontsRegistered) return;
@@ -168,8 +173,10 @@ public partial class PdfGenerationService
     {
         EnsureThaiFontsRegistered();
 
-        var xmlBytes = System.Text.Encoding.UTF8.GetBytes(xmlContent);
-        var xmlFileName = $"{metadata.EtaxRefNumber}.xml";
+        // ⚠️ ชื่อไฟล์ XML ที่ฝัง **ต้องเป็น "ETDA-invoice.xml"** ตามข้อกำหนด ETDA
+        // e-Tax Invoice by Email — สรรพากรค้นไฟล์แนบด้วยชื่อนี้ (เทียบกับ TakeTime
+        // ที่ผ่าน: /F=/UF=ETDA-invoice.xml). ชื่ออื่น = "ประมวลผลเอกสารแนบไม่ได้".
+        var xmlFileName = EtdaEmbeddedXmlFileName;
         // จับ timestamp ครั้งเดียว ใช้ทั้ง Info dict (WithMetadata) และ XMP — PDF/A
         // บังคับวันที่ใน XMP ต้องตรงกับ Info dict (ไม่งั้น veraPDF/ETDA validator fail)
         var now = DateTime.UtcNow;
@@ -204,10 +211,61 @@ public partial class PdfGenerationService
         document.WithSettings(new DocumentSettings { PdfA = true });
 
         var pdfBytes = document.GeneratePdf();
-        var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName, now);
-        return PdfAttachmentInjector.AttachXml(pdfBytes, xmlFileName, xmlBytes,
-            "e-Tax XML data per ETDA Recommendation 3-2560 v2.0",
-            etdaXmpMetadata: etdaXmp);
+        return AttachEtaxXmlNative(pdfBytes, xmlContent, xmlFileName, metadata, now);
+    }
+
+    /// <summary>ฝัง XML e-Tax ลง PDF/A-3 ด้วย **QuestPDF native DocumentOperation**
+    /// (qpdf-based, single-pass) — ให้ไฟล์สะอาด xref เดียว, XMP เดียว, /AF ถูกต้อง
+    /// เหมือน iTextSharp (TakeTime) → สรรพากร/ETDA parse ได้แน่นอน. แทน hand-rolled
+    /// incremental injector เดิม (2 xref, XMP ซ้อน) ที่ strict parser หา XML ไม่เจอ.
+    /// LoadFile/Save ของ DocumentOperation ใช้ไฟล์จริง → เขียน temp แล้วลบทิ้ง.
+    /// ล้มเหลว (เช่น native qpdf lib ขาด) → fallback ตัว injector เดิม (แก้ /Size แล้ว).</summary>
+    private byte[] AttachEtaxXmlNative(byte[] basePdf, string xmlContent, string xmlFileName,
+        EtaxPdfMetadata metadata, DateTime now)
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), "nextacc-etax", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        var basePath = Path.Combine(tmpDir, "base.pdf");
+        var xmlPath = Path.Combine(tmpDir, xmlFileName);
+        var outPath = Path.Combine(tmpDir, "out.pdf");
+        try
+        {
+            File.WriteAllBytes(basePath, basePdf);
+            File.WriteAllText(xmlPath, xmlContent, new System.Text.UTF8Encoding(false)); // UTF-8 ไม่มี BOM
+
+            QuestPDF.Fluent.DocumentOperation
+                .LoadFile(basePath)
+                .AddAttachment(new QuestPDF.Fluent.DocumentOperation.DocumentAttachment
+                {
+                    Key = xmlFileName,
+                    FilePath = xmlPath,
+                    AttachmentName = xmlFileName,        // ชื่อไฟล์แนบ = {EtaxRef}.xml
+                    MimeType = "application/xml",
+                    Description = "Tax Invoice XML Data",
+                    // XML = ตัวจริงตามกฎหมาย, PDF = ภาพแสดงแทน → Alternative (ETDA spec)
+                    Relationship = QuestPDF.Fluent.DocumentOperation.DocumentAttachmentRelationship.Alternative,
+                    CreationDate = now,
+                    ModificationDate = now,
+                    Replace = true
+                })
+                .ExtendMetadata(BuildEtdaXmpExtension(metadata, xmlFileName))  // ETDA rsm extension schema
+                .Save(outPath);
+
+            return File.ReadAllBytes(outPath);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning(
+                $"Native PDF/A-3 attach failed ({ex.Message}) — fallback to injector");
+            var xmlBytes = System.Text.Encoding.UTF8.GetBytes(xmlContent);
+            var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName, now);
+            return PdfAttachmentInjector.AttachXml(basePdf, xmlFileName, xmlBytes,
+                "e-Tax XML data per ETDA Recommendation 3-2560 v2.0", etdaXmpMetadata: etdaXmp);
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
     }
 
     /// <summary>
@@ -309,6 +367,57 @@ public partial class PdfGenerationService
         sb.Append("</rdf:Description>");
 
         sb.Append("</rdf:RDF></x:xmpmeta><?xpacket end=\"r\"?>");
+        return sb.ToString();
+    }
+
+    /// <summary>สร้าง "เฉพาะ" ส่วน rdf:Description ของ ETDA extension schema สำหรับ
+    /// ส่งให้ <c>DocumentOperation.ExtendMetadata()</c> — QuestPDF native จะ merge เข้า
+    /// XMP ที่มันสร้าง (part=3 อยู่แล้ว) → ไม่ต้องมี xpacket/xmpmeta/rdf:RDF/pdfaid
+    /// wrapper (ต่างจาก BuildEtdaXmpMetadata ที่คืน XMP เต็มก้อนสำหรับ injector เก่า).
+    /// รูปแบบตาม ETDA Resources/EDocument_PDFAExtensionSchema.xml (เหมือน ZUGFeRD).</summary>
+    private static string BuildEtdaXmpExtension(EtaxPdfMetadata m, string xmlFileName)
+    {
+        const string rsmNs = "urn:etda:uncefact:data:standard:Invoice_CrossIndustryInvoice:2#";
+        var typeCode = m.DocumentType switch
+        {
+            "TaxInvoice_CrossIndustryInvoice" => "388",
+            "Receipt_CrossIndustryInvoice" => "T03",
+            "DebitCreditNote_CrossIndustryInvoice" => m.DocumentTypeNameTh.Contains("เพิ่ม") ? "80" : "81",
+            _ => "388"
+        };
+        var version = (m.XmlVersion ?? "2.0").TrimStart('v', 'V');
+        var sb = new System.Text.StringBuilder();
+        // (1) extension schema declaration
+        sb.Append("<rdf:Description rdf:about=\"\"");
+        sb.Append(" xmlns:pdfaExtension=\"http://www.aiim.org/pdfa/ns/extension/\"");
+        sb.Append(" xmlns:pdfaProperty=\"http://www.aiim.org/pdfa/ns/property#\"");
+        sb.Append(" xmlns:pdfaSchema=\"http://www.aiim.org/pdfa/ns/schema#\">");
+        sb.Append("<pdfaExtension:schemas><rdf:Bag><rdf:li rdf:parseType=\"Resource\">");
+        sb.Append("<pdfaSchema:schema>Electronic Tax Invoice PDFA Extension Schema</pdfaSchema:schema>");
+        sb.Append($"<pdfaSchema:namespaceURI>{rsmNs}</pdfaSchema:namespaceURI>");
+        sb.Append("<pdfaSchema:prefix>rsm</pdfaSchema:prefix>");
+        sb.Append("<pdfaSchema:property><rdf:Seq>");
+        foreach (var (nm, desc) in new[] {
+            ("DocumentFileName", "Name of the embedded XML invoice file"),
+            ("DocumentType", "Type of the document"),
+            ("Version", "Version of the ETDA XML data") })
+        {
+            sb.Append("<rdf:li rdf:parseType=\"Resource\">");
+            sb.Append($"<pdfaProperty:name>{nm}</pdfaProperty:name>");
+            sb.Append("<pdfaProperty:valueType>Text</pdfaProperty:valueType>");
+            sb.Append("<pdfaProperty:category>external</pdfaProperty:category>");
+            sb.Append($"<pdfaProperty:description>{desc}</pdfaProperty:description>");
+            sb.Append("</rdf:li>");
+        }
+        sb.Append("</rdf:Seq></pdfaSchema:property>");
+        sb.Append("</rdf:li></rdf:Bag></pdfaExtension:schemas>");
+        sb.Append("</rdf:Description>");
+        // (2) extension data values
+        sb.Append($"<rdf:Description rdf:about=\"\" xmlns:rsm=\"{rsmNs}\">");
+        sb.Append($"<rsm:DocumentFileName>{XmlEscape(xmlFileName)}</rsm:DocumentFileName>");
+        sb.Append($"<rsm:DocumentType>{typeCode}</rsm:DocumentType>");
+        sb.Append($"<rsm:Version>{XmlEscape(version)}</rsm:Version>");
+        sb.Append("</rdf:Description>");
         return sb.ToString();
     }
 
