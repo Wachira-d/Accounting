@@ -587,6 +587,7 @@ public class DocumentService : IDocumentService
                     && request.DocumentType == DocumentType.TaxInvoice,
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
+                DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 CreatedBy = createdBy
             };
 
@@ -1177,6 +1178,7 @@ public class DocumentService : IDocumentService
         // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — รับเฉพาะเมื่อ doc เป็น TaxInvoice.
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
         if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
+        if (request.DepositAppliedDrivesJournal.HasValue) doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
         if (request.CombinedInvoiceTaxInvoice.HasValue)
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
@@ -7077,9 +7079,58 @@ public class DocumentService : IDocumentService
             }
             else
             {
-                if (moneyAccount != null)
-                    AddLine(moneyAccount.Id, doc.TotalAmount, 0,
-                        $"{(doc.BankAccountId.HasValue ? "รับเงินเข้าบัญชี" : "รับเงินสด")} - {doc.DocumentNumber}");
+                // นำมัดจำมาหักแบบขับ JE (opt-in): Dr เงินสด "สุทธิ" (Total−Applied)
+                // + กลับบัญชี deferred ของใบมัดจำที่อ้าง → JE self-contained ในใบเดียว
+                // (ไม่ต้องมี JV แยก). กัน double-reverse: mark ใบมัดจำ realized +
+                // DepositAppliedToDocumentId. เฉพาะใบที่ไม่ใช่มัดจำเอง (รับรู้รายได้เต็ม)
+                var driveDeposit = doc.DepositAppliedAmount > 0 && doc.DepositAppliedDrivesJournal
+                    && !doc.IsDeposit && !string.IsNullOrWhiteSpace(doc.DepositAppliedRef);
+                var cashAmt = driveDeposit ? doc.TotalAmount - doc.DepositAppliedAmount : doc.TotalAmount;
+
+                if (moneyAccount != null && cashAmt != 0m)
+                    AddLine(moneyAccount.Id, cashAmt, 0,
+                        $"{(doc.BankAccountId.HasValue ? "รับเงินเข้าบัญชี" : "รับเงินสด")}{(driveDeposit ? " (สุทธิหลังหักมัดจำ)" : "")} - {doc.DocumentNumber}");
+
+                if (driveDeposit)
+                {
+                    var deposit = await _db.Documents
+                        .FirstOrDefaultAsync(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                            && d.DocumentNumber == doc.DepositAppliedRef);
+                    if (deposit == null)
+                        throw new InvalidOperationException(
+                            $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำเลขที่ {doc.DepositAppliedRef} — ตรวจสอบ depositAppliedRef");
+
+                    // แยกยอดมัดจำที่หัก (รวม VAT) เป็นฐาน + VAT ตามสัดส่วน VAT ของใบมัดจำ
+                    var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
+                    var depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
+                    var depVat = Math.Round(doc.DepositAppliedAmount - depBase, 2, MidpointRounding.AwayFromZero);
+
+                    // Dr กลับ "ขายรอรับรู้" (217xx) ของใบมัดจำ
+                    var depDeferredAcc = await FindAccountAsync(companyId, deposit.DepositDeferredAccountCode ?? "21712")
+                        ?? await FindAccountAsync(companyId, "217");
+                    if (depDeferredAcc != null && depBase != 0m)
+                        AddLine(depDeferredAcc.Id, depBase, 0, $"ตัดขายรอรับรู้ (นำมัดจำ {deposit.DocumentNumber} มาหัก)", doc.ProjectId);
+
+                    // Dr กลับ VAT ของใบมัดจำ: ยัง deferred (21913) หรือรับรู้แล้ว (21911)
+                    var depVatDeferredPending = deposit.DepositOutputVatDeferred
+                        && deposit.DepositOutputVatRecognizedAt == null && depVat > 0;
+                    if (depVat > 0)
+                    {
+                        var depVatAcc = await FindAccountAsync(companyId, depVatDeferredPending ? "21913" : "21911");
+                        if (depVatAcc != null)
+                            AddLine(depVatAcc.Id, depVat, 0,
+                                depVatDeferredPending ? "ตัดภาษีขายรอเรียกเก็บ (มัดจำ→ใบกำกับ)" : "ล้าง VAT มัดจำ",
+                                doc.ProjectId);
+                    }
+
+                    // mark ใบมัดจำถูกใช้ (กันรับรู้ซ้ำจากช่องทางอื่น)
+                    deposit.DepositRealizedAmount += depBase;
+                    if (deposit.SubTotal - deposit.DepositRealizedAmount <= 0.005m)
+                        deposit.DepositRealizedAt = doc.DocumentDate;
+                    if (depVatDeferredPending)
+                        deposit.DepositOutputVatRecognizedAt = doc.DocumentDate;
+                    deposit.DepositAppliedToDocumentId = doc.Id;
+                }
 
                 if (doc.WithholdingTaxAmount > 0)
                 {

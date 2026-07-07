@@ -153,10 +153,31 @@ override รายบรรทัดได้** และ void กลับด�
 ยอดชำระสุทธิ         2,700.00   ← ตัวหนา
 ```
 
-- **DISPLAY ONLY** — ไม่สร้าง/แก้ JE. การรับรู้มัดจำ + กลับ 21913→21911 ทำผ่าน
-  RealizeDeposit/adjustment แยกอยู่แล้ว (GL ถูกต้องสมบูรณ์ตามที่ยืนยัน)
 - ไม่ใช้ DocumentLine ติดลบ → ไม่ชน validator, void ไม่มีผลข้างเคียง
 - `depositAppliedAmount = 0`/ไม่ส่ง → แสดง "ยอดรวมสุทธิ" ปกติ (พฤติกรรมเดิม)
+
+### 9.1 สองโหมด — display-only vs ขับ JE (`depositAppliedDrivesJournal`)
+
+| โหมด | `depositAppliedDrivesJournal` | JE ของใบรับเงิน | ใครกลับ 217xx/21913 |
+|---|---|---|---|
+| **display-only** (default) | `false` / ไม่ส่ง | Dr เงินสด **เต็มยอด** + Cr รายได้/VAT | JV แยกฝั่งระบบภายนอก |
+| **ขับ JE** (แนะนำ) | `true` | Dr เงินสด **สุทธิ** (Total−Applied) + Dr 217xx + Dr 21913/21911 (กลับใบมัดจำที่อ้าง) + Cr รายได้/VAT เต็ม → **self-contained** | NextAcc ในใบเดียว |
+
+โหมด **ขับ JE** (`depositAppliedDrivesJournal: true`) — NextAcc จะ:
+```
+Dr เงินสด/ธนาคาร (สุทธิ)   2,700.00
+Dr 217xx ขายรอรับรู้         467.29   ← กลับใบมัดจำ (ฐาน)
+Dr 21913 ภาษีขายรอเรียกเก็บ   32.71   ← กลับใบมัดจำ (VAT) → เข้า 21911 ผ่าน Cr ล่าง
+    Cr 41110 รายได้           2,990.65
+    Cr 21911 ภาษีขาย ภ.พ.30     209.35
+```
+- ค้นใบมัดจำจาก `depositAppliedRef` = **เลขเอกสาร NextAcc ของใบมัดจำ** (ต้อง sync
+  แล้ว มิฉะนั้น error ชัดเจน) → กลับบัญชี deferred + VAT ตามที่ใบมัดจำ book จริง
+- mark ใบมัดจำ `DepositRealizedAt`/`DepositAppliedToDocumentId` → กันรับรู้ซ้ำ
+- ⚠ **coordination กัน double-reverse:** เปิด `depositAppliedDrivesJournal: true`
+  **พร้อมกับเลิกส่ง JV แยก** ในดีพลอยเดียว — ถ้าเปิด flag แต่ยังส่ง JV อยู่
+  217xx/21913 จะถูกกลับ 2 รอบ. ระหว่างที่ยังไม่พร้อม ให้คงโหมด display-only
+  (flag=false) + JV แยกเหมือนเดิม (GL ถูกต้องอยู่แล้ว)
 
 ## 10. ประเภทที่รองรับ / ยังไม่รองรับ
 
