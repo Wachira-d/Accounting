@@ -8168,7 +8168,8 @@ public class DocumentService : IDocumentService
         DepositRefundReason: d.DepositRefundReason,
         DepositAppliedToDocumentId: d.DepositAppliedToDocumentId,
         BookingNumber: d.BookingNumber,
-        CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice);
+        CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
+        DepositAppliedAmount: d.DepositAppliedAmount);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

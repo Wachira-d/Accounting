@@ -499,7 +499,11 @@ public record DocumentResponse(
     string? BookingNumber = null,
     // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — echo กลับมาเพื่อ hydrate checkbox
     // ตอนแก้ไข + ให้ UI ติดป้าย/หัวกระดาษถูก. type ยังเป็น TaxInvoice.
-    bool CombinedInvoiceTaxInvoice = false);
+    bool CombinedInvoiceTaxInvoice = false,
+    // ยอดมัดจำที่นำมาหักบนใบรับเงินนี้ (display) — ยอดรวม (TotalAmount) ยังเป็น
+    // ยอดขายเต็ม, รับสุทธิ = TotalAmount − DepositAppliedAmount. ให้ list โชว์
+    // "รับสุทธิ" กันงงเมื่อมีหักมัดจำ
+    decimal DepositAppliedAmount = 0m);
 
 public record ProjectCostBrief(
     Guid ProjectId,

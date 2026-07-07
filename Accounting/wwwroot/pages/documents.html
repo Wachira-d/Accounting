@@ -3552,7 +3552,9 @@
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
-            <td class="text-right">${Layout.money(d.totalAmount)}</td>
+            <td class="text-right">${Layout.money(d.totalAmount)}${(Number(d.depositAppliedAmount) > 0)
+                ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400" title="ยอดรวมคือยอดขายเต็ม; หักมัดจำที่รับไว้ก่อนแล้ว → เงินรับเพิ่มครั้งนี้">หักมัดจำ ${Layout.money(d.depositAppliedAmount)} · รับสุทธิ ${Layout.money((Number(d.totalAmount)||0) - (Number(d.depositAppliedAmount)||0))}</div>`
+                : ''}</td>
             <td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>
             <td>${Layout.statusBadge(d.status)}</td>
             <td>
