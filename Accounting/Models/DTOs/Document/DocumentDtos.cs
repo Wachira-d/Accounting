@@ -839,7 +839,12 @@ public record CreatePaymentRequest(
     /// ใช้ได้เฉพาะเอกสารฝั่งขาย (Invoice/TaxInvoice/DebitNote).</summary>
     decimal? FeeAmount = null,
     /// <summary>ผังค่าธรรมเนียม — null = ระบบหา 53xxx/ชื่อ "ค่าธรรมเนียม".</summary>
-    Guid? FeeAccountId = null);
+    Guid? FeeAccountId = null,
+    /// <summary>ออก "ใบเสร็จรับเงิน" (Document) เป็นหลักฐานคู่กับการชำระนี้ —
+    /// default true (ฝั่งขาย Invoice/TaxInvoice/DebitNote). ใบเสร็จนี้ผูกกับ
+    /// Payment, ลงวันที่ชำระ, ไม่ลง JE ซ้ำ (Payment ลง Dr เงินสด/Cr ลูกหนี้ แล้ว)
+    /// และไม่คิด VAT ซ้ำ (VAT อยู่ที่ใบกำกับ). null = true.</summary>
+    bool? IssueReceiptDocument = null);
 
 public record PaymentAllocationRequest(
     Guid DocumentId,

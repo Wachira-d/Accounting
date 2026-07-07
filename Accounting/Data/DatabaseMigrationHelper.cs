@@ -4312,6 +4312,10 @@ public static class DatabaseMigrationHelper
             // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata ลงบรรทัด
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BillDiscountPercent" numeric(9,4) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BillDiscountAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // ใบเสร็จรับเงินหลักฐานคู่กับการชำระ (evidence-only, ไม่ลง JE ซ้ำ)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsSettlementReceipt" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementPaymentId" uuid NULL;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "ReceiptDocumentId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BuyerDeclinedTaxInvoice" boolean NOT NULL DEFAULT false;""",
 
             // ===== หัวเรื่องเอกสารตั้งเอง (ต่อประเภท + เงื่อนไข) =====

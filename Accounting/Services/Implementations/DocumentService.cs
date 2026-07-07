@@ -3748,6 +3748,20 @@ public class DocumentService : IDocumentService
         payment.IsDeleted = true;
         payment.UpdatedAt = DateTime.UtcNow;
 
+        // void ใบเสร็จรับเงินหลักฐานที่ออกคู่กับการชำระนี้ (ถ้ามี) — ไม่มี JE ให้กลับ
+        // (evidence-only) แค่ mark Voided + soft-delete ไม่ให้ค้างในรายการ/พิมพ์ได้
+        if (payment.ReceiptDocumentId.HasValue)
+        {
+            var rcpt = await _db.Documents.FirstOrDefaultAsync(d =>
+                d.Id == payment.ReceiptDocumentId.Value && d.CompanyId == companyId);
+            if (rcpt is { IsSettlementReceipt: true })
+            {
+                rcpt.Status = DocumentStatus.Voided;
+                rcpt.IsDeleted = true;
+                rcpt.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
         // Restore document balance (รวมค่าธรรมเนียมที่เคยล้างเอกสารด้วย)
         doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount - payment.FeeAmount);
         doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
@@ -4895,6 +4909,63 @@ public class DocumentService : IDocumentService
         return inflow;
     }
 
+    /// <summary>ออก "ใบเสร็จรับเงิน" (Document) เป็นหลักฐานคู่กับ Payment ที่เพิ่ง
+    /// บันทึก — ลงวันที่รับเงินจริง, อ้างใบกำกับ/ใบแจ้งหนี้ต้นทาง. **ไม่ post JE**
+    /// (Payment ลง Dr เงินสด/Cr ลูกหนี้ ให้แล้ว) และ **ไม่คิด VAT ซ้ำ** (VAT อยู่ที่
+    /// ใบกำกับ) → VatAmount=0. สร้างตรงเป็น Status=Paid ไม่ผ่าน ApproveDocumentAsync
+    /// จึงไม่ตัดหนี้ซ้ำผ่าน ApplySourceDocumentAdjustments. หัวพิมพ์ = "ใบเสร็จรับเงิน"
+    /// (Receipt + VAT=0 ไม่ upgrade เป็นใบกำกับ).</summary>
+    private async Task<Document> CreateSettlementReceiptAsync(
+        Guid companyId, Document invoice, Payment payment, string createdBy)
+    {
+        var number = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
+            _db, companyId, DocumentType.Receipt, payment.PaymentDate);
+        var srcLabel = invoice.DocumentType == DocumentType.TaxInvoice ? "ใบกำกับภาษี"
+            : invoice.DocumentType == DocumentType.DebitNote ? "ใบเพิ่มหนี้" : "ใบแจ้งหนี้";
+        var receipt = new Document
+        {
+            CompanyId = companyId,
+            DocumentNumber = number,
+            DocumentType = DocumentType.Receipt,
+            DocumentDate = payment.PaymentDate,
+            ContactId = invoice.ContactId,
+            RelatedDocumentId = invoice.Id,
+            IsSettlementReceipt = true,
+            SettlementPaymentId = payment.Id,
+            Reference = invoice.DocumentNumber,
+            Status = DocumentStatus.Paid,
+            PaymentType = Models.Enums.PaymentType.Cash,
+            Currency = invoice.Currency,
+            ExchangeRate = invoice.ExchangeRate,
+            ProjectId = invoice.ProjectId,
+            SubTotal = payment.Amount,
+            DiscountAmount = 0m,
+            VatAmount = 0m,                 // VAT อยู่ที่ใบกำกับต้นทางแล้ว — ไม่คิดซ้ำ
+            WithholdingTaxAmount = 0m,
+            TotalAmount = payment.Amount,
+            PaidAmount = payment.Amount,
+            BalanceDue = 0m,
+            BankAccountId = payment.BankAccountId,
+            Notes = $"รับชำระเงินตาม{srcLabel}เลขที่ {invoice.DocumentNumber} " +
+                    $"(วันที่รับ {payment.PaymentDate:dd/MM/yyyy}, {payment.PaymentMethod})",
+            CreatedBy = createdBy,
+        };
+        _db.Documents.Add(receipt);
+        _db.DocumentLines.Add(new DocumentLine
+        {
+            DocumentId = receipt.Id,
+            LineOrder = 1,
+            Description = $"รับชำระเงินตาม{srcLabel}เลขที่ {invoice.DocumentNumber}",
+            Quantity = 1m,
+            Unit = "รายการ",
+            UnitPrice = payment.Amount,
+            Amount = payment.Amount,
+            VatRate = 0m,
+            VatAmount = 0m,
+        });
+        return receipt;
+    }
+
     public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
     {
         // Validate Amount > 0
@@ -5096,6 +5167,28 @@ public class DocumentService : IDocumentService
             await CreatePaymentJournalAsync(companyId, doc, payment, createdBy);
 
             await _db.SaveChangesAsync();
+
+            // ออกใบเสร็จรับเงิน "หลักฐาน" คู่กับการชำระ (default เปิด) — เฉพาะฝั่งขาย
+            // (ลูกค้าจ่ายเรา). Payment ลง JE/ตัด AR แล้ว → ใบนี้ evidence-only ไม่ลง JE
+            // ซ้ำ ไม่คิด VAT ซ้ำ (VAT อยู่ที่ใบกำกับ) ลงวันที่รับเงินจริง. รองรับผ่อน
+            // หลายงวด (1 Payment = 1 ใบเสร็จ).
+            var wantReceipt = (request.IssueReceiptDocument ?? true)
+                && doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote;
+            if (wantReceipt)
+            {
+                // การชำระ (JE/ตัด AR) คือแกนสำคัญ — ถ้าออกใบเสร็จหลักฐานพลาด ห้าม
+                // ล้มการชำระที่สำเร็จแล้ว. ล้มเหลว → ข้ามใบเสร็จ (ผู้ใช้ออกทีหลังได้)
+                try
+                {
+                    var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy);
+                    payment.ReceiptDocumentId = receiptDoc.Id;
+                    await _db.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "ออกใบเสร็จรับเงินหลักฐานไม่สำเร็จ (payment {PaymentNumber}) — ข้ามไปก่อน", payment.PaymentNumber);
+                }
+            }
 
             // Sync BankAccount.CurrentBalance — convert from doc currency to THB
             // at the document's captured FX rate (BankAccount.CurrentBalance is

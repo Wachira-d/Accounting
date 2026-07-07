@@ -1170,6 +1170,13 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 45: บันทึกชำระเงิน → ออก "ใบเสร็จรับเงิน" หลักฐานอัตโนมัติ (default เปิด_
+_ฝั่งขาย Invoice/TaxInvoice/DebitNote). `Document.IsSettlementReceipt=true` +_
+_`SettlementPaymentId`, `Payment.ReceiptDocumentId`. ใบนี้ **evidence-only**:_
+_Payment ลง Dr เงินสด/Cr ลูกหนี้ + ตัด AR แล้ว → ใบเสร็จ **ไม่ลง JE ซ้ำ ไม่ตัด_
+_หนี้ซ้ำ ไม่คิด VAT ซ้ำ** (VAT อยู่ที่ใบกำกับ, VatAmount=0) สร้างตรงเป็น Status=_
+_Paid ไม่ผ่าน ApproveDocumentAsync. void payment → void ใบเสร็จตาม. เลิกใช้_
+_convert Invoice→Receipt เป็นทางตัดหนี้ (กันเบิ้ล). `CreateSettlementReceiptAsync`._
 _รอบ 44: หัวเอกสาร downgrade ตาม `Buyer864Incomplete` จริง (ไม่ใช่แค่ flag) —_
 _ข้อมูล §86/4 ผู้ซื้อไม่ครบ = ห้ามขึ้น "ใบกำกับภาษี". + ส่วนลดท้ายบิล (จากยอด_
 _รวม): `Document.BillDiscountPercent/Amount` — `ComputeLineAmounts(extraDiscount)`_

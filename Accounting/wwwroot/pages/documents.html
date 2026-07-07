@@ -5685,6 +5685,11 @@
                   <label class="form-label">หมายเหตุ</label>
                   <input id="rpNotes" class="form-input" type="text">
                 </div>
+                <label id="rpIssueReceiptRow" style="display:flex;gap:8px;align-items:flex-start;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;font-size:13px">
+                  <input type="checkbox" id="rpIssueReceipt" checked style="margin-top:2px">
+                  <span><b>ออกใบเสร็จรับเงินให้ลูกค้า</b> (ลงวันที่รับเงินจริง)<br>
+                  <span style="color:#15803d;font-size:11px">ใบเสร็จอ้างอิงใบกำกับ/ใบแจ้งหนี้เดิม · VAT รับรู้ที่ใบกำกับแล้วไม่คิดซ้ำ · ไม่ลง JE ซ้ำ</span></span>
+                </label>
               </div>
               <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="document.getElementById('rpModal').classList.remove('active')">ยกเลิก</button>
@@ -5704,6 +5709,13 @@
         document.getElementById('rpFee').value = '';
         document.getElementById('rpNotes').value = '';
         document.getElementById('rpMethod').value = 'BankTransfer';
+        // ออกใบเสร็จรับเงิน — เฉพาะฝั่งขาย (ลูกค้าจ่ายเรา). ฝั่งซื้อ (PV/Expense) ซ่อน
+        const _rpDt = this._currentDoc?.documentType;
+        const _salesSide = _rpDt === 'Invoice' || _rpDt === 'TaxInvoice' || _rpDt === 'DebitNote';
+        const rpIssueRow = document.getElementById('rpIssueReceiptRow');
+        if (rpIssueRow) rpIssueRow.style.display = _salesSide ? 'flex' : 'none';
+        const rpIssueCb = document.getElementById('rpIssueReceipt');
+        if (rpIssueCb) rpIssueCb.checked = _salesSide;   // default เปิดสำหรับฝั่งขาย
         // Populate the bank-override dropdown with the company's bank
         // accounts. Default option (empty value) keeps the doc's channel.
         const rpBank = document.getElementById('rpBankOverride');
@@ -5805,17 +5817,17 @@
                 : null,
               feeAmount: (parseFloat(document.getElementById('rpFee').value || '0') || 0) > 0
                 ? parseFloat(document.getElementById('rpFee').value) : null,
+              // ออกใบเสร็จรับเงินหลักฐานคู่กับการชำระ (default เปิดฝั่งขาย) —
+              // backend สร้าง Receipt อ้างอิงเอกสาร ไม่ลง JE ซ้ำ ลงวันที่รับเงิน
+              issueReceiptDocument: document.getElementById('rpIssueReceipt')?.checked || false,
             });
-            Layout.toast('บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success');
+            const _issued = document.getElementById('rpIssueReceipt')?.checked;
+            Layout.toast(_issued
+              ? 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ + ออกใบเสร็จรับเงินให้แล้ว'
+              : 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success', 6000);
             wrap.classList.remove('active');
             Layout.closeModal('detailModal');
             await this.load();
-            // ชำระครบ + เป็น Invoice/TaxInvoice → เสนอออกใบเสร็จรับเงิน (Receipt)
-            // ให้ลูกค้า (VAT รับรู้แล้วที่ใบเดิม — Receipt เป็นหลักฐานรับเงิน)
-            const _dt = this._currentDoc?.documentType;
-            if (amount >= (balanceDue - 0.01) && (_dt === 'Invoice' || _dt === 'TaxInvoice')) {
-              this._offerIssueReceipt(docId, _dt);
-            }
           } catch (e) {
             Layout.toast(e.message, 'error');
           } finally {
