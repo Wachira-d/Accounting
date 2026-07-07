@@ -588,6 +588,7 @@ public class DocumentService : IDocumentService
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
+                BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
                 CreatedBy = createdBy
             };
 
@@ -1179,6 +1180,7 @@ public class DocumentService : IDocumentService
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
         if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
         if (request.DepositAppliedDrivesJournal.HasValue) doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
+        if (request.BuyerDeclinedTaxInvoice.HasValue) doc.BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice.Value;
         if (request.CombinedInvoiceTaxInvoice.HasValue)
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
@@ -1967,7 +1969,8 @@ public class DocumentService : IDocumentService
         var isDeferredVatDeposit = doc.IsDeposit && doc.DepositOutputVatDeferred
             && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
         if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null
-            && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit)
+            && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit
+            && !doc.BuyerDeclinedTaxInvoice)
         {
             var missing = new List<string>();
             var taxIdDigits = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());

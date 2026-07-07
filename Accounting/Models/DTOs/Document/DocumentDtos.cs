@@ -23,6 +23,7 @@ public record CreateDocumentRequest(
     decimal? DepositAppliedAmount = null,
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
+    bool? BuyerDeclinedTaxInvoice = null,
     Guid? BankAccountId = null,
     Guid? PaymentAccountId = null,
     Guid? ExpenseCategoryId = null,
@@ -201,7 +202,8 @@ public record UpdateDocumentRequest(
     bool? CombinedInvoiceTaxInvoice = null,
     decimal? DepositAppliedAmount = null,
     string? DepositAppliedRef = null,
-    bool? DepositAppliedDrivesJournal = null);
+    bool? DepositAppliedDrivesJournal = null,
+    bool? BuyerDeclinedTaxInvoice = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.

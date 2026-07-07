@@ -4302,6 +4302,7 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedRef" varchar(100) NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedDrivesJournal" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BuyerDeclinedTaxInvoice" boolean NOT NULL DEFAULT false;""",
 
             // ===== หัวเรื่องเอกสารตั้งเอง (ต่อประเภท + เงื่อนไข) =====
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",

@@ -859,7 +859,12 @@ public partial class PdfGenerationService : IPdfGenerationService
             && customTitle != GetDocumentTitle(doc.DocumentType, isEn ? "en" : "th");
         var title = hasCustomTitle ? customTitle! : baseTitle;
 
-        if (!hasCustomTitle)
+        // ผู้ซื้อไม่ประสงค์รับใบกำกับ (per-doc flag หรือ ลูกค้าเงินสด walk-in) +
+        // ข้อมูล §86/4 ไม่ครบ → คงเป็น "ใบเสร็จรับเงิน" ไม่ upgrade เป็นใบกำกับเต็มรูป
+        // (VAT ยังลง ภ.พ.30 ครบ — นำส่งภาษีได้ตามปกติ เพราะภาระ VAT ขายไม่ขึ้นกับ
+        // หัวเอกสาร) ผู้ซื้อเคลมภาษีซื้อไม่ได้
+        var buyerDeclined = doc.BuyerDeclinedTaxInvoice || (doc.Contact?.IsWalkInCustomer ?? false);
+        if (!hasCustomTitle && !buyerDeclined)
         {
             if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
                 title = isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี");
@@ -868,6 +873,10 @@ public partial class PdfGenerationService : IPdfGenerationService
                      || (doc.DocumentType == DocumentType.TaxInvoice && doc.ServedAsReceipt))
                 title = isEn ? "Tax Invoice / Receipt" : Ov("TaxInvoiceReceipt", "ใบกำกับภาษี/ใบเสร็จรับเงิน");
         }
+        // declined + doc type ที่ base = "ใบกำกับภาษี" (TaxInvoice) → ลงเป็นใบเสร็จ
+        else if (!hasCustomTitle && doc.BuyerDeclinedTaxInvoice
+                 && doc.DocumentType == DocumentType.TaxInvoice)
+            title = isEn ? "Receipt" : "ใบเสร็จรับเงิน";
 
         if (doc.IsDeposit)
             title += isEn ? " (Deposit)" : " " + Ov("DepositSuffix", "(เงินมัดจำ)");
