@@ -17,6 +17,11 @@ public record CreateDocumentRequest(
     // เอกสารต้นทาง (convert chain) — ต้องรู้ตั้งแต่ create เพราะ PaymentType
     // inference / cash-settle / PV auto-approve แยกพฤติกรรมด้วย field นี้
     Guid? RelatedDocumentId = null,
+    // หักเงินมัดจำบนใบรับเงินสุดท้าย (display-only — ไม่กระทบ JE): ยอดมัดจำ
+    // ที่หัก (รวม VAT) + เลขใบมัดจำอ้างอิง → renderer แสดง "หักเงินมัดจำ" +
+    // "ยอดชำระสุทธิ". line ยังเป็นการขายเต็มจำนวน (ห้าม line ติดลบ)
+    decimal? DepositAppliedAmount = null,
+    string? DepositAppliedRef = null,
     Guid? BankAccountId = null,
     Guid? PaymentAccountId = null,
     Guid? ExpenseCategoryId = null,
@@ -192,7 +197,9 @@ public record UpdateDocumentRequest(
     string? DepositDeferredAccountCode = null,
     bool? DepositOutputVatDeferred = null,
     // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — แก้ได้ตอน Draft เท่านั้น.
-    bool? CombinedInvoiceTaxInvoice = null);
+    bool? CombinedInvoiceTaxInvoice = null,
+    decimal? DepositAppliedAmount = null,
+    string? DepositAppliedRef = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.

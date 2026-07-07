@@ -585,6 +585,8 @@ public class DocumentService : IDocumentService
                 // เอกสารประเภทอื่นมาตั้ง flag แล้วหัวกระดาษเพี้ยน.
                 CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice
                     && request.DocumentType == DocumentType.TaxInvoice,
+                DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
+                DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
                 CreatedBy = createdBy
             };
 
@@ -1173,6 +1175,8 @@ public class DocumentService : IDocumentService
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
         // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — รับเฉพาะเมื่อ doc เป็น TaxInvoice.
+        if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
+        if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
         if (request.CombinedInvoiceTaxInvoice.HasValue)
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
