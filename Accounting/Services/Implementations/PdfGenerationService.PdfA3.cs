@@ -50,6 +50,11 @@ public partial class PdfGenerationService
     private static bool _fontsRegistered;
     private static readonly object _fontLock = new();
 
+    /// <summary>ชื่อไฟล์ XML ที่ฝังใน PDF/A-3 — บังคับตามข้อกำหนด ETDA e-Tax Invoice
+    /// by Email (สรรพากรค้นไฟล์แนบด้วยชื่อนี้). อ้างอิง ETDA/e-TaxInvoice-PDFgen +
+    /// ตรงกับไฟล์ TakeTime ที่ส่งผ่าน (/F=/UF=ETDA-invoice.xml).</summary>
+    internal const string EtdaEmbeddedXmlFileName = "ETDA-invoice.xml";
+
     private static void EnsureThaiFontsRegistered()
     {
         if (_fontsRegistered) return;
@@ -168,8 +173,10 @@ public partial class PdfGenerationService
     {
         EnsureThaiFontsRegistered();
 
-        var xmlBytes = System.Text.Encoding.UTF8.GetBytes(xmlContent);
-        var xmlFileName = $"{metadata.EtaxRefNumber}.xml";
+        // ⚠️ ชื่อไฟล์ XML ที่ฝัง **ต้องเป็น "ETDA-invoice.xml"** ตามข้อกำหนด ETDA
+        // e-Tax Invoice by Email — สรรพากรค้นไฟล์แนบด้วยชื่อนี้ (เทียบกับ TakeTime
+        // ที่ผ่าน: /F=/UF=ETDA-invoice.xml). ชื่ออื่น = "ประมวลผลเอกสารแนบไม่ได้".
+        var xmlFileName = EtdaEmbeddedXmlFileName;
         // จับ timestamp ครั้งเดียว ใช้ทั้ง Info dict (WithMetadata) และ XMP — PDF/A
         // บังคับวันที่ใน XMP ต้องตรงกับ Info dict (ไม่งั้น veraPDF/ETDA validator fail)
         var now = DateTime.UtcNow;
@@ -234,7 +241,7 @@ public partial class PdfGenerationService
                     FilePath = xmlPath,
                     AttachmentName = xmlFileName,        // ชื่อไฟล์แนบ = {EtaxRef}.xml
                     MimeType = "application/xml",
-                    Description = "e-Tax XML data per ETDA Recommendation 3-2560 v2.0",
+                    Description = "Tax Invoice XML Data",
                     // XML = ตัวจริงตามกฎหมาย, PDF = ภาพแสดงแทน → Alternative (ETDA spec)
                     Relationship = QuestPDF.Fluent.DocumentOperation.DocumentAttachmentRelationship.Alternative,
                     CreationDate = now,

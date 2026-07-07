@@ -103,7 +103,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                     pdfTitle: $"{GetDocumentTitle(document.DocumentType, request.Language ?? template.Language ?? "th")} {document.DocumentNumber}",
                     pdfAuthor: company.Name);
                 var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
-                var xmlFileName = $"{etax.EtaxRefNumber}.xml";
+                // ชื่อไฟล์ XML แนบต้องเป็น ETDA-invoice.xml (ETDA spec) — ดู EtdaEmbeddedXmlFileName
+                var xmlFileName = EtdaEmbeddedXmlFileName;
                 // ฝัง XML ด้วย QuestPDF native (single-pass, สะอาด) เหมือน BuildEtaxPdfA3
                 var withXml = AttachEtaxXmlNative(etaxPdf, etax.XmlContent, xmlFileName, metadata, DateTime.UtcNow);
                 var etaxFileName = $"{etax.EtaxRefNumber}.pdf";
