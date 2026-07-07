@@ -129,7 +129,14 @@ internal static class PdfAttachmentInjector
         // Trailer with /Prev pointing to previous xref. **PDF/A บังคับต้องมี /ID**
         // และ incremental update ต้องคง /ID เดิม (ต้องตรงกับไฟล์ต้นทาง) — เดิมไม่ใส่
         // → veraPDF/ETDA validator reject. ดึง /ID เดิมจาก trailer ก่อนหน้ามาใส่ต่อ.
-        var newSize = Math.Max(maxObj, newCatalogObj) + 1; // total object count after additions
+        //
+        // 🔴 /Size ต้อง ≥ object number สูงสุด + 1 เสมอ. **บั๊กเดิม**: ใช้
+        // Math.Max(maxObj, newCatalogObj)+1 = maxObj+1 (newCatalogObj คือ Root เลขต่ำ)
+        // แต่เราเพิ่ง add object เลข maxObj+1..maxObj+4 (EmbeddedFile/Filespec/
+        // NameTree/XMP) → เลขพวกนี้ ≥ /Size → parser (iText ที่สรรพากรใช้) ถือว่า
+        // object นอกช่วง หา embedded XML ไม่เจอ → "ประมวลผลเอกสารแนบไม่ได้". แก้เป็น
+        // เลข object สูงสุดที่เขียนจริง + 1.
+        var newSize = newOffsets.Keys.Max() + 1;
         var trailerId = FindTrailerId(pdfText);
         WriteAscii("trailer\n");
         WriteAscii(trailerId != null
