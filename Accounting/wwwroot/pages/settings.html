@@ -84,6 +84,33 @@
         </div>
       </div>
 
+      <!-- Company Stamp (ตราประทับบริษัท) Section -->
+      <div style="margin-bottom:24px;padding:20px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+        <label class="form-label" style="font-weight:600;margin-bottom:4px;display:block">ตราประทับบริษัท (ประทับบนเอกสารที่อนุมัติแล้ว)</label>
+        <p style="color:#64748b;font-size:12px;margin:0 0 12px">แนะนำไฟล์ PNG พื้นหลังโปร่งใส · ประทับเฉพาะเอกสารที่ <b>ผู้มีอำนาจอนุมัติแล้ว</b> (ฉบับร่าง/รออนุมัติจะไม่ประทับ) · วางในโซนลายเซ็นผู้อนุมัติ</p>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div id="stampPreview" style="width:100px;height:100px;border:2px dashed #cbd5e1;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff">
+            <span style="color:#94a3b8;font-size:12px" id="stampPlaceholder">ยังไม่มีตรา</span>
+          </div>
+          <div>
+            <input type="file" id="stampFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" style="display:none" onchange="Page.uploadStamp()">
+            <button class="btn btn-primary" onclick="document.getElementById('stampFile').click()" style="margin-bottom:8px">เลือกไฟล์ตรา</button>
+            <button class="btn btn-outline" onclick="Page.deleteStamp()" id="btnDeleteStamp" style="margin-bottom:8px;display:none">ลบตรา</button>
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">กว้าง (มม.)</label><input type="number" id="sStampW" class="form-input" min="0" max="120" step="1" style="width:90px" placeholder="32"></div>
+            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">สูง (มม.)</label><input type="number" id="sStampH" class="form-input" min="5" max="120" step="1" style="width:90px" placeholder="32"></div>
+            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">ตำแหน่ง</label>
+              <select id="sStampAlign" class="form-select" style="width:120px">
+                <option value="Right">ขวา</option>
+                <option value="Center">กลาง</option>
+                <option value="Left">ซ้าย</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="form-row">
         <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span class="req">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
         <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
@@ -1699,6 +1726,14 @@
             document.getElementById('logoPreview').innerHTML = `<img src="${s.logoUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;
             document.getElementById('btnDeleteLogo').style.display = 'inline-block';
           }
+          // ตราประทับบริษัท
+          if (s.stampUrl) {
+            document.getElementById('stampPreview').innerHTML = `<img src="${s.stampUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+            document.getElementById('btnDeleteStamp').style.display = 'inline-block';
+          }
+          if (document.getElementById('sStampW')) document.getElementById('sStampW').value = s.stampWidthMm ?? 32;
+          if (document.getElementById('sStampH')) document.getElementById('sStampH').value = s.stampHeightMm ?? 32;
+          if (document.getElementById('sStampAlign')) document.getElementById('sStampAlign').value = s.stampAlign || 'Right';
           // General
           if (s.primaryColor) document.getElementById('sPrimaryColor').value = s.primaryColor;
           if (s.secondaryColor) document.getElementById('sSecondaryColor').value = s.secondaryColor;
@@ -1793,6 +1828,35 @@
           Layout.toast('ลบโลโก้แล้ว');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      async uploadStamp() {
+        const api = Layout.api(); if (!api) return;
+        const fileInput = document.getElementById('stampFile');
+        const file = fileInput.files[0];
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) { Layout.toast('ขนาดไฟล์เกิน 10MB', 'error'); return; }
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+          const res = await api.uploadStamp(formData);
+          const s = res.data;
+          if (s && s.stampUrl) {
+            document.getElementById('stampPreview').innerHTML = `<img src="${s.stampUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+            document.getElementById('btnDeleteStamp').style.display = 'inline-block';
+          }
+          Layout.toast('อัพโหลดตราประทับสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        fileInput.value = '';
+      },
+      async deleteStamp() {
+        if (!confirm('ต้องการลบตราประทับ?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.deleteStamp();
+          document.getElementById('stampPreview').innerHTML = '<span style="color:#94a3b8;font-size:12px" id="stampPlaceholder">ยังไม่มีตรา</span>';
+          document.getElementById('btnDeleteStamp').style.display = 'none';
+          Layout.toast('ลบตราประทับแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
       async loadNumberSeries() {
         const api = Layout.api(); if (!api) return;
         try {
@@ -1830,6 +1894,10 @@
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
             enforceManagerApproval: document.getElementById('sEnforceManagerApproval').checked,
             documentTitleOverridesJson: this.collectTitleOverrides(),
+            // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)
+            stampWidthMm: parseFloat(document.getElementById('sStampW')?.value || '32'),
+            stampHeightMm: parseFloat(document.getElementById('sStampH')?.value || '32'),
+            stampAlign: document.getElementById('sStampAlign')?.value || 'Right',
             // Email
             emailFromName: document.getElementById('sEmailFromName').value || null,
             emailReplyTo: document.getElementById('sEmailReplyTo').value || null,

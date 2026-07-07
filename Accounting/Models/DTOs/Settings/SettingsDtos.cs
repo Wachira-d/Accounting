@@ -98,7 +98,11 @@ public record UpdateCompanySettingsRequest(
     bool? SodBlockSelfApproval = null,      // แยกหน้าที่: ห้ามคนสร้างอนุมัติเอกสารตัวเอง
     string? BudgetCommitmentMode = null,    // Off / Warn / Block — คุมงบผูกพัน (PO/PI/Expense)
     bool? AllowNegativeStock = null,        // อนุญาตให้สต๊อกติดลบ (default: ไม่อนุญาต)
-    bool? EclEnabled = null);               // เปิดงานตั้งค่าเผื่อหนี้สงสัยจะสูญ (ECL) รายเดือน
+    bool? EclEnabled = null,                // เปิดงานตั้งค่าเผื่อหนี้สงสัยจะสูญ (ECL) รายเดือน
+    // ===== ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดผ่าน endpoint /settings/stamp) =====
+    decimal? StampWidthMm = null,           // กว้าง (มม.) 0 = auto
+    decimal? StampHeightMm = null,          // สูง (มม.)
+    string? StampAlign = null);             // Right / Left / Center (ในโซนลายเซ็น)
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -178,7 +182,12 @@ public record CompanySettingsResponse(
     bool SodBlockSelfApproval = false,
     string BudgetCommitmentMode = "Off",
     bool AllowNegativeStock = false,
-    bool EclEnabled = false);
+    bool EclEnabled = false,
+    // ===== ตราประทับบริษัท =====
+    string? StampUrl = null,
+    decimal StampWidthMm = 32,
+    decimal StampHeightMm = 32,
+    string StampAlign = "Right");
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

@@ -68,6 +68,27 @@ public class SettingsController : ControllerBase
         return NoContent();
     }
 
+    // ===== Company Stamp (ตราประทับบริษัท) Upload =====
+
+    [HttpPost("stamp")]
+    [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
+    public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UploadStamp(Guid companyId, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<string>(false, null, "กรุณาเลือกไฟล์ตราประทับ"));
+
+        using var stream = file.OpenReadStream();
+        var result = await _settingsService.UploadStampAsync(companyId, stream, file.FileName, file.ContentType);
+        return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพโหลดตราประทับสำเร็จ"));
+    }
+
+    [HttpDelete("stamp")]
+    public async Task<IActionResult> DeleteStamp(Guid companyId)
+    {
+        await _settingsService.DeleteStampAsync(companyId);
+        return NoContent();
+    }
+
     // ===== Number Series =====
 
     [HttpGet("number-series")]

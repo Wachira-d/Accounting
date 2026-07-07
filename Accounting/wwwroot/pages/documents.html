@@ -1903,8 +1903,17 @@
           || (tid.length === 13 && tid.startsWith('0'));
         if (isJuristic && !contact?.branchCode) missing.push('รหัสสาขา (00000=สนญ.)');
         if (!(contact?.address || contact?.subDistrict || contact?.province)) missing.push('ที่อยู่');
-        if (missing.length)
-          Layout.toast('⚠️ ใบกำกับภาษี §86/4 ต้องมี: ' + missing.join(' · ') + ' — เติมข้อมูลลูกค้าก่อนอนุมัติ', 'error', 9000);
+        if (missing.length) {
+          // นิติบุคคล = ต้องเติมให้ครบ (ผู้ซื้อจะเคลมภาษีซื้อ) ไม่งั้น approve ถูก block
+          // + มีทางออกให้ติ๊ก "ไม่ประสงค์รับใบกำกับ". บุคคลธรรมดา = ระบบ downgrade เป็น
+          // ใบเสร็จให้เองตอน approve (ไม่ block) — เตือนเบา ๆ พอ
+          if (isJuristic)
+            Layout.toast('⚠️ ใบกำกับภาษีเต็มรูป §86/4 (นิติบุคคล) ต้องมี: ' + missing.join(' · ')
+              + ' — เติมให้ครบ หรือ ติ๊ก "ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี" เพื่อออกเป็นใบเสร็จ', 'error', 9000);
+          else
+            Layout.toast('ℹ️ ข้อมูล §86/4 ไม่ครบ (' + missing.join(' · ')
+              + ') — บุคคลธรรมดา ระบบจะออกเป็น "ใบเสร็จรับเงิน" ให้ (VAT นำส่งครบ)', 'info', 7000);
+        }
       },
 
       // §90/2 — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี/เก็บ VAT ขาย. ปิดตัวเลือก

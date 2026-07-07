@@ -180,6 +180,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     !Contact.IsWalkInCustomer`). นอกจากนี้ **branch code (§86/4 ประกาศ 199)
     บังคับเฉพาะผู้ซื้อนิติบุคคล** (`ContactType==JuristicPerson` หรือ TaxId 13 หลัก
     ขึ้นต้น "0") — บุคคลธรรมดาไม่บังคับสาขา.
+    3. **Auto-downgrade (ไม่ block ทางตัน)** — เมื่อ §86/4 ผู้ซื้อไม่ครบตอน approve
+       (`DocumentService.cs:~1991`): **แยกตามชนิดผู้ซื้อ** — (a) **นิติบุคคล** (ตั้งใจ
+       เคลมภาษีซื้อ) → **block + ชี้ทางออก** ("เติมข้อมูล หรือ ติ๊กไม่ประสงค์รับใบกำกับ
+       เพื่อออกเป็นใบเสร็จ") กัน downgrade เงียบ ๆ ที่ทำให้ผู้ซื้อเสียสิทธิ; (b)
+       **บุคคลธรรมดา/ไม่มีเลขภาษี** (ขายปลีก) → ระบบ **auto ตั้ง
+       `BuyerDeclinedTaxInvoice=true`** เอง → หัว downgrade เป็น "ใบเสร็จรับเงิน",
+       **ไม่ block** (หลัก: เอกสาร §86/4 ไม่ครบ = ไม่ใช่ใบกำกับเต็มรูป จึงไม่ควรมีหัวว่า
+       "ใบกำกับภาษี"). VAT ขายยังลง ภ.พ.30 ครบ.
     **หัวเอกสาร**: `ComputeDocumentTitle` เมื่อ `buyerDeclined` (per-doc flag หรือ
     walk-in) → ไม่ upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน"; ถ้า DocumentType=
     TaxInvoice + `BuyerDeclinedTaxInvoice` → downgrade หัวเป็น "ใบเสร็จรับเงิน".
@@ -1143,7 +1151,7 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
-_Last verified against codebase: 2026-07-06 — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-07 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
@@ -1153,6 +1161,12 @@ _รอบ 42: ผู้ซื้อไม่ประสงค์รับใ�
 _`BuyerDeclinedTaxInvoice` (นอกจาก walk-in contact) ยกเว้น §86/4 gate +_
 _downgrade หัว TaxInvoice → "ใบเสร็จรับเงิน"; branch code (§86/4) บังคับเฉพาะ_
 _ผู้ซื้อนิติบุคคล บุคคลธรรมดาไม่บังคับ (ประกาศอธิบดีฯ 199). VAT → ภ.พ.30 ครบ._
+_รอบ 43: §86/4 smart-lock — ไม่ block ทางตัน: บุคคลธรรมดา/ไม่มีเลขภาษีที่ข้อมูล_
+_ไม่ครบ → auto ตั้ง BuyerDeclinedTaxInvoice (ออกเป็นใบเสร็จ, VAT ครบ); นิติบุคคล_
+_→ block + ชี้ทางออก (เติม/ติ๊กไม่รับใบกำกับ). + ตราประทับบริษัท (company seal):_
+_อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
+_(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
+_(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
 _รอบ 16 (audit ยอดเบิ้ล/double-count + concurrency): supersede block,_
 _deposit-apply settlement JE, settlement receipt กันนับซ้ำในรายงานรายได้,_
 _POS tip fix, POS refund discountFactor, Integration idempotency (expense/PV_

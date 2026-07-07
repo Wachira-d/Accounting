@@ -9,6 +9,8 @@ public interface ISettingsService
     Task<CompanySettingsResponse> UpdateSettingsAsync(Guid companyId, UpdateCompanySettingsRequest request);
     Task<CompanySettingsResponse> UploadLogoAsync(Guid companyId, Stream fileStream, string fileName, string contentType);
     Task DeleteLogoAsync(Guid companyId);
+    Task<CompanySettingsResponse> UploadStampAsync(Guid companyId, Stream fileStream, string fileName, string contentType);
+    Task DeleteStampAsync(Guid companyId);
     Task<LandingServicesResponse?> GetLandingServicesAsync();
 
     // Number Series
