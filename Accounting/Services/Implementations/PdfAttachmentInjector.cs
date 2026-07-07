@@ -27,8 +27,10 @@ internal static class PdfAttachmentInjector
         var rootObj = FindRootObjectNumber(pdfText);
         if (rootObj <= 0) return pdfBytes;
 
-        // Find the highest existing object number from xref tables
+        // Find the highest existing object number from xref tables — fallback ไป
+        // สแกน object header ถ้าอ่าน xref ไม่ได้ (กัน bail เงียบ = ไม่ฝัง XML)
         var maxObj = FindMaxObjectNumber(pdfText);
+        if (maxObj <= 0) maxObj = FindMaxObjNumberByHeaders(pdfText);
         if (maxObj <= 0) return pdfBytes;
 
         var efObj = maxObj + 1;       // EmbeddedFile stream
@@ -124,10 +126,15 @@ internal static class PdfAttachmentInjector
             }
         }
 
-        // Trailer with /Prev pointing to previous xref
+        // Trailer with /Prev pointing to previous xref. **PDF/A บังคับต้องมี /ID**
+        // และ incremental update ต้องคง /ID เดิม (ต้องตรงกับไฟล์ต้นทาง) — เดิมไม่ใส่
+        // → veraPDF/ETDA validator reject. ดึง /ID เดิมจาก trailer ก่อนหน้ามาใส่ต่อ.
         var newSize = Math.Max(maxObj, newCatalogObj) + 1; // total object count after additions
+        var trailerId = FindTrailerId(pdfText);
         WriteAscii("trailer\n");
-        WriteAscii($"<< /Size {newSize} /Root {newCatalogObj} 0 R /Prev {prevStartXref} >>\n");
+        WriteAscii(trailerId != null
+            ? $"<< /Size {newSize} /Root {newCatalogObj} 0 R /Prev {prevStartXref} /ID {trailerId} >>\n"
+            : $"<< /Size {newSize} /Root {newCatalogObj} 0 R /Prev {prevStartXref} >>\n");
         WriteAscii($"startxref\n{xrefOffset}\n");
         WriteAscii("%%EOF\n");
 
@@ -171,6 +178,39 @@ internal static class PdfAttachmentInjector
                 }
             }
             idx = end;
+        }
+        return max;
+    }
+
+    /// <summary>ดึงค่า /ID [ &lt;hex&gt; &lt;hex&gt; ] จาก trailer ตัวสุดท้าย (คืนรวมวงเล็บ [])
+    /// เพื่อคง file identifier เดิมใน incremental update (PDF/A บังคับ). null = ไม่พบ.</summary>
+    private static string? FindTrailerId(string pdf)
+    {
+        var idx = pdf.LastIndexOf("/ID", StringComparison.Ordinal);
+        if (idx < 0) return null;
+        var open = pdf.IndexOf('[', idx);
+        if (open < 0 || open - idx > 8) return null;   // /ID ต้องตามด้วย [ ใกล้ ๆ
+        var close = pdf.IndexOf(']', open);
+        if (close < 0) return null;
+        return pdf.Substring(open, close - open + 1);   // "[<..> <..>]"
+    }
+
+    /// <summary>สแกน object header "N G obj" หา object number สูงสุด — ใช้เป็น
+    /// fallback เมื่ออ่าน xref ไม่ได้ (กัน XML ไม่ถูกฝังเงียบ ๆ). ทนทานทุกรูปแบบ xref.</summary>
+    private static int FindMaxObjNumberByHeaders(string pdf)
+    {
+        var max = 0;
+        var idx = 0;
+        while ((idx = pdf.IndexOf(" obj", idx, StringComparison.Ordinal)) >= 0)
+        {
+            // ถอยหลังอ่าน "N G" ก่อน " obj"
+            var j = idx - 1;
+            while (j >= 0 && (pdf[j] == ' ' || char.IsDigit(pdf[j]))) j--;   // ข้าม G + ช่องว่าง
+            // ตอนนี้ j ชี้ก่อน token; หา N (ตัวเลขชุดแรกจาก j+1)
+            var seg = pdf.Substring(j + 1, idx - (j + 1)).Trim();
+            var parts = seg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 1 && int.TryParse(parts[0], out var n) && n > max) max = n;
+            idx += 4;
         }
         return max;
     }

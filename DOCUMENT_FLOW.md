@@ -1170,6 +1170,14 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 46: e-Tax PDF/A-3 — แก้ compliance ให้ผ่าน validator: (1) trailer เพิ่ม /ID_
+_(incremental update คง file id เดิม — PDF/A บังคับ), (2) XMP เพิ่ม field มาตรฐาน_
+_ครบ (dc:title/creator/description, pdf:Producer/Keywords, xmp:CreatorTool/Create_
+_Date/ModifyDate) ตรงกับ Info dict + วันที่ capture ครั้งเดียว, (3) FindMaxObj_
+_fallback สแกน object header กัน XML ไม่ถูกฝังเงียบ. + DocumentEmailService:_
+_ส่ง e-Tax by Email ถ้าสร้าง PDF/A-3 ไม่ได้ → **fail loud** (เดิม swallow ส่ง_
+_อีเมลเปล่าไม่มีเอกสารตามกฎหมาย). หมายเหตุ: วิธี robust สุดคือใช้ PDF/A library_
+_(ETDA reference ใช้ iTextSharp) — ปัจจุบัน QuestPDF(A-2b)+injector ยังเปราะ._
 _รอบ 45: บันทึกชำระเงิน → ออก "ใบเสร็จรับเงิน" หลักฐานอัตโนมัติ (default เปิด_
 _ฝั่งขาย Invoice/TaxInvoice/DebitNote). `Document.IsSettlementReceipt=true` +_
 _`SettlementPaymentId`, `Payment.ReceiptDocumentId`. ใบนี้ **evidence-only**:_
