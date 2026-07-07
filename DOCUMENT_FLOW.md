@@ -188,9 +188,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
        `BuyerDeclinedTaxInvoice=true`** เอง → หัว downgrade เป็น "ใบเสร็จรับเงิน",
        **ไม่ block** (หลัก: เอกสาร §86/4 ไม่ครบ = ไม่ใช่ใบกำกับเต็มรูป จึงไม่ควรมีหัวว่า
        "ใบกำกับภาษี"). VAT ขายยังลง ภ.พ.30 ครบ.
-    **หัวเอกสาร**: `ComputeDocumentTitle` เมื่อ `buyerDeclined` (per-doc flag หรือ
-    walk-in) → ไม่ upgrade เป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน"; ถ้า DocumentType=
-    TaxInvoice + `BuyerDeclinedTaxInvoice` → downgrade หัวเป็น "ใบเสร็จรับเงิน".
+    **หัวเอกสาร**: `ComputeDocumentTitle` เมื่อ `buyerDeclined` — per-doc flag,
+    walk-in, **หรือ `Buyer864Incomplete(doc)`** (ข้อมูล §86/4 ผู้ซื้อไม่ครบจริง:
+    เลขภาษี≠13 / ไม่มีที่อยู่ / นิติบุคคลไม่มีสาขา5 — เกณฑ์เดียวกับ approve gate,
+    เฉพาะเอกสารมี VAT ไม่ใช่มัดจำพักรอ) → ไม่ upgrade เป็น "ใบกำกับภาษี/ใบเสร็จ
+    รับเงิน"; ถ้า DocumentType=TaxInvoice → downgrade หัวเป็น "ใบเสร็จรับเงิน".
+    (กันเคสเอกสารที่ข้อมูลไม่ครบแต่หัวยังขึ้น "ใบกำกับภาษี" — ผิด §86/4)
     VAT ขายลงรายงาน/ภ.พ.30 ครบตามปกติ (ภาระ VAT ไม่ขึ้นกับหัวเอกสาร),
     ผู้ซื้อเคลมภาษีซื้อไม่ได้
 
