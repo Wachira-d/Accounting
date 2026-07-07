@@ -1593,26 +1593,38 @@ public class DocumentService : IDocumentService
         //     กรอง IsDeposit=true จึงพลาด. ตรวจจากการลงบัญชีจริง (Cr เงินมัดจำ/ขายรอ
         //     รับรู้) เพื่อให้ dashboard สะท้อนความจริงทางบัญชี ไม่พึ่งแค่ธง.
         var nativeIds = rows.Select(r => r.Id).ToHashSet();
-        var glDepositDocIds = await _db.JournalEntryLines.AsNoTracking()
-            .Where(l => !l.IsDeleted && l.CreditAmount > 0
-                && (l.Account.AccountCode.StartsWith("215") || l.Account.AccountCode.StartsWith("217"))
-                && l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.ReversedByEntryId == null
-                && l.JournalEntry.SourceDocumentId != null)
-            .Select(l => l.JournalEntry.SourceDocumentId!.Value)
-            .Distinct()
-            .ToListAsync();
-        var extraIds = glDepositDocIds.Where(id => !nativeIds.Contains(id)).ToList();
-        if (extraIds.Count > 0)
+        try
         {
-            var extra = await _db.Documents.AsNoTracking()
-                .Include(d => d.Contact)
-                .Where(d => d.CompanyId == companyId && extraIds.Contains(d.Id)
-                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                    && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
+            // select เป็น Guid? แล้ว convert ใน memory (กัน EF แปล .Value ไม่ได้)
+            var glDepositDocIds = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => !l.IsDeleted && l.CreditAmount > 0
+                    && (l.Account.AccountCode.StartsWith("215") || l.Account.AccountCode.StartsWith("217"))
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.ReversedByEntryId == null
+                    && l.JournalEntry.SourceDocumentId != null)
+                .Select(l => l.JournalEntry.SourceDocumentId)
+                .Distinct()
                 .ToListAsync();
-            rows.AddRange(extra);
+            var extraIds = glDepositDocIds
+                .Where(id => id.HasValue && !nativeIds.Contains(id.Value))
+                .Select(id => id!.Value)
+                .ToList();
+            if (extraIds.Count > 0)
+            {
+                var extra = await _db.Documents.AsNoTracking()
+                    .Include(d => d.Contact)
+                    .Where(d => d.CompanyId == companyId && extraIds.Contains(d.Id)
+                        && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                        && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
+                    .ToListAsync();
+                rows.AddRange(extra);
+            }
+        }
+        catch (Exception ex)
+        {
+            // GL-detection ล้ม → ไม่ทำให้หน้าเงินมัดจำพัง (แสดง native อย่างเดียว)
+            _logger.LogWarning(ex, "GetDepositsAsync GL-based deposit detection failed — native-only");
         }
         rows = rows.OrderByDescending(d => d.DocumentDate).ToList();
 
