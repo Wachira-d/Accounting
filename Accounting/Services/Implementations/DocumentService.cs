@@ -1592,33 +1592,47 @@ public class DocumentService : IDocumentService
         //     account mapping DEPOSIT_RECEIVED โดยไม่ set IsDeposit) → dashboard เดิม
         //     กรอง IsDeposit=true จึงพลาด. ตรวจจากการลงบัญชีจริง (Cr เงินมัดจำ/ขายรอ
         //     รับรู้) เพื่อให้ dashboard สะท้อนความจริงทางบัญชี ไม่พึ่งแค่ธง.
-        var nativeIds = rows.Select(r => r.Id).ToHashSet();
         try
         {
-            // select เป็น Guid? แล้ว convert ใน memory (กัน EF แปล .Value ไม่ได้)
-            var glDepositDocIds = await _db.JournalEntryLines.AsNoTracking()
-                .Where(l => !l.IsDeleted && l.CreditAmount > 0
-                    && (l.Account.AccountCode.StartsWith("215") || l.Account.AccountCode.StartsWith("217"))
-                    && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
-                    && l.JournalEntry.ReversedByEntryId == null
-                    && l.JournalEntry.SourceDocumentId != null)
-                .Select(l => l.JournalEntry.SourceDocumentId)
-                .Distinct()
+            // หา "บัญชีหนี้สินมัดจำ/รับล่วงหน้า" ของบริษัทนี้ก่อน — จับด้วย **ชื่อบัญชี**
+            // (มัดจำ/รับล่วงหน้า/รอรับรู้) หรือรหัส 215xx/217xx เพื่อให้ครอบคลุมทุกผัง
+            // ไม่ว่าจะตั้งเลขบัญชีแบบไหน (เช่น 21510 "เงินมัดจำ/ชำระล่วงหน้าค่าห้องพัก")
+            var depAcctIds = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted
+                    && (a.AccountCode.StartsWith("215") || a.AccountCode.StartsWith("217")
+                        || a.AccountName.Contains("มัดจำ")
+                        || a.AccountName.Contains("รับล่วงหน้า")
+                        || a.AccountName.Contains("รอรับรู้")))
+                .Select(a => a.Id)
                 .ToListAsync();
-            var extraIds = glDepositDocIds
-                .Where(id => id.HasValue && !nativeIds.Contains(id.Value))
-                .Select(id => id!.Value)
-                .ToList();
-            if (extraIds.Count > 0)
+
+            if (depAcctIds.Count > 0)
             {
-                var extra = await _db.Documents.AsNoTracking()
-                    .Include(d => d.Contact)
-                    .Where(d => d.CompanyId == companyId && extraIds.Contains(d.Id)
-                        && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                        && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
+                // เอกสารที่ "รับมัดจำ" = มี JE (Posted, ไม่ reverse) **Cr** บัญชีมัดจำ
+                // (Cr = เพิ่มหนี้สินมัดจำ = ถือมัดจำไว้; ตัดมัดจำจะเป็น Dr ไม่เข้าเงื่อนไข)
+                var glDepositDocIds = await _db.JournalEntryLines.AsNoTracking()
+                    .Where(l => !l.IsDeleted && l.CreditAmount > 0
+                        && depAcctIds.Contains(l.AccountId)
+                        && l.JournalEntry.CompanyId == companyId
+                        && l.JournalEntry.Status == JournalEntryStatus.Posted
+                        && l.JournalEntry.ReversedByEntryId == null
+                        && l.JournalEntry.SourceDocumentId != null)
+                    .Select(l => l.JournalEntry.SourceDocumentId)
+                    .Distinct()
                     .ToListAsync();
-                rows.AddRange(extra);
+                var extraIds = glDepositDocIds
+                    .Where(id => id.HasValue).Select(id => id!.Value).ToList();
+                if (extraIds.Count > 0)
+                {
+                    var extra = await _db.Documents.AsNoTracking()
+                        .Include(d => d.Contact)
+                        .Where(d => d.CompanyId == companyId && extraIds.Contains(d.Id)
+                            && !d.IsDeposit   // native ถูกดึงไปแล้วในชุดแรก
+                            && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                            && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
+                        .ToListAsync();
+                    rows.AddRange(extra);
+                }
             }
         }
         catch (Exception ex)
