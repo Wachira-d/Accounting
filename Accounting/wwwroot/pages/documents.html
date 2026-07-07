@@ -1891,7 +1891,11 @@
         }
         const missing = [];
         if (!contact?.taxId) missing.push('เลขผู้เสียภาษี 13 หลัก');
-        if (!contact?.branchCode) missing.push('รหัสสาขา (00000=สนญ.)');
+        // รหัสสาขาบังคับเฉพาะนิติบุคคล — บุคคลธรรมดาไม่มีสาขา
+        const tid = String(contact?.taxId || '').replace(/\D/g, '');
+        const isJuristic = contact?.contactType === 'JuristicPerson' || contact?.contactType === 2
+          || (tid.length === 13 && tid.startsWith('0'));
+        if (isJuristic && !contact?.branchCode) missing.push('รหัสสาขา (00000=สนญ.)');
         if (!(contact?.address || contact?.subDistrict || contact?.province)) missing.push('ที่อยู่');
         if (missing.length)
           Layout.toast('⚠️ ใบกำกับภาษี §86/4 ต้องมี: ' + missing.join(' · ') + ' — เติมข้อมูลลูกค้าก่อนอนุมัติ', 'error', 9000);

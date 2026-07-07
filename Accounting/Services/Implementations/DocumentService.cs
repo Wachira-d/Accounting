@@ -1970,15 +1970,21 @@ public class DocumentService : IDocumentService
             && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit)
         {
             var missing = new List<string>();
-            var btid = (doc.Contact.TaxId ?? "").Where(char.IsDigit).Count();
-            if (btid != 13) missing.Add("เลขผู้เสียภาษีผู้ซื้อ 13 หลัก");
+            var taxIdDigits = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+            if (taxIdDigits.Length != 13) missing.Add("เลขผู้เสียภาษีผู้ซื้อ 13 หลัก");
             if (string.IsNullOrWhiteSpace(doc.Contact.Address)) missing.Add("ที่อยู่ผู้ซื้อ");
-            // SupplierBranchCode = สาขาผู้ขาย (เก็บฝั่งซื้อ); ฝั่งขายใช้
-            // Contact.BranchCode สำหรับสาขาผู้ซื้อ. ตรวจฝั่งขาย (TaxInvoice
-            // ที่เรา = ผู้ขาย).
-            var buyerBr = doc.Contact.BranchCode ?? "";
-            var buyerBrDigits = new string(buyerBr.Where(char.IsDigit).ToArray());
-            if (buyerBrDigits.Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
+            // รหัสสาขา (00000=สนญ. / สาขาที่ NNNNN) เป็นแนวคิดของ "นิติบุคคล"
+            // เท่านั้น — บุคคลธรรมดาไม่มีสาขา จึงบังคับเฉพาะผู้ซื้อนิติบุคคล
+            // (ContactType.JuristicPerson หรือเลขภาษี 13 หลักขึ้นต้น 0 = เลข
+            // ทะเบียนนิติบุคคล; บัตร ปชช. บุคคลธรรมดาขึ้นต้น 1-8).
+            var isJuristicBuyer = doc.Contact.ContactType == ContactType.JuristicPerson
+                || (taxIdDigits.Length == 13 && taxIdDigits.StartsWith("0"));
+            if (isJuristicBuyer)
+            {
+                var buyerBr = doc.Contact.BranchCode ?? "";
+                var buyerBrDigits = new string(buyerBr.Where(char.IsDigit).ToArray());
+                if (buyerBrDigits.Length != 5) missing.Add("รหัสสาขาผู้ซื้อ 5 หลัก (00000=สนญ.)");
+            }
             if (missing.Count > 0)
                 throw new InvalidOperationException(
                     $"⛔ §86/4: ใบกำกับขาด field บังคับ — {string.Join(", ", missing)}. " +
