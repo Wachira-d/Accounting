@@ -301,9 +301,24 @@ internal static class PdfAttachmentInjector
         }
         else
         {
-            // Simple token (until whitespace/slash)
+            // Simple token — แต่ **ต้องรองรับ indirect reference "N G R" (3 tokens)**
+            // เช่น "/Metadata 2 0 R". บั๊กเดิม: ตัดแค่ token แรก ("2") เหลือ " 0 R"
+            // ค้างใน catalog → dictionary พัง → iText (สรรพากร) "ประมวลผลไม่ได้"
+            // (pikepdf/qpdf ยอมรับได้เพราะ lenient แต่ iText strict).
+            static bool IsWs(char c) => c == ' ' || c == '\r' || c == '\n' || c == '\t';
             var j = i;
-            while (j < body.Length && body[j] != ' ' && body[j] != '\r' && body[j] != '\n' && body[j] != '\t' && body[j] != '/') j++;
+            while (j < body.Length && !IsWs(body[j]) && body[j] != '/') j++;   // token 1 (obj num)
+            // ถ้าตามด้วย "<ws><digits><ws>R" → เป็น indirect ref กินต่อให้ครบ
+            var k = j;
+            while (k < body.Length && IsWs(body[k])) k++;
+            var g = k;
+            while (g < body.Length && char.IsDigit(body[g])) g++;
+            if (g > k)
+            {
+                var r = g;
+                while (r < body.Length && IsWs(body[r])) r++;
+                if (r < body.Length && body[r] == 'R') j = r + 1;   // กิน "N G R" ครบ
+            }
             valEnd = j;
         }
 
