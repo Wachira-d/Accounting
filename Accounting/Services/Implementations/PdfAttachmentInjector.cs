@@ -83,10 +83,12 @@ internal static class PdfAttachmentInjector
         WriteAscii($"/EF << /F {efObj} 0 R /UF {efObj} 0 R >> >>\n");
         WriteAscii("endobj\n");
 
-        // Object: EmbeddedFiles name tree
+        // Object: EmbeddedFiles name tree — key = description ("Tax Invoice XML Data")
+        // ตรงกับ TakeTime/ETDA (iText ใช้ description เป็น name-tree key; ชื่อไฟล์จริง
+        // อยู่ที่ /F /UF = ETDA-invoice.xml)
         newOffsets[nameTreeObj] = ms.Position;
         WriteAscii($"{nameTreeObj} 0 obj\n");
-        WriteAscii($"<< /Names [({EscapeLiteral(xmlFileName)}) {fsObj} 0 R] >>\n");
+        WriteAscii($"<< /Names [({EscapeLiteral(description)}) {fsObj} 0 R] >>\n");
         WriteAscii("endobj\n");
 
         // Object: ETDA XMP metadata stream (overrides QuestPDF's default XMP)
