@@ -214,62 +214,23 @@ public partial class PdfGenerationService
         return AttachEtaxXmlNative(pdfBytes, xmlContent, xmlFileName, metadata, now);
     }
 
-    /// <summary>ฝัง XML e-Tax ลง PDF/A-3 ด้วย **QuestPDF native DocumentOperation**
-    /// (qpdf-based, single-pass) — ให้ไฟล์สะอาด xref เดียว, XMP เดียว, /AF ถูกต้อง
-    /// เหมือน iTextSharp (TakeTime) → สรรพากร/ETDA parse ได้แน่นอน. แทน hand-rolled
-    /// incremental injector เดิม (2 xref, XMP ซ้อน) ที่ strict parser หา XML ไม่เจอ.
-    /// LoadFile/Save ของ DocumentOperation ใช้ไฟล์จริง → เขียน temp แล้วลบทิ้ง.
-    /// ล้มเหลว (เช่น native qpdf lib ขาด) → fallback ตัว injector เดิม (แก้ /Size แล้ว).</summary>
+    /// <summary>ฝัง XML e-Tax ลง PDF/A-3 ด้วย **PdfAttachmentInjector** (เขียน
+    /// XMP metadata stream แบบ **uncompressed** + /Type/Metadata /Subtype/XML +
+    /// conformance **U** + rsm extension — ตรงข้อกำหนด ETDA/TakeTime เป๊ะ).
+    ///
+    /// ⚠️ **ไม่ใช้ QuestPDF DocumentOperation (qpdf)** เพราะ qpdf **บีบอัด metadata
+    /// stream** (/Filter /FlateDecode) ซึ่ง **ผิด PDF/A** (XMP ต้อง uncompressed) +
+    /// ออก conformance **B** ไม่ใช่ U → RD reject "PDF/A-3 คุณสมบัติไม่ตรง".
+    /// พิสูจน์แล้วด้วย pikepdf: แก้ให้ metadata uncompressed + U → ผ่าน.
+    /// injector แก้ /Size + /ID แล้ว → parseable; base จาก QuestPDF ให้ OutputIntent
+    /// + ฟอนต์ ToUnicode ครบ (เข้าเกณฑ์ U).</summary>
     private byte[] AttachEtaxXmlNative(byte[] basePdf, string xmlContent, string xmlFileName,
         EtaxPdfMetadata metadata, DateTime now)
     {
-        var tmpDir = Path.Combine(Path.GetTempPath(), "nextacc-etax", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmpDir);
-        var basePath = Path.Combine(tmpDir, "base.pdf");
-        var xmlPath = Path.Combine(tmpDir, xmlFileName);
-        var outPath = Path.Combine(tmpDir, "out.pdf");
-        try
-        {
-            File.WriteAllBytes(basePath, basePdf);
-            File.WriteAllText(xmlPath, xmlContent, new System.Text.UTF8Encoding(false)); // UTF-8 ไม่มี BOM
-
-            QuestPDF.Fluent.DocumentOperation
-                .LoadFile(basePath)
-                .AddAttachment(new QuestPDF.Fluent.DocumentOperation.DocumentAttachment
-                {
-                    Key = xmlFileName,
-                    FilePath = xmlPath,
-                    AttachmentName = xmlFileName,        // ชื่อไฟล์แนบ = {EtaxRef}.xml
-                    MimeType = "text/xml",   // ตรงกับ TakeTime (/Subtype /text/xml) ที่ผ่าน
-                    Description = "Tax Invoice XML Data",
-                    // XML = ตัวจริงตามกฎหมาย, PDF = ภาพแสดงแทน → Alternative (ETDA spec)
-                    Relationship = QuestPDF.Fluent.DocumentOperation.DocumentAttachmentRelationship.Alternative,
-                    CreationDate = now,
-                    ModificationDate = now,
-                    Replace = true
-                })
-                .ExtendMetadata(BuildEtdaXmpExtension(metadata, xmlFileName))  // ETDA rsm extension schema
-                .Save(outPath);
-
-            // ETDA บังคับ PDF/A-3**U** (PdfAConformanceLevel.PDF_A_3U — เทียบ ETDA
-            // reference + TakeTime) แต่ QuestPDF ออก **B**. ฟอนต์ที่ฝังมี ToUnicode
-            // ครบทุกตัว (single-byte→Unicode) → ไฟล์เข้าเกณฑ์ U จริง → อัป conformance
-            // B→U ใน XMP (แทนที่ยาวเท่ากัน ไม่กระทบ xref/โครงสร้าง).
-            return UpgradePdfaConformanceToU(File.ReadAllBytes(outPath));
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Trace.TraceWarning(
-                $"Native PDF/A-3 attach failed ({ex.Message}) — fallback to injector");
-            var xmlBytes = System.Text.Encoding.UTF8.GetBytes(xmlContent);
-            var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName, now);
-            return PdfAttachmentInjector.AttachXml(basePdf, xmlFileName, xmlBytes,
-                "e-Tax XML data per ETDA Recommendation 3-2560 v2.0", etdaXmpMetadata: etdaXmp);
-        }
-        finally
-        {
-            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        var xmlBytes = System.Text.Encoding.UTF8.GetBytes(xmlContent);
+        var etdaXmp = BuildEtdaXmpMetadata(metadata, xmlFileName, now);  // full XMP: part=3, U, rsm
+        return PdfAttachmentInjector.AttachXml(basePdf, xmlFileName, xmlBytes,
+            "Tax Invoice XML Data", etdaXmpMetadata: etdaXmp);
     }
 
     /// <summary>
