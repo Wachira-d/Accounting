@@ -7613,22 +7613,33 @@ public class DocumentService : IDocumentService
                         var vatLine = depJe.Lines.FirstOrDefault(l => l.CreditAmount > 0
                             && (CodeOf(l.AccountId) == "21913" || CodeOf(l.AccountId) == "21911"));
 
-                        // ── NET-BALANCE guard (แทนการกรอง ReversedByEntryId==null เดิม) ──
-                        //    "มัดจำยังไม่ consume" = ดูจาก **ยอดคงค้างสุทธิ (net)** ของบัญชี
-                        //    มัดจำในสาย reverse-chain ไม่ใช่แค่ธง ReversedByEntryId —
-                        //    net = Σ(Cr−Dr) บนบัญชี deferred ของ [original + reversal ที่ยัง
-                        //    active (ReversedByEntryId==null)]. เคส reverse → reversal Dr กลับ
-                        //    → net=0 (ตัด ไม่ให้หัก); เคส un-reverse → reversal ถูกกลับเอง
-                        //    (มี ReversedByEntryId) → หลุดออก → net กลับมา live → หักได้.
-                        //    ตอบโจทย์ TakeTime: partner un-reverse ได้โดยไม่ต้องให้ NextAcc
-                        //    เคลียร์ link ReversedByEntryId ของ original.
-                        var chainIds = new List<Guid> { depJe.Id };
-                        chainIds.AddRange(await _db.JournalEntries
-                            .Where(j => j.CompanyId == companyId && j.OriginalEntryId == depJe.Id
-                                && j.Status == JournalEntryStatus.Posted && j.ReversedByEntryId == null)
-                            .Select(j => j.Id).ToListAsync());
+                        // ── NET-BALANCE guard (ครอบคลุมทุกกลไก un-reverse) ──
+                        //    "มัดจำยังไม่ consume" = **ยอด Cr สุทธิจริงใน GL** ของบัญชีมัดจำ
+                        //    ก้อนนี้ ไม่ใช่ธง ReversedByEntryId. คำนวณจาก Σ(Cr−Dr) บนบัญชี
+                        //    deferred ของ **ทั้ง reverse-family** (transitive closure ตาม
+                        //    OriginalEntryId ทุกชั้น) นับเฉพาะ Posted + ไม่ถูกลบ:
+                        //      original(+Cr) → reversal(−Cr) → reversal-of-reversal(+Cr) ...
+                        //    telescope เป็น net จริงเสมอ ไม่ว่า un-reverse ด้วยวิธีใด:
+                        //      • reversal-of-reversal (post กลับ) → ชั้นใหม่ +Cr → net live
+                        //      • void reversal ตรง ๆ (Status≠Posted) → หลุด → net live
+                        //      • delete reversal (IsDeleted) → หลุด → net live
+                        //      • reversal ยัง active → −Cr → net 0 (ตัด ไม่ให้หัก)
+                        //    ไม่พึ่ง flag ReversedByEntryId เลย → partner un-reverse ด้วย
+                        //    กลไกใดก็ได้ ขอแค่สะท้อนใน GL (JE posted/void/delete) ที่ NextAcc.
+                        var family = new HashSet<Guid> { depJe.Id };
+                        var frontier = new List<Guid> { depJe.Id };
+                        for (var depth = 0; depth < 20 && frontier.Count > 0; depth++)
+                        {
+                            var children = await _db.JournalEntries
+                                .Where(j => j.CompanyId == companyId && j.OriginalEntryId != null
+                                    && frontier.Contains(j.OriginalEntryId.Value)
+                                    && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
+                                .Select(j => j.Id).ToListAsync();
+                            frontier = children.Where(id => family.Add(id)).ToList();
+                        }
+                        var familyIds = family.ToList();
                         var liveNet = await _db.JournalEntryLines
-                            .Where(l => !l.IsDeleted && chainIds.Contains(l.JournalEntryId)
+                            .Where(l => !l.IsDeleted && familyIds.Contains(l.JournalEntryId)
                                 && l.AccountId == deferredLine.AccountId)
                             .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
                         if (liveNet <= 0.005m)
