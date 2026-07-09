@@ -1183,6 +1183,13 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 51: ที่อยู่ต่างประเทศของ Contact — ฟอร์มผู้ติดต่อเดิมเป็นโครงไทยล้วน_
+_(จังหวัด/รหัสไปรษณีย์ required) → vendor/ลูกค้าต่างชาติ (เช่น Booking.com B.V.)_
+_กรอกไม่ได้. เพิ่ม checkbox "🌐 ที่อยู่ต่างประเทศ" → สลับเป็น dropdown ประเทศ_
+_(ISO alpha-2) + textarea ที่อยู่เต็ม; save เซ็ต `CountryCode`≠TH + `Address`_
+_free-text + null โครงไทย. e-Tax `BuildBuyerParty`: guard `isThai` — CountryID≠TH_
+_บังคับไปทาง unstructured (LineOne + CountryID ต่างชาติ) ไม่ยัด TISI geo-code_
+_ไทยให้ที่อยู่ต่างชาติ. (backend DTO/entity/WHT ม.70 รองรับ CountryCode อยู่แล้ว)_
 _รอบ 50: dashboard เงินมัดจำ (`GetDepositsAsync`) — ยังโชว์ 0. ขยายการตรวจจับ_
 _เป็น 3 ชั้น: (1) native IsDeposit, (2) GL-detected **ทุก doc type** (เลิกจำกัด_
 _แค่ Receipt/RV) ใช้ยอด **Cr สุทธิใน GL** (ΣCr−ΣDr) เป็นฐาน/คงค้าง แทน SubTotal_
