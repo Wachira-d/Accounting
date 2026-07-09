@@ -1779,8 +1779,10 @@ public class DocumentService : IDocumentService
             hint = $"พบบัญชีมัดจำ {depAcctIds.Count} บัญชี แต่ยังไม่มีการลงบัญชี (JE) เครดิตเข้าบัญชีเหล่านี้เลย — เงินมัดจำที่รับมาอาจถูกลงบัญชีอื่น (เช่น รายได้/ลูกหนี้) ตรวจการตั้งค่า mapping ตอนรับเงิน หรือลงรายการมัดจำผ่านเมนูขาย (ติ๊ก 'เงินมัดจำ')";
         else if (totalNet <= 0.005m)
             hint = $"พบเครดิตมัดจำ {creditLines.Count} บรรทัด แต่ยอดสุทธิ (เครดิต−เดบิต) = {totalNet:N2} — มัดจำถูกรับรู้/คืนไปหมดแล้ว (ไม่มีคงค้าง) จึงแสดง 0 ถูกต้อง";
+        else if (nativeCount > 0 || totalNet > 0.005m)
+            hint = $"ระบบเห็นมัดจำจริง (เอกสารติดธง {nativeCount} ใบ · คงค้างสุทธิ {totalNet:N2}) — ถ้ารายการด้านบนยังว่าง แปลว่า response ถูก **cache** ไว้ตอนยังไม่มีข้อมูล: กด Ctrl+Shift+R (hard refresh) หรือเปิดแบบไม่ใช้แคช; ถ้ายังไม่หายให้ล้าง cache ของ CDN/proxy แล้ว restart backend ทุก instance";
         else
-            hint = $"พบยอดมัดจำคงค้างสุทธิ {totalNet:N2} — ถ้าหน้ายังโชว์ 0 แสดงว่าเซิร์ฟเวอร์ยังรันโค้ดเวอร์ชันเก่า กรุณา rebuild + redeploy";
+            hint = $"พบยอดมัดจำคงค้างสุทธิ {totalNet:N2} — ถ้าหน้ายังโชว์ 0 กด Ctrl+Shift+R (hard refresh); ถ้ายังไม่หายให้ rebuild + redeploy";
 
         return new DepositDiagnostics(
             depAcctIds.Count, perAcct, nativeCount,
