@@ -162,7 +162,10 @@ public record InboundCreditNoteRequest(
     string Reason,
     List<InboundInvoiceLineRequest> Lines,
     string? Notes,
-    List<InboundAttachment>? Attachments = null);
+    List<InboundAttachment>? Attachments = null,
+    /// <summary>เลขจอง booking (JSON `bookingNumber`, string) → Document.BookingNumber
+    /// — ผูก CN เข้า booking เดียวกับมัดจำ/ใบกำกับ (เหมือน invoice). null = ไม่ผูก.</summary>
+    string? BookingNumber = null);
 
 public record InboundDebitNoteRequest(
     string? ExternalId, string? ExternalRef,
@@ -172,7 +175,10 @@ public record InboundDebitNoteRequest(
     string Reason,
     List<InboundInvoiceLineRequest> Lines,
     string? Notes,
-    List<InboundAttachment>? Attachments = null);
+    List<InboundAttachment>? Attachments = null,
+    /// <summary>เลขจอง booking (JSON `bookingNumber`, string) → Document.BookingNumber
+    /// — ผูก DN เข้า booking เดียวกับมัดจำ/ใบกำกับ (เหมือน invoice). null = ไม่ผูก.</summary>
+    string? BookingNumber = null);
 
 /// <summary>ค่าใช้จ่ายจากระบบภายนอก</summary>
 public record InboundExpenseRequest(
