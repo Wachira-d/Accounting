@@ -738,6 +738,9 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "OriginalEntryId" uuid NULL;
             """,
+            """
+            ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "DepositAppliedToDocumentId" uuid NULL;
+            """,
 
             // ===== SiteSettings: global site configuration (singleton) =====
             // ===== BankTransactions: AI Reconciliation MatchGroupId =====
