@@ -21,7 +21,10 @@ const API = {
     if (!isFormData) headers['Content-Type'] = 'application/json';
     headers['Accept-Language'] = (typeof I18n !== 'undefined' && I18n.lang) ? I18n.lang : (localStorage.getItem('nextacc_lang') || 'th');
 
-    const options = { method, headers };
+    // no-store: API JSON ต้องสดเสมอ — กัน browser/proxy/CDN cache GET response
+    // (เคยเจอหน้าเงินมัดจำโชว์ 0 เพราะ document/deposits ถูก cache ตอนยังว่าง
+    // ทั้งที่ backend มีข้อมูลแล้ว — endpoint ใหม่ที่ URL ไม่เคย cache กลับได้ข้อมูลสด)
+    const options = { method, headers, cache: 'no-store' };
     if (signal) options.signal = signal;   // AbortController support for long calls (bulk AI)
     if (data && !isFormData) options.body = JSON.stringify(data);
     if (data && isFormData) options.body = data;

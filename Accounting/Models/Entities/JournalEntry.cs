@@ -19,6 +19,12 @@ public class JournalEntry : TenantEntity
     public Guid? SourceDocumentId { get; set; }         // อ้างอิงเอกสารต้นทาง
     public Guid? ReversedByEntryId { get; set; }        // รายการกลับรายการที่สร้างจากรายการนี้
     public Guid? OriginalEntryId { get; set; }          // รายการต้นทางที่ถูกกลับรายการ
+    /// <summary>เมื่อ JE นี้เป็น "มัดจำภายนอก" (เช่น JV-INT ที่ integration ลง
+    /// Cr 217xx/21913) และถูกนำไปหักบนใบรับเงินสุดท้ายแบบขับ JE
+    /// (DepositAppliedDrivesJournal) — FK ไปใบที่หัก. ใช้กัน double-reverse:
+    /// drives จะไม่กลับ deferred ของ journal นี้ซ้ำถ้าถูก mark แล้ว.
+    /// Null = ยังไม่ถูกนำไปหัก (พฤติกรรมเดิมทุกอย่าง).</summary>
+    public Guid? DepositAppliedToDocumentId { get; set; }
 
     // Project / Branch / Cost Center allocation (header-level default)
     public Guid? ProjectId { get; set; }

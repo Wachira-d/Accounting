@@ -576,6 +576,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   5. mark `deposit.DepositAppliedToDocumentId = invoiceId` (1 ใบมัดจำ → 1 ใบ
      ปลายทาง; ถ้า apply หลายใบต้องเรียกหลายครั้ง)
   6. Fire webhook `deposit.applied`
+- **Deposit-applied drives-journal** (integration self-contained JE) — ใบรับเงิน
+  สุดท้ายส่ง `DepositAppliedAmount` + `DepositAppliedRef` + `DepositAppliedDrivesJournal=true`
+  → JE ใบเดียวกลับ deferred ของมัดจำ (ไม่ต้องมี JV reverse แยก).
+  `DepositAppliedRef` resolve 2 ทาง (`AutoPostToJournalAsync`, `DocumentService.cs:7499`):
+  - **เคส A** — ตรงกับ **ใบมัดจำ (Document, `IsDeposit`)** ตาม `DocumentNumber` →
+    Dr 217xx/21913 ของใบมัดจำ + mark `deposit.DepositAppliedToDocumentId`
+  - **เคส B** — ไม่พบ Document → resolve เป็น **`JournalEntry.EntryNumber`** (มัดจำ
+    ภายนอก เช่น JV-INT ที่ integration ลง Cr 217xx/21913 เอง) → อ่านบรรทัด Cr ของ
+    journal หาบัญชี deferred (215xx/217xx) + VAT (21913/21911) → Dr กลับบัญชีเดิม
+    ตามสัดส่วน; guard double-reverse ด้วย `JournalEntry.DepositAppliedToDocumentId`
+    (void ใบ → un-mark ให้ resync ได้). ต้นเหตุ: TakeTime "drives รับ journal ref"
 - **UX**: ตอนผู้ใช้เลือก contact ในฟอร์ม Invoice/TaxInvoice/Receipt/Quotation/
   BillingNote → `onContactChange` เรียก `checkContactDeposits(contactId)` →
   ถ้า `GetContactDepositSummaryAsync` คืน outstanding > 0 → โชว์ banner เขียว
@@ -1167,7 +1178,7 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
-_Last verified against codebase: 2026-07-09 — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-09 (รอบ 52) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
@@ -1183,6 +1194,13 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 52: deposit-applied drives-journal รับ journal ref (TakeTime point 2) —_
+_เดิม `DepositAppliedRef` resolve ได้แค่ใบมัดจำ (Document) ตาม DocumentNumber →_
+_มัดจำที่เป็นสมุดรายวันภายนอก (JV-INT) หาไม่เจอ → throw → integration ต้อง_
+_fallback ส่ง JV reverse แยก. เพิ่มเคส B: ไม่พบ Document → resolve เป็น_
+_JournalEntry.EntryNumber → กลับ deferred (217xx/21913) จากบรรทัด Cr จริงของ_
+_journal → net JE ใบเดียว. guard double-reverse ด้วยคอลัมน์ใหม่_
+_JournalEntry.DepositAppliedToDocumentId (void → un-mark). เคส A ไม่แตะ._
 _รอบ 51: ที่อยู่ต่างประเทศของ Contact — ฟอร์มผู้ติดต่อเดิมเป็นโครงไทยล้วน_
 _(จังหวัด/รหัสไปรษณีย์ required) → vendor/ลูกค้าต่างชาติ (เช่น Booking.com B.V.)_
 _กรอกไม่ได้. เพิ่ม checkbox "🌐 ที่อยู่ต่างประเทศ" → สลับเป็น dropdown ประเทศ_

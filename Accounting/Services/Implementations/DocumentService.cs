@@ -1779,8 +1779,10 @@ public class DocumentService : IDocumentService
             hint = $"พบบัญชีมัดจำ {depAcctIds.Count} บัญชี แต่ยังไม่มีการลงบัญชี (JE) เครดิตเข้าบัญชีเหล่านี้เลย — เงินมัดจำที่รับมาอาจถูกลงบัญชีอื่น (เช่น รายได้/ลูกหนี้) ตรวจการตั้งค่า mapping ตอนรับเงิน หรือลงรายการมัดจำผ่านเมนูขาย (ติ๊ก 'เงินมัดจำ')";
         else if (totalNet <= 0.005m)
             hint = $"พบเครดิตมัดจำ {creditLines.Count} บรรทัด แต่ยอดสุทธิ (เครดิต−เดบิต) = {totalNet:N2} — มัดจำถูกรับรู้/คืนไปหมดแล้ว (ไม่มีคงค้าง) จึงแสดง 0 ถูกต้อง";
+        else if (nativeCount > 0 || totalNet > 0.005m)
+            hint = $"ระบบเห็นมัดจำจริง (เอกสารติดธง {nativeCount} ใบ · คงค้างสุทธิ {totalNet:N2}) — ถ้ารายการด้านบนยังว่าง แปลว่า response ถูก **cache** ไว้ตอนยังไม่มีข้อมูล: กด Ctrl+Shift+R (hard refresh) หรือเปิดแบบไม่ใช้แคช; ถ้ายังไม่หายให้ล้าง cache ของ CDN/proxy แล้ว restart backend ทุก instance";
         else
-            hint = $"พบยอดมัดจำคงค้างสุทธิ {totalNet:N2} — ถ้าหน้ายังโชว์ 0 แสดงว่าเซิร์ฟเวอร์ยังรันโค้ดเวอร์ชันเก่า กรุณา rebuild + redeploy";
+            hint = $"พบยอดมัดจำคงค้างสุทธิ {totalNet:N2} — ถ้าหน้ายังโชว์ 0 กด Ctrl+Shift+R (hard refresh); ถ้ายังไม่หายให้ rebuild + redeploy";
 
         return new DepositDiagnostics(
             depAcctIds.Count, perAcct, nativeCount,
@@ -3383,6 +3385,15 @@ public class DocumentService : IDocumentService
                             deposit.DepositAppliedToDocumentId = null;
                         }
                         deposit.UpdatedAt = DateTime.UtcNow;
+                    }
+                    else
+                    {
+                        // เคส B (journal ภายนอก): un-mark guard บน JV เพื่อให้ resync
+                        // (สร้างใบใหม่อ้าง journal เดิม) หักได้อีกครั้ง
+                        var depJe = await _db.JournalEntries.FirstOrDefaultAsync(j =>
+                            j.CompanyId == companyId && j.EntryNumber == doc.DepositAppliedRef
+                            && j.DepositAppliedToDocumentId == doc.Id);
+                        if (depJe != null) depJe.DepositAppliedToDocumentId = null;
                     }
                 }
 
@@ -7499,40 +7510,96 @@ public class DocumentService : IDocumentService
                     var deposit = await _db.Documents
                         .FirstOrDefaultAsync(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
                             && d.DocumentNumber == doc.DepositAppliedRef);
-                    if (deposit == null)
-                        throw new InvalidOperationException(
-                            $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำเลขที่ {doc.DepositAppliedRef} — ตรวจสอบ depositAppliedRef");
-
-                    // แยกยอดมัดจำที่หัก (รวม VAT) เป็นฐาน + VAT ตามสัดส่วน VAT ของใบมัดจำ
-                    var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
-                    var depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
-                    var depVat = Math.Round(doc.DepositAppliedAmount - depBase, 2, MidpointRounding.AwayFromZero);
-
-                    // Dr กลับ "ขายรอรับรู้" (217xx) ของใบมัดจำ
-                    var depDeferredAcc = await FindAccountAsync(companyId, deposit.DepositDeferredAccountCode ?? "21712")
-                        ?? await FindAccountAsync(companyId, "217");
-                    if (depDeferredAcc != null && depBase != 0m)
-                        AddLine(depDeferredAcc.Id, depBase, 0, $"ตัดขายรอรับรู้ (นำมัดจำ {deposit.DocumentNumber} มาหัก)", doc.ProjectId);
-
-                    // Dr กลับ VAT ของใบมัดจำ: ยัง deferred (21913) หรือรับรู้แล้ว (21911)
-                    var depVatDeferredPending = deposit.DepositOutputVatDeferred
-                        && deposit.DepositOutputVatRecognizedAt == null && depVat > 0;
-                    if (depVat > 0)
+                    if (deposit != null)
                     {
-                        var depVatAcc = await FindAccountAsync(companyId, depVatDeferredPending ? "21913" : "21911");
-                        if (depVatAcc != null)
-                            AddLine(depVatAcc.Id, depVat, 0,
-                                depVatDeferredPending ? "ตัดภาษีขายรอเรียกเก็บ (มัดจำ→ใบกำกับ)" : "ล้าง VAT มัดจำ",
-                                doc.ProjectId);
-                    }
+                        // ── เคส A: มัดจำเป็น "ใบมัดจำ" (Document) ในระบบ (เช่น REC-) ──
+                        // แยกยอดมัดจำที่หัก (รวม VAT) เป็นฐาน + VAT ตามสัดส่วน VAT ของใบมัดจำ
+                        var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
+                        var depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
+                        var depVat = Math.Round(doc.DepositAppliedAmount - depBase, 2, MidpointRounding.AwayFromZero);
 
-                    // mark ใบมัดจำถูกใช้ (กันรับรู้ซ้ำจากช่องทางอื่น)
-                    deposit.DepositRealizedAmount += depBase;
-                    if (deposit.SubTotal - deposit.DepositRealizedAmount <= 0.005m)
-                        deposit.DepositRealizedAt = doc.DocumentDate;
-                    if (depVatDeferredPending)
-                        deposit.DepositOutputVatRecognizedAt = doc.DocumentDate;
-                    deposit.DepositAppliedToDocumentId = doc.Id;
+                        // Dr กลับ "ขายรอรับรู้" (217xx) ของใบมัดจำ
+                        var depDeferredAcc = await FindAccountAsync(companyId, deposit.DepositDeferredAccountCode ?? "21712")
+                            ?? await FindAccountAsync(companyId, "217");
+                        if (depDeferredAcc != null && depBase != 0m)
+                            AddLine(depDeferredAcc.Id, depBase, 0, $"ตัดขายรอรับรู้ (นำมัดจำ {deposit.DocumentNumber} มาหัก)", doc.ProjectId);
+
+                        // Dr กลับ VAT ของใบมัดจำ: ยัง deferred (21913) หรือรับรู้แล้ว (21911)
+                        var depVatDeferredPending = deposit.DepositOutputVatDeferred
+                            && deposit.DepositOutputVatRecognizedAt == null && depVat > 0;
+                        if (depVat > 0)
+                        {
+                            var depVatAcc = await FindAccountAsync(companyId, depVatDeferredPending ? "21913" : "21911");
+                            if (depVatAcc != null)
+                                AddLine(depVatAcc.Id, depVat, 0,
+                                    depVatDeferredPending ? "ตัดภาษีขายรอเรียกเก็บ (มัดจำ→ใบกำกับ)" : "ล้าง VAT มัดจำ",
+                                    doc.ProjectId);
+                        }
+
+                        // mark ใบมัดจำถูกใช้ (กันรับรู้ซ้ำจากช่องทางอื่น)
+                        deposit.DepositRealizedAmount += depBase;
+                        if (deposit.SubTotal - deposit.DepositRealizedAmount <= 0.005m)
+                            deposit.DepositRealizedAt = doc.DocumentDate;
+                        if (depVatDeferredPending)
+                            deposit.DepositOutputVatRecognizedAt = doc.DocumentDate;
+                        deposit.DepositAppliedToDocumentId = doc.Id;
+                    }
+                    else
+                    {
+                        // ── เคส B: มัดจำเป็น "สมุดรายวันภายนอก" (เช่น JV-INT ที่ระบบ
+                        //    integration ลง Cr 217xx/21913 เอง ไม่มีใบมัดจำใน NextAcc) ──
+                        //    resolve DepositAppliedRef เป็น JournalEntry.EntryNumber แล้ว
+                        //    กลับ deferred ของ journal นั้น → net JE self-contained ใบเดียว
+                        //    (TakeTime point 2: "drives รับ journal ref").
+                        var depJe = await _db.JournalEntries.Include(j => j.Lines)
+                            .FirstOrDefaultAsync(j => j.CompanyId == companyId
+                                && j.EntryNumber == doc.DepositAppliedRef
+                                && j.Status == JournalEntryStatus.Posted
+                                && j.ReversedByEntryId == null);
+                        if (depJe == null)
+                            throw new InvalidOperationException(
+                                $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำหรือสมุดรายวันเลขที่ {doc.DepositAppliedRef} — ตรวจสอบ depositAppliedRef");
+                        // กัน double-reverse: journal เดียวถูกนำไปหักได้ครั้งเดียว
+                        if (depJe.DepositAppliedToDocumentId.HasValue && depJe.DepositAppliedToDocumentId.Value != doc.Id)
+                            throw new InvalidOperationException(
+                                $"หักมัดจำแบบขับ JE: สมุดรายวัน {doc.DepositAppliedRef} ถูกนำไปหักกับเอกสารอื่นแล้ว (กัน reverse ซ้ำ)");
+
+                        // ระบุบัญชี deferred (217xx/215xx) + VAT (21913/21911) จากบรรทัด
+                        // Cr ของ journal จริง — กลับ "บัญชีเดิมที่ถูกเครดิต" ไม่เดาผัง
+                        var lineAcctIds = depJe.Lines.Select(l => l.AccountId).Distinct().ToList();
+                        var lineAccts = await _db.ChartOfAccounts.AsNoTracking()
+                            .Where(a => a.CompanyId == companyId && lineAcctIds.Contains(a.Id))
+                            .Select(a => new { a.Id, a.AccountCode })
+                            .ToListAsync();
+                        string CodeOf(Guid id) => lineAccts.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+
+                        var deferredLine = depJe.Lines.FirstOrDefault(l => l.CreditAmount > 0
+                            && (CodeOf(l.AccountId).StartsWith("217") || CodeOf(l.AccountId).StartsWith("215")));
+                        if (deferredLine == null)
+                            throw new InvalidOperationException(
+                                $"หักมัดจำแบบขับ JE: สมุดรายวัน {doc.DepositAppliedRef} ไม่มีบรรทัดเครดิตบัญชีมัดจำ (215xx/217xx) — ตรวจ mapping ฝั่ง integration");
+                        var vatLine = depJe.Lines.FirstOrDefault(l => l.CreditAmount > 0
+                            && (CodeOf(l.AccountId) == "21913" || CodeOf(l.AccountId) == "21911"));
+
+                        // สัดส่วน VAT = VAT / (ฐาน+VAT) จากยอด Cr จริงของ journal
+                        var jeBaseCr = deferredLine.CreditAmount;
+                        var jeVatCr = vatLine?.CreditAmount ?? 0m;
+                        var jeGross = jeBaseCr + jeVatCr;
+                        var depVatRatio = jeGross > 0 ? jeVatCr / jeGross : 0m;
+                        var depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
+                        var depVat = Math.Round(doc.DepositAppliedAmount - depBase, 2, MidpointRounding.AwayFromZero);
+
+                        // Dr กลับ "บัญชีเดิม" ที่ journal เครดิตไว้ (ตรงบัญชี ไม่เดา)
+                        if (depBase != 0m)
+                            AddLine(deferredLine.AccountId, depBase, 0,
+                                $"ตัดขายรอรับรู้ (นำมัดจำ JV {depJe.EntryNumber} มาหัก)", doc.ProjectId);
+                        if (depVat > 0 && vatLine != null)
+                            AddLine(vatLine.AccountId, depVat, 0,
+                                $"ตัด VAT มัดจำ (JV {depJe.EntryNumber} → ใบกำกับ)", doc.ProjectId);
+
+                        // mark journal ว่าถูกนำไปหักแล้ว (กัน double-reverse)
+                        depJe.DepositAppliedToDocumentId = doc.Id;
+                    }
                 }
 
                 if (doc.WithholdingTaxAmount > 0)

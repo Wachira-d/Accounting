@@ -721,6 +721,23 @@ app.UseMiddleware<IdempotencyMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// 6.5 กัน browser/proxy/CDN cache API JSON — response ต้องสดเสมอ ไม่งั้น
+// GET ที่เคยว่าง (เช่น document/deposits ตอนยังไม่มีมัดจำ) อาจถูก cache
+// ค้างแล้วโชว์ข้อมูลเก่าทั้งที่ backend มีข้อมูลใหม่แล้ว
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api"))
+    {
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+            context.Response.Headers["Pragma"] = "no-cache";
+            return Task.CompletedTask;
+        });
+    }
+    await next();
+});
+
 // 7. Tenant access control (after auth)
 app.UseMiddleware<TenantAccessMiddleware>();
 
