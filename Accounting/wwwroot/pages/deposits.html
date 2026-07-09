@@ -184,8 +184,10 @@
                   <td class="text-center">${r.ageDays} วัน</td>
                   <td class="text-center">${this.statusBadge(r.status)}</td>
                   <td class="text-right" style="white-space:nowrap">
-                    ${r.status === 'Realized' ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>`}
-                    ${r.outstandingAmount > 0.005 ? `<button class="btn btn-sm btn-ghost" onclick="Page.openRefund('${r.id}')" title="คืนเงินมัดจำ (ยกเลิกการจอง)">คืนมัดจำ</button>` : ''}
+                    ${(!r.id || r.id === '00000000-0000-0000-0000-000000000000')
+                      ? '<span style="font-size:11px;color:#94a3b8" title="ยอดจาก GL ที่ยังไม่ผูกเอกสาร — รับรู้/คืนผ่านสมุดรายวันโดยตรง">ไม่มีเอกสารอ้างอิง</span>'
+                      : `${r.status === 'Realized' ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>`}
+                    ${r.outstandingAmount > 0.005 ? `<button class="btn btn-sm btn-ghost" onclick="Page.openRefund('${r.id}')" title="คืนเงินมัดจำ (ยกเลิกการจอง)">คืนมัดจำ</button>` : ''}`}
                   </td>
                 </tr>`; }).join('')}</tbody>
             </table>

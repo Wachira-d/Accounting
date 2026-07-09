@@ -957,8 +957,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     /// </summary>
     private static XElement BuildBuyerParty(XNamespace ram, Contact contact, string schemeId, string txId)
     {
-        var hasStructured =
-            !string.IsNullOrEmpty(contact.BuildingNumber)
+        // เฉพาะที่อยู่ไทย (CountryID=TH) เท่านั้นที่ใช้โครงสร้าง TISI geo-code —
+        // ผู้ซื้อต่างประเทศต้องไปทาง unstructured (LineOne + CountryID ต่างชาติ)
+        // ไม่งั้นจะยัด Thai province/district code ให้ที่อยู่ต่างประเทศ = ผิด
+        var isThai = string.IsNullOrEmpty(contact.CountryCode)
+            || string.Equals(contact.CountryCode, "TH", StringComparison.OrdinalIgnoreCase);
+        var hasStructured = isThai
+            && !string.IsNullOrEmpty(contact.BuildingNumber)
             && !string.IsNullOrEmpty(contact.SubDistrict)
             && !string.IsNullOrEmpty(contact.District)
             && !string.IsNullOrEmpty(contact.Province);
