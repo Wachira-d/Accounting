@@ -88,9 +88,10 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     {
         var document = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, document);
 
         // Only TaxInvoice, Receipt, DebitNote, CreditNote can be e-Tax
         if (document.DocumentType != DocumentType.TaxInvoice && document.DocumentType != DocumentType.Receipt

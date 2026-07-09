@@ -681,6 +681,8 @@ public class IntegrationService : IIntegrationService
                 DueDate = NormalizeDate(request.DueDate ?? request.DocumentDate.AddDays(30)),
                 ContactId = contact.Id,
                 Reference = request.ExternalRef,
+                // เลขจอง booking (ผูกมัดจำ→ใบกำกับ→ใบเสร็จ เข้า booking เดียวกัน)
+                BookingNumber = string.IsNullOrWhiteSpace(request.BookingNumber) ? null : request.BookingNumber.Trim(),
                 SubTotal = subTotal,
                 DiscountAmount = totalDiscount,
                 VatAmount = totalVat,
@@ -2420,17 +2422,24 @@ public class IntegrationService : IIntegrationService
             .SumAsync(l => l.DebitAmount);
 
         // Get recent deposit documents
-        var details = await _db.Documents
-            .Include(d => d.Contact)
+        // ห้าม project d.Contact.Name ตรง ๆ — query filter !IsDeleted ทำให้ชื่อหาย
+        // เมื่อ contact ถูกลบ. select ContactId แล้ว resolve จาก dict (IgnoreQueryFilters).
+        var detailRows = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate
                 && d.Notes != null && d.Notes.Contains("มัดจำ"))
             .OrderByDescending(d => d.DocumentDate)
             .Take(50)
-            .Select(d => new DepositDetailItem(
-                d.Id, d.DocumentNumber, d.Contact != null ? d.Contact.Name : null,
-                d.TotalAmount, d.DocumentDate, d.Status.ToString()))
+            .Select(d => new { d.Id, d.DocumentNumber, d.ContactId,
+                d.TotalAmount, d.DocumentDate, d.Status })
             .ToListAsync();
+        var detailCids = detailRows.Select(r => r.ContactId).Distinct().ToList();
+        var detailCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && detailCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var details = detailRows.Select(r => new DepositDetailItem(
+            r.Id, r.DocumentNumber, detailCmap.GetValueOrDefault(r.ContactId),
+            r.TotalAmount, r.DocumentDate, r.Status.ToString())).ToList();
 
         return new DepositSummaryResponse(depositReceived, depositApplied, depositReceived - depositApplied, details);
     }
@@ -3412,7 +3421,6 @@ public class IntegrationService : IIntegrationService
     public async Task<OutboundPagedResponse<OutboundDocumentResponse>> GetDocumentsForExternalAsync(Guid companyId, OutboundQueryParams query)
     {
         var q = _db.Documents
-            .Include(d => d.Contact)
             .Include(d => d.Lines)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted);
 
@@ -3429,6 +3437,7 @@ public class IntegrationService : IIntegrationService
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         // ── ไฟล์แนบ — รวม "ไฟล์ของเอกสาร" (EntityType=Document) + "ไฟล์ต้นฉบับ
         // OCR" (ค้างที่ EntityType=OcrScan จาก relink พลาด). batch query กัน

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.DTOs.Portal;
@@ -65,23 +66,36 @@ public class PortalService : IPortalService
 
     public async Task<List<PortalAccessResponse>> GetAccessesAsync(Guid companyId)
     {
-        return await _db.Set<PortalAccess>()
-            .Include(p => p.Contact)
+        // ไม่ Include Contact ใน SQL (required nav + !IsDeleted → INNER JOIN
+        // ตัดแถวที่ contact ถูกลบ) — materialize แล้ว reattach + map ใน memory
+        var accesses = await _db.Set<PortalAccess>()
             .Where(p => p.CompanyId == companyId)
             .OrderByDescending(p => p.CreatedAt)
-            .Select(p => new PortalAccessResponse(
-                p.Id, p.ContactId, p.Contact.Name, p.Email, p.DisplayName,
+            .ToListAsync();
+
+        var contactIds = accesses.Select(p => p.ContactId).Distinct().ToList();
+        var contactMap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+        foreach (var p in accesses)
+            if (contactMap.TryGetValue(p.ContactId, out var c)) p.Contact = c;
+
+        return accesses.Select(p => new PortalAccessResponse(
+                p.Id, p.ContactId, p.Contact?.Name ?? string.Empty, p.Email, p.DisplayName,
                 p.IsActive, p.LastLoginAt,
                 p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment))
-            .ToListAsync();
+            .ToList();
     }
 
     public async Task<PortalAccessResponse> UpdateAccessAsync(Guid companyId, Guid accessId, UpdatePortalAccessRequest request)
     {
         var access = await _db.Set<PortalAccess>()
-            .Include(p => p.Contact)
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Id == accessId)
             ?? throw new InvalidOperationException("Portal access not found.");
+
+        // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
+        access.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId);
 
         if (request.CanViewInvoices.HasValue) access.CanViewInvoices = request.CanViewInvoices.Value;
         if (request.CanViewStatements.HasValue) access.CanViewStatements = request.CanViewStatements.Value;
@@ -157,9 +171,12 @@ public class PortalService : IPortalService
         var (portalAccessId, contactId, companyId) = DecodeJwtToken(refreshToken);
 
         var access = await _db.Set<PortalAccess>()
-            .Include(p => p.Contact)
             .FirstOrDefaultAsync(p => p.Id == portalAccessId && p.IsActive)
             ?? throw new InvalidOperationException("Portal access not found or inactive.");
+
+        // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
+        access.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId);
 
         var company = await _db.Companies
             .FirstOrDefaultAsync(c => c.Id == companyId)
@@ -213,9 +230,10 @@ public class PortalService : IPortalService
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.CompanyId == companyId && d.ContactId == contactId && d.Id == documentId)
             ?? throw new InvalidOperationException("Document not found.");
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, doc);
 
         // Log the download activity
         var portalAccess = await _db.Set<PortalAccess>()

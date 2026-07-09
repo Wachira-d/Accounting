@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Bank;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -36,13 +37,15 @@ public partial class BankService
         var dateMax = unmatched.Any() ? unmatched.Max(t => t.TransactionDate).AddDays(14) : DateTime.MaxValue;
 
         var payments = await _db.Payments
-            .Include(p => p.Document).ThenInclude(d => d.Contact)
+            // ไม่ ThenInclude Contact (INNER JOIN ตัด payment ที่ contact ถูกลบ) — hydrate แยก
+            .Include(p => p.Document)
             .Where(p => p.CompanyId == companyId
                 && (p.PaymentMethod == PaymentMethod.BankTransfer
                     || p.PaymentMethod == PaymentMethod.PromptPay
                     || p.PaymentMethod == PaymentMethod.DirectDebit)
                 && p.PaymentDate >= dateMin && p.PaymentDate <= dateMax)
             .ToListAsync();
+        await _db.HydratePaymentContactsAsync(companyId, payments);
 
         var journalEntries = await _db.JournalEntries
             .Include(j => j.Lines)

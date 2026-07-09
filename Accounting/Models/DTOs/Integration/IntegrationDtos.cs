@@ -110,7 +110,12 @@ public record InboundInvoiceRequest(
     /// ระบบผูกเอกสารกับผู้ติดต่อกลาง "ลูกค้าเงินสด (ไม่ประสงค์รับใบกำกับภาษี)"
     /// โดยไม่ต้องส่ง customerName/customerTaxId. ไม่ส่ง flag แต่เว้นข้อมูล
     /// ลูกค้าว่างทั้งหมด = พฤติกรรมเดียวกัน (นัยเดียวกัน).</summary>
-    bool BuyerDeclinedTaxInvoice = false);
+    bool BuyerDeclinedTaxInvoice = false,
+    /// <summary>เลขจอง/booking ของระบบต้นทาง (PMS โรงแรม / POS / CRM) — ผูก
+    /// เอกสารหลายใบเข้ากับ booking เดียวกัน (มัดจำ → ใบกำกับสุดท้าย → ใบเสร็จ)
+    /// เพื่อ auto-suggest หักมัดจำ + กระทบยอด. เก็บลง `Document.BookingNumber`
+    /// (JSON key = `bookingNumber`, string). null = ไม่ผูก. ป้อน RES-{reservationId}.</summary>
+    string? BookingNumber = null);
 
 /// <summary>
 /// Base64-encoded file attachment for external integrations. Server enforces:

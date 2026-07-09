@@ -1194,6 +1194,13 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 54: กวาดบั๊ก Include(Contact) INNER JOIN ทั้งระบบ (~40 จุด) + integration_
+_invoice รับ `bookingNumber` — helper กลาง `ContactHydration` (Hydrate*ContactsAsync_
+_ผูก Contact ที่ soft-delete กลับเข้า nav ด้วย IgnoreQueryFilters). ครอบคลุม ภาษี_
+_(ภ.พ.30/36/54, ภ.ง.ด.3, aging, bad-debt, 50 ทวิ), รายงาน (executive/dashboard/_
+_cashforecast/reportbuilder), bank reconciliation, PDF/email/etax, portal,_
+_revenue-recognition. `InboundInvoiceRequest.BookingNumber` (JSON `bookingNumber`,_
+_string) → `Document.BookingNumber` (company endpoint มีอยู่แล้ว)._
 _รอบ 53: **ต้นเหตุจริง** หน้าเงินมัดจำโชว์ 0 (ไม่ใช่ cache/deploy) —_
 _`GetDepositsAsync` ทำ `.Include(d => d.Contact)` แต่ `Document.Contact` เป็น_
 _required (ContactId non-nullable) + `Contact` มี `HasQueryFilter(!IsDeleted)` →_

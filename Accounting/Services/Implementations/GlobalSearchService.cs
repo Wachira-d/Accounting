@@ -32,8 +32,10 @@ public class GlobalSearchService
 
         // Documents — match on number, contact name, reference, notes, OR exact total amount.
         decimal? amountQuery = decimal.TryParse(q.Replace(",", ""), out var amt) ? amt : (decimal?)null;
-        var docs = await _db.Documents.AsNoTracking()
-            .Include(d => d.Contact)
+        // ⚠️ ห้าม project d.Contact.Name ตรง ๆ ใน SQL — Contact มี query filter
+        // !IsDeleted → เอกสารที่ contact ถูกลบจะได้ชื่อ null. select ContactId แล้ว
+        // resolve ชื่อจาก dict (IgnoreQueryFilters) ให้ครบ.
+        var docRows = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && (d.DocumentNumber.ToLower().Contains(qLower)
                     || (d.Reference != null && d.Reference.ToLower().Contains(qLower))
@@ -42,11 +44,17 @@ public class GlobalSearchService
                     || (amountQuery.HasValue && d.TotalAmount == amountQuery.Value)))
             .OrderByDescending(d => d.DocumentDate)
             .Take(perBucket)
-            .Select(d => new DocHit(
-                d.Id, d.DocumentNumber, d.DocumentType.ToString(),
-                d.DocumentDate, d.TotalAmount, d.Status.ToString(),
-                d.Contact != null ? d.Contact.Name : null))
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType,
+                d.DocumentDate, d.TotalAmount, d.Status, d.ContactId })
             .ToListAsync();
+        var docCids = docRows.Select(r => r.ContactId).Distinct().ToList();
+        var docCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && docCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var docs = docRows.Select(r => new DocHit(
+            r.Id, r.DocumentNumber, r.DocumentType.ToString(),
+            r.DocumentDate, r.TotalAmount, r.Status.ToString(),
+            docCmap.GetValueOrDefault(r.ContactId))).ToList();
 
         // Journal Entries — number / reference / description / amount
         var jes = await _db.JournalEntries.AsNoTracking()

@@ -267,10 +267,17 @@ public class DashboardService : IDashboardService
                         && d.RelatedDocumentId == null))
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .Select(d => new { d.ContactId, ContactName = d.Contact != null ? d.Contact.Name : null, d.TotalAmount })
+            .Select(d => new { d.ContactId, d.TotalAmount })
             .ToListAsync();
+        // resolve ชื่อจาก dict (IgnoreQueryFilters) — Contact query filter !IsDeleted
+        // ทำให้ชื่อหาย/ตัดใบเมื่อ contact ถูกลบ
+        var topCids = rawData.Select(r => r.ContactId).Distinct().ToList();
+        var topCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && topCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
 
         return rawData
+            .Select(r => new { r.ContactId, ContactName = topCmap.GetValueOrDefault(r.ContactId), r.TotalAmount })
             .GroupBy(d => new { d.ContactId, ContactName = d.ContactName ?? "ไม่ระบุ" })
             .Select(g => new TopCustomer(g.Key.ContactId, g.Key.ContactName, g.Sum(d => d.TotalAmount), g.Count()))
             .OrderByDescending(c => c.TotalAmount)
@@ -302,8 +309,7 @@ public class DashboardService : IDashboardService
     private async Task<List<OverdueInvoice>> GetOverdueInvoicesAsync(Guid companyId, int top = 20)
     {
         var today = DateTime.UtcNow.Date;
-        var overdues = await _db.Documents
-            .Include(d => d.Contact)
+        var overdueRows = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                 && d.DueDate < today
@@ -311,8 +317,14 @@ public class DashboardService : IDashboardService
                 && d.BalanceDue > 0)
             .OrderBy(d => d.DueDate)
             .Take(top)
-            .Select(d => new { d.Id, d.DocumentNumber, ContactName = d.Contact.Name, d.TotalAmount, d.BalanceDue, DueDate = d.DueDate!.Value })
+            .Select(d => new { d.Id, d.DocumentNumber, d.ContactId, d.TotalAmount, d.BalanceDue, DueDate = d.DueDate!.Value })
             .ToListAsync();
+        // resolve ชื่อจาก dict (IgnoreQueryFilters) — กัน INNER JOIN ตัดใบที่ contact ถูกลบ
+        var ovCids = overdueRows.Select(r => r.ContactId).Distinct().ToList();
+        var ovCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && ovCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var overdues = overdueRows.Select(d => new { d.Id, d.DocumentNumber, ContactName = ovCmap.GetValueOrDefault(d.ContactId) ?? "-", d.TotalAmount, d.BalanceDue, d.DueDate }).ToList();
 
         return overdues.Select(d => new OverdueInvoice(d.Id, d.DocumentNumber, d.ContactName,
             d.TotalAmount, d.BalanceDue, d.DueDate, (int)(today - d.DueDate).TotalDays)).ToList();
@@ -322,16 +334,21 @@ public class DashboardService : IDashboardService
     {
         var today = DateTime.UtcNow.Date;
         var cutoff = today.AddDays(daysAhead);
-        var payables = await _db.Documents
-            .Include(d => d.Contact)
+        var payableRows = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.CertificateInLieu)
                 && d.DueDate >= today && d.DueDate <= cutoff
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Paid
                 && d.BalanceDue > 0)
             .OrderBy(d => d.DueDate)
-            .Select(d => new { d.Id, d.DocumentNumber, ContactName = d.Contact.Name, d.TotalAmount, d.BalanceDue, DueDate = d.DueDate!.Value })
+            .Select(d => new { d.Id, d.DocumentNumber, d.ContactId, d.TotalAmount, d.BalanceDue, DueDate = d.DueDate!.Value })
             .ToListAsync();
+        // resolve ชื่อจาก dict (IgnoreQueryFilters) — กัน INNER JOIN ตัดใบที่ contact ถูกลบ
+        var payCids = payableRows.Select(r => r.ContactId).Distinct().ToList();
+        var payCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && payCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var payables = payableRows.Select(d => new { d.Id, d.DocumentNumber, ContactName = payCmap.GetValueOrDefault(d.ContactId) ?? "-", d.TotalAmount, d.BalanceDue, d.DueDate }).ToList();
 
         return payables.Select(d => new UpcomingPayable(d.Id, d.DocumentNumber, d.ContactName,
             d.TotalAmount, d.BalanceDue, d.DueDate, (int)(d.DueDate - today).TotalDays)).ToList();

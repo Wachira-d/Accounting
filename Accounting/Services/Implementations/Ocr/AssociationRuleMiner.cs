@@ -77,9 +77,19 @@ public class AssociationRuleMiner
                 && d.CreatedAt >= since
                 && (d.Status == Models.Enums.DocumentStatus.Approved
                     || d.Status == Models.Enums.DocumentStatus.Paid))
-            .Include(d => d.Contact)
+            // ไม่ Include Contact (required nav + !IsDeleted → INNER JOIN ตัดใบที่
+            // contact ถูกลบ = mining set หด). reattach เอง. คิวรีนี้ cross-tenant
+            // (system-wide) จึง match ด้วย ContactId ล้วน (GUID ไม่ชนข้าม tenant).
             .Include(d => d.Lines).ThenInclude(l => l.Account)
             .ToListAsync(ct);
+
+        var minerContactIds = docs.Where(d => d.ContactId != Guid.Empty)
+            .Select(d => d.ContactId).Distinct().ToList();
+        var minerContactMap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => minerContactIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, ct);
+        foreach (var d in docs)
+            if (minerContactMap.TryGetValue(d.ContactId, out var c)) d.Contact = c;
 
         var transactions = new List<(HashSet<string> Items, string Consequent)>(docs.Count);
         foreach (var d in docs)

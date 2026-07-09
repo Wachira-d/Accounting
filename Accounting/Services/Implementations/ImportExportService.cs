@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Import;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -815,11 +816,12 @@ public class ImportExportService : IImportExportService
 
     private async Task<List<Dictionary<string, string>>> ExportDocumentsAsync(Guid companyId, ExportRequest request)
     {
-        var query = _db.Documents.Include(d => d.Contact).Where(d => d.CompanyId == companyId);
+        var query = _db.Documents.Where(d => d.CompanyId == companyId);
         if (request.FromDate.HasValue) query = query.Where(d => d.DocumentDate >= request.FromDate);
         if (request.ToDate.HasValue) query = query.Where(d => d.DocumentDate <= request.ToDate);
 
         var docs = await query.OrderBy(d => d.DocumentDate).ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
         return docs.Select(d => new Dictionary<string, string>
         {
             ["DocumentNumber"] = d.DocumentNumber, ["DocumentType"] = d.DocumentType.ToString(),

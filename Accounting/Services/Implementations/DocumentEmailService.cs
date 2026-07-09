@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Email;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -30,10 +31,11 @@ public class DocumentEmailService : IDocumentEmailService
         SendDocumentEmailRequest req, string? actorEmail = null)
     {
         var doc = await _db.Documents
-            .Include(d => d.Contact)
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new InvalidOperationException("Document not found");
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, doc);
 
         // ห้ามส่งเอกสารที่ยังไม่อนุมัติออกไปหาลูกค้า — เลขเอกสารจริง (§86/4 gap-free)
         // ออกตอน Approve เท่านั้น; ฉบับร่างใช้เลข DRAFT-{guid} ซึ่งเป็นใบกำกับที่
@@ -99,10 +101,11 @@ public class DocumentEmailService : IDocumentEmailService
         SendEtaxByEmailRequest req, string? actorEmail = null)
     {
         var etax = await _db.EtaxInvoices
-            .Include(e => e.Document).ThenInclude(d => d.Contact)
             .Include(e => e.Document).ThenInclude(d => d.Lines)
             .FirstOrDefaultAsync(e => e.Id == etaxInvoiceId && e.CompanyId == companyId)
             ?? throw new InvalidOperationException("e-Tax invoice not found");
+        // ไม่ ThenInclude Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, etax.Document);
 
         var settings = await GetOrCreateSettings(companyId);
 

@@ -531,10 +531,20 @@ public partial class BankService
             .Where(i => i.ItemType == ReconciliationItemType.Document)
             .Select(i => i.ItemId).ToHashSet();
 
+        // ค้นด้วยชื่อ contact: pre-resolve ContactId (IgnoreQueryFilters — รวม
+        // ที่ถูก soft-delete) แทนการ join Contact ที่ !IsDeleted ตรง ๆ เพราะ
+        // Contact เป็น required nav + มี query filter !IsDeleted → join = INNER
+        // JOIN ตัด payment/document ที่ contact ถูกลบทิ้งเงียบ ๆ.
+        var searchContactIds = string.IsNullOrWhiteSpace(q)
+            ? new List<Guid>()
+            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.CompanyId == companyId && c.Name.ToLower().Contains(q))
+                .Select(c => c.Id).ToListAsync();
+
         // ----- Payments -----
         var paymentExclude = usedPaymentIds.ToList();
         var paymentsQuery = _db.Set<Payment>().AsNoTracking()
-            .Include(p => p.Document).ThenInclude(d => d.Contact)
+            .Include(p => p.Document)
             .Where(p => p.CompanyId == companyId && !p.IsDeleted
                 && p.PaymentDate >= from && p.PaymentDate < to
                 && p.Document.Status != DocumentStatus.Voided
@@ -543,14 +553,24 @@ public partial class BankService
             paymentsQuery = paymentsQuery.Where(p =>
                 p.PaymentNumber.ToLower().Contains(q)
                 || (p.Notes != null && p.Notes.ToLower().Contains(q))
-                || (p.Document.Contact != null && p.Document.Contact.Name.ToLower().Contains(q)));
-        var payments = await paymentsQuery
+                || searchContactIds.Contains(p.Document.ContactId));
+        var paymentRows = await paymentsQuery
             .OrderByDescending(p => p.PaymentDate).Take(200)
-            .Select(p => new UnmatchedItem(
-                "Payment", p.Id, p.PaymentNumber, p.PaymentDate,
-                p.Notes ?? p.Document.DocumentNumber, p.Amount,
-                p.Document.Contact != null ? p.Document.Contact.Name : null))
+            .Select(p => new
+            {
+                p.Id, p.PaymentNumber, p.PaymentDate, p.Notes,
+                DocNumber = p.Document.DocumentNumber, p.Amount, p.Document.ContactId
+            })
             .ToListAsync();
+        // reattach ชื่อ contact (รวมที่ถูกลบ) — ไม่ให้ join ตัดแถว
+        var paymentContactNames = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId
+                && paymentRows.Select(r => r.ContactId).Distinct().Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var payments = paymentRows.Select(r => new UnmatchedItem(
+            "Payment", r.Id, r.PaymentNumber, r.PaymentDate,
+            r.Notes ?? r.DocNumber, r.Amount,
+            paymentContactNames.GetValueOrDefault(r.ContactId))).ToList();
 
         // ----- Journal Entries (Posted, not auto-doc-twin) -----
         var jeExclude = usedJeIds.ToList();
@@ -573,8 +593,9 @@ public partial class BankService
 
         // ----- Documents (Approved receipts / payment vouchers without payment record yet) -----
         var docExclude = usedDocIds.ToList();
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — projection
+        // ดึง ContactId แล้ว reattach ชื่อจาก IgnoreQueryFilters
         var docsQuery = _db.Documents.AsNoTracking()
-            .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.Status == DocumentStatus.Approved
                 && d.DocumentDate >= from && d.DocumentDate < to
@@ -585,15 +606,27 @@ public partial class BankService
         if (!string.IsNullOrWhiteSpace(q))
             docsQuery = docsQuery.Where(d =>
                 d.DocumentNumber.ToLower().Contains(q)
-                || (d.Contact != null && d.Contact.Name.ToLower().Contains(q)));
-        var docs = await docsQuery
+                || searchContactIds.Contains(d.ContactId));
+        var docRows = await docsQuery
             .OrderByDescending(d => d.DocumentDate).Take(200)
-            .Select(d => new UnmatchedItem(
-                "Document", d.Id, d.DocumentNumber, d.DocumentDate,
-                d.DocumentType + " · " + (d.Contact != null ? d.Contact.Name : ""),
-                d.TotalAmount,
-                d.Contact != null ? d.Contact.Name : null))
+            .Select(d => new
+            {
+                d.Id, d.DocumentNumber, d.DocumentDate, d.DocumentType,
+                d.TotalAmount, d.ContactId
+            })
             .ToListAsync();
+        var docContactNames = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId
+                && docRows.Select(r => r.ContactId).Distinct().Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var docs = docRows.Select(d =>
+        {
+            var name = docContactNames.GetValueOrDefault(d.ContactId);
+            return new UnmatchedItem(
+                "Document", d.Id, d.DocumentNumber, d.DocumentDate,
+                d.DocumentType + " · " + (name ?? ""),
+                d.TotalAmount, name);
+        }).ToList();
 
         return new UnmatchedItemsResponse(payments, jes, docs);
     }
