@@ -1581,8 +1581,12 @@ public class DocumentService : IDocumentService
     public async Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null)
     {
         // (1) เอกสารมัดจำ native — ติดธง IsDeposit ตอนสร้างในระบบ
+        //     ⚠️ ห้าม .Include(d => d.Contact): Document.Contact เป็น required
+        //     relationship + Contact มี HasQueryFilter(!IsDeleted) → EF แปลง
+        //     Include เป็น INNER JOIN + filter → เอกสารมัดจำที่ contact ถูกลบ/ปิด
+        //     (IsDeleted=true, เช่น vendor ที่ deactivate) จะถูก "ตัดทิ้งเงียบ" ทั้งใบ
+        //     → dashboard โชว์ 0 ทั้งที่มีมัดจำจริง. โหลดชื่อ contact แยก (ด้านล่าง)
         var rows = await _db.Documents.AsNoTracking()
-            .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId && d.IsDeposit
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
             .ToListAsync();
@@ -1647,7 +1651,7 @@ public class DocumentService : IDocumentService
                 {
                     var extraIds = glNetByDoc.Keys.ToList();
                     var extra = await _db.Documents.AsNoTracking()
-                        .Include(d => d.Contact)
+                        // ไม่ Include Contact (เหตุผลเดียวกับ step 1 — กัน INNER JOIN ตัดทิ้ง)
                         .Where(d => d.CompanyId == companyId && extraIds.Contains(d.Id)
                             && !d.IsDeposit   // native ถูกดึงไปแล้วในชุดแรก
                             && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
@@ -1674,6 +1678,17 @@ public class DocumentService : IDocumentService
         }
         rows = rows.OrderByDescending(d => d.DocumentDate).ToList();
 
+        // โหลดชื่อ/เลขภาษี contact แยก แบบ IgnoreQueryFilters เพื่อให้ contact ที่
+        // ถูกลบ/ปิด (IsDeleted=true) ยังโชว์ชื่อได้ และ **ไม่ทำให้เอกสารหายทั้งใบ**
+        // (ต่างจาก .Include ที่ทำ INNER JOIN + filter → ตัดทิ้ง)
+        var contactIds = rows.Select(d => d.ContactId).Where(id => id != Guid.Empty).Distinct().ToList();
+        var contactMap = contactIds.Count == 0
+            ? new Dictionary<Guid, (string Name, string? TaxId)>()
+            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+                .Select(c => new { c.Id, c.Name, c.TaxId })
+                .ToDictionaryAsync(c => c.Id, c => (c.Name, c.TaxId));
+
         var now = DateTime.UtcNow;
         var list = rows.Select(d =>
         {
@@ -1699,9 +1714,10 @@ public class DocumentService : IDocumentService
             }
             var st = outstanding <= 0.005m ? "Realized"
                 : realized > 0.005m ? "Partial" : "Outstanding";
+            var ct = contactMap.TryGetValue(d.ContactId, out var cInfo) ? cInfo : ("", (string?)null);
             return new DepositSummary(
                 d.Id, d.DocumentNumber, d.DocumentDate,
-                d.Contact?.Name ?? "", d.Contact?.TaxId,
+                ct.Item1, ct.Item2,
                 baseAmt, d.VatAmount, d.TotalAmount,
                 realized, outstanding,
                 d.DepositRealizedAt,
