@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Document;
@@ -912,7 +913,6 @@ public class DocumentService : IDocumentService
     public async Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId)
     {
         var doc = await _db.Documents
-            .Include(d => d.Contact)
             .Include(d => d.Lines).ThenInclude(l => l.Project)
             .Include(d => d.Lines).ThenInclude(l => l.Account)
             .Include(d => d.Project)
@@ -921,6 +921,7 @@ public class DocumentService : IDocumentService
             .Include(d => d.ExpenseCategory)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         var etax = await GetLatestEtaxAsync(companyId, new[] { documentId });
 
@@ -1080,7 +1081,6 @@ public class DocumentService : IDocumentService
     public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null)
     {
         var query = _db.Documents
-            .Include(d => d.Contact)
             .Include(d => d.Lines)
             .Include(d => d.Project)
             .Include(d => d.BankAccount)
@@ -1142,6 +1142,7 @@ public class DocumentService : IDocumentService
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, items);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         var etaxByDoc = await GetLatestEtaxAsync(companyId, items.Select(i => i.Id));
 
@@ -1434,9 +1435,9 @@ public class DocumentService : IDocumentService
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         // method นี้สำหรับเอกสาร approved ที่ค้าง 11640 — Draft ใช้ UpdateDocumentAsync
         if (doc.Status == DocumentStatus.Draft)
@@ -1474,9 +1475,9 @@ public class DocumentService : IDocumentService
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         if (!doc.IsDeposit)
             throw new InvalidOperationException("เอกสารนี้ไม่ใช่เงินมัดจำ/รับล่วงหน้า");
@@ -1842,9 +1843,10 @@ public class DocumentService : IDocumentService
         Guid companyId, Guid documentId, RefundDepositRequest request, string actor)
     {
         var doc = await _db.Documents
-            .Include(d => d.Lines).Include(d => d.Contact)
+            .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
         if (!doc.IsDeposit)
             throw new InvalidOperationException("เอกสารนี้ไม่ใช่เงินมัดจำ");
         if (doc.Status == DocumentStatus.Draft || doc.Status == DocumentStatus.Voided)
@@ -1915,13 +1917,14 @@ public class DocumentService : IDocumentService
         Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor)
     {
         var invoice = await _db.Documents
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้");
+        await _db.HydrateContactAsync(companyId, invoice);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
         var deposit = await _db.Documents
-            .Include(d => d.Lines).Include(d => d.Contact)
+            .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == request.DepositDocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสารมัดจำ");
+        await _db.HydrateContactAsync(companyId, deposit);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
         if (!deposit.IsDeposit)
             throw new InvalidOperationException("เอกสารที่อ้างไม่ใช่เงินมัดจำ");
         if (deposit.ContactId != invoice.ContactId)
@@ -2071,7 +2074,6 @@ public class DocumentService : IDocumentService
         // เอกสารที่ VAT ค้าง 11640 รอใบกำกับครบ (ยังไม่ reclassify)
         var rows = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId
                 && d.InputVatPostedAsUndue
                 && d.InputVatBecameClaimableAt == null
@@ -2079,6 +2081,7 @@ public class DocumentService : IDocumentService
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, rows);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         var today = DateTime.UtcNow.Date;
         return rows.Select(d =>
@@ -2109,9 +2112,9 @@ public class DocumentService : IDocumentService
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
