@@ -199,12 +199,31 @@
         toast('บันทึกใบเสร็จเรียบร้อย ✓');
         amount = 0; refresh();
         document.getElementById('memo').value = '';
-        // Open print preview in same tab for thermal printer / Save as PDF
+        // พิมพ์ใบเสร็จที่ "เพิ่งสร้าง" — generate-html เป็น POST ต้องส่ง documentId
+        // ใน body (เดิมเรียกแบบ GET ไม่ส่ง id → หน้าพิมพ์ว่าง/ไม่ตรงใบ). ดึง HTML
+        // มาเปิดหน้าต่างใหม่แล้วสั่งพิมพ์ (เหมาะกับเครื่องพิมพ์สลิป / Save as PDF)
         const docId = j.data?.id;
         if (docId) {
-          setTimeout(() => {
-            window.open(`/api/companies/${cid}/document-templates/generate-html`, '_blank');
-          }, 500);
+          try {
+            const pres = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ documentId: docId, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+            });
+            if (pres.ok) {
+              const html = await pres.text();
+              const w = window.open('', '_blank');
+              if (w) {
+                w.document.open(); w.document.write(html); w.document.close();
+                let printed = false;
+                const doPrint = () => { if (printed) return; printed = true; try { w.focus(); w.print(); } catch (_) {} };
+                w.onload = doPrint;            // ยิงเมื่อ render เสร็จ
+                setTimeout(doPrint, 700);      // fallback ถ้า onload ไม่ยิง
+              } else {
+                toast('เปิดหน้าพิมพ์ไม่ได้ (ป๊อปอัปถูกบล็อก) — เปิดพิมพ์จากรายการเอกสารได้', 'error');
+              }
+            }
+          } catch (_) { /* บันทึกสำเร็จแล้ว พิมพ์ไม่ได้ไม่เป็นไร */ }
         }
       } catch (e) { toast(e.message, 'error'); }
       finally { btn.disabled = false; btn.textContent = 'บันทึก + พิมพ์ใบเสร็จ'; }
