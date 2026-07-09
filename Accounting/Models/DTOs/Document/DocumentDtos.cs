@@ -316,6 +316,21 @@ public record DepositSummary(
     // UI ใช้ highlight + auto-suggest มัดจำเมื่อ user กรอก booking ตรงกัน
     string? BookingNumber = null);
 
+/// <summary>ตัววินิจฉัยหน้าเงินมัดจำ — บอกว่าระบบ "เห็น" อะไรบ้าง เพื่อหา
+/// สาเหตุเมื่อ dashboard โชว์ 0 (ไม่มีบัญชีมัดจำในผัง / ไม่มี JE เครดิต /
+/// เอกสารไม่ติดธง). แสดงในหน้าเมื่อ list ว่าง.</summary>
+public record DepositDiagnostics(
+    int MatchedAccountCount,
+    List<DepositAccountInfo> MatchedAccounts,
+    int NativeDepositDocCount,      // Documents.IsDeposit = true (non-draft/void)
+    int CreditLineCount,            // JE lines Cr บัญชีมัดจำ (Posted, ไม่ reverse)
+    decimal TotalCreditNet,         // ΣCr − ΣDr รวมทุกบัญชีมัดจำ
+    int DocLinkedCreditCount,       // credit lines ที่มี SourceDocumentId
+    int DocLessCreditCount,         // credit lines ที่ไม่มี SourceDocumentId
+    string Hint);                   // คำแนะนำภาษาไทยว่าติดตรงไหน
+
+public record DepositAccountInfo(string AccountCode, string AccountName, decimal NetCredit);
+
 /// <summary>สรุปเอกสารที่ภาษีซื้อค้างอยู่ที่ 11640 "ยังไม่ถึงกำหนด" รอใบกำกับ
 /// ครบ §86/4. MonthsLeft = เดือนเหลือก่อนหมดสิทธิเคลม (§82/3 6 เดือนนับจาก
 /// เดือนใบกำกับ); IsExpired = เกิน 6 เดือนแล้ว (เคลมไม่ได้ ต้องลงเป็นต้นทุน).</summary>

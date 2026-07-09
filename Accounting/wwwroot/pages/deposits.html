@@ -152,6 +152,8 @@
         const content = document.getElementById('listContent');
         if (!rows.length) {
           content.innerHTML = '<div class="text-center text-gray-400" style="padding:40px">ไม่มีรายการเงินมัดจำ</div>';
+          // ว่างเปล่า → ดึงตัววินิจฉัยมาบอกว่าติดตรงไหน (บัญชี/JE/เอกสาร)
+          this.loadDiagnostics();
           return;
         }
         content.innerHTML = `
@@ -192,6 +194,37 @@
                 </tr>`; }).join('')}</tbody>
             </table>
           </div>`;
+      },
+      async loadDiagnostics() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDepositDiagnostics();
+          const d = res.data; if (!d) return;
+          const acctRows = (d.matchedAccounts || []).map(a =>
+            `<tr><td style="padding:2px 8px">${Layout.esc(a.accountCode)}</td><td style="padding:2px 8px">${Layout.esc(a.accountName)}</td><td style="padding:2px 8px;text-align:right">${Layout.money(a.netCredit)}</td></tr>`
+          ).join('');
+          const content = document.getElementById('listContent');
+          content.innerHTML = `
+            <div style="padding:24px;max-width:760px;margin:0 auto">
+              <div style="text-align:center;color:#94a3b8;margin-bottom:16px">ไม่มีรายการเงินมัดจำ</div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px">
+                <div style="font-weight:700;color:#1e293b;margin-bottom:8px">🔎 ผลตรวจสอบระบบ</div>
+                <div style="font-size:13px;color:#334155;line-height:1.9">
+                  บัญชีมัดจำในผังบัญชี: <b>${d.matchedAccountCount}</b> บัญชี ·
+                  เอกสารติดธงมัดจำ: <b>${d.nativeDepositDocCount}</b> ·
+                  JE เครดิตบัญชีมัดจำ: <b>${d.creditLineCount}</b> บรรทัด
+                  (ผูกเอกสาร ${d.docLinkedCreditCount} / ไม่ผูก ${d.docLessCreditCount}) ·
+                  ยอดคงค้างสุทธิ: <b>${Layout.money(d.totalCreditNet)}</b>
+                </div>
+                ${acctRows ? `<table style="width:100%;font-size:12px;margin-top:10px;border-top:1px solid #e2e8f0">
+                  <thead><tr style="color:#64748b"><th style="text-align:left;padding:4px 8px">รหัส</th><th style="text-align:left;padding:4px 8px">ชื่อบัญชี</th><th style="text-align:right;padding:4px 8px">คงค้างสุทธิ</th></tr></thead>
+                  <tbody>${acctRows}</tbody></table>` : ''}
+                <div style="margin-top:12px;padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e">
+                  💡 ${Layout.esc(d.hint)}
+                </div>
+              </div>
+            </div>`;
+        } catch (e) { /* วินิจฉัยล้ม → คงข้อความ "ไม่มีรายการ" ไว้เฉย ๆ */ }
       },
       openRealize(id) {
         const r = this._rows.find(x => x.id === id);

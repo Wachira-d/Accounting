@@ -1730,6 +1730,65 @@ public class DocumentService : IDocumentService
         return list;
     }
 
+    /// <summary>วินิจฉัยหน้าเงินมัดจำ — ตอบว่าระบบเห็นบัญชีมัดจำ/JE เครดิต/
+    /// เอกสารกี่รายการ เพื่อบอกสาเหตุเมื่อ dashboard โชว์ 0.</summary>
+    public async Task<DepositDiagnostics> GetDepositDiagnosticsAsync(Guid companyId)
+    {
+        var depAccts = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted
+                && (a.AccountCode.StartsWith("215") || a.AccountCode.StartsWith("217")
+                    || a.AccountName.Contains("มัดจำ")
+                    || a.AccountName.Contains("รับล่วงหน้า")
+                    || a.AccountName.Contains("รอรับรู้")))
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .ToListAsync();
+        var depAcctIds = depAccts.Select(a => a.Id).ToList();
+
+        var nativeCount = await _db.Documents.AsNoTracking()
+            .CountAsync(d => d.CompanyId == companyId && d.IsDeposit
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided);
+
+        var lines = depAcctIds.Count == 0
+            ? new List<(Guid AccountId, decimal Net, bool HasDoc, bool IsCredit)>()
+            : (await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => !l.IsDeleted
+                    && depAcctIds.Contains(l.AccountId)
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.ReversedByEntryId == null)
+                .Select(l => new
+                {
+                    l.AccountId,
+                    Net = l.CreditAmount - l.DebitAmount,
+                    HasDoc = l.JournalEntry.SourceDocumentId != null,
+                    IsCredit = l.CreditAmount > 0
+                })
+                .ToListAsync())
+                .Select(x => (x.AccountId, x.Net, x.HasDoc, x.IsCredit)).ToList();
+
+        var creditLines = lines.Where(l => l.IsCredit).ToList();
+        var totalNet = lines.Sum(l => l.Net);
+        var perAcct = depAccts.Select(a => new DepositAccountInfo(
+            a.AccountCode, a.AccountName,
+            lines.Where(l => l.AccountId == a.Id).Sum(l => l.Net))).ToList();
+
+        string hint;
+        if (depAcctIds.Count == 0)
+            hint = "ไม่พบ 'บัญชีมัดจำ/รับล่วงหน้า' ในผังบัญชี — ต้องมีบัญชีรหัส 215xx/217xx หรือชื่อมีคำว่า 'มัดจำ/รับล่วงหน้า/รอรับรู้' ก่อน (ไปที่ผังบัญชี → เพิ่มบัญชีหนี้สิน เช่น 21710 'เงินรับล่วงหน้า/มัดจำ')";
+        else if (creditLines.Count == 0)
+            hint = $"พบบัญชีมัดจำ {depAcctIds.Count} บัญชี แต่ยังไม่มีการลงบัญชี (JE) เครดิตเข้าบัญชีเหล่านี้เลย — เงินมัดจำที่รับมาอาจถูกลงบัญชีอื่น (เช่น รายได้/ลูกหนี้) ตรวจการตั้งค่า mapping ตอนรับเงิน หรือลงรายการมัดจำผ่านเมนูขาย (ติ๊ก 'เงินมัดจำ')";
+        else if (totalNet <= 0.005m)
+            hint = $"พบเครดิตมัดจำ {creditLines.Count} บรรทัด แต่ยอดสุทธิ (เครดิต−เดบิต) = {totalNet:N2} — มัดจำถูกรับรู้/คืนไปหมดแล้ว (ไม่มีคงค้าง) จึงแสดง 0 ถูกต้อง";
+        else
+            hint = $"พบยอดมัดจำคงค้างสุทธิ {totalNet:N2} — ถ้าหน้ายังโชว์ 0 แสดงว่าเซิร์ฟเวอร์ยังรันโค้ดเวอร์ชันเก่า กรุณา rebuild + redeploy";
+
+        return new DepositDiagnostics(
+            depAcctIds.Count, perAcct, nativeCount,
+            creditLines.Count, totalNet,
+            creditLines.Count(l => l.HasDoc), creditLines.Count(l => !l.HasDoc),
+            hint);
+    }
+
     public async Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber)
     {
         if (string.IsNullOrWhiteSpace(bookingNumber)) return new List<DocumentResponse>();

@@ -32,6 +32,8 @@ public interface IDocumentService
     /// <summary>รายการเงินมัดจำคงค้าง/ที่รับรู้แล้ว สำหรับหน้าจัดการมัดจำ.
     /// status: "Outstanding" | "Partial" | "Realized" (null = ทั้งหมด).</summary>
     Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);
+    /// <summary>วินิจฉัยหน้าเงินมัดจำ — บอกสาเหตุเมื่อ dashboard โชว์ 0.</summary>
+    Task<DepositDiagnostics> GetDepositDiagnosticsAsync(Guid companyId);
     /// <summary>สรุปมัดจำคงค้างของลูกค้ารายหนึ่ง (สำหรับหน้า contact + dropdown
     /// ตอนออกใบแจ้งหนี้เพื่อนำมัดจำมาหัก).</summary>
     Task<ContactDepositSummary> GetContactDepositSummaryAsync(Guid companyId, Guid contactId);
