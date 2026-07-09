@@ -1,4 +1,6 @@
+using Accounting.Filters;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.Enums;
@@ -108,6 +110,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> CreateJournalEntry(Guid companyId, [FromBody] CreateJournalEntryRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -116,6 +119,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals/{entryId:guid}/post")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> PostJournalEntry(Guid companyId, Guid entryId)
     {
         var result = await _accountingService.PostJournalEntryAsync(companyId, entryId);
@@ -123,6 +127,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPut("journals/{entryId:guid}")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> UpdateJournalEntry(
         Guid companyId, Guid entryId, [FromBody] UpdateJournalEntryRequest request)
     {
@@ -132,6 +137,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals/{entryId:guid}/void")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<string>>> VoidJournalEntry(Guid companyId, Guid entryId)
     {
         await _accountingService.VoidJournalEntryAsync(companyId, entryId);
@@ -139,6 +145,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpDelete("journals/{entryId:guid}")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<string>>> DeleteJournalEntry(Guid companyId, Guid entryId)
     {
         await _accountingService.DeleteJournalEntryAsync(companyId, entryId);
@@ -146,6 +153,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals/{entryId:guid}/reverse")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> ReverseJournalEntry(
         Guid companyId, Guid entryId, [FromBody] ReverseJournalEntryRequest? request = null)
     {
@@ -154,6 +162,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals/{entryId:guid}/correct")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<CorrectJournalEntryResponse>>> CorrectJournalEntry(
         Guid companyId, Guid entryId)
     {
@@ -163,6 +172,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals/batch-void")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<string>>> BatchVoidJournalEntries(
         Guid companyId, [FromBody] BatchVoidRequest request)
     {
@@ -171,6 +181,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals/batch-delete")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<string>>> BatchDeleteJournalEntries(
         Guid companyId, [FromBody] BatchVoidRequest request)
     {
@@ -179,6 +190,7 @@ public class AccountingController : ControllerBase
     }
 
     [HttpPost("journals/batch-post")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<string>>> BatchPostJournalEntries(Guid companyId)
     {
         var count = await _accountingService.BatchPostJournalEntriesAsync(companyId);
