@@ -749,14 +749,19 @@ public partial class PdfGenerationService : IPdfGenerationService
             var cur = signers[0];
             string? dataUri = cur.SignatureImageDataUri;
             byte[]? bytes = cur.SignatureImageBytes;
-            if ((bytes is null || bytes.Length == 0) && !string.IsNullOrWhiteSpace(doc.PreparerSignatureBase64))
+            // ลายเซ็นที่ partner ส่งมา = คนทำรายการจริง → **priority เหนือ** CreatedBy user
+            // (เดิม fill เฉพาะตอน CreatedBy ไม่มีลายเซ็น → ชื่อคนทำจริงคู่ลายเซ็นคนอื่น)
+            if (!string.IsNullOrWhiteSpace(doc.PreparerSignatureBase64))
             {
                 var raw = doc.PreparerSignatureBase64!.Trim();
                 dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
                     ? raw : "data:image/png;base64," + raw;
                 bytes = TryDecodeBase64Image(raw);
             }
-            var name = !string.IsNullOrWhiteSpace(cur.Name) ? cur.Name : doc.PreparerName?.Trim();
+            // ชื่อที่ partner ส่งมา = คนทำจริง → **priority เหนือ** CreatedBy user
+            // (TakeTime: ช่อง "ผู้รับเงิน" = ชวนพิศ ที่ส่งมา ไม่ใช่ service account ที่สร้างเอกสาร;
+            //  ช่อง "ผู้มีอำนาจลงนาม" = slot 1 = กรรมการ ไม่กระทบ)
+            var name = !string.IsNullOrWhiteSpace(doc.PreparerName) ? doc.PreparerName!.Trim() : cur.Name;
             signers[0] = new DocumentSigner(dataUri, bytes, name, cur.Title);
         }
 

@@ -105,7 +105,13 @@ public record CreateDocumentRequest(
     // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — frontend ติ๊ก checkbox ที่หน้าใบแจ้งหนี้
     // แล้ว force DocumentType=TaxInvoice + flag นี้=true. เอกสารทำงานเป็นใบกำกับ
     // ภาษีเต็มรูป (VAT/ภ.พ.30/§86/4/e-Tax) แต่หัวกระดาษพิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี".
-    bool CombinedInvoiceTaxInvoice = false);
+    bool CombinedInvoiceTaxInvoice = false,
+    // ชื่อ + ลายเซ็นผู้จัดทำจากระบบต้นทาง (คนทำรายการจริง เช่น พนักงานหน้าร้าน) —
+    // stamp ช่อง "ผู้จัดทำ/ผู้รับเงิน" (slot 0) แทน CreatedBy user (= service account).
+    // ให้ priority เหนือ CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1) คงเป็นกรรมการ.
+    // เหมือน integration PV/invoice. null = fallback CreatedBy user เหมือนเดิม.
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null);
 
 public record DocumentLineRequest(
     string Description,
@@ -210,7 +216,13 @@ public record UpdateDocumentRequest(
     bool? BuyerDeclinedTaxInvoice = null,
     // ส่วนลดท้ายบิล (จากยอดรวม) — null = คงค่าเดิม
     decimal? BillDiscountPercent = null,
-    decimal? BillDiscountAmount = null);
+    decimal? BillDiscountAmount = null,
+    // ผู้จัดทำจริงจากระบบต้นทาง — จุดเดียวที่ยัดได้เมื่อ NextAcc สร้างเอกสารเอง
+    // (เช่น OCR ใบสำคัญจ่าย) แล้ว partner แตะแค่ PUT (staff ไม่ใช่ NextAcc user →
+    // X-Acting-User ไม่พอ). → ช่อง "ผู้จัดทำ/ผู้รับเงิน" (slot 0) priority เหนือ
+    // CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1 = กรรมการ) คงเดิม. null = ไม่แตะ.
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
