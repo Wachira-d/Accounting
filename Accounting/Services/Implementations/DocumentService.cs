@@ -7581,11 +7581,16 @@ public class DocumentService : IDocumentService
                         //    resolve DepositAppliedRef เป็น JournalEntry.EntryNumber แล้ว
                         //    กลับ deferred ของ journal นั้น → net JE self-contained ใบเดียว
                         //    (TakeTime point 2: "drives รับ journal ref").
+                        // resolve จาก EntryNumber — รับทั้ง Posted และ Reversed เพราะ
+                        // เมื่อ JV ถูก reverse สถานะเปลี่ยนเป็น Reversed แต่บรรทัด **ยังอยู่
+                        // ใน GL** (offset ด้วย reversal — ตรงกับ GetGeneralLedger/TrialBalance
+                        // ที่นับ Posted||Reversed). ถ้ากรองแค่ Posted → หลัง reverse หา
+                        // original ไม่เจอ. net-balance guard ด้านล่างเป็นตัวตัดสินว่า live/ตัด
                         var depJe = await _db.JournalEntries.Include(j => j.Lines)
                             .FirstOrDefaultAsync(j => j.CompanyId == companyId
                                 && j.EntryNumber == doc.DepositAppliedRef
-                                && j.Status == JournalEntryStatus.Posted
-                                && j.ReversedByEntryId == null);
+                                && (j.Status == JournalEntryStatus.Posted
+                                    || j.Status == JournalEntryStatus.Reversed));
                         if (depJe == null)
                             throw new InvalidOperationException(
                                 $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำหรือสมุดรายวันเลขที่ {doc.DepositAppliedRef} — ตรวจสอบ depositAppliedRef");
@@ -7610,6 +7615,43 @@ public class DocumentService : IDocumentService
                                 $"หักมัดจำแบบขับ JE: สมุดรายวัน {doc.DepositAppliedRef} ไม่มีบรรทัดเครดิตบัญชีมัดจำ (215xx/217xx) — ตรวจ mapping ฝั่ง integration");
                         var vatLine = depJe.Lines.FirstOrDefault(l => l.CreditAmount > 0
                             && (CodeOf(l.AccountId) == "21913" || CodeOf(l.AccountId) == "21911"));
+
+                        // ── NET-BALANCE guard (ครอบคลุมทุกกลไก un-reverse) ──
+                        //    "มัดจำยังไม่ consume" = **ยอด Cr สุทธิจริงใน GL** ของบัญชีมัดจำ
+                        //    ก้อนนี้ ไม่ใช่ธง ReversedByEntryId. คำนวณจาก Σ(Cr−Dr) บนบัญชี
+                        //    deferred ของ **ทั้ง reverse-family** (transitive closure ตาม
+                        //    OriginalEntryId ทุกชั้น) นับเฉพาะ Posted + ไม่ถูกลบ:
+                        //      original(+Cr) → reversal(−Cr) → reversal-of-reversal(+Cr) ...
+                        //    telescope เป็น net จริงเสมอ ไม่ว่า un-reverse ด้วยวิธีใด:
+                        //      • reversal-of-reversal (post กลับ) → ชั้นใหม่ +Cr → net live
+                        //      • void reversal ตรง ๆ (Status≠Posted) → หลุด → net live
+                        //      • delete reversal (IsDeleted) → หลุด → net live
+                        //      • reversal ยัง active → −Cr → net 0 (ตัด ไม่ให้หัก)
+                        //    ไม่พึ่ง flag ReversedByEntryId เลย → partner un-reverse ด้วย
+                        //    กลไกใดก็ได้ ขอแค่สะท้อนใน GL (JE posted/void/delete) ที่ NextAcc.
+                        var family = new HashSet<Guid> { depJe.Id };
+                        var frontier = new List<Guid> { depJe.Id };
+                        for (var depth = 0; depth < 20 && frontier.Count > 0; depth++)
+                        {
+                            // นับทั้ง Posted + Reversed (ยังอยู่ใน GL); ตัด Voided/Draft/
+                            // Rejected (ไม่แตะ GL) → net = ยอด GL จริง. reversal ที่ถูก void
+                            // (un-reverse แบบ void) จึงหลุด → net กลับมา live
+                            var children = await _db.JournalEntries
+                                .Where(j => j.CompanyId == companyId && j.OriginalEntryId != null
+                                    && frontier.Contains(j.OriginalEntryId.Value)
+                                    && (j.Status == JournalEntryStatus.Posted
+                                        || j.Status == JournalEntryStatus.Reversed) && !j.IsDeleted)
+                                .Select(j => j.Id).ToListAsync();
+                            frontier = children.Where(id => family.Add(id)).ToList();
+                        }
+                        var familyIds = family.ToList();
+                        var liveNet = await _db.JournalEntryLines
+                            .Where(l => !l.IsDeleted && familyIds.Contains(l.JournalEntryId)
+                                && l.AccountId == deferredLine.AccountId)
+                            .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
+                        if (liveNet <= 0.005m)
+                            throw new InvalidOperationException(
+                                $"หักมัดจำแบบขับ JE: มัดจำ JV {doc.DepositAppliedRef} ถูกกลับรายการ/ใช้หมดแล้ว (ยอดคงค้างสุทธิ {liveNet:N2}) — ไม่มีมัดจำให้หัก");
 
                         // สัดส่วน VAT = VAT / (ฐาน+VAT) จากยอด Cr จริงของ journal
                         var jeBaseCr = deferredLine.CreditAmount;

@@ -1194,6 +1194,17 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 55: drives-resolve (เคส B journal) เปลี่ยนจาก link-based เป็น **net-balance**_
+_ครอบคลุมทุกกลไก un-reverse — เดิมกรอง `ReversedByEntryId == null` (partner_
+_reverse→un-reverse → link ค้างที่ NextAcc → หาไม่เจอ). เปลี่ยนเป็นคำนวณ **net GL_
+_จริง**: Σ(Cr−Dr) บนบัญชี deferred ของ **ทั้ง reverse-family** (transitive closure_
+_ตาม OriginalEntryId ทุกชั้น) นับ **Status = Posted||Reversed** (ตรงกับ GetGeneral_
+_Ledger/TrialBalance — Reversed ยังอยู่ใน ledger; Voided/Draft/ลบ หลุด) →_
+_telescope เป็น net เสมอ: reversal-of-reversal(+Cr)/void/delete reversal → net live;_
+_reversal ยัง active → net 0 (ตัด). สำคัญ: reverse ตั้ง original.Status=Reversed_
+_ถ้ากรองแค่ Posted จะหา original ไม่เจอหลัง reverse. verify: TakeTime reverse ผ่าน_
+_integration ProcessJournalReverse → ตั้ง OriginalEntryId + Status=Reversed →_
+_closure เห็นครบ. ไม่พึ่ง flag ReversedByEntryId → un-reverse วิธีใดก็ได้._
 _รอบ 54: กวาดบั๊ก Include(Contact) INNER JOIN ทั้งระบบ (~40 จุด) + integration_
 _invoice รับ `bookingNumber` — helper กลาง `ContactHydration` (Hydrate*ContactsAsync_
 _ผูก Contact ที่ soft-delete กลับเข้า nav ด้วย IgnoreQueryFilters). ครอบคลุม ภาษี_
