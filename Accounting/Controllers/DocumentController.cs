@@ -327,6 +327,15 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<DepositSummary>>(true, result));
     }
 
+    /// <summary>วินิจฉัยหน้าเงินมัดจำ — ใช้ตอน dashboard โชว์ 0 เพื่อบอกว่า
+    /// ระบบเห็นบัญชีมัดจำ/JE เครดิต/เอกสารกี่รายการ + สาเหตุ.</summary>
+    [HttpGet("deposits/diagnostics")]
+    public async Task<ActionResult<ApiResponse<DepositDiagnostics>>> GetDepositDiagnostics(Guid companyId)
+    {
+        var result = await _documentService.GetDepositDiagnosticsAsync(companyId);
+        return Ok(new ApiResponse<DepositDiagnostics>(true, result));
+    }
+
     /// <summary>เอกสารทั้งหมดที่ผูก booking เดียวกัน (มัดจำ → ใบสุดท้าย → ใบเสร็จ).</summary>
     [HttpGet("by-booking/{bookingNumber}")]
     public async Task<ActionResult<ApiResponse<List<DocumentResponse>>>> GetByBooking(

@@ -2243,7 +2243,9 @@ const Layout = {
       const api = Layout.api(); if (!api) return;
       try {
         const res = await api.getContacts('?pageSize=20&search=' + encodeURIComponent(q));
-        contacts = res.data?.items || res.data || [];
+        // ตัดผู้ติดต่อที่ปิดใช้งานแล้ว (IsActive=false) ออกจากตัวเลือก —
+        // ยังโชว์ในหน้ารายชื่อผู้ติดต่อ (badge "ปิด") แต่ห้ามเลือกมาออกเอกสารใหม่
+        contacts = (res.data?.items || res.data || []).filter(c => c.isActive !== false);
       } catch { contacts = []; }
       // Auto-create on a COMPLETE Tax ID with no existing match — the user
       // asked for "type the full tax id and it just creates it". Fires once

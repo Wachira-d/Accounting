@@ -126,6 +126,12 @@ public static class PermissionKeys
     public const string TaxFile           = P + "Tax.File";            // submit PND / PP30
     public const string TaxExport         = P + "Tax.Export";          // export e-file
 
+    // ───── Journal / GL manipulation ─────
+    /// <summary>สร้าง/post/แก้/ย้าย(reclassify)/void/ลบ/reverse ใบสำคัญ (JE)
+    /// แบบ manual ผ่านสมุดรายวัน — การแก้ GL ตรง ๆ ที่กระทบงบ ควรจำกัดเฉพาะ
+    /// ผู้ทำบัญชี (Owner/Accountant auto-pass; role อื่นต้องได้รับสิทธิ์นี้).</summary>
+    public const string JournalManage     = P + "Journal.Manage";
+
     // ───── Contact / Master data ─────
     public const string ContactEdit       = P + "Contact.Edit";
     public const string ProductEdit       = P + "Product.Edit";
@@ -222,6 +228,7 @@ public static class PermissionKeys
         new(ContactEdit,      "Master",  "แก้ผู้ติดต่อ",             "contact CRUD"),
         new(ProductEdit,      "Master",  "แก้สินค้า",                "product / service CRUD"),
         new(ChartOfAccountsEdit, "Master", "แก้ผังบัญชี",           "ChartOfAccounts CRUD"),
+        new(JournalManage,    "บัญชี",   "จัดการใบสำคัญ (JE)",       "สร้าง/post/ย้าย/void/ลบ/reverse ใบสำคัญ manual"),
 
         // System
         new(SensitiveDocsView, "ระบบ",   "ดูเอกสารลับ",              "manager bonus · exec expense"),

@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using Accounting.Data;
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -44,8 +46,11 @@ public class StatutoryRemittanceController : ControllerBase
             : Ok(new ApiResponse<PendingRemittanceItem>(true, item));
     }
 
-    /// <summary>นำส่ง 1 งวด — post JE (Dr หนี้ค้างจ่าย / Cr ธนาคาร) + บันทึก.</summary>
+    /// <summary>นำส่ง 1 งวด — post JE (Dr หนี้ค้างจ่าย / Cr ธนาคาร) + บันทึก.
+    /// จำกัดเฉพาะผู้มีสิทธิ์ยื่นภาษี/นำส่ง (Owner/Accountant auto-pass) — เป็นการ
+    /// จ่ายเงิน+ลง GL จริง ไม่ควรให้ Staff/Viewer ทำ.</summary>
     [HttpPost]
+    [RequirePermission(PermissionKeys.TaxFile)]
     public async Task<ActionResult<ApiResponse<RemitResult>>> Remit(
         Guid companyId, [FromBody] RemitRequest request)
     {
