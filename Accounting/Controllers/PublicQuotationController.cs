@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -101,7 +102,6 @@ public class PublicQuotationController : ControllerBase
         var q = track ? _db.Documents.AsQueryable() : _db.Documents.AsNoTracking();
         var doc = await q
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.QuotationAcceptToken == token
                 && d.DocumentType == DocumentType.Quotation
                 && !d.IsDeleted
@@ -109,6 +109,8 @@ public class PublicQuotationController : ControllerBase
                 && d.Status != DocumentStatus.Draft);
         if (doc == null) return null;
         if (doc.QuotationAcceptTokenExpiresAt is { } exp && exp < DateTime.UtcNow) return null;
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate ผ่าน doc.CompanyId
+        await _db.HydrateContactAsync(doc.CompanyId, doc);
         return doc;
     }
 
@@ -188,7 +190,6 @@ public class PublicQuotationController : ControllerBase
         var q = track ? _db.Documents.AsQueryable() : _db.Documents.AsNoTracking();
         var doc = await q
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.DeliverySignToken == token
                 && d.DocumentType == DocumentType.DeliveryNote
                 && !d.IsDeleted
@@ -196,6 +197,8 @@ public class PublicQuotationController : ControllerBase
                 && d.Status != DocumentStatus.Draft);
         if (doc == null) return null;
         if (doc.DeliverySignTokenExpiresAt is { } exp && exp < DateTime.UtcNow) return null;
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate ผ่าน doc.CompanyId
+        await _db.HydrateContactAsync(doc.CompanyId, doc);
         return doc;
     }
 
