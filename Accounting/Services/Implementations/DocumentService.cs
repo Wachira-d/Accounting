@@ -7581,13 +7581,16 @@ public class DocumentService : IDocumentService
                         //    resolve DepositAppliedRef เป็น JournalEntry.EntryNumber แล้ว
                         //    กลับ deferred ของ journal นั้น → net JE self-contained ใบเดียว
                         //    (TakeTime point 2: "drives รับ journal ref").
-                        // resolve จาก EntryNumber + Posted (ไม่กรอง ReversedByEntryId
-                        // ตรงนี้ — ใช้ net-balance guard ด้านล่างแทน เพื่อรองรับ
-                        // reverse→un-reverse)
+                        // resolve จาก EntryNumber — รับทั้ง Posted และ Reversed เพราะ
+                        // เมื่อ JV ถูก reverse สถานะเปลี่ยนเป็น Reversed แต่บรรทัด **ยังอยู่
+                        // ใน GL** (offset ด้วย reversal — ตรงกับ GetGeneralLedger/TrialBalance
+                        // ที่นับ Posted||Reversed). ถ้ากรองแค่ Posted → หลัง reverse หา
+                        // original ไม่เจอ. net-balance guard ด้านล่างเป็นตัวตัดสินว่า live/ตัด
                         var depJe = await _db.JournalEntries.Include(j => j.Lines)
                             .FirstOrDefaultAsync(j => j.CompanyId == companyId
                                 && j.EntryNumber == doc.DepositAppliedRef
-                                && j.Status == JournalEntryStatus.Posted);
+                                && (j.Status == JournalEntryStatus.Posted
+                                    || j.Status == JournalEntryStatus.Reversed));
                         if (depJe == null)
                             throw new InvalidOperationException(
                                 $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำหรือสมุดรายวันเลขที่ {doc.DepositAppliedRef} — ตรวจสอบ depositAppliedRef");
@@ -7630,10 +7633,14 @@ public class DocumentService : IDocumentService
                         var frontier = new List<Guid> { depJe.Id };
                         for (var depth = 0; depth < 20 && frontier.Count > 0; depth++)
                         {
+                            // นับทั้ง Posted + Reversed (ยังอยู่ใน GL); ตัด Voided/Draft/
+                            // Rejected (ไม่แตะ GL) → net = ยอด GL จริง. reversal ที่ถูก void
+                            // (un-reverse แบบ void) จึงหลุด → net กลับมา live
                             var children = await _db.JournalEntries
                                 .Where(j => j.CompanyId == companyId && j.OriginalEntryId != null
                                     && frontier.Contains(j.OriginalEntryId.Value)
-                                    && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
+                                    && (j.Status == JournalEntryStatus.Posted
+                                        || j.Status == JournalEntryStatus.Reversed) && !j.IsDeleted)
                                 .Select(j => j.Id).ToListAsync();
                             frontier = children.Where(id => family.Add(id)).ToList();
                         }

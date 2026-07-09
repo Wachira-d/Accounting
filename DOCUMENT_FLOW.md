@@ -1198,10 +1198,13 @@ _รอบ 55: drives-resolve (เคส B journal) เปลี่ยนจา�
 _ครอบคลุมทุกกลไก un-reverse — เดิมกรอง `ReversedByEntryId == null` (partner_
 _reverse→un-reverse → link ค้างที่ NextAcc → หาไม่เจอ). เปลี่ยนเป็นคำนวณ **net GL_
 _จริง**: Σ(Cr−Dr) บนบัญชี deferred ของ **ทั้ง reverse-family** (transitive closure_
-_ตาม OriginalEntryId ทุกชั้น) นับเฉพาะ Posted+ไม่ลบ → telescope เป็น net เสมอ:_
-_reversal-of-reversal(+Cr)/void/delete reversal → net live; reversal ยัง active_
-_→ net 0 (ตัด). ไม่พึ่ง flag ReversedByEntryId → un-reverse วิธีใดก็ได้ ขอแค่_
-_สะท้อนใน GL ที่ NextAcc._
+_ตาม OriginalEntryId ทุกชั้น) นับ **Status = Posted||Reversed** (ตรงกับ GetGeneral_
+_Ledger/TrialBalance — Reversed ยังอยู่ใน ledger; Voided/Draft/ลบ หลุด) →_
+_telescope เป็น net เสมอ: reversal-of-reversal(+Cr)/void/delete reversal → net live;_
+_reversal ยัง active → net 0 (ตัด). สำคัญ: reverse ตั้ง original.Status=Reversed_
+_ถ้ากรองแค่ Posted จะหา original ไม่เจอหลัง reverse. verify: TakeTime reverse ผ่าน_
+_integration ProcessJournalReverse → ตั้ง OriginalEntryId + Status=Reversed →_
+_closure เห็นครบ. ไม่พึ่ง flag ReversedByEntryId → un-reverse วิธีใดก็ได้._
 _รอบ 54: กวาดบั๊ก Include(Contact) INNER JOIN ทั้งระบบ (~40 จุด) + integration_
 _invoice รับ `bookingNumber` — helper กลาง `ContactHydration` (Hydrate*ContactsAsync_
 _ผูก Contact ที่ soft-delete กลับเข้า nav ด้วย IgnoreQueryFilters). ครอบคลุม ภาษี_
