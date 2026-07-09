@@ -592,7 +592,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (กฎเหล็ก #3 spirit: ระบบเติมให้ครบ ผู้ใช้แค่ยืนยัน)
   - `fBookingNumber` มี `onchange/onblur` → re-render banner live เมื่อพิมพ์
 - **DTO field**: `DepositSummary.BookingNumber` (เพิ่มล่าสุด — เดิมมีแต่
-  `Reference`) populate ใน `GetDepositsAsync` (`DocumentService.cs:1278`)
+  `Reference`) populate ใน `GetDepositsAsync` (`DocumentService.cs:1581`)
+- **การตรวจจับมัดจำใน dashboard** (`GetDepositsAsync`) — 3 ชั้น ไม่พึ่งแค่ธง
+  `IsDeposit` เพื่อให้ KPI สะท้อนหนี้สินมัดจำจริงบนงบดุล:
+  1. **Native** — `Documents.IsDeposit = true` (สร้างในระบบ) → ใช้
+     `SubTotal − DepositRealizedAmount`
+  2. **GL-detected (มีเอกสารผูก)** — เอกสารที่ยังไม่ติดธง `IsDeposit` แต่มี JE
+     (Posted, ไม่ reverse) **Cr สุทธิ** บัญชีมัดจำ (`AccountCode` 215xx/217xx
+     **หรือ** `AccountName` มี "มัดจำ/รับล่วงหน้า/รอรับรู้") — **ทุก doc type**
+     (integration/POS/receipt/invoice) ไม่จำกัดแค่ Receipt; ฐาน/คงค้างใช้ยอด
+     **Cr สุทธิใน GL** (ΣCr − ΣDr) แทน `SubTotal` เพราะ integration doc อาจ
+     ไม่ตั้ง `SubTotal` → เดิมคำนวณ outstanding = 0
+  3. **Doc-less (JE ล้วน ไม่มี `SourceDocumentId`)** — รวมยอด Cr สุทธิเป็น 1
+     แถวสรุป (`Id = Guid.Empty`, ไม่มีปุ่มรับรู้/คืน) เพื่อ KPI ไม่ขึ้น 0
+     ทั้งที่งบดุลมีหนี้สินมัดจำ (รับรู้/คืนต้องผ่านสมุดรายวันตรง)
 
 ---
 
@@ -1154,7 +1167,7 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
-_Last verified against codebase: 2026-07-07 — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-09 — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
@@ -1170,6 +1183,12 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 50: dashboard เงินมัดจำ (`GetDepositsAsync`) — ยังโชว์ 0. ขยายการตรวจจับ_
+_เป็น 3 ชั้น: (1) native IsDeposit, (2) GL-detected **ทุก doc type** (เลิกจำกัด_
+_แค่ Receipt/RV) ใช้ยอด **Cr สุทธิใน GL** (ΣCr−ΣDr) เป็นฐาน/คงค้าง แทน SubTotal_
+_ที่ integration doc อาจไม่ตั้ง (เดิม outstanding=0), (3) doc-less: มัดจำที่เป็น_
+_JE ล้วน `SourceDocumentId=null` → รวมเป็น 1 แถวสรุป (Id=Guid.Empty ไม่มีปุ่ม)_
+_เพื่อ KPI ไม่ขึ้น 0 ทั้งที่งบดุลมีหนี้สินมัดจำ._
 _รอบ 49: dashboard เงินมัดจำ (`GetDepositsAsync`) — เดิมกรอง `IsDeposit=true`_
 _อย่างเดียว → พลาดมัดจำที่สร้างผ่าน integration (ลง JE เอง Cr 215xx/217xx ผ่าน_
 _mapping DEPOSIT_RECEIVED โดยไม่ set IsDeposit) → หน้าเงินมัดจำโชว์ 0. เพิ่มการ_

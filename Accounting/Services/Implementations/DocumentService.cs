@@ -1592,6 +1592,12 @@ public class DocumentService : IDocumentService
         //     account mapping DEPOSIT_RECEIVED โดยไม่ set IsDeposit) → dashboard เดิม
         //     กรอง IsDeposit=true จึงพลาด. ตรวจจากการลงบัญชีจริง (Cr เงินมัดจำ/ขายรอ
         //     รับรู้) เพื่อให้ dashboard สะท้อนความจริงทางบัญชี ไม่พึ่งแค่ธง.
+        // ยอด Cr สุทธิในบัญชีมัดจำต่อเอกสาร (สำหรับ doc ที่ integration ลง แต่
+        // SubTotal อาจเป็น 0 — ใช้ยอด GL จริงเป็นฐานแทน) + ยอดมัดจำที่เป็น JE
+        // ล้วนไม่มีเอกสารผูก (SourceDocumentId == null) เพื่อไม่ให้ KPI ขึ้น 0
+        // ทั้งที่งบดุลมีหนี้สินมัดจำจริง
+        var glNetByDoc = new Dictionary<Guid, decimal>();
+        decimal docLessDepositNet = 0m;
         try
         {
             // หา "บัญชีหนี้สินมัดจำ/รับล่วงหน้า" ของบริษัทนี้ก่อน — จับด้วย **ชื่อบัญชี**
@@ -1608,31 +1614,57 @@ public class DocumentService : IDocumentService
 
             if (depAcctIds.Count > 0)
             {
-                // เอกสารที่ "รับมัดจำ" = มี JE (Posted, ไม่ reverse) **Cr** บัญชีมัดจำ
-                // (Cr = เพิ่มหนี้สินมัดจำ = ถือมัดจำไว้; ตัดมัดจำจะเป็น Dr ไม่เข้าเงื่อนไข)
-                var glDepositDocIds = await _db.JournalEntryLines.AsNoTracking()
-                    .Where(l => !l.IsDeleted && l.CreditAmount > 0
+                // ดึงบรรทัด JE ทุกบรรทัดที่แตะบัญชีมัดจำ (Posted, ไม่ reverse) —
+                // ทั้ง Cr (รับมัดจำ = เพิ่มหนี้สิน) และ Dr (ตัด/คืนมัดจำ = ลดหนี้สิน)
+                // เพื่อคำนวณ "ยอดคงค้างสุทธิ" = ΣCr − ΣDr ต่อเอกสาร
+                var depLines = await _db.JournalEntryLines.AsNoTracking()
+                    .Where(l => !l.IsDeleted
                         && depAcctIds.Contains(l.AccountId)
                         && l.JournalEntry.CompanyId == companyId
                         && l.JournalEntry.Status == JournalEntryStatus.Posted
-                        && l.JournalEntry.ReversedByEntryId == null
-                        && l.JournalEntry.SourceDocumentId != null)
-                    .Select(l => l.JournalEntry.SourceDocumentId)
-                    .Distinct()
+                        && l.JournalEntry.ReversedByEntryId == null)
+                    .Select(l => new
+                    {
+                        Net = l.CreditAmount - l.DebitAmount,
+                        DocId = l.JournalEntry.SourceDocumentId
+                    })
                     .ToListAsync();
-                var extraIds = glDepositDocIds
-                    .Where(id => id.HasValue).Select(id => id!.Value).ToList();
-                if (extraIds.Count > 0)
+
+                var nativeIds = rows.Select(r => r.Id).ToHashSet();
+
+                // (2a) เอกสารที่ยังไม่ติดธง IsDeposit แต่มียอด Cr สุทธิในบัญชีมัดจำ
+                //      — ครอบคลุม "ทุก doc type" (integration/POS/receipt/invoice)
+                //      ไม่จำกัดแค่ Receipt เพราะการ Cr บัญชีมัดจำคือสัญญาณ "รับมัดจำ"
+                //      อยู่แล้ว ไม่ว่าเอกสารจะถูกจัดประเภทเป็นอะไร
+                glNetByDoc = depLines
+                    .Where(x => x.DocId.HasValue && !nativeIds.Contains(x.DocId!.Value))
+                    .GroupBy(x => x.DocId!.Value)
+                    .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.Net) })
+                    .Where(g => g.Net > 0.005m)
+                    .ToDictionary(g => g.DocId, g => g.Net);
+
+                if (glNetByDoc.Count > 0)
                 {
+                    var extraIds = glNetByDoc.Keys.ToList();
                     var extra = await _db.Documents.AsNoTracking()
                         .Include(d => d.Contact)
                         .Where(d => d.CompanyId == companyId && extraIds.Contains(d.Id)
                             && !d.IsDeposit   // native ถูกดึงไปแล้วในชุดแรก
-                            && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                            && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher))
+                            && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
                         .ToListAsync();
                     rows.AddRange(extra);
+                    // ถ้าเอกสารถูกลบ/ไม่พบ แต่ยังมียอด GL → โยนเข้า docless เพื่อไม่หายจาก KPI
+                    var foundIds = extra.Select(e => e.Id).ToHashSet();
+                    foreach (var kv in glNetByDoc)
+                        if (!foundIds.Contains(kv.Key)) docLessDepositNet += kv.Value;
                 }
+
+                // (2b) มัดจำที่ลงเป็น JE ล้วน ไม่มีเอกสารผูก (SourceDocumentId == null)
+                //      — งบดุลมีหนี้สินมัดจำแต่ไม่มี Document ให้แสดงเป็นแถว →
+                //      รวมยอดสุทธิเป็นแถวสรุป (ไม่มีปุ่มรับรู้/คืน เพราะไม่มี doc อ้างอิง)
+                docLessDepositNet += depLines
+                    .Where(x => !x.DocId.HasValue)
+                    .Sum(x => x.Net);
             }
         }
         catch (Exception ex)
@@ -1645,23 +1677,57 @@ public class DocumentService : IDocumentService
         var now = DateTime.UtcNow;
         var list = rows.Select(d =>
         {
-            var outstanding = d.SubTotal - d.DepositRealizedAmount;
+            // doc ที่ตรวจจับจาก GL (ไม่ใช่ native): ใช้ยอด Cr สุทธิใน GL เป็นฐาน
+            // เพราะ SubTotal/DepositRealizedAmount ของ integration doc อาจไม่ถูกตั้ง
+            // (ทำให้เดิมคำนวณ outstanding = 0 → KPI ขึ้น 0 ทั้งที่มีมัดจำจริง)
+            var isGlDetected = glNetByDoc.TryGetValue(d.Id, out var glNet);
+            decimal baseAmt, outstanding, realized;
+            if (isGlDetected)
+            {
+                // GL net = ยอดหนี้สินมัดจำคงเหลือจริง (ΣCr − ΣDr) → คือ outstanding
+                // ฐานเต็ม = ยอดที่เคยรับ ≈ base จากเอกสารถ้ามี ไม่งั้นใช้ GL net
+                baseAmt = d.SubTotal > 0.005m ? d.SubTotal : glNet;
+                outstanding = glNet;
+                realized = baseAmt - outstanding;
+                if (realized < 0) { realized = 0; baseAmt = outstanding; }
+            }
+            else
+            {
+                baseAmt = d.SubTotal;
+                realized = d.DepositRealizedAmount;
+                outstanding = d.SubTotal - d.DepositRealizedAmount;
+            }
             var st = outstanding <= 0.005m ? "Realized"
-                : d.DepositRealizedAmount > 0 ? "Partial" : "Outstanding";
+                : realized > 0.005m ? "Partial" : "Outstanding";
             return new DepositSummary(
                 d.Id, d.DocumentNumber, d.DocumentDate,
                 d.Contact?.Name ?? "", d.Contact?.TaxId,
-                d.SubTotal, d.VatAmount, d.TotalAmount,
-                d.DepositRealizedAmount, outstanding,
+                baseAmt, d.VatAmount, d.TotalAmount,
+                realized, outstanding,
                 d.DepositRealizedAt,
                 (int)(now.Date - d.DocumentDate.Date).TotalDays,
                 st, d.DepositDeferredAccountCode,
                 d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt,
                 d.BookingNumber);
-        });
+        }).ToList();
+
+        // แถวสรุปมัดจำที่เป็น JE ล้วน (ไม่มีเอกสารผูก) — งบดุลมีหนี้สินมัดจำ
+        // แต่ไม่มี Document ให้แสดง → รวมยอดสุทธิเป็น 1 แถว (id ว่าง = ไม่มีปุ่ม
+        // รับรู้/คืน) เพื่อ KPI สะท้อนยอดจริง ไม่ขึ้น 0
+        if (docLessDepositNet > 0.005m)
+        {
+            list.Insert(0, new DepositSummary(
+                Guid.Empty, "— (จาก GL / ระบบภายนอก)", now,
+                "มัดจำที่ยังไม่ผูกเอกสาร", null,
+                docLessDepositNet, 0m, docLessDepositNet,
+                0m, docLessDepositNet,
+                null, 0, "Outstanding", null,
+                null, false, null, null));
+        }
+
         if (!string.IsNullOrWhiteSpace(status))
-            list = list.Where(x => string.Equals(x.Status, status, StringComparison.OrdinalIgnoreCase));
-        return list.ToList();
+            list = list.Where(x => string.Equals(x.Status, status, StringComparison.OrdinalIgnoreCase)).ToList();
+        return list;
     }
 
     public async Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber)
