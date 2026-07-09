@@ -1253,6 +1253,13 @@ public class DocumentService : IDocumentService
         if (request.CombinedInvoiceTaxInvoice.HasValue)
             doc.CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice.Value
                 && doc.DocumentType == DocumentType.TaxInvoice;
+        // ผู้จัดทำจริงจากระบบต้นทาง (เคส OCR PV: NextAcc สร้าง Draft เอง → partner
+        // ยัดผู้จัดทำผ่าน PUT). null = ไม่แตะ; "" = ล้าง; ค่า = ตั้ง. PDF slot 0
+        // (ผู้จัดทำ/ผู้รับเงิน) จะ priority ค่านี้เหนือ CreatedBy (ResolveSignersAsync)
+        if (request.PreparerName != null)
+            doc.PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim();
+        if (request.PreparerSignatureBase64 != null)
+            doc.PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim();
 
         // Project re-assignment (only allowed while Draft, which is enforced above)
         if (request.ProjectId.HasValue)

@@ -216,7 +216,13 @@ public record UpdateDocumentRequest(
     bool? BuyerDeclinedTaxInvoice = null,
     // ส่วนลดท้ายบิล (จากยอดรวม) — null = คงค่าเดิม
     decimal? BillDiscountPercent = null,
-    decimal? BillDiscountAmount = null);
+    decimal? BillDiscountAmount = null,
+    // ผู้จัดทำจริงจากระบบต้นทาง — จุดเดียวที่ยัดได้เมื่อ NextAcc สร้างเอกสารเอง
+    // (เช่น OCR ใบสำคัญจ่าย) แล้ว partner แตะแค่ PUT (staff ไม่ใช่ NextAcc user →
+    // X-Acting-User ไม่พอ). → ช่อง "ผู้จัดทำ/ผู้รับเงิน" (slot 0) priority เหนือ
+    // CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1 = กรรมการ) คงเดิม. null = ไม่แตะ.
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
