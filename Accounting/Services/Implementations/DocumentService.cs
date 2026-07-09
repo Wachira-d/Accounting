@@ -645,6 +645,10 @@ public class DocumentService : IDocumentService
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
+                // ผู้จัดทำจากระบบต้นทาง (คนทำจริง) → ช่อง "ผู้จัดทำ/ผู้รับเงิน" บน PDF
+                // แทน CreatedBy user (เหมือน integration PV/invoice)
+                PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
+                PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
                 CreatedBy = createdBy
             };
 

@@ -105,7 +105,13 @@ public record CreateDocumentRequest(
     // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — frontend ติ๊ก checkbox ที่หน้าใบแจ้งหนี้
     // แล้ว force DocumentType=TaxInvoice + flag นี้=true. เอกสารทำงานเป็นใบกำกับ
     // ภาษีเต็มรูป (VAT/ภ.พ.30/§86/4/e-Tax) แต่หัวกระดาษพิมพ์ "ใบแจ้งหนี้/ใบกำกับภาษี".
-    bool CombinedInvoiceTaxInvoice = false);
+    bool CombinedInvoiceTaxInvoice = false,
+    // ชื่อ + ลายเซ็นผู้จัดทำจากระบบต้นทาง (คนทำรายการจริง เช่น พนักงานหน้าร้าน) —
+    // stamp ช่อง "ผู้จัดทำ/ผู้รับเงิน" (slot 0) แทน CreatedBy user (= service account).
+    // ให้ priority เหนือ CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1) คงเป็นกรรมการ.
+    // เหมือน integration PV/invoice. null = fallback CreatedBy user เหมือนเดิม.
+    string? PreparerName = null,
+    string? PreparerSignatureBase64 = null);
 
 public record DocumentLineRequest(
     string Description,
