@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Data;
 using Accounting.Models.DTOs.Aging;
 using Accounting.Models.Enums;
@@ -53,7 +54,8 @@ public class AgingReportService : IAgingReportService
 
         var allTypes = positiveTypes.Concat(new[] { negativeType }).ToArray();
         var query = _db.Documents
-            .Include(d => d.Contact)
+            // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ
+            // ออกจากรายงานอายุ AR/AP = under-report + TFRS NPAEs ch.9 allowance ผิด)
             .Where(d => d.CompanyId == companyId
                 && !d.IsDeleted
                 && allTypes.Contains(d.DocumentType)
@@ -75,8 +77,9 @@ public class AgingReportService : IAgingReportService
             query = query.Where(d => d.ProjectId == request.ProjectId.Value);
 
         var documents = await query.ToListAsync();
+        await _db.HydrateContactsAsync(companyId, documents);
 
-        // Build contact details with aging
+        // Build contact details with aging (d.Contact ผูกกลับแล้วจาก hydrate — ปลอดภัย)
         var contactGroups = documents.GroupBy(d => new { d.ContactId, d.Contact.Name, d.Contact.TaxId });
 
         var details = new List<AgingContactDetail>();

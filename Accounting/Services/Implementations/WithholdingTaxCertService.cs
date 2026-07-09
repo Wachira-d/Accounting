@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
@@ -372,10 +373,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         Guid companyId, Guid documentId, bool autoIssue, string createdBy)
     {
         var doc = await _db.Documents
-            .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null → 50 ทวิ ออกไม่ได้)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);
 
         if (doc.WithholdingTaxAmount <= 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่าย");
@@ -495,8 +496,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // a cert that ties back to a voided source doc. Also exclude soft-
         // deleted rows (was missing from this query entirely).
         var query = _db.Documents
-            .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ)
             .Where(d => d.CompanyId == companyId
                 && !d.IsDeleted
                 && d.Status != DocumentStatus.Voided
@@ -515,6 +515,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             query = query.Where(d => d.DocumentDate.Month == month.Value);
 
         var docs = await query.OrderByDescending(d => d.DocumentDate).ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         return docs.Select(d => new PendingWhtDocumentResponse(
             d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,

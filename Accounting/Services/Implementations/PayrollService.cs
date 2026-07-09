@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using System.Text;
 using System.Text.RegularExpressions;
 using Accounting.Data;
@@ -3211,13 +3212,13 @@ public class PayrollService : IPayrollService
         var endDate = startDate.AddMonths(1).AddDays(-1);
 
         var docs = await _db.Documents
-            .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว ภ.ง.ด.3)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.WithholdingTaxAmount > 0)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         var lines = docs.SelectMany(d => d.Lines
             .Where(l => l.WithholdingTaxAmount > 0)

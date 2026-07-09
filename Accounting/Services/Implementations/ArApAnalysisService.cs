@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Data;
 using Accounting.Models.DTOs.ArApAnalysis;
 using Accounting.Models.Enums;
@@ -265,11 +266,13 @@ public class ArApAnalysisService : IArApAnalysisService
     {
         var now = DateTime.UtcNow.Date;
         var arOpen = await _db.Documents
-            .Include(d => d.Contact)
+            // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ
+            // ทำ bad-debt allowance / TFRS NPAEs ch.9 คลาดเคลื่อน)
             .Where(d => d.CompanyId == companyId && ArOpenTypes.Contains(d.DocumentType)
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                 && d.BalanceDue > 0)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, arOpen);
 
         var totalAr = arOpen.Sum(d => d.BalanceDue);
         var totalOverdue = arOpen.Where(d => d.DueDate.HasValue && d.DueDate.Value < now).Sum(d => d.BalanceDue);
