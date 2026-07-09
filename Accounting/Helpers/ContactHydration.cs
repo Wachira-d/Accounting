@@ -54,4 +54,34 @@ public static class ContactHydration
         var docs = payments.Where(p => p.Document is not null).Select(p => p.Document!).ToList();
         await db.HydrateContactsAsync(companyId, docs);
     }
+
+    /// <summary>ผูก PayeeContact (รวมที่ถูก soft-delete) เข้า
+    /// <see cref="WithholdingTaxCert.PayeeContact"/> — required nav บน Contact ที่มี
+    /// filter !IsDeleted เช่นกัน → .Include(w => w.PayeeContact) จะ INNER JOIN ตัด
+    /// หนังสือรับรอง 50 ทวิ ที่ payee ถูกลบทิ้ง (under-report ภ.ง.ด.1ก/3ก).</summary>
+    public static async Task HydratePayeeContactsAsync(
+        this AccountingDbContext db, Guid companyId, IReadOnlyCollection<WithholdingTaxCert> certs)
+    {
+        if (certs is null || certs.Count == 0) return;
+        var ids = certs
+            .Where(w => w.PayeeContact is null && w.PayeeContactId != Guid.Empty)
+            .Select(w => w.PayeeContactId).Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var map = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && ids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+
+        foreach (var w in certs)
+            if (w.PayeeContact is null && map.TryGetValue(w.PayeeContactId, out var c))
+                w.PayeeContact = c;
+    }
+
+    /// <summary>ผูก PayeeContact ให้ 50 ทวิ ใบเดียว (single-fetch).</summary>
+    public static async Task<WithholdingTaxCert?> HydratePayeeContactAsync(
+        this AccountingDbContext db, Guid companyId, WithholdingTaxCert? cert)
+    {
+        if (cert is not null) await db.HydratePayeeContactsAsync(companyId, new[] { cert });
+        return cert;
+    }
 }

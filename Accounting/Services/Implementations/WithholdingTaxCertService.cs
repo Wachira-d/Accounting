@@ -222,10 +222,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     {
         var cert = await _db.WithholdingTaxCerts
             .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัด 50 ทวิ ที่ payee ถูกลบ)
             .Include(w => w.Document)
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+        await _db.HydratePayeeContactAsync(companyId, cert);
 
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
@@ -237,7 +238,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     {
         var query = _db.WithholdingTaxCerts
             .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัด 50 ทวิ ที่ payee ถูกลบ)
             .Include(w => w.Document)
             .Where(w => w.CompanyId == companyId);
 
@@ -250,6 +251,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, items);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
@@ -333,13 +335,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     public async Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null)
     {
         var query = _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก
             .Where(w => w.CompanyId == companyId && w.PayeeContactId == contactId);
 
         if (year.HasValue) query = query.Where(w => w.TaxYear == year.Value);
 
         var certs = await query.OrderByDescending(w => w.TaxYear).ThenByDescending(w => w.TaxMonth).ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, certs);
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
         return certs.Select(w => MapToResponse(w, company)).ToList();

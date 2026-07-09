@@ -97,13 +97,13 @@ public class TaxFilingExportService : ITaxFilingExportService
         var period = $"{thaiYear:D4}{month:D2}";
 
         var certs = await _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัดpayee ภ.ง.ด.3/1ก)
             .Where(w => w.CompanyId == companyId
                 && w.TaxFormType == TaxType.WithholdingTax3
                 && w.TaxYear == year && w.TaxMonth == month
                 && w.Status != WithholdingTaxCertStatus.Voided)
             .ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, certs);
 
         var sb = new StringBuilder();
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
@@ -143,13 +143,13 @@ public class TaxFilingExportService : ITaxFilingExportService
         var period = $"{thaiYear:D4}{month:D2}";
 
         var certs = await _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัดpayee ภ.ง.ด.53/3ก)
             .Where(w => w.CompanyId == companyId
                 && w.TaxFormType == TaxType.WithholdingTax53
                 && w.TaxYear == year && w.TaxMonth == month
                 && w.Status != WithholdingTaxCertStatus.Voided)
             .ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, certs);
 
         var sb = new StringBuilder();
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);

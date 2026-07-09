@@ -120,8 +120,9 @@ public class EmailScheduleService : IEmailScheduleService
             if (rules.Count == 0) return;
 
             var cert = await _db.WithholdingTaxCerts.AsNoTracking()
-                .Include(c => c.PayeeContact)
+                // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ทำ cert=null → 50 ทวิ ไม่ส่งเมล)
                 .FirstOrDefaultAsync(c => c.Id == certId && c.CompanyId == companyId, ct);
+            await _db.HydratePayeeContactAsync(companyId, cert);
             if (cert?.PayeeContact == null) return;
 
             var email = cert.PayeeContact.Email;

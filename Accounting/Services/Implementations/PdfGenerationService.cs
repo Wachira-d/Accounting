@@ -211,10 +211,10 @@ public partial class PdfGenerationService : IPdfGenerationService
     public async Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId)
     {
         var cert = await _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ทำ cert=null พิมพ์ 50 ทวิ)
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+        await _db.HydratePayeeContactAsync(companyId, cert);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
