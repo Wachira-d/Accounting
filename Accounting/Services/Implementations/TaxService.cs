@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -129,13 +130,15 @@ public partial class TaxService : ITaxService
         // Fallback DocumentDate สำหรับเอกสารเก่าที่ approve ก่อนเพิ่ม snapshot.
         var docs = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            // ไม่ Include Contact (required nav + !IsDeleted filter → INNER JOIN
+            // ตัดใบที่ contact ถูกลบ = under-report ภ.พ.30). hydrate แยกด้านล่าง
             .Where(d => d.CompanyId == companyId
                 && (d.TaxPointDate ?? d.DocumentDate) >= startDate
                 && (d.TaxPointDate ?? d.DocumentDate) <= endDate
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.VatAmount != 0)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         // Cross-report dedup: a document already claimed (a non-excluded line)
         // in ANOTHER VAT report must not be claimed again here. This both
@@ -158,7 +161,7 @@ public partial class TaxService : ITaxService
         // ใบที่ DocumentDate อยู่ในงวดอยู่แล้วถูกดึงข้างบน แล้ว Receipt branch
         // จะกรองด้วย RecognizedAt เอง.
         var deferredRecognized = await _db.Documents
-            .Include(d => d.Lines).Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว)
             .Where(d => d.CompanyId == companyId
                 && d.IsDeposit && d.DepositOutputVatDeferred
                 && d.DepositOutputVatRecognizedAt != null
@@ -167,6 +170,7 @@ public partial class TaxService : ITaxService
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.VatAmount != 0)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, deferredRecognized);
         if (deferredRecognized.Count > 0)
         {
             var existing = docs.Select(d => d.Id).ToHashSet();
@@ -656,13 +660,13 @@ public partial class TaxService : ITaxService
     private async Task GenerateWhtReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
     {
         var docs = await _db.Documents
-            .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว ภ.ง.ด.3/53)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && d.WithholdingTaxAmount != 0)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         var lineOrder = 1;
         foreach (var doc in docs)
@@ -1413,21 +1417,30 @@ public partial class TaxService : ITaxService
             .ToListAsync())
             .ToHashSet();
 
-        var q = _db.Documents.AsNoTracking().Include(d => d.Contact)
+        // ไม่ Include Contact (required nav → INNER JOIN ตัดใบที่ contact ถูกลบ).
+        // ค้นด้วยเลขเอกสารใน SQL; ค้นด้วยชื่อ contact ทำ client-side หลัง hydrate
+        var s = search?.Trim();
+        var q = _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId
                 && types.Contains(d.DocumentType)
                 && d.VatAmount != 0
                 && d.DocumentDate >= from && d.DocumentDate < to
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var s = search.Trim();
-            q = q.Where(d => d.DocumentNumber.Contains(s) || (d.Contact != null && d.Contact.Name.Contains(s)));
-        }
-
-        var docs = await q.OrderByDescending(d => d.DocumentDate).Take(200).ToListAsync();
+        // ถ้าค้นด้วยเลขเอกสารตรง ๆ กรองใน SQL ให้ก่อน (เร็ว); ถ้าไม่มี match เลย
+        // (อาจตั้งใจค้นชื่อ) จะ fallback ดึงกว้างแล้วกรองชื่อ client-side ด้านล่าง
+        var byNumber = !string.IsNullOrWhiteSpace(s)
+            ? await q.Where(d => d.DocumentNumber.Contains(s)).OrderByDescending(d => d.DocumentDate).Take(200).ToListAsync()
+            : await q.OrderByDescending(d => d.DocumentDate).Take(200).ToListAsync();
+        List<Document> docs = byNumber;
+        if (!string.IsNullOrWhiteSpace(s) && byNumber.Count == 0)
+            docs = await q.OrderByDescending(d => d.DocumentDate).Take(500).ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
         return docs
             .Where(d => !claimed.Contains(d.Id))
+            .Where(d => string.IsNullOrWhiteSpace(s)
+                || d.DocumentNumber.Contains(s)
+                || (d.Contact?.Name?.Contains(s) ?? false))
+            .Take(200)
             .Select(d => new PullableDocumentDto(
                 d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,
                 d.Contact?.Name ?? "-", d.SubTotal, d.VatAmount,
@@ -1447,10 +1460,10 @@ public partial class TaxService : ITaxService
             throw new InvalidOperationException("ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่นแล้ว");
 
         var doc = await _db.Documents
-            .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);
 
         if (!PullableVatTypes.TryGetValue(doc.DocumentType, out var isInput))
             throw new InvalidOperationException($"เอกสารประเภท {doc.DocumentType} ไม่สามารถดึงเข้ารายงาน ภพ.30 ได้");

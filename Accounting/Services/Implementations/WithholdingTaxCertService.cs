@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Data;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
@@ -221,10 +222,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     {
         var cert = await _db.WithholdingTaxCerts
             .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัด 50 ทวิ ที่ payee ถูกลบ)
             .Include(w => w.Document)
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+        await _db.HydratePayeeContactAsync(companyId, cert);
 
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
@@ -236,7 +238,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     {
         var query = _db.WithholdingTaxCerts
             .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัด 50 ทวิ ที่ payee ถูกลบ)
             .Include(w => w.Document)
             .Where(w => w.CompanyId == companyId);
 
@@ -249,6 +251,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, items);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
@@ -332,13 +335,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     public async Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null)
     {
         var query = _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก
             .Where(w => w.CompanyId == companyId && w.PayeeContactId == contactId);
 
         if (year.HasValue) query = query.Where(w => w.TaxYear == year.Value);
 
         var certs = await query.OrderByDescending(w => w.TaxYear).ThenByDescending(w => w.TaxMonth).ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, certs);
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
         return certs.Select(w => MapToResponse(w, company)).ToList();
@@ -372,10 +375,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         Guid companyId, Guid documentId, bool autoIssue, string createdBy)
     {
         var doc = await _db.Documents
-            .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null → 50 ทวิ ออกไม่ได้)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);
 
         if (doc.WithholdingTaxAmount <= 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่าย");
@@ -495,8 +498,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // a cert that ties back to a voided source doc. Also exclude soft-
         // deleted rows (was missing from this query entirely).
         var query = _db.Documents
-            .Include(d => d.Lines)
-            .Include(d => d.Contact)
+            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ)
             .Where(d => d.CompanyId == companyId
                 && !d.IsDeleted
                 && d.Status != DocumentStatus.Voided
@@ -515,6 +517,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             query = query.Where(d => d.DocumentDate.Month == month.Value);
 
         var docs = await query.OrderByDescending(d => d.DocumentDate).ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         return docs.Select(d => new PendingWhtDocumentResponse(
             d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,

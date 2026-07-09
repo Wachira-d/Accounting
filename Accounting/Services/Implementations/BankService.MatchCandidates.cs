@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Bank;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -137,13 +138,16 @@ public partial class BankService
         var paymentExclude = usedPaymentIds.ToList();
         var paymentCandidates = await _db.Set<Payment>()
             .AsNoTracking()
-            .Include(p => p.Document).ThenInclude(d => d.Contact)
+            // ไม่ ThenInclude Contact (required nav + !IsDeleted → INNER JOIN
+            // ตัด payment ที่ contact ถูกลบ) — hydrate แยกด้านล่าง
+            .Include(p => p.Document)
             .Where(p => p.CompanyId == companyId
                      && !p.IsDeleted
                      && p.PaymentDate >= dateMin && p.PaymentDate <= dateMax
                      && p.Document.Status != DocumentStatus.Voided
                      && !paymentExclude.Contains(p.Id))
             .ToListAsync();
+        await _db.HydratePaymentContactsAsync(companyId, paymentCandidates);
 
         // Pre-fetch all JE lines (with ChartOfAccount) for candidates to derive
         // "deposit destination" per JE without N+1. We pull lines for ALL JEs in

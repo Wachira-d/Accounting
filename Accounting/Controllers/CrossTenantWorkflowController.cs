@@ -163,7 +163,9 @@ public class CrossTenantWorkflowController : ControllerBase
         [FromQuery] CrossTenantLinkStatus? status = null)
     {
         var query = _db.CrossTenantDocumentLinks.AsNoTracking()
-            .Include(l => l.SourceDocument).ThenInclude(d => d.Contact)
+            // .ThenInclude(Contact) ถอดออก: projection ด้านล่างไม่ได้ใช้ SourceDocument.Contact
+            // (EF drop join อยู่แล้ว = dead include) — ถอดเพื่อไม่ให้สับสนกับบั๊ก INNER JOIN
+            .Include(l => l.SourceDocument)
             .Where(l => l.TargetCompanyId == companyId);
         if (type.HasValue) query = query.Where(l => l.LinkType == type.Value);
         if (status.HasValue) query = query.Where(l => l.Status == status.Value);
@@ -197,9 +199,11 @@ public class CrossTenantWorkflowController : ControllerBase
     [HttpGet("incoming-documents/{linkId:guid}")]
     public async Task<ActionResult<ApiResponse<object>>> IncomingDetail(Guid companyId, Guid linkId)
     {
+        // ไม่ ThenInclude Contact: (1) response ด้านล่างไม่ได้ใช้ SourceDocument.Contact
+        // เลย และ (2) Contact เป็น required nav + !IsDeleted filter → INNER JOIN
+        // ตัด link ทั้งใบทิ้งถ้า contact ต้นทางถูกลบ (= 404 ผิด ๆ). ตัดออกพอ.
         var link = await _db.CrossTenantDocumentLinks.AsNoTracking()
             .Include(l => l.SourceDocument).ThenInclude(d => d.Lines)
-            .Include(l => l.SourceDocument).ThenInclude(d => d.Contact)
             .FirstOrDefaultAsync(l => l.Id == linkId && l.TargetCompanyId == companyId);
         if (link == null) return NotFound();
         return Ok(new ApiResponse<object>(true, new

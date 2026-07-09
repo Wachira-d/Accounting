@@ -53,20 +53,24 @@ public class RevenueRecognitionService : IRevenueRecognitionService
     public async Task<RevenueContractResponse> GetContractAsync(Guid companyId, Guid contractId)
     {
         var contract = await _db.RevenueContracts
-            .Include(c => c.Contact)
             .Include(c => c.Obligations)
             .Include(c => c.Project)
             .FirstOrDefaultAsync(c => c.Id == contractId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสัญญา");
 
+        // ไม่ Include Contact (required nav + !IsDeleted → INNER JOIN ตัดสัญญาที่
+        // contact ถูกลบ) — reattach เอง (รวมที่ถูก soft-delete)
+        contract.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contract.ContactId);
+
         var obligations = contract.Obligations.Select(MapObligationToResponse).ToList();
-        return MapContractToResponse(contract, contract.Contact.Name, obligations);
+        return MapContractToResponse(contract, contract.Contact?.Name ?? string.Empty, obligations);
     }
 
     public async Task<PagedResponse<RevenueContractResponse>> GetContractsAsync(Guid companyId, string? status, PagedRequest request)
     {
+        // ไม่ Include Contact (INNER JOIN ตัดสัญญาที่ contact ถูกลบ) — reattach หลัง materialize
         var query = _db.RevenueContracts
-            .Include(c => c.Contact)
             .Include(c => c.Obligations)
             .Include(c => c.Project)
             .Where(c => c.CompanyId == companyId);
@@ -87,8 +91,15 @@ public class RevenueRecognitionService : IRevenueRecognitionService
 
         var totalPages = (int)Math.Ceiling(totalCount / (double)request.PageSize);
 
+        var itemContactIds = items.Select(c => c.ContactId).Distinct().ToList();
+        var itemContactMap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && itemContactIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+        foreach (var c in items)
+            if (itemContactMap.TryGetValue(c.ContactId, out var ct)) c.Contact = ct;
+
         return new PagedResponse<RevenueContractResponse>(
-            items.Select(c => MapContractToResponse(c, c.Contact.Name,
+            items.Select(c => MapContractToResponse(c, c.Contact?.Name ?? string.Empty,
                 c.Obligations.Select(MapObligationToResponse).ToList())).ToList(),
             totalCount,
             request.Page,
@@ -99,11 +110,14 @@ public class RevenueRecognitionService : IRevenueRecognitionService
     public async Task<RevenueContractResponse> UpdateContractAsync(Guid companyId, Guid contractId, UpdateRevenueContractRequest request)
     {
         var contract = await _db.RevenueContracts
-            .Include(c => c.Contact)
             .Include(c => c.Obligations)
             .Include(c => c.Project)
             .FirstOrDefaultAsync(c => c.Id == contractId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสัญญา");
+
+        // ไม่ Include Contact (INNER JOIN ตัดสัญญาที่ contact ถูกลบ) — reattach เอง
+        contract.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contract.ContactId);
 
         if (request.Name != null) contract.Name = request.Name;
         if (request.EndDate.HasValue) contract.EndDate = request.EndDate.Value;
@@ -114,7 +128,7 @@ public class RevenueRecognitionService : IRevenueRecognitionService
         await _db.SaveChangesAsync();
 
         var obligations = contract.Obligations.Select(MapObligationToResponse).ToList();
-        return MapContractToResponse(contract, contract.Contact.Name, obligations);
+        return MapContractToResponse(contract, contract.Contact?.Name ?? string.Empty, obligations);
     }
 
     // ===== Performance Obligations =====
@@ -411,10 +425,17 @@ public class RevenueRecognitionService : IRevenueRecognitionService
     public async Task<DeferredRevenueReportResponse> GetDeferredRevenueReportAsync(Guid companyId, DateTime asOfDate)
     {
         var contracts = await _db.RevenueContracts
-            .Include(c => c.Contact)
             .Include(c => c.Obligations)
             .Where(c => c.CompanyId == companyId && c.Status == "Active")
             .ToListAsync();
+
+        // ไม่ Include Contact (INNER JOIN ตัดสัญญาที่ contact ถูกลบ) — reattach เอง
+        var reportContactIds = contracts.Select(c => c.ContactId).Distinct().ToList();
+        var reportContactMap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && reportContactIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+        foreach (var contract in contracts)
+            if (reportContactMap.TryGetValue(contract.ContactId, out var ct)) contract.Contact = ct;
 
         var byContract = new List<DeferredRevenueByContract>();
         decimal totalDeferred = 0;
@@ -429,7 +450,7 @@ public class RevenueRecognitionService : IRevenueRecognitionService
             totalRecognized += recognized;
 
             byContract.Add(new DeferredRevenueByContract(
-                contract.Id, contract.Name, contract.Contact.Name,
+                contract.Id, contract.Name, contract.Contact?.Name ?? string.Empty,
                 contract.TotalContractValue, recognized, deferred, contract.EndDate));
         }
 

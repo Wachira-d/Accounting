@@ -355,8 +355,9 @@ public class ReportBuilderService : IReportBuilderService
     private async Task<List<Dictionary<string, object>>> BuildDocumentQueryAsync(
         Guid companyId, Dictionary<string, string>? parameters)
     {
+        // ไม่ Include/Select Contact ตรง ๆ (required nav → INNER JOIN ตัดใบที่ contact
+        // ถูกลบ). เลือก ContactId แล้ว map ชื่อจาก dict (IgnoreQueryFilters) ทีหลัง
         var query = _db.Documents
-            .Include(d => d.Contact)
             .Where(d => d.CompanyId == companyId);
 
         if (parameters != null)
@@ -386,7 +387,7 @@ public class ReportBuilderService : IReportBuilderService
                 DocumentType = d.DocumentType.ToString(),
                 d.DocumentDate,
                 d.DueDate,
-                ContactName = d.Contact.Name,
+                d.ContactId,
                 d.SubTotal,
                 d.VatAmount,
                 d.TotalAmount,
@@ -396,13 +397,19 @@ public class ReportBuilderService : IReportBuilderService
             })
             .ToListAsync();
 
+        // ชื่อ contact (รวมที่ถูกลบ) จาก dict — กันแถวหายและชื่อไม่ว่าง
+        var cids = data.Select(r => r.ContactId).Distinct().ToList();
+        var cmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && cids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+
         return data.Select(r => new Dictionary<string, object>
         {
             ["DocumentNumber"] = r.DocumentNumber,
             ["DocumentType"] = r.DocumentType,
             ["DocumentDate"] = r.DocumentDate,
             ["DueDate"] = r.DueDate ?? (object)"",
-            ["ContactName"] = r.ContactName,
+            ["ContactName"] = cmap.GetValueOrDefault(r.ContactId) ?? "",
             ["SubTotal"] = r.SubTotal,
             ["VatAmount"] = r.VatAmount,
             ["TotalAmount"] = r.TotalAmount,
@@ -545,9 +552,10 @@ public class ReportBuilderService : IReportBuilderService
     private async Task<List<Dictionary<string, object>>> BuildPaymentQueryAsync(
         Guid companyId, Dictionary<string, string>? parameters)
     {
+        // ไม่ ThenInclude Contact (required → INNER JOIN ตัดแถวที่ contact ถูกลบ) —
+        // เลือก ContactId แล้ว map ชื่อจาก dict (IgnoreQueryFilters) ทีหลัง
         var query = _db.Payments
             .Include(p => p.Document)
-                .ThenInclude(d => d.Contact)
             .Where(p => p.CompanyId == companyId);
 
         if (parameters != null)
@@ -570,9 +578,14 @@ public class ReportBuilderService : IReportBuilderService
                 PaymentMethod = p.PaymentMethod.ToString(),
                 Reference = p.Reference ?? "",
                 DocumentNumber = p.Document.DocumentNumber,
-                ContactName = p.Document.Contact.Name
+                p.Document.ContactId
             })
             .ToListAsync();
+
+        var cids = data.Select(r => r.ContactId).Distinct().ToList();
+        var cmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && cids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
 
         return data.Select(r => new Dictionary<string, object>
         {
@@ -582,7 +595,7 @@ public class ReportBuilderService : IReportBuilderService
             ["PaymentMethod"] = r.PaymentMethod,
             ["Reference"] = r.Reference,
             ["DocumentNumber"] = r.DocumentNumber,
-            ["ContactName"] = r.ContactName
+            ["ContactName"] = cmap.GetValueOrDefault(r.ContactId) ?? ""
         }).ToList();
     }
 

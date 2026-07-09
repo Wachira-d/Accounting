@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Etax;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -10,10 +11,11 @@ public partial class EtaxInvoiceService
     public async Task<(byte[] pdfBytes, string fileName)> GeneratePdfA3Async(Guid companyId, Guid etaxId)
     {
         var etax = await _db.EtaxInvoices
-            .Include(e => e.Document).ThenInclude(d => d.Contact)
             .Include(e => e.Document).ThenInclude(d => d.Lines)
             .FirstOrDefaultAsync(e => e.Id == etaxId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
+        // ไม่ ThenInclude Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, etax.Document);
 
         if (string.IsNullOrWhiteSpace(etax.XmlContent))
             throw new InvalidOperationException("e-Tax XML content ว่างเปล่า — ไม่สามารถสร้าง PDF/A-3 ได้");

@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using System.Text;
 using Accounting.Data;
 using Accounting.Models.DTOs.Tax;
@@ -96,13 +97,13 @@ public class TaxFilingExportService : ITaxFilingExportService
         var period = $"{thaiYear:D4}{month:D2}";
 
         var certs = await _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัดpayee ภ.ง.ด.3/1ก)
             .Where(w => w.CompanyId == companyId
                 && w.TaxFormType == TaxType.WithholdingTax3
                 && w.TaxYear == year && w.TaxMonth == month
                 && w.Status != WithholdingTaxCertStatus.Voided)
             .ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, certs);
 
         var sb = new StringBuilder();
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
@@ -142,13 +143,13 @@ public class TaxFilingExportService : ITaxFilingExportService
         var period = $"{thaiYear:D4}{month:D2}";
 
         var certs = await _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัดpayee ภ.ง.ด.53/3ก)
             .Where(w => w.CompanyId == companyId
                 && w.TaxFormType == TaxType.WithholdingTax53
                 && w.TaxYear == year && w.TaxMonth == month
                 && w.Status != WithholdingTaxCertStatus.Voided)
             .ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, certs);
 
         var sb = new StringBuilder();
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
@@ -745,7 +746,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var monthEnd = monthStart.AddMonths(1).AddDays(-1);
 
         var docs = await _db.Documents.AsNoTracking()
-            .Include(d => d.Contact)
+            // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ ภ.พ.36)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.IsForeignService
                 && d.DocumentDate >= monthStart && d.DocumentDate <= monthEnd
@@ -755,6 +756,7 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && d.Status != Models.Enums.DocumentStatus.Draft)
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         var sb = new System.Text.StringBuilder();
         var totalServiceAmount = docs.Sum(d => d.SubTotal);
@@ -796,7 +798,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         var monthEnd = monthStart.AddMonths(1).AddDays(-1);
 
         var docs = await _db.Documents.AsNoTracking()
-            .Include(d => d.Contact)
+            // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ ภ.ง.ด.54)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.IsForeignService
                 && d.WithholdingTaxAmount > 0
@@ -808,6 +810,7 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && d.Status != Models.Enums.DocumentStatus.Draft)
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         var sb = new System.Text.StringBuilder();
         var totalIncome = docs.Sum(d => d.SubTotal);

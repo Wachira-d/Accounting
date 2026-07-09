@@ -59,9 +59,13 @@ public class AdvancedArApService : IAdvancedArApService
     public async Task<CreditSettingResponse> GetCreditSettingAsync(Guid companyId, Guid contactId)
     {
         var setting = await _db.Set<ContactCreditSetting>()
-            .Include(s => s.Contact)
             .FirstOrDefaultAsync(s => s.ContactId == contactId && s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบการตั้งค่าเครดิต");
+
+        // ไม่ Include Contact (required nav + !IsDeleted filter → INNER JOIN
+        // ตัดแถวที่ contact ถูกลบ) — reattach เอง (รวมที่ถูก soft-delete)
+        setting.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == setting.ContactId);
 
         // Recalculate outstanding from all AR docs (handles CN net).
         var outstandingBalance = await ComputeContactOutstandingArAsync(companyId, contactId);
@@ -69,7 +73,7 @@ public class AdvancedArApService : IAdvancedArApService
         setting.AvailableCredit = setting.CreditLimit - outstandingBalance;
         await _db.SaveChangesAsync();
 
-        return MapToCreditResponse(setting, setting.Contact.Name);
+        return MapToCreditResponse(setting, setting.Contact?.Name ?? string.Empty);
     }
 
     /// <summary>Computes net AR for a contact — sum of open (Invoice +
@@ -104,11 +108,19 @@ public class AdvancedArApService : IAdvancedArApService
     public async Task<List<CreditSettingResponse>> GetAllCreditSettingsAsync(Guid companyId)
     {
         var settings = await _db.Set<ContactCreditSetting>()
-            .Include(s => s.Contact)
+            // ไม่ Include/OrderBy Contact ใน SQL (required nav + !IsDeleted →
+            // INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach + sort ใน memory
             .Where(s => s.CompanyId == companyId && !s.IsDeleted)
-            .OrderBy(s => s.Contact.Name)
             .ToListAsync();
         if (settings.Count == 0) return new();
+
+        var settingContactIds = settings.Select(s => s.ContactId).Distinct().ToList();
+        var contactMap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && settingContactIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+        foreach (var s in settings)
+            if (contactMap.TryGetValue(s.ContactId, out var c)) s.Contact = c;
+        settings = settings.OrderBy(s => s.Contact?.Name).ToList();
 
         // Compute outstanding balances for all contacts in ONE batched query
         // (instead of one query per setting) — replaces the previously stale
@@ -141,7 +153,7 @@ public class AdvancedArApService : IAdvancedArApService
             s.CurrentBalance = bal;
             s.AvailableCredit = s.CreditLimit - bal;
         }
-        return settings.Select(s => MapToCreditResponse(s, s.Contact.Name)).ToList();
+        return settings.Select(s => MapToCreditResponse(s, s.Contact?.Name ?? string.Empty)).ToList();
     }
 
     public async Task<CreditCheckResponse> CheckCreditAsync(Guid companyId, Guid contactId, decimal amount)
@@ -284,10 +296,13 @@ public class AdvancedArApService : IAdvancedArApService
     public async Task<DunningLetterResponse> SendDunningLetterAsync(Guid companyId, Guid letterId, string channel)
     {
         var letter = await _db.Set<DunningLetter>()
-            .Include(l => l.Contact)
             .Include(l => l.Lines)
             .FirstOrDefaultAsync(l => l.Id == letterId && l.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบจดหมายทวงหนี้");
+
+        // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
+        letter.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == letter.ContactId);
 
         letter.Status = "Sent";
         letter.SentAt = DateTime.UtcNow;
@@ -297,21 +312,27 @@ public class AdvancedArApService : IAdvancedArApService
         await _db.SaveChangesAsync();
 
         return new DunningLetterResponse(
-            letter.Id, letter.LetterNumber, letter.ContactId, letter.Contact.Name,
+            letter.Id, letter.LetterNumber, letter.ContactId, letter.Contact?.Name ?? string.Empty,
             letter.DunningLevel, letter.LetterDate, letter.TotalOverdueAmount,
             letter.OldestOverdueDays, letter.Status, letter.SentAt, letter.Lines.Count);
     }
 
     public async Task<PagedResponse<DunningLetterResponse>> GetDunningLettersAsync(Guid companyId, PagedRequest request)
     {
+        // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ). ค้นด้วยชื่อ
+        // contact ทำผ่าน pre-resolve ContactId (IgnoreQueryFilters) แทน join.
         var query = _db.Set<DunningLetter>()
-            .Include(l => l.Contact)
             .Include(l => l.Lines)
             .Where(l => l.CompanyId == companyId && !l.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(request.Search))
+        {
+            var matchContactIds = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.CompanyId == companyId && c.Name.Contains(request.Search))
+                .Select(c => c.Id).ToListAsync();
             query = query.Where(l => l.LetterNumber.Contains(request.Search)
-                || l.Contact.Name.Contains(request.Search));
+                || matchContactIds.Contains(l.ContactId));
+        }
 
         var total = await query.CountAsync();
         var items = await query
@@ -320,8 +341,16 @@ public class AdvancedArApService : IAdvancedArApService
             .Take(request.PageSize)
             .ToListAsync();
 
+        // reattach Contact (รวมที่ถูก soft-delete) กัน row หาย
+        var itemContactIds = items.Select(l => l.ContactId).Distinct().ToList();
+        var itemContactMap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && itemContactIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+        foreach (var l in items)
+            if (itemContactMap.TryGetValue(l.ContactId, out var c)) l.Contact = c;
+
         var responses = items.Select(l => new DunningLetterResponse(
-            l.Id, l.LetterNumber, l.ContactId, l.Contact.Name,
+            l.Id, l.LetterNumber, l.ContactId, l.Contact?.Name ?? string.Empty,
             l.DunningLevel, l.LetterDate, l.TotalOverdueAmount,
             l.OldestOverdueDays, l.Status, l.SentAt, l.Lines.Count)).ToList();
 

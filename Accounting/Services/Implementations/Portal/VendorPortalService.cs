@@ -99,11 +99,14 @@ public class VendorPortalService : IVendorPortalService
         if (string.IsNullOrWhiteSpace(rawToken)) return null;
         var hash = ComputeHash(rawToken);
         var token = await _db.VendorPortalTokens
-            .Include(t => t.Contact)
             .FirstOrDefaultAsync(t => t.TokenHash == hash && !t.IsDeleted, ct);
         if (token == null) return null;
         if (token.RevokedAt.HasValue) return null;
         if (token.ExpiresAt < DateTime.UtcNow) return null;
+        // ไม่ Include Contact (required nav + !IsDeleted → INNER JOIN ตัด token ที่
+        // contact ถูกลบ = ปฏิเสธ vendor ผิด ๆ) — reattach เอง ผ่าน token.CompanyId
+        token.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == token.CompanyId && c.Id == token.ContactId, ct);
         // Touch LastUsedAt — soft write, ignore failure.
         try
         {

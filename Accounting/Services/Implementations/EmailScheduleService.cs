@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -37,9 +38,9 @@ public class EmailScheduleService : IEmailScheduleService
         try
         {
             var doc = await _db.Documents.AsNoTracking()
-                .Include(d => d.Contact)
                 .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
             if (doc == null) return;
+            await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
             var rules = await _db.EmailScheduleRules.AsNoTracking()
                 .Where(r => r.CompanyId == companyId && r.IsActive && !r.IsDeleted
@@ -119,8 +120,9 @@ public class EmailScheduleService : IEmailScheduleService
             if (rules.Count == 0) return;
 
             var cert = await _db.WithholdingTaxCerts.AsNoTracking()
-                .Include(c => c.PayeeContact)
+                // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ทำ cert=null → 50 ทวิ ไม่ส่งเมล)
                 .FirstOrDefaultAsync(c => c.Id == certId && c.CompanyId == companyId, ct);
+            await _db.HydratePayeeContactAsync(companyId, cert);
             if (cert?.PayeeContact == null) return;
 
             var email = cert.PayeeContact.Email;
@@ -164,9 +166,9 @@ public class EmailScheduleService : IEmailScheduleService
         try
         {
             var doc = await _db.Documents.AsNoTracking()
-                .Include(d => d.Contact)
                 .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
             if (doc == null) return;
+            await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
             // ห้ามส่งอีเมลเอกสาร Draft/รออนุมัติ — เลขจริง §86/4 ออกตอน Approve
             // เท่านั้น (DocumentEmailService บล็อกอยู่แล้ว จะทำให้คิว fail). ถ้า
@@ -342,7 +344,6 @@ public class EmailScheduleService : IEmailScheduleService
                 : today.AddDays(-rule.OffsetDays);
 
             var docsQuery = _db.Documents.AsNoTracking()
-                .Include(d => d.Contact)
                 .Where(d => d.CompanyId == rule.CompanyId
                     && !d.IsDeleted
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
@@ -354,6 +355,7 @@ public class EmailScheduleService : IEmailScheduleService
                 docsQuery = docsQuery.Where(d => d.DocumentType == dt);
 
             var docs = await docsQuery.ToListAsync(ct);
+            await _db.HydrateContactsAsync(rule.CompanyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
             var sendUtc = ScheduledUtc(today, rule.SendAtHour);
             foreach (var doc in docs)
             {

@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -40,9 +41,10 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var document = await _db.Documents
             .Include(d => d.Lines)
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, document);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
@@ -141,9 +143,11 @@ public partial class PdfGenerationService : IPdfGenerationService
     public async Task<string> GenerateDocumentHtmlAsync(Guid companyId, GeneratePdfRequest request)
     {
         var document = await _db.Documents
-            .Include(d => d.Contact).Include(d => d.Lines)
+            .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == request.DocumentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, document);
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
@@ -207,10 +211,10 @@ public partial class PdfGenerationService : IPdfGenerationService
     public async Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId)
     {
         var cert = await _db.WithholdingTaxCerts
-            .Include(w => w.Lines)
-            .Include(w => w.PayeeContact)
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ทำ cert=null พิมพ์ 50 ทวิ)
             .FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
+        await _db.HydratePayeeContactAsync(companyId, cert);
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
@@ -274,9 +278,11 @@ public partial class PdfGenerationService : IPdfGenerationService
     public async Task<GeneratePdfResponse> GenerateReceiptPdfAsync(Guid companyId, Guid paymentId)
     {
         var payment = await _db.Payments
-            .Include(p => p.Document).ThenInclude(d => d.Contact)
+            .Include(p => p.Document)
             .FirstOrDefaultAsync(p => p.Id == paymentId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบการชำระเงิน");
+        // ไม่ ThenInclude Contact (INNER JOIN ตัด payment ที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydratePaymentContactsAsync(companyId, new[] { payment });
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var html = BuildReceiptHtml(payment, company);

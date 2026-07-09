@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Treasury;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -44,7 +45,6 @@ public class CashForecastService : ICashForecastService
 
         // ===== A/R expected in =====
         var arQuery = _db.Documents
-            .Include(d => d.Contact)
             .Include(d => d.Project)
             .Where(d => d.CompanyId == companyId
                 && arTypes.Contains(d.DocumentType)
@@ -54,10 +54,10 @@ public class CashForecastService : ICashForecastService
                 && !d.IsDeleted);
         if (req.ProjectId.HasValue) arQuery = arQuery.Where(d => d.ProjectId == req.ProjectId.Value);
         var arDocs = await arQuery.ToListAsync(ct);
+        await _db.HydrateContactsAsync(companyId, arDocs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         // ===== A/P expected out =====
         var apQuery = _db.Documents
-            .Include(d => d.Contact)
             .Include(d => d.Project)
             .Where(d => d.CompanyId == companyId
                 && apTypes.Contains(d.DocumentType)
@@ -67,6 +67,7 @@ public class CashForecastService : ICashForecastService
                 && !d.IsDeleted);
         if (req.ProjectId.HasValue) apQuery = apQuery.Where(d => d.ProjectId == req.ProjectId.Value);
         var apDocs = await apQuery.ToListAsync(ct);
+        await _db.HydrateContactsAsync(companyId, apDocs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         // ===== Payroll expected out =====
         var payrollItems = new List<CashForecastItem>();

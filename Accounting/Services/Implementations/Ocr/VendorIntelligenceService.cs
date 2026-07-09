@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -430,10 +431,11 @@ public class VendorIntelligenceService
     private async Task TrainFromDocumentAsync(Guid companyId, Guid documentId, int retryCount)
     {
         var doc = await _db.Documents
-            .Include(d => d.Contact)
             .Include(d => d.Lines).ThenInclude(l => l.Account)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
         if (doc == null) return;
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, doc);
 
         // M3: Idempotent — never train the same document twice. Tracked via the
         // OcrIntelTrainedAt column on Document; if set, this doc has already been
@@ -697,7 +699,7 @@ public class VendorIntelligenceService
         // M7: Filter to approved-only (consistent with incremental training)
         // M6: Include ExpenseCategory so the header-level account fallback works
         var docs = await _db.Documents
-            .Include(d => d.Contact)
+            // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ = training set หด) — hydrate แยก
             .Include(d => d.Lines).ThenInclude(l => l.Account)
             .Include(d => d.ExpenseCategory)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
@@ -706,6 +708,7 @@ public class VendorIntelligenceService
                 && d.DocumentDate >= since)
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
+        await _db.HydrateContactsAsync(companyId, docs);
 
         var trained = 0;
         // Group by vendor key and aggregate in memory before bulk insert — much

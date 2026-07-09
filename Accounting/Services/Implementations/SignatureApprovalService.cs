@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Signature;
 using Accounting.Models.Entities;
@@ -144,9 +145,10 @@ public class SignatureApprovalService : ISignatureApprovalService
     public async Task<DocumentWithApprovalsResponse> GetDocumentWithApprovalsAsync(Guid companyId, Guid documentId)
     {
         var doc = await _db.Documents
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, doc);
 
         var approvals = await _db.Set<DocumentApproval>()
             .Include(a => a.Document)

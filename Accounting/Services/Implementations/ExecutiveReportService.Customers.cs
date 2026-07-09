@@ -8,8 +8,10 @@ public partial class ExecutiveReportService
 {
     public async Task<CustomerAnalyticsResponse> GetCustomerAnalyticsAsync(Guid companyId, DateTime fromDate, DateTime toDate, int topN = 20)
     {
-        var docs = await _db.Documents
-            .Include(d => d.Contact)
+        // ห้าม project d.Contact.Name/TaxId ตรง ๆ — Contact query filter !IsDeleted
+        // → เอกสารที่ contact ถูกลบจะถูก INNER JOIN ตัดทิ้ง (รายได้ under-report).
+        // select ContactId แล้ว resolve จาก dict (IgnoreQueryFilters).
+        var rows = await _db.Documents
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             // ใบเสร็จ/ใบสำคัญรับที่อ้างใบแจ้งหนี้ (RelatedDocumentId) = การตัดชำระ
             // ไม่ใช่รายได้ใหม่ → นับเฉพาะขายสด standalone กันรายได้ต่อลูกค้าเบิ้ล 2
@@ -21,8 +23,6 @@ public partial class ExecutiveReportService
             .Select(d => new
             {
                 d.ContactId,
-                ContactName = d.Contact.Name,
-                d.Contact.TaxId,
                 d.TotalAmount,
                 d.BalanceDue,
                 d.DocumentDate,
@@ -30,6 +30,25 @@ public partial class ExecutiveReportService
                 d.PaidAmount
             })
             .ToListAsync();
+        var custCids = rows.Select(r => r.ContactId).Distinct().ToList();
+        var custCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && custCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => new { c.Name, c.TaxId });
+        var docs = rows.Select(r =>
+        {
+            var c = custCmap.GetValueOrDefault(r.ContactId);
+            return new
+            {
+                r.ContactId,
+                ContactName = c?.Name ?? "-",
+                TaxId = c?.TaxId,
+                r.TotalAmount,
+                r.BalanceDue,
+                r.DocumentDate,
+                r.DueDate,
+                r.PaidAmount
+            };
+        }).ToList();
 
         var totalRevenue = docs.Sum(d => d.TotalAmount);
         var grouped = docs
@@ -78,8 +97,7 @@ public partial class ExecutiveReportService
 
         // Churn risk: customers historically active but no invoice in last 90 days
         var historicCutoff = toDate.AddYears(-2);
-        var allHistory = await _db.Documents
-            .Include(d => d.Contact)
+        var historyRows = await _db.Documents
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             // ใบเสร็จ/ใบสำคัญรับที่อ้างใบแจ้งหนี้ (RelatedDocumentId) = การตัดชำระ
             // ไม่ใช่รายได้ใหม่ → นับเฉพาะขายสด standalone กันรายได้ต่อลูกค้าเบิ้ล 2
@@ -88,8 +106,16 @@ public partial class ExecutiveReportService
                          && d.RelatedDocumentId == null))
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= historicCutoff && d.DocumentDate <= toDate)
-            .Select(d => new { d.ContactId, ContactName = d.Contact.Name, d.DocumentDate, d.TotalAmount })
+            .Select(d => new { d.ContactId, d.DocumentDate, d.TotalAmount })
             .ToListAsync();
+        // resolve ชื่อจาก dict (IgnoreQueryFilters) — กัน INNER JOIN ตัดใบที่ contact ถูกลบ
+        var histCids = historyRows.Select(r => r.ContactId).Distinct().ToList();
+        var histCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && histCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var allHistory = historyRows
+            .Select(r => new { r.ContactId, ContactName = histCmap.GetValueOrDefault(r.ContactId) ?? "-", r.DocumentDate, r.TotalAmount })
+            .ToList();
         var ninetyAgo = toDate.AddDays(-90);
         var churn = allHistory
             .GroupBy(d => new { d.ContactId, d.ContactName })
@@ -115,8 +141,9 @@ public partial class ExecutiveReportService
 
     internal async Task<List<TopCustomerRow>> BuildTopCustomersAsync(Guid companyId, DateTime fromDate, DateTime toDate, int n)
     {
-        var docs = await _db.Documents
-            .Include(d => d.Contact)
+        // select ContactId แล้ว resolve ชื่อจาก dict (IgnoreQueryFilters) — กัน INNER
+        // JOIN ตัดใบที่ contact ถูกลบ (รายได้ under-report)
+        var rows = await _db.Documents
             .Where(d => d.CompanyId == companyId && !d.IsDeleted)
             // ใบเสร็จ/ใบสำคัญรับที่อ้างใบแจ้งหนี้ (RelatedDocumentId) = การตัดชำระ
             // ไม่ใช่รายได้ใหม่ → นับเฉพาะขายสด standalone กันรายได้ต่อลูกค้าเบิ้ล 2
@@ -125,8 +152,13 @@ public partial class ExecutiveReportService
                          && d.RelatedDocumentId == null))
             .Where(d => d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft)
             .Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate)
-            .Select(d => new { d.ContactId, ContactName = d.Contact.Name, d.TotalAmount })
+            .Select(d => new { d.ContactId, d.TotalAmount })
             .ToListAsync();
+        var topCids = rows.Select(r => r.ContactId).Distinct().ToList();
+        var topCmap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && topCids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+        var docs = rows.Select(r => new { r.ContactId, ContactName = topCmap.GetValueOrDefault(r.ContactId) ?? "-", r.TotalAmount }).ToList();
         var total = docs.Sum(d => d.TotalAmount);
         return docs.GroupBy(d => new { d.ContactId, d.ContactName })
             .Select(g => new TopCustomerRow(g.Key.ContactId, g.Key.ContactName,

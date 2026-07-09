@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -143,7 +144,6 @@ public class BackgroundJobService : BackgroundService
             foreach (var companyId in companyIds)
             {
                 var overdueDocuments = await db.Documents
-                    .Include(d => d.Contact)
                     .Where(d => d.CompanyId == companyId
                         && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
                         && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
@@ -152,6 +152,7 @@ public class BackgroundJobService : BackgroundService
                         && d.DueDate < today
                         && d.BalanceDue > 0)
                     .ToListAsync(ct);
+                await db.HydrateContactsAsync(companyId, overdueDocuments);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
                 foreach (var doc in overdueDocuments)
                 {

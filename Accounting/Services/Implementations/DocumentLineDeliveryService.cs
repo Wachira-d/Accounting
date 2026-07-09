@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -35,9 +36,10 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
         CancellationToken ct = default)
     {
         var doc = await _db.Documents.AsNoTracking()
-            .Include(d => d.Contact)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
         if (doc == null) return false;
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
+        await _db.HydrateContactAsync(companyId, doc);
         var lineId = doc.Contact?.LineUserId;
         if (string.IsNullOrWhiteSpace(lineId))
         {
