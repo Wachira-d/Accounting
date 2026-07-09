@@ -1194,6 +1194,12 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 55: drives-resolve (เคส B journal) เปลี่ยนจาก link-based เป็น **net-balance**_
+_— เดิมกรอง `ReversedByEntryId == null` (ถ้า partner reverse→un-reverse JV, link_
+_ค้างที่ NextAcc → หาไม่เจอ). เปลี่ยนเป็นดูยอด Cr สุทธิของบัญชีมัดจำในสาย_
+_reverse-chain (original + reversal ที่ยัง active): reverse→net=0 (ตัด),_
+_un-reverse→reversal หลุด→net live→หักได้. ตอบ TakeTime: un-reverse ฝั่ง partner_
+_พอ ไม่ต้องเคลียร์ link ที่ NextAcc._
 _รอบ 54: กวาดบั๊ก Include(Contact) INNER JOIN ทั้งระบบ (~40 จุด) + integration_
 _invoice รับ `bookingNumber` — helper กลาง `ContactHydration` (Hydrate*ContactsAsync_
 _ผูก Contact ที่ soft-delete กลับเข้า nav ด้วย IgnoreQueryFilters). ครอบคลุม ภาษี_
