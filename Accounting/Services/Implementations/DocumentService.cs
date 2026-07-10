@@ -572,6 +572,15 @@ public class DocumentService : IDocumentService
             // 1 would corrupt the GL.
             var fxRate = await ResolveExchangeRateAsync(request.Currency, request.ExchangeRate, request.DocumentDate);
 
+            // ใบมัดจำต้อง standalone (audit #10): ใบเสร็จที่อ้างเอกสารต้นทางจะ post
+            // เป็น "ตัดชำระลูกหนี้" (Cr 113) ไม่แตะ 217xx → ติดธง IsDeposit ไป
+            // ก็จะโชว์คงค้างบนหน้ามัดจำทั้งที่ GL ไม่มีหนี้สินมัดจำ + ทำให้ void-
+            // restore นับ 113 เพี้ยน
+            if (request.IsDeposit && request.RelatedDocumentId.HasValue)
+                throw new InvalidOperationException(
+                    "ใบมัดจำต้องเป็นเอกสาร standalone — ห้ามอ้างเอกสารต้นทาง " +
+                    "(ใบเสร็จที่อ้างใบแจ้งหนี้ = การตัดชำระ ไม่ใช่การรับมัดจำ)");
+
             var doc = new Document
             {
                 CompanyId = companyId,
@@ -1526,7 +1535,14 @@ public class DocumentService : IDocumentService
             deferredVatAcc = await FindAccountAsync(companyId, "21913");
             outputVatAcc = await FindAccountAsync(companyId, "21911");
             if (deferredVatAcc == null || outputVatAcc == null)
+            {
                 recognizeDeferredVat = false;   // ผังไม่รองรับ → คงไว้ที่เดิม
+                // ห้ามเงียบ (audit #13): ถ้าไม่ log VAT จะค้าง 21913 + RecognizedAt
+                // ไม่ถูก stamp → ภ.พ.30 ข้ามใบนี้ตลอดไปโดยไม่มีใครรู้
+                _logger.LogWarning(
+                    "RealizeDeposit {Doc}: ผังบัญชีไม่มี 21913/21911 — ข้ามการรับรู้ VAT รอเรียกเก็บ (VAT {Vat:N2} ค้างที่ 21913 และจะไม่เข้า ภ.พ.30 จนกว่าจะเพิ่มบัญชี)",
+                    doc.DocumentNumber, doc.VatAmount);
+            }
         }
         var vatMove = recognizeDeferredVat ? doc.VatAmount : 0m;
 
@@ -1613,6 +1629,7 @@ public class DocumentService : IDocumentService
         // ล้วนไม่มีเอกสารผูก (SourceDocumentId == null) เพื่อไม่ให้ KPI ขึ้น 0
         // ทั้งที่งบดุลมีหนี้สินมัดจำจริง
         var glNetByDoc = new Dictionary<Guid, decimal>();
+        var glAllNetByDoc = new Dictionary<Guid, decimal>();
         decimal docLessDepositNet = 0m;
         try
         {
@@ -1648,16 +1665,21 @@ public class DocumentService : IDocumentService
 
                 var nativeIds = rows.Select(r => r.Id).ToHashSet();
 
+                // GL net ต่อเอกสาร "ทุกใบ" (รวม native) — ใช้เป็น fallback ให้ native
+                // ที่ field ไม่ถูกตั้ง (SubTotal=0 จาก integration) แสดงยอดจริงจาก GL
+                glAllNetByDoc = depLines
+                    .Where(x => x.DocId.HasValue)
+                    .GroupBy(x => x.DocId!.Value)
+                    .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.Net) })
+                    .ToDictionary(g => g.DocId, g => g.Net);
+
                 // (2a) เอกสารที่ยังไม่ติดธง IsDeposit แต่มียอด Cr สุทธิในบัญชีมัดจำ
                 //      — ครอบคลุม "ทุก doc type" (integration/POS/receipt/invoice)
                 //      ไม่จำกัดแค่ Receipt เพราะการ Cr บัญชีมัดจำคือสัญญาณ "รับมัดจำ"
                 //      อยู่แล้ว ไม่ว่าเอกสารจะถูกจัดประเภทเป็นอะไร
-                glNetByDoc = depLines
-                    .Where(x => x.DocId.HasValue && !nativeIds.Contains(x.DocId!.Value))
-                    .GroupBy(x => x.DocId!.Value)
-                    .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.Net) })
-                    .Where(g => g.Net > 0.005m)
-                    .ToDictionary(g => g.DocId, g => g.Net);
+                glNetByDoc = glAllNetByDoc
+                    .Where(kv => !nativeIds.Contains(kv.Key) && kv.Value > 0.005m)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
 
                 if (glNetByDoc.Count > 0)
                 {
@@ -1719,6 +1741,11 @@ public class DocumentService : IDocumentService
             // (ทำให้เดิมคำนวณ outstanding = 0 → KPI ขึ้น 0 ทั้งที่มีมัดจำจริง)
             var isGlDetected = glNetByDoc.TryGetValue(d.Id, out var glNet);
             decimal baseAmt, outstanding, realized;
+            // ฐานส่วนที่ "คืนเงิน" ไปแล้ว (gross → base ตามสัดส่วน VAT ของใบ) —
+            // ต้องหักออกจาก outstanding (audit #7: เดิมไม่หัก → หน้าโชว์คงค้าง
+            // ทั้งที่ GL 217xx = 0 หลังคืนครบ)
+            var refundVatPortion = d.TotalAmount > 0 ? d.VatAmount / d.TotalAmount : 0m;
+            var refundedBase = Math.Round(d.DepositRefundedAmount * (1 - refundVatPortion), 2, MidpointRounding.AwayFromZero);
             if (isGlDetected)
             {
                 // GL net = ยอดหนี้สินมัดจำคงเหลือจริง (ΣCr − ΣDr) → คือ outstanding
@@ -1728,11 +1755,22 @@ public class DocumentService : IDocumentService
                 realized = baseAmt - outstanding;
                 if (realized < 0) { realized = 0; baseAmt = outstanding; }
             }
+            else if (d.SubTotal <= 0.005m && glAllNetByDoc.TryGetValue(d.Id, out var nativeGlNet) && nativeGlNet > 0.005m)
+            {
+                // native ที่ field ไม่ถูกตั้ง (SubTotal=0 จาก integration) แต่ GL มี
+                // หนี้สินจริง → fallback GL net (audit #9: เดิมโชว์ 0/"Realized"
+                // ทั้งที่ GL ค้าง)
+                baseAmt = nativeGlNet;
+                outstanding = nativeGlNet;
+                realized = 0m;
+            }
             else
             {
                 baseAmt = d.SubTotal;
                 realized = d.DepositRealizedAmount;
-                outstanding = d.SubTotal - d.DepositRealizedAmount;
+                // clamp ≥ 0 (audit #8: มัดจำ book แบบ gross ถูก drives หักเต็ม
+                // gross → Realized > SubTotal → เดิมโชว์คงค้างติดลบ)
+                outstanding = Math.Max(0m, d.SubTotal - d.DepositRealizedAmount - refundedBase);
             }
             var st = outstanding <= 0.005m ? "Realized"
                 : realized > 0.005m ? "Partial" : "Outstanding";
@@ -1746,7 +1784,7 @@ public class DocumentService : IDocumentService
                 (int)(now.Date - d.DocumentDate.Date).TotalDays,
                 st, d.DepositDeferredAccountCode,
                 d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt,
-                d.BookingNumber);
+                d.BookingNumber, d.DepositRefundedAmount);
         }).ToList();
 
         // แถวสรุปมัดจำที่เป็น JE ล้วน (ไม่มีเอกสารผูก) — งบดุลมีหนี้สินมัดจำ
@@ -1887,14 +1925,21 @@ public class DocumentService : IDocumentService
 
         if (request.Amount <= 0)
             throw new InvalidOperationException("จำนวนเงินคืนต้องมากกว่า 0");
-        if (request.Amount > doc.TotalAmount - doc.DepositRefundedAmount + 0.005m)
-            throw new InvalidOperationException(
-                $"คืนเกินยอดมัดจำ (ยอดมัดจำ {doc.TotalAmount:N2}, คืนไปแล้ว {doc.DepositRefundedAmount:N2})");
 
         // แยกฐาน + VAT จากยอด gross ที่จะคืน (ตามสัดส่วนเดิมของใบ)
         var vatPortion = doc.TotalAmount > 0 ? doc.VatAmount / doc.TotalAmount : 0m;
         var refundVat = Math.Round(request.Amount * vatPortion, 2, MidpointRounding.AwayFromZero);
         var refundBase = request.Amount - refundVat;
+
+        // guard คืนเกิน "มัดจำคงเหลือจริง" (audit #4): ต้องหักส่วนที่รับรู้/ตัดชำระ
+        // ไปแล้วด้วย ไม่ใช่แค่ที่คืนไปแล้ว — ไม่งั้นมัดจำ 1,070 รับรู้ 500 ยังคืน
+        // 1,070 ได้ → 217xx ติดลบ ~500
+        var refundedBaseSoFar = Math.Round(doc.DepositRefundedAmount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);
+        var remainingBase = doc.SubTotal - doc.DepositRealizedAmount - refundedBaseSoFar;
+        if (refundBase > remainingBase + 0.005m)
+            throw new InvalidOperationException(
+                $"คืนเกินมัดจำคงเหลือ (ฐานคงเหลือ {Math.Max(0, remainingBase):N2} — " +
+                $"รับรู้/ตัดชำระแล้ว {doc.DepositRealizedAmount:N2}, คืนแล้ว {refundedBaseSoFar:N2})");
 
         var deferredAcc = await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
             ?? await FindAccountAsync(companyId, "217");
@@ -1940,6 +1985,54 @@ public class DocumentService : IDocumentService
         doc.DepositRefundedAmount += request.Amount;
         doc.DepositRefundedAt = when;
         doc.DepositRefundReason = request.Reason;
+
+        // ── ออก "ใบลดหนี้" จริงเป็นเอกสาร (audit #5, §86/10) ──
+        // เดิมคืนมัดจำเป็นแค่ JE เปล่า → ภ.พ.30 ไม่เคยถูกลดยอด (รายงานสแกนจาก
+        // Documents) = ภาษีขายค้างสูงถาวร. ออก CN เฉพาะเมื่อ VAT ของมัดจำ "เคย
+        // ถูกรายงาน" แล้ว (ขา 21911) — เคส deferred ที่ยังไม่ recognize (Dr 21913)
+        // VAT ไม่เคยเข้า ภ.พ.30 จึงไม่มีอะไรให้ลด (JE reversal พอ).
+        // CN สร้างแบบ Approved ตรง ๆ ไม่ผ่าน ApproveDocumentAsync — การลงบัญชี
+        // อยู่ใน JE คืนมัดจำข้างบนแล้ว (Dr 21911/217xx / Cr เงินสด) ห้าม post ซ้ำ.
+        var vatWasReported = !(doc.DepositOutputVatDeferred && doc.DepositOutputVatRecognizedAt == null);
+        if (vatWasReported && refundVat > 0)
+        {
+            var cnNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
+                _db, companyId, DocumentType.CreditNote, when);
+            var cnVatRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 7m;
+            var cn = new Document
+            {
+                CompanyId = companyId,
+                DocumentNumber = cnNumber,
+                DocumentType = DocumentType.CreditNote,
+                Status = DocumentStatus.Approved,
+                DocumentDate = when,
+                ContactId = doc.ContactId,
+                RelatedDocumentId = doc.Id,
+                CreditNoteReason = CreditNoteReason.Adjustment,   // คืนเงินมัดจำ/ยกเลิกจอง — ไม่กระทบสต๊อก
+                Reference = doc.DocumentNumber,
+                SubTotal = refundBase,
+                VatAmount = refundVat,
+                TotalAmount = request.Amount,
+                BalanceDue = 0,
+                PaidAmount = 0,
+                Notes = $"ใบลดหนี้คืนเงินมัดจำ {doc.DocumentNumber}" +
+                        (string.IsNullOrWhiteSpace(request.Reason) ? "" : $" — {request.Reason}") +
+                        $" (ลงบัญชีแล้วใน JE {entryNumber})",
+                CreatedBy = actor,
+                Lines = new List<DocumentLine>
+                {
+                    new DocumentLine
+                    {
+                        Description = $"คืนเงินมัดจำตามใบเสร็จ {doc.DocumentNumber}",
+                        Quantity = 1, UnitPrice = refundBase, Amount = refundBase,
+                        VatRate = cnVatRate, VatAmount = refundVat,
+                        WithholdingTaxRate = 0, LineOrder = 1
+                    }
+                }
+            };
+            _db.Documents.Add(cn);
+        }
+
         await _db.SaveChangesAsync();
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId, "deposit.refunded", updated);
@@ -1986,6 +2079,36 @@ public class DocumentService : IDocumentService
         var vatPortion = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
         var baseAmt = Math.Round(request.Amount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);
         var vatAmt = Math.Round(request.Amount - baseAmt, 2, MidpointRounding.AwayFromZero);
+
+        // ── Over-apply guards (audit #1) ──
+        if (request.Amount <= 0)
+            throw new InvalidOperationException("ยอดที่นำมาตัดชำระต้องมากกว่า 0");
+        // (1) ห้ามหักเกินมัดจำคงเหลือ (ฐาน = SubTotal − รับรู้แล้ว − คืนแล้ว):
+        //     กัน 217xx ติดลบ + DepositRealizedAmount > SubTotal
+        var refundedBase = Math.Round(deposit.DepositRefundedAmount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);
+        var availableBase = deposit.SubTotal - deposit.DepositRealizedAmount - refundedBase;
+        if (baseAmt > availableBase + 0.005m)
+            throw new InvalidOperationException(
+                $"ยอดที่ตัดชำระ (ฐาน {baseAmt:N2}) เกินมัดจำคงเหลือ ({Math.Max(0, availableBase):N2}) — " +
+                $"มัดจำ {deposit.DocumentNumber} รับรู้แล้ว {deposit.DepositRealizedAmount:N2} คืนแล้ว {refundedBase:N2}");
+        // (2) ห้ามหักเกินยอดค้างของใบแจ้งหนี้: กัน PaidAmount > TotalAmount
+        if (request.Amount > invoice.BalanceDue + 0.005m)
+            throw new InvalidOperationException(
+                $"ยอดที่ตัดชำระ ({request.Amount:N2}) เกินยอดค้างของใบแจ้งหนี้ ({invoice.BalanceDue:N2})");
+        // (3) One-shot: 1 ใบมัดจำ → 1 ใบปลายทาง (สอดคล้อง void-restore 7b ที่คืน
+        //     ยอดให้ใบเดียว — apply ข้ามหลายใบจะทำ restore เพี้ยน audit #2/#3).
+        //     ทยอยหักซ้ำกับ "ใบเดิม" ได้; ใบอื่นต้องรอใบเดิมถูก void/ลบ (มาร์คโมฆะ
+        //     → self-heal เหมือน drives)
+        if (deposit.DepositAppliedToDocumentId.HasValue && deposit.DepositAppliedToDocumentId.Value != invoiceId)
+        {
+            var prior = await _db.Documents.AsNoTracking().FirstOrDefaultAsync(d =>
+                d.Id == deposit.DepositAppliedToDocumentId.Value && d.CompanyId == companyId);
+            if (prior != null && prior.Status != DocumentStatus.Voided)
+                throw new InvalidOperationException(
+                    $"มัดจำ {deposit.DocumentNumber} ถูกนำไปตัดชำระกับ {prior.DocumentNumber} แล้ว — " +
+                    "หากต้องการย้ายไปใบอื่น ให้ยกเลิกใบนั้นก่อน (ระบบจะปลดมาร์คให้อัตโนมัติ)");
+            // ใบเดิมถูกลบ/ยกเลิกแล้ว → มาร์คโมฆะ → apply ใหม่ได้ (ทับมาร์คด้านล่าง)
+        }
 
         var deferredAcc = await FindAccountAsync(companyId, deposit.DepositDeferredAccountCode ?? "21712")
             ?? await FindAccountAsync(companyId, "217")
@@ -2037,14 +2160,20 @@ public class DocumentService : IDocumentService
         deposit.DepositRealizedAmount += baseAmt;
         if (deposit.SubTotal - deposit.DepositRealizedAmount <= 0.005m)
             deposit.DepositRealizedAt = when;
-        if (depositVatDeferredPending)
+        // stamp RecognizedAt เฉพาะเมื่อ "ใช้มัดจำครบ" (audit #6): ถ้า stamp ตั้งแต่
+        // partial แรก apply ถัดไปจะเห็น RecognizedAt != null → หันไป Dr 21911 ทั้งที่
+        // 21913 ยังเหลือค้าง (ghost) — ทยอย Dr 21913 ตามสัดส่วนจนครบแล้วค่อย stamp
+        if (depositVatDeferredPending && deposit.SubTotal - deposit.DepositRealizedAmount <= 0.005m)
             deposit.DepositOutputVatRecognizedAt = when;
 
         // ตัดยอดค้างใบแจ้งหนี้ (gross)
         invoice.PaidAmount += request.Amount;
         invoice.BalanceDue = Math.Max(0m, invoice.TotalAmount - invoice.PaidAmount);
-        if (invoice.BalanceDue <= 0.005m && invoice.Status == DocumentStatus.Approved)
+        if (invoice.BalanceDue <= 0.005m
+            && (invoice.Status == DocumentStatus.Approved || invoice.Status == DocumentStatus.PartiallyPaid))
             invoice.Status = DocumentStatus.Paid;
+        else if (invoice.BalanceDue > 0.005m && invoice.Status == DocumentStatus.Approved)
+            invoice.Status = DocumentStatus.PartiallyPaid;   // audit #12
         deposit.DepositAppliedToDocumentId = invoiceId;
 
         await _db.SaveChangesAsync();
@@ -3418,35 +3547,7 @@ public class DocumentService : IDocumentService
                 if (!doc.IsDeposit && doc.DepositAppliedDrivesJournal
                     && doc.DepositAppliedAmount > 0 && !string.IsNullOrWhiteSpace(doc.DepositAppliedRef))
                 {
-                    var deposit = await _db.Documents.FirstOrDefaultAsync(d =>
-                        d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                        && d.DocumentNumber == doc.DepositAppliedRef);
-                    if (deposit != null)
-                    {
-                        var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
-                        var depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
-                        deposit.DepositRealizedAmount = Math.Max(0m, deposit.DepositRealizedAmount - depBase);
-                        // ยังไม่ realized ครบ → เคลียร์วันปิด (กลับเป็น "มัดจำคงค้าง")
-                        if (deposit.SubTotal - deposit.DepositRealizedAmount > 0.005m)
-                            deposit.DepositRealizedAt = null;
-                        // ถ้าใบนี้เป็นผู้รับรู้ VAT deferred ของมัดจำ → un-recognize
-                        if (deposit.DepositAppliedToDocumentId == doc.Id)
-                        {
-                            if (deposit.DepositOutputVatDeferred)
-                                deposit.DepositOutputVatRecognizedAt = null;
-                            deposit.DepositAppliedToDocumentId = null;
-                        }
-                        deposit.UpdatedAt = DateTime.UtcNow;
-                    }
-                    else
-                    {
-                        // เคส B (journal ภายนอก): un-mark guard บน JV เพื่อให้ resync
-                        // (สร้างใบใหม่อ้าง journal เดิม) หักได้อีกครั้ง
-                        var depJe = await _db.JournalEntries.FirstOrDefaultAsync(j =>
-                            j.CompanyId == companyId && j.EntryNumber == doc.DepositAppliedRef
-                            && j.DepositAppliedToDocumentId == doc.Id);
-                        if (depJe != null) depJe.DepositAppliedToDocumentId = null;
-                    }
+                    await UnrealizeDrivesDepositAsync(companyId, doc);
                 }
 
                 await _db.SaveChangesAsync();
@@ -3554,6 +3655,80 @@ public class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>Un-realize ใบมัดจำเมื่อใบเช็คเอาท์ (drives) ถูก void/purge —
+    /// คิดยอดจาก "บรรทัด JE จริงของใบเช็คเอาท์" (audit F1-F3): apply คิดจาก GL
+    /// legs 3 โหมด (gross/defer/recognized) ถ้า un-realize คิดจาก field ratio
+    /// จะ drift (เคส gross: Realized ค้าง +VAT-portion ทุกรอบ apply/void) และ
+    /// การเคลียร์ RecognizedAt ด้วย flag/mark อาจไปล้าง stamp ของ RealizeDeposit
+    /// ครั้งก่อน → realize รอบถัดไป Dr 21913 ซ้ำ (21913 ติดลบ / 21911 เบิ้ล /
+    /// ภ.พ.30 นับซ้ำ). JE ของใบเช็คเอาท์คือ mirror ที่แม่นยำของสิ่งที่ apply ทำ:
+    ///   depBase จริง = Σ Dr บนบัญชีมัดจำ (215xx/217xx) ใน JE ต้นฉบับของใบนี้
+    ///   ใบนี้เป็นผู้ stamp RecognizedAt จริง ⟺ JE มี Dr 21913
+    /// ข้อบังคับ: purge ต้องเรียก "ก่อนลบ JE"; void เรียกได้ปกติ (JE แค่ถูก reverse
+    /// — ใช้เฉพาะ JE ต้นฉบับ OriginalEntryId == null). ไม่ SaveChanges เอง.</summary>
+    private async Task UnrealizeDrivesDepositAsync(Guid companyId, Document doc)
+    {
+        var deposit = await _db.Documents.FirstOrDefaultAsync(d =>
+            d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+            && d.DocumentNumber == doc.DepositAppliedRef);
+        if (deposit != null)
+        {
+            // อ่านขา Dr จริงจาก JE ต้นฉบับของใบเช็คเอาท์ (ไม่รวม reversal)
+            var coLines = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => !l.IsDeleted
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.SourceDocumentId == doc.Id
+                    && l.JournalEntry.OriginalEntryId == null
+                    && !l.JournalEntry.IsDeleted
+                    && l.DebitAmount > 0)
+                .Select(l => new { l.AccountId, l.DebitAmount })
+                .ToListAsync();
+            var acctIds = coLines.Select(l => l.AccountId).Distinct().ToList();
+            var acctCodes = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && acctIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode })
+                .ToListAsync();
+            string CodeOf(Guid id) => acctCodes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+
+            var depBase = coLines
+                .Where(l => CodeOf(l.AccountId).StartsWith("217") || CodeOf(l.AccountId).StartsWith("215"))
+                .Sum(l => l.DebitAmount);
+            var stamped21913 = coLines.Any(l => CodeOf(l.AccountId) == "21913");
+            if (coLines.Count == 0)
+            {
+                // ไม่พบ JE (เคสประวัติศาสตร์/ถูกลบไปก่อน) → fallback field ratio เดิม
+                var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
+                depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
+                stamped21913 = deposit.DepositOutputVatDeferred;
+            }
+
+            deposit.DepositRealizedAmount = Math.Max(0m, deposit.DepositRealizedAmount - depBase);
+            // ยังไม่ realized ครบ → เคลียร์วันปิด (กลับเป็น "มัดจำคงค้าง")
+            if (deposit.SubTotal - deposit.DepositRealizedAmount > 0.005m)
+                deposit.DepositRealizedAt = null;
+            if (deposit.DepositAppliedToDocumentId == doc.Id)
+            {
+                // เคลียร์ RecognizedAt เฉพาะเมื่อ "ใบนี้เป็นผู้ stamp จริง" (มี Dr
+                // 21913) — เคส net+21911 mark ก็ถูกตั้ง แต่ RecognizedAt เป็นของ
+                // RealizeDeposit ครั้งก่อน ห้ามล้าง (audit F3: ล้างผิด → realize
+                // ถัดไป Dr 21913 ซ้ำ)
+                if (stamped21913)
+                    deposit.DepositOutputVatRecognizedAt = null;
+                deposit.DepositAppliedToDocumentId = null;
+            }
+            deposit.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            // เคส B (journal ภายนอก): un-mark guard บน JV เพื่อให้ resync
+            // (สร้างใบใหม่อ้าง journal เดิม) หักได้อีกครั้ง
+            var depJe = await _db.JournalEntries.FirstOrDefaultAsync(j =>
+                j.CompanyId == companyId && j.EntryNumber == doc.DepositAppliedRef
+                && j.DepositAppliedToDocumentId == doc.Id);
+            if (depJe != null) depJe.DepositAppliedToDocumentId = null;
+        }
+    }
+
     public async Task PurgeDocumentAsync(Guid companyId, Guid documentId)
     {
         await PurgeDocumentAsync(companyId, documentId, null);
@@ -3620,6 +3795,18 @@ public class DocumentService : IDocumentService
                 @"UPDATE ""JournalEntries"" SET ""DepositAppliedToDocumentId"" = NULL
                   WHERE ""DepositAppliedToDocumentId"" = {0} AND ""CompanyId"" = {1}",
                 documentId, companyId);
+
+            // 0b. un-realize ใบมัดจำ (Document) ที่ใบนี้หักแบบ drives (audit F7) —
+            //     ต้องทำ "ก่อนลบ JE" เพราะคิดยอดจากบรรทัด JE จริง. เดิม purge คืน
+            //     GL (ลบ JE) แต่ subledger มัดจำค้าง (Realized/AppliedTo ghost) →
+            //     หน้ามัดจำโชว์ "รับรู้ครบ" ทั้งที่ GL มีหนี้สินคงค้าง + ภ.พ.30
+            //     ข้ามใบมัดจำตลอดไป (AppliedTo ชี้ doc ที่หายไปแล้ว)
+            if (!doc.IsDeposit && doc.DepositAppliedDrivesJournal
+                && doc.DepositAppliedAmount > 0 && !string.IsNullOrWhiteSpace(doc.DepositAppliedRef))
+            {
+                await UnrealizeDrivesDepositAsync(companyId, doc);
+                await _db.SaveChangesAsync();   // persist subledger ก่อนขั้น raw-SQL ลบ JE
+            }
 
             // 1. Delete JournalLineDimensions → JournalEntryLines → JournalEntries
             var journalIds = await _db.JournalEntries
@@ -7568,12 +7755,36 @@ public class DocumentService : IDocumentService
 
                 if (driveDeposit)
                 {
-                    var deposit = await _db.Documents
-                        .FirstOrDefaultAsync(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                            && d.DocumentNumber == doc.DepositAppliedRef);
+                    // row-lock ใบมัดจำก่อนอ่าน (audit F9B): approve 2 ใบพร้อมกันที่หัก
+                    // มัดจำใบเดียว = read-modify-write race บน DepositRealizedAmount/
+                    // AppliedToDocumentId (Document ไม่มี concurrency token) → lost
+                    // update + Dr เบิ้ล. lock ใน transaction ของ approve ให้ serialize
+                    var depIdForLock = await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                            && d.DocumentNumber == doc.DepositAppliedRef)
+                        .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
+                    if (depIdForLock.HasValue)
+                        await _db.Database.ExecuteSqlRawAsync(
+                            @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} FOR UPDATE",
+                            depIdForLock.Value);
+                    var deposit = depIdForLock.HasValue
+                        ? await _db.Documents.FirstOrDefaultAsync(d => d.Id == depIdForLock.Value)
+                        : null;
                     if (deposit != null)
                     {
                         // ── เคส A: มัดจำเป็น "ใบมัดจำ" (Document) ในระบบ (เช่น REC-) ──
+                        // guards (audit F4 — เดิมเคส A ไม่มี guard เลย):
+                        // (1) one-shot + self-heal เหมือนเคส B: มัดจำถูกหักโดยใบอื่นที่
+                        //     ยัง "มีชีวิต" → block; ใบนั้นถูก void/ลบ → มาร์คโมฆะ
+                        if (deposit.DepositAppliedToDocumentId.HasValue
+                            && deposit.DepositAppliedToDocumentId.Value != doc.Id)
+                        {
+                            var priorCo = await _db.Documents.AsNoTracking().FirstOrDefaultAsync(d =>
+                                d.Id == deposit.DepositAppliedToDocumentId.Value && d.CompanyId == companyId);
+                            if (priorCo != null && priorCo.Status != DocumentStatus.Voided)
+                                throw new InvalidOperationException(
+                                    $"หักมัดจำแบบขับ JE: มัดจำ {deposit.DocumentNumber} ถูกนำไปหักกับ {priorCo.DocumentNumber} แล้ว (กัน reverse ซ้ำ)");
+                        }
                         // หลักเดียวกับเคส B: อ่าน "ขา Cr จริง" จาก JE ของใบมัดจำ แล้วกลับ
                         // ตามนั้น — ห้าม assume โหมดจาก field/flag/setting เพราะเอกสารอยู่
                         // ในมือแล้ว (TakeTime §5):
@@ -7645,6 +7856,21 @@ public class DocumentService : IDocumentService
                             vatAcctId = depVatAcc?.Id;
                         }
 
+                        // (2) over-apply guard (audit F4): ห้ามหักเกิน "มัดจำคงเหลือจริง"
+                        //     GL-driven → เทียบ net คงเหลือใน GL ของใบมัดจำเอง (Realize/
+                        //     Apply เดิม Dr ลด net นี้แล้ว; drives รอบก่อนกันด้วย one-shot)
+                        //     fallback → เทียบ subledger (SubTotal − Realized − คืนแล้ว)
+                        //     ครอบเคส "มัดจำถูก realize หมดแล้ว" ที่เดิมหลุดผ่าน fallback
+                        var fbVatPortion = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
+                        var availableBase = glDeferred != null
+                            ? glDeferred.Net
+                            : deposit.SubTotal - deposit.DepositRealizedAmount
+                              - Math.Round(deposit.DepositRefundedAmount * (1 - fbVatPortion), 2, MidpointRounding.AwayFromZero);
+                        if (depBase > availableBase + 0.005m)
+                            throw new InvalidOperationException(
+                                $"หักมัดจำแบบขับ JE: ยอดที่หัก (ฐาน {depBase:N2}) เกินมัดจำ {deposit.DocumentNumber} " +
+                                $"คงเหลือ ({Math.Max(0, availableBase):N2}) — มัดจำอาจถูกรับรู้/ตัดชำระ/คืนไปแล้ว");
+
                         // Dr กลับ "ขายรอรับรู้" (217xx/215xx) ของใบมัดจำ
                         if (deferredAcctId.HasValue && depBase != 0m)
                             AddLine(deferredAcctId.Value, depBase, 0, $"ตัดขายรอรับรู้ (นำมัดจำ {deposit.DocumentNumber} มาหัก)", doc.ProjectId);
@@ -7682,6 +7908,12 @@ public class DocumentService : IDocumentService
                         if (depJe == null)
                             throw new InvalidOperationException(
                                 $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำหรือสมุดรายวันเลขที่ {doc.DepositAppliedRef} — ตรวจสอบ depositAppliedRef");
+                        // row-lock JV + re-read mark หลังได้ lock (audit F9B): 2 checkout
+                        // approve พร้อมกันอ้าง JV เดียว → ทั้งคู่อ่าน mark=null ก่อนใคร
+                        // เขียน → ผ่าน guard ทั้งคู่ → Dr เบิ้ล. serialize ด้วย FOR UPDATE
+                        await _db.Database.ExecuteSqlRawAsync(
+                            @"SELECT ""Id"" FROM ""JournalEntries"" WHERE ""Id"" = {0} FOR UPDATE", depJe.Id);
+                        await _db.Entry(depJe).ReloadAsync();
                         // กัน double-reverse: journal เดียวถูกนำไปหักได้ครั้งเดียว —
                         // แต่ **มาร์คต้องยังมีชีวิต**: ถ้าเอกสารที่อ้าง (เช็คเอาท์เดิม) ถูก
                         // ลบ/void ไปแล้ว มาร์คเป็นโมฆะ → อนุญาตหักซ้ำ (self-heal). กัน

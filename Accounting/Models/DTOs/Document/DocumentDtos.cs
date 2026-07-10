@@ -326,7 +326,9 @@ public record DepositSummary(
     DateTime? OutputVatRecognizedAt,
     // เลขจอง (BookingNumber) — ผูกกับใบปลายทางที่ booking เดียวกัน;
     // UI ใช้ highlight + auto-suggest มัดจำเมื่อ user กรอก booking ตรงกัน
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    // ยอดที่คืนเงินแล้ว (gross รวม VAT) — Outstanding หักส่วนนี้แล้ว (audit #7)
+    decimal RefundedAmount = 0m);
 
 /// <summary>ตัววินิจฉัยหน้าเงินมัดจำ — บอกว่าระบบ "เห็น" อะไรบ้าง เพื่อหา
 /// สาเหตุเมื่อ dashboard โชว์ 0 (ไม่มีบัญชีมัดจำในผัง / ไม่มี JE เครดิต /
