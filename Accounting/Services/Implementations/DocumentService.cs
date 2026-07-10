@@ -3590,6 +3590,15 @@ public class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // 0. un-mark มัดจำภายนอก (JV) ที่เอกสารนี้เคยหักไว้ (drives) — กันมัดจำ
+            //    stuck ชี้ ghost หลัง purge → เช็คเอาท์ใหม่หักมัดจำเดิมได้ (ไม่ throw
+            //    "ถูกนำไปหักกับเอกสารอื่น"). self-heal guard ก็ครอบให้ แต่ล้างเชิงรุก
+            //    เพื่อข้อมูลสะอาด (raw UPDATE — ตรงสไตล์ purge, atomic ใน transaction)
+            await _db.Database.ExecuteSqlRawAsync(
+                @"UPDATE ""JournalEntries"" SET ""DepositAppliedToDocumentId"" = NULL
+                  WHERE ""DepositAppliedToDocumentId"" = {0} AND ""CompanyId"" = {1}",
+                documentId, companyId);
+
             // 1. Delete JournalLineDimensions → JournalEntryLines → JournalEntries
             var journalIds = await _db.JournalEntries
                 .IgnoreQueryFilters()
@@ -7594,10 +7603,24 @@ public class DocumentService : IDocumentService
                         if (depJe == null)
                             throw new InvalidOperationException(
                                 $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำหรือสมุดรายวันเลขที่ {doc.DepositAppliedRef} — ตรวจสอบ depositAppliedRef");
-                        // กัน double-reverse: journal เดียวถูกนำไปหักได้ครั้งเดียว
+                        // กัน double-reverse: journal เดียวถูกนำไปหักได้ครั้งเดียว —
+                        // แต่ **มาร์คต้องยังมีชีวิต**: ถ้าเอกสารที่อ้าง (เช็คเอาท์เดิม) ถูก
+                        // ลบ/void ไปแล้ว มาร์คเป็นโมฆะ → อนุญาตหักซ้ำ (self-heal). กัน
+                        // เคส delete เอกสารเช็คเอาท์แล้วมัดจำค้าง stuck ("ถูกนำไปหักกับ
+                        // เอกสารอื่นแล้ว") ทั้งที่เอกสารนั้นไม่มีอยู่จริงแล้ว.
+                        // _db.Documents มี query filter !IsDeleted → doc ที่ถูกลบ = null
                         if (depJe.DepositAppliedToDocumentId.HasValue && depJe.DepositAppliedToDocumentId.Value != doc.Id)
-                            throw new InvalidOperationException(
-                                $"หักมัดจำแบบขับ JE: สมุดรายวัน {doc.DepositAppliedRef} ถูกนำไปหักกับเอกสารอื่นแล้ว (กัน reverse ซ้ำ)");
+                        {
+                            var priorDoc = await _db.Documents.AsNoTracking()
+                                .FirstOrDefaultAsync(d => d.Id == depJe.DepositAppliedToDocumentId.Value
+                                    && d.CompanyId == companyId);
+                            var priorAlive = priorDoc != null && priorDoc.Status != DocumentStatus.Voided;
+                            if (priorAlive)
+                                throw new InvalidOperationException(
+                                    $"หักมัดจำแบบขับ JE: สมุดรายวัน {doc.DepositAppliedRef} ถูกนำไปหักกับเอกสารอื่นแล้ว (กัน reverse ซ้ำ)");
+                            // มาร์คเก่าชี้เอกสารที่ลบ/void แล้ว → ล้าง แล้วหักใหม่ (จะ set
+                            // = doc.Id ด้านล่าง) — net-balance guard ด้านล่างยังคุมยอดจริง
+                        }
 
                         // ระบุบัญชี deferred (217xx/215xx) + VAT (21913/21911) จากบรรทัด
                         // Cr ของ journal จริง — กลับ "บัญชีเดิมที่ถูกเครดิต" ไม่เดาผัง
