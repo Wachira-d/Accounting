@@ -1194,6 +1194,12 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 56: drives เคส A (document REC-) + deferred VAT — ขา VAT อ่านจาก **GL จริง**_
+_ของใบมัดจำ (GL-first, flag-fallback) เหมือนเคส B: เดิมพึ่ง flag DepositOutputVat_
+_Deferred อย่างเดียว → มัดจำที่ Cr 21913 จริงแต่ flag ไม่ตั้ง ถูกเลือก 21911 →_
+_Dr net กับ Cr 21911 ของใบเช็คเอาท์ = 21913 ค้างถาวร + ภาษีขายงวดขาด + JE ≠_
+_ยอดเอกสาร (เคส REC-20260707-0002). ใหม่: sum(Cr−Dr) บน 21913 ของ JE ที่_
+_SourceDocumentId=ใบมัดจำ (Posted||Reversed) ≥ depVat → Dr 21913 + Cr 21911 เต็ม._
 _รอบ 55: drives-resolve (เคส B journal) เปลี่ยนจาก link-based เป็น **net-balance**_
 _ครอบคลุมทุกกลไก un-reverse — เดิมกรอง `ReversedByEntryId == null` (partner_
 _reverse→un-reverse → link ค้างที่ NextAcc → หาไม่เจอ). เปลี่ยนเป็นคำนวณ **net GL_

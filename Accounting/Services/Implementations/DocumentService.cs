@@ -7563,9 +7563,33 @@ public class DocumentService : IDocumentService
                         if (depDeferredAcc != null && depBase != 0m)
                             AddLine(depDeferredAcc.Id, depBase, 0, $"ตัดขายรอรับรู้ (นำมัดจำ {deposit.DocumentNumber} มาหัก)", doc.ProjectId);
 
-                        // Dr กลับ VAT ของใบมัดจำ: ยัง deferred (21913) หรือรับรู้แล้ว (21911)
-                        var depVatDeferredPending = deposit.DepositOutputVatDeferred
-                            && deposit.DepositOutputVatRecognizedAt == null && depVat > 0;
+                        // Dr กลับ VAT ของใบมัดจำ: ยัง deferred (21913) หรือรับรู้แล้ว (21911).
+                        // อ่าน "ขา VAT จริง" จาก GL ของใบมัดจำก่อน (GL-first) — เหมือนเคส B:
+                        // มัดจำบางใบ Cr 21913 จริงแต่ flag DepositOutputVatDeferred ไม่ได้ตั้ง
+                        // (book ผ่านช่องทางที่โพสต์ JE เอง) → เดิมพึ่ง flag อย่างเดียวเลือก 21911
+                        // → Dr ไป net กับ Cr 21911 ของใบเช็คเอาท์ = 21913 ค้างถาวร + ภาษีขาย
+                        // งวดขาดเท่ายอด VAT มัดจำ. flag เป็นแค่ fallback (JE มัดจำอาจไม่ผูก
+                        // SourceDocumentId ถ้าโพสต์นอกระบบ).
+                        var depVatDeferredPending = false;
+                        if (depVat > 0)
+                        {
+                            var acc21913 = await FindAccountAsync(companyId, "21913");
+                            if (acc21913 != null)
+                            {
+                                var depNet21913 = await _db.JournalEntryLines
+                                    .Where(l => !l.IsDeleted && l.AccountId == acc21913.Id
+                                        && l.JournalEntry.CompanyId == companyId
+                                        && l.JournalEntry.SourceDocumentId == deposit.Id
+                                        && !l.JournalEntry.IsDeleted
+                                        && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                                            || l.JournalEntry.Status == JournalEntryStatus.Reversed))
+                                    .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
+                                depVatDeferredPending = depNet21913 >= depVat - 0.005m;
+                            }
+                            if (!depVatDeferredPending)
+                                depVatDeferredPending = deposit.DepositOutputVatDeferred
+                                    && deposit.DepositOutputVatRecognizedAt == null;
+                        }
                         if (depVat > 0)
                         {
                             var depVatAcc = await FindAccountAsync(companyId, depVatDeferredPending ? "21913" : "21911");
