@@ -1194,6 +1194,13 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 58 (audit จำลอง scenario): แก้ **ภ.พ.30 นับ VAT มัดจำซ้ำ** — มัดจำ defer ที่_
+_ถูกหักผ่าน drives/apply (DepositAppliedToDocumentId ตั้ง) เคยถูกดึงเข้า ภ.พ.30_
+_งวด RecognizedAt ทั้งที่ใบเช็คเอาท์/ใบกำกับปลายทางรายงาน VAT เต็มใบแล้ว → ยอด_
+_ขาย/ภาษีขายเกินจริง. แก้: exclude applied deposits จาก deferredRecognized query_
+_+ Receipt branch (standalone RealizeDeposit ยังรายงานปกติ). + deferred ตัดสิน_
+_**GL-first** (flag หรือขา Cr 21913 จริงใน JE ใบมัดจำ) เหมือน drives d7ee4d3 —_
+_มัดจำ integration ที่ flag ไม่ตั้งเคยถูกรายงานเดือนรับเงินทั้งที่ GL พัก 21913._
 _รอบ 57: drives — **หลักเดียวทุกเคส** (TakeTime §5): resolve เจอแล้ว → อ่าน "ขา Cr_
 _จริง" ของใบมัดจำ/JV แล้วกลับตามนั้น ไม่ assume โหมดจาก field/flag/setting._
 _เคส A ยกเครื่องเหมือนเคส B: อ่าน JE ของใบมัดจำ (SourceDocumentId, Posted||Reversed)_

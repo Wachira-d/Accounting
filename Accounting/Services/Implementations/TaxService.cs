@@ -163,10 +163,14 @@ public partial class TaxService : ITaxService
         var deferredRecognized = await _db.Documents
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว)
             .Where(d => d.CompanyId == companyId
-                && d.IsDeposit && d.DepositOutputVatDeferred
+                && d.IsDeposit
                 && d.DepositOutputVatRecognizedAt != null
                 && d.DepositOutputVatRecognizedAt >= startDate && d.DepositOutputVatRecognizedAt <= endDate
                 && ((d.TaxPointDate ?? d.DocumentDate) < startDate || (d.TaxPointDate ?? d.DocumentDate) > endDate)
+                // มัดจำที่ถูก "นำไปหัก" ในใบกำกับ/ใบเสร็จปลายทาง (drives/apply) — VAT
+                // ทั้งก้อนถูกรายงานโดยใบปลายทางแล้ว (Cr 21911 เต็มใบ) → ห้ามดึงมา
+                // เพิ่มแถวซ้ำ (นับซ้ำ = ยอดขาย/ภาษีขายเกินจริง)
+                && d.DepositAppliedToDocumentId == null
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                 && d.VatAmount != 0)
             .ToListAsync();
@@ -176,6 +180,29 @@ public partial class TaxService : ITaxService
             var existing = docs.Select(d => d.Id).ToHashSet();
             docs.AddRange(deferredRecognized.Where(d => !existing.Contains(d.Id)));
         }
+
+        // GL-first (หลักเดียวกับ drives d7ee4d3): มัดจำที่ "ขา VAT จริง" ลง 21913
+        // แต่ flag DepositOutputVatDeferred ไม่ได้ตั้ง (book ผ่านช่องทางที่โพสต์
+        // JE เอง) ต้องนับเป็น deferred ใน ภ.พ.30 ด้วย — ไม่งั้นรายงานเดือนรับเงิน
+        // โชว์ VAT ที่ GL ยังพักอยู่ 21913 (ไม่ตรง GL + นับซ้ำกับใบเช็คเอาท์เดือน
+        // ถัดไป). ยอด Cr สุทธิบน 21913 ของ JE ใบมัดจำเอง (checkout Dr อยู่คนละ JE)
+        // = ตัวชี้ "book แบบ defer" ที่เสถียรตลอดเวลา → regenerate งวดเก่าได้ผลเดิม
+        var depositDocIds = docs.Where(d => d.IsDeposit).Select(d => d.Id).ToList();
+        var gl21913NetByDoc = depositDocIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : (await _db.JournalEntryLines
+                .Where(l => !l.IsDeleted
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.SourceDocumentId != null
+                    && depositDocIds.Contains(l.JournalEntry.SourceDocumentId.Value)
+                    && !l.JournalEntry.IsDeleted
+                    && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                        || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+                    && l.Account.AccountCode == "21913")
+                .GroupBy(l => l.JournalEntry.SourceDocumentId!.Value)
+                .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+                .ToListAsync())
+                .ToDictionary(x => x.DocId, x => x.Net);
 
         // Accounts whose input VAT is prohibited (ภาษีซื้อต้องห้าม, §82/5) —
         // e.g. ค่ารับรอง. VAT on purchase lines posting here is excluded from
@@ -259,16 +286,33 @@ public partial class TaxService : ITaxService
             {
                 // มัดจำเคส Deferred output VAT: tax point เกิดเมื่อ RecognizedAt.
                 //   • ยังไม่ recognized → ข้าม (ยังไม่เข้า ภ.พ.30 — VAT อยู่ 21913)
-                //   • recognized แล้ว → เข้า ภ.พ.30 เฉพาะงวดที่ RecognizedAt อยู่,
-                //     ใช้ RecognizedAt เป็นวันที่. (Immediate / ขายปกติ →
-                //     tax point = DocumentDate ตามเดิม)
-                if (doc.IsDeposit && doc.DepositOutputVatDeferred)
+                //   • recognized "แบบ standalone" (RealizeDeposit — ไม่มีใบกำกับ
+                //     ปลายทาง) → เข้า ภ.พ.30 งวดที่ RecognizedAt
+                //   • ถูก "นำไปหัก" ในใบกำกับ/ใบเสร็จปลายทาง (drives/apply,
+                //     DepositAppliedToDocumentId ตั้ง) → ข้ามเสมอ: ใบปลายทางรายงาน
+                //     VAT เต็มใบ (Cr 21911 287.85) แล้ว การเพิ่มแถวมัดจำ (101.40)
+                //     = นับซ้ำ → ภ.พ.30 เกินจริง
+                // deferred ตัดสินแบบ GL-first (flag หรือ ขา Cr 21913 จริงใน JE
+                // ใบมัดจำ) — เคสเดียวกับ drives ที่ flag ไม่ได้ตั้งแต่ GL ลง 21913
+                var effectivelyDeferred = doc.IsDeposit
+                    && (doc.DepositOutputVatDeferred
+                        || gl21913NetByDoc.GetValueOrDefault(doc.Id) > 0.005m);
+                if (effectivelyDeferred)
                 {
+                    if (doc.DepositAppliedToDocumentId.HasValue) continue;
                     if (doc.DepositOutputVatRecognizedAt == null) continue;
                     var rec = doc.DepositOutputVatRecognizedAt.Value;
                     if (rec < startDate || rec > endDate) continue;
                 }
-                var taxPoint = (doc.IsDeposit && doc.DepositOutputVatDeferred)
+                else if (doc.IsDeposit)
+                {
+                    // มัดจำ immediate (VAT ลง 21911 ตั้งแต่รับเงิน): tax point =
+                    // วันรับเงิน ต้องอยู่ในงวดนี้ (กัน candidate ที่ merge เข้ามา
+                    // จาก deferredRecognized แต่จริง ๆ ไม่ใช่ deferred)
+                    var tp = doc.TaxPointDate ?? doc.DocumentDate;
+                    if (tp < startDate || tp > endDate) continue;
+                }
+                var taxPoint = effectivelyDeferred
                     ? doc.DepositOutputVatRecognizedAt!.Value
                     : (doc.TaxPointDate ?? doc.DocumentDate);
                 outputVat += doc.VatAmount;
