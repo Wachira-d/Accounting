@@ -1194,6 +1194,12 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 57: drives — **หลักเดียวทุกเคส** (TakeTime §5): resolve เจอแล้ว → อ่าน "ขา Cr_
+_จริง" ของใบมัดจำ/JV แล้วกลับตามนั้น ไม่ assume โหมดจาก field/flag/setting._
+_เคส A ยกเครื่องเหมือนเคส B: อ่าน JE ของใบมัดจำ (SourceDocumentId, Posted||Reversed)_
+_→ ratio ฐาน/VAT จากขา Cr จริง + Dr กลับ "บัญชีเดิมที่ถูกเครดิต" (ไม่เดาผัง):_
+_gross (ไม่มีขา VAT) → Dr 217xx เต็ม / net+21913 → Dr ทั้งคู่ + Cr 21911 เต็ม /_
+_net+21911 → Dr 21911 (net). fallback field+flag เฉพาะเมื่อ JE ไม่ผูกใบมัดจำ._
 _รอบ 56: drives เคส A (document REC-) + deferred VAT — ขา VAT อ่านจาก **GL จริง**_
 _ของใบมัดจำ (GL-first, flag-fallback) เหมือนเคส B: เดิมพึ่ง flag DepositOutputVat_
 _Deferred อย่างเดียว → มัดจำที่ Cr 21913 จริงแต่ flag ไม่ตั้ง ถูกเลือก 21911 →_
