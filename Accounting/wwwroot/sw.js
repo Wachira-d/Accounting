@@ -1,4 +1,7 @@
-const CACHE_VERSION = 'nextacc-v4';
+// v5: ล้าง cache เก่าทั้งหมด (เคยมี API response ค้างใน Cache Storage ของ SW
+// รุ่นเก่า ทำหน้าเงินมัดจำโชว์ 0 ทั้งที่ backend มีข้อมูล) — bump version →
+// activate จะ caches.delete ทุก key เก่า + api.js ใส่ _t cache-bust แล้ว
+const CACHE_VERSION = 'nextacc-v5';
 const CACHE_NAME = CACHE_VERSION;
 
 // POS shell + critical assets pre-cached on install so the cashier can open

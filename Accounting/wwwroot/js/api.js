@@ -24,6 +24,12 @@ const API = {
     // no-store: API JSON ต้องสดเสมอ — กัน browser/proxy/CDN cache GET response
     // (เคยเจอหน้าเงินมัดจำโชว์ 0 เพราะ document/deposits ถูก cache ตอนยังว่าง
     // ทั้งที่ backend มีข้อมูลแล้ว — endpoint ใหม่ที่ URL ไม่เคย cache กลับได้ข้อมูลสด)
+    // cache-bust: no-store กันแค่ "ของใหม่" ไม่ล้างของที่ cache ไว้แล้ว (SW Cache
+    // Storage / CDN object เก่า) → ใส่ timestamp ให้ URL ไม่ซ้ำทุกครั้ง = ทะลุทุก
+    // cache layer ที่ key ด้วย URL (service worker match / browser / CDN) ถาวร
+    if (method === 'GET') {
+      url += (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+    }
     const options = { method, headers, cache: 'no-store' };
     if (signal) options.signal = signal;   // AbortController support for long calls (bulk AI)
     if (data && !isFormData) options.body = JSON.stringify(data);

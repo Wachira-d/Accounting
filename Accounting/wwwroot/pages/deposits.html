@@ -214,7 +214,9 @@
                   เอกสารติดธงมัดจำ: <b>${d.nativeDepositDocCount}</b> ·
                   JE เครดิตบัญชีมัดจำ: <b>${d.creditLineCount}</b> บรรทัด
                   (ผูกเอกสาร ${d.docLinkedCreditCount} / ไม่ผูก ${d.docLessCreditCount}) ·
-                  ยอดคงค้างสุทธิ: <b>${Layout.money(d.totalCreditNet)}</b>
+                  ยอดคงค้างสุทธิ: <b>${Layout.money(d.totalCreditNet)}</b> ·
+                  self-probe (endpoint รายการใน build นี้): <b>${d.listEndpointCount ?? 0} แถว</b>
+                  ${d.listEndpointError ? `<span style="color:#b91c1c">· error: ${Layout.esc(d.listEndpointError)}</span>` : ''}
                 </div>
                 ${acctRows ? `<table style="width:100%;font-size:12px;margin-top:10px;border-top:1px solid #e2e8f0">
                   <thead><tr style="color:#64748b"><th style="text-align:left;padding:4px 8px">รหัส</th><th style="text-align:left;padding:4px 8px">ชื่อบัญชี</th><th style="text-align:right;padding:4px 8px">คงค้างสุทธิ</th></tr></thead>

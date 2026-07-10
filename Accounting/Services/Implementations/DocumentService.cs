@@ -1694,12 +1694,22 @@ public class DocumentService : IDocumentService
         // ถูกลบ/ปิด (IsDeleted=true) ยังโชว์ชื่อได้ และ **ไม่ทำให้เอกสารหายทั้งใบ**
         // (ต่างจาก .Include ที่ทำ INNER JOIN + filter → ตัดทิ้ง)
         var contactIds = rows.Select(d => d.ContactId).Where(id => id != Guid.Empty).Distinct().ToList();
-        var contactMap = contactIds.Count == 0
-            ? new Dictionary<Guid, (string Name, string? TaxId)>()
-            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
-                .Select(c => new { c.Id, c.Name, c.TaxId })
-                .ToDictionaryAsync(c => c.Id, c => (c.Name, c.TaxId));
+        var contactMap = new Dictionary<Guid, (string Name, string? TaxId)>();
+        if (contactIds.Count > 0)
+        {
+            try
+            {
+                contactMap = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                    .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+                    .Select(c => new { c.Id, c.Name, c.TaxId })
+                    .ToDictionaryAsync(c => c.Id, c => (c.Name, c.TaxId));
+            }
+            catch (Exception ex)
+            {
+                // โหลดชื่อ contact ล้ม → รายการต้องยังแสดง (ชื่อว่างดีกว่าหน้าว่าง)
+                _logger.LogWarning(ex, "GetDepositsAsync contact-name lookup failed — degrade to blank names");
+            }
+        }
 
         var now = DateTime.UtcNow;
         var list = rows.Select(d =>
@@ -1800,23 +1810,35 @@ public class DocumentService : IDocumentService
             a.AccountCode, a.AccountName,
             lines.Where(l => l.AccountId == a.Id).Sum(l => l.Net))).ToList();
 
+        // ── self-probe: รัน GetDepositsAsync (โค้ดเดียวกับ endpoint หน้า list) ใน
+        //    build นี้จริง — ฟันธงว่า "backend คืนข้อมูลไหม" แยกจาก "หน้าเห็นอะไร".
+        //    probe > 0 แต่หน้า list ว่าง = response หน้า list โดน cache (SW/browser/
+        //    CDN) 100%; probe = 0 ทั้งที่ native > 0 = บั๊กใน list builder → โชว์
+        //    error message ตรง ๆ
+        var listCount = 0;
+        string? listError = null;
+        try { listCount = (await GetDepositsAsync(companyId)).Count; }
+        catch (Exception ex) { listError = ex.Message; }
+
         string hint;
         if (depAcctIds.Count == 0)
             hint = "ไม่พบ 'บัญชีมัดจำ/รับล่วงหน้า' ในผังบัญชี — ต้องมีบัญชีรหัส 215xx/217xx หรือชื่อมีคำว่า 'มัดจำ/รับล่วงหน้า/รอรับรู้' ก่อน (ไปที่ผังบัญชี → เพิ่มบัญชีหนี้สิน เช่น 21710 'เงินรับล่วงหน้า/มัดจำ')";
+        else if (listError != null)
+            hint = $"พบสาเหตุแล้ว: endpoint รายการมัดจำ error — {listError}";
+        else if (listCount > 0)
+            hint = $"backend คืนรายการมัดจำ {listCount} แถวปกติ — ที่หน้าเห็นว่าง = response เก่าถูก cache (service worker/browser/CDN). เวอร์ชันนี้ใส่ตัวกันแคช (_t) ให้ทุก API แล้ว: กด Ctrl+Shift+R หนึ่งครั้ง แล้วรายการจะขึ้นและไม่ค้างอีก (ถ้ายังไม่หาย: DevTools → Application → Service Workers → Unregister แล้วโหลดใหม่)";
         else if (creditLines.Count == 0)
             hint = $"พบบัญชีมัดจำ {depAcctIds.Count} บัญชี แต่ยังไม่มีการลงบัญชี (JE) เครดิตเข้าบัญชีเหล่านี้เลย — เงินมัดจำที่รับมาอาจถูกลงบัญชีอื่น (เช่น รายได้/ลูกหนี้) ตรวจการตั้งค่า mapping ตอนรับเงิน หรือลงรายการมัดจำผ่านเมนูขาย (ติ๊ก 'เงินมัดจำ')";
-        else if (totalNet <= 0.005m)
+        else if (totalNet <= 0.005m && nativeCount == 0)
             hint = $"พบเครดิตมัดจำ {creditLines.Count} บรรทัด แต่ยอดสุทธิ (เครดิต−เดบิต) = {totalNet:N2} — มัดจำถูกรับรู้/คืนไปหมดแล้ว (ไม่มีคงค้าง) จึงแสดง 0 ถูกต้อง";
-        else if (nativeCount > 0 || totalNet > 0.005m)
-            hint = $"ระบบเห็นมัดจำจริง (เอกสารติดธง {nativeCount} ใบ · คงค้างสุทธิ {totalNet:N2}) — ถ้ารายการด้านบนยังว่าง แปลว่า response ถูก **cache** ไว้ตอนยังไม่มีข้อมูล: กด Ctrl+Shift+R (hard refresh) หรือเปิดแบบไม่ใช้แคช; ถ้ายังไม่หายให้ล้าง cache ของ CDN/proxy แล้ว restart backend ทุก instance";
         else
-            hint = $"พบยอดมัดจำคงค้างสุทธิ {totalNet:N2} — ถ้าหน้ายังโชว์ 0 กด Ctrl+Shift+R (hard refresh); ถ้ายังไม่หายให้ rebuild + redeploy";
+            hint = $"ระบบเห็นมัดจำ (เอกสารติดธง {nativeCount} ใบ · คงค้างสุทธิ {totalNet:N2}) แต่ list builder คืน 0 แถวใน build เดียวกัน — เป็นบั๊กใน GetDepositsAsync ที่ไม่ throw กรุณาส่งภาพหน้านี้ให้ผู้พัฒนา (ระบุ: nativeCount={nativeCount}, probe=0)";
 
         return new DepositDiagnostics(
             depAcctIds.Count, perAcct, nativeCount,
             creditLines.Count, totalNet,
             creditLines.Count(l => l.HasDoc), creditLines.Count(l => !l.HasDoc),
-            hint);
+            hint, listCount, listError);
     }
 
     public async Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber)

@@ -339,7 +339,12 @@ public record DepositDiagnostics(
     decimal TotalCreditNet,         // ΣCr − ΣDr รวมทุกบัญชีมัดจำ
     int DocLinkedCreditCount,       // credit lines ที่มี SourceDocumentId
     int DocLessCreditCount,         // credit lines ที่ไม่มี SourceDocumentId
-    string Hint);                   // คำแนะนำภาษาไทยว่าติดตรงไหน
+    string Hint,                    // คำแนะนำภาษาไทยว่าติดตรงไหน
+    // self-probe: จำนวนแถวที่ GetDepositsAsync (endpoint จริงของหน้า list) คืน
+    // ใน build เดียวกันนี้ — ฟันธง: probe > 0 แต่หน้าเห็น 0 = cache/SW เก่า 100%;
+    // probe = 0 ทั้งที่ native > 0 = บั๊กใน list builder (ดู ListEndpointError)
+    int ListEndpointCount = 0,
+    string? ListEndpointError = null);
 
 public record DepositAccountInfo(string AccountCode, string AccountName, decimal NetCredit);
 
