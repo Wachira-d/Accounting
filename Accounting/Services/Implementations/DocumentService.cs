@@ -5503,7 +5503,7 @@ public class DocumentService : IDocumentService
 
         // Validate document status allows payment
         if (doc.Status != DocumentStatus.Approved && doc.Status != DocumentStatus.PartiallyPaid && doc.Status != DocumentStatus.Sent && doc.Status != DocumentStatus.Overdue)
-            throw new InvalidOperationException("สามารถชำระเงินได้เฉพาะเอกสารที่อนุมัติแล้ว, ชำระบางส่วน หรือส่งแล้วเท่านั้น");
+            throw new InvalidOperationException("สามารถชำระเงินได้เฉพาะเอกสารที่อนุมัติแล้ว, ชำระบางส่วน, ส่งแล้ว หรือเกินกำหนดเท่านั้น");
 
         // เฉพาะเอกสาร "ตั้งหนี้" เท่านั้นที่รับ/จ่ายชำระได้ — เอกสารอื่นทำ GL พัง:
         //   • ใบวางบิล/ใบเสนอราคา/PO ฯลฯ ไม่ลง JE ตอนอนุมัติ → ชำระแล้ว Cr AR
