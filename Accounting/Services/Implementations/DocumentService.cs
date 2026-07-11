@@ -4249,7 +4249,7 @@ public class DocumentService : IDocumentService
                 {
                     _logger.LogWarning(
                         "VoidPayment {Doc}: หนังสือรับรอง 50 ทวิ {Cert} สถานะ {Status} ยังไม่ถูกยกเลิก — ออกให้ผู้ถูกหักแล้ว กรุณายกเลิก/ออกใหม่ด้วยตนเอง",
-                        doc.DocumentNumber, cert.CertNumber, cert.Status);
+                        doc.DocumentNumber, cert.CertificateNumber, cert.Status);
                 }
             }
         }
