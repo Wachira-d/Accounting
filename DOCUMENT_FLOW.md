@@ -1194,6 +1194,15 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 62: **Deposit Center** — redesign หน้าเงินมัดจำทั้งหน้า (`/pages/_
+_deposit-center.html` + endpoint ใหม่ `GET document/deposit-center`): payload_
+_เดียวจบ (rows + KPI + **GL tie-out** + sources + GeneratedAtUtc + build marker)_
+_→ หน้ากับ GL ไม่ตรง = ฟ้องบน banner ทันที ไม่มีวันโชว์ 0 เงียบ. URL ใหม่ทั้ง_
+_หน้า+API = ทะลุ cache เก่าทุกชั้น (SW/browser/CDN) ที่ทำ "แก้แล้วยังขึ้น 0"._
+_เมนูชี้หน้าใหม่, หน้าเก่า redirect. mobile-first cards / desktop table, tabs+_
+_ค้นหา+เรียง, VAT chip (พักรอ 21913/รายงานแล้ว), booking chip, progress bar_
+_รับรู้/คืน, refresh + เวลาข้อมูลจากเซิร์ฟเวอร์, modal รับรู้/คืนเงิน (payload_
+_เดิม), accordion ที่มาของตัวเลขรายบัญชี._
 _รอบ 61 (ปิด backlog สูงจาก audit รอบ 60): กัน**รายได้ซ้ำ** QT/BN → Invoice_
 _และ → Receipt (นับ Receipt/RV เป็น revenue-child ของ QT/BN ใน conversion guard_
 _F3); **ภ.พ.30 นับ Receipt ที่แปลงจาก QT/BN** (ขายเงินสด — VAT ลง GL แต่เดิม_

@@ -1879,6 +1879,78 @@ public class DocumentService : IDocumentService
             hint, listCount, listError);
     }
 
+    /// <summary>Deposit Center — endpoint เดียวจบสำหรับหน้าเงินมัดจำ redesign:
+    /// รายการ + KPI + GL tie-out + แหล่งที่มา ใน payload เดียว (atomic — หน้า
+    /// ไม่มีวันโชว์ list ว่างพร้อม GL มียอดโดยไม่ฟ้อง). URL ใหม่ = ไม่เคยถูก
+    /// cache ที่ชั้นไหน (ปิดปัญหา "แก้แล้วยังขึ้น 0" จาก SW/browser/CDN เดิม).</summary>
+    public async Task<DepositCenterResponse> GetDepositCenterAsync(Guid companyId)
+    {
+        List<DepositSummary> rows;
+        string? warning = null;
+        try { rows = await GetDepositsAsync(companyId); }
+        catch (Exception ex)
+        {
+            rows = new List<DepositSummary>();
+            warning = $"โหลดรายการมัดจำล้มเหลว: {ex.Message}";
+            _logger.LogError(ex, "GetDepositCenterAsync: list failed for {Company}", companyId);
+        }
+
+        // GL side — คำนวณตรงจากบัญชีมัดจำ (โค้ดเดียวกับ diagnostics แต่ไม่ self-probe
+        // ซ้ำ เพราะ rows ข้างบนคือผลจริงอยู่แล้ว)
+        var depAcctList = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted
+                && (a.AccountCode.StartsWith("215") || a.AccountCode.StartsWith("217")
+                    || a.AccountName.Contains("มัดจำ")
+                    || a.AccountName.Contains("รับล่วงหน้า")
+                    || a.AccountName.Contains("รอรับรู้")))
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .ToListAsync();
+        var depAcctIdSet = depAcctList.Select(a => a.Id).ToList();
+        var glLines = depAcctIdSet.Count == 0
+            ? new List<(Guid AccountId, decimal Net, bool HasDoc)>()
+            : (await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => !l.IsDeleted
+                    && depAcctIdSet.Contains(l.AccountId)
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.ReversedByEntryId == null)
+                .Select(l => new { l.AccountId, Net = l.CreditAmount - l.DebitAmount, HasDoc = l.JournalEntry.SourceDocumentId != null })
+                .ToListAsync())
+                .Select(x => (x.AccountId, x.Net, x.HasDoc)).ToList();
+        var glNet = glLines.Sum(l => l.Net);
+        var accounts = depAcctList.Select(a => new DepositAccountInfo(
+            a.AccountCode, a.AccountName,
+            glLines.Where(l => l.AccountId == a.Id).Sum(l => l.Net))).ToList();
+
+        // KPIs จาก rows (แถว docless id=Guid.Empty นับรวมใน outstanding — เป็นหนี้สินจริง)
+        var outstanding = rows.Sum(r => r.OutstandingAmount);
+        var realized = rows.Where(r => r.Id != Guid.Empty).Sum(r => r.RealizedAmount);
+        var refunded = rows.Where(r => r.Id != Guid.Empty).Sum(r => r.RefundedAmount);
+        var deferredParked = rows.Where(r => r.OutputVatDeferred && r.OutputVatRecognizedAt == null)
+            .Sum(r => r.VatAmount);
+        var vatReported = rows.Where(r => r.Id != Guid.Empty && (!r.OutputVatDeferred || r.OutputVatRecognizedAt != null))
+            .Sum(r => r.VatAmount);
+        var openCount = rows.Count(r => r.Status != "Realized");
+
+        var diff = Math.Round(glNet - outstanding, 2);
+        // tolerance 1 บาท — เศษปัดสะสมจากการเฉลี่ยฐาน/VAT ต่อใบ
+        var tieOk = Math.Abs(diff) <= 1.00m;
+        if (warning == null && rows.Count == 0 && glNet > 0.005m)
+            warning = $"บัญชีแยกประเภทมีหนี้สินมัดจำคงค้าง {glNet:N2} บาท แต่ระบบแสดงรายการไม่ได้ — กรุณาส่งภาพหน้านี้ให้ผู้ดูแล";
+
+        var nativeDocs = rows.Count(r => r.Id != Guid.Empty);
+        var doclessNet = rows.Where(r => r.Id == Guid.Empty).Sum(r => r.OutstandingAmount);
+
+        return new DepositCenterResponse(
+            DateTime.UtcNow,
+            "deposit-center v1",
+            new DepositCenterKpis(outstanding, realized, refunded, deferredParked, vatReported, openCount, rows.Count),
+            rows,
+            new DepositCenterTieOut(glNet, outstanding, diff, tieOk),
+            new DepositCenterSources(nativeDocs, 0, doclessNet, depAcctList.Count, accounts),
+            warning);
+    }
+
     public async Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber)
     {
         if (string.IsNullOrWhiteSpace(bookingNumber)) return new List<DocumentResponse>();

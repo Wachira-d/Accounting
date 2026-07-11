@@ -204,6 +204,8 @@ const API = {
       approveDocument: (id, body) => API.post(`${base}/document/${id}/approve`, body ?? {}),
       completeTaxInvoice: (id, body) => API.post(`${base}/document/${id}/complete-tax-invoice`, body),
       getDeposits: (status = '') => API.get(`${base}/document/deposits${status ? `?status=${status}` : ''}`),
+      // Deposit Center (redesign): endpoint เดียวจบ — rows + KPI + GL tie-out + timestamp
+      getDepositCenter: () => API.get(`${base}/document/deposit-center`),
       getDepositDiagnostics: () => API.get(`${base}/document/deposits/diagnostics`),
       realizeDeposit: (id, body) => API.post(`${base}/document/${id}/realize-deposit`, body),
       refundDeposit: (id, body) => API.post(`${base}/document/${id}/refund-deposit`, body),

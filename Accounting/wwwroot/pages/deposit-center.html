@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ศูนย์เงินมัดจำ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* ── Deposit Center — mobile-first ── */
+    .dc-freshness{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--gray-500)}
+    .dc-freshness .dot{width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block}
+    .dc-freshness.stale .dot{background:#f59e0b}
+    .dc-tieout{border-radius:12px;padding:12px 16px;margin:12px 0;display:flex;gap:12px;align-items:flex-start;font-size:13.5px;line-height:1.7}
+    .dc-tieout .ic{font-size:20px;line-height:1}
+    .dc-tieout.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+    .dc-tieout.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+    .dc-tieout.err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+    .dc-kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0}
+    @media(min-width:760px){.dc-kpis{grid-template-columns:repeat(5,1fr)}}
+    .dc-kpi{background:#fff;border:1px solid var(--gray-200);border-radius:12px;padding:12px 14px}
+    .dc-kpi .l{font-size:11.5px;color:var(--gray-500);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .dc-kpi .v{font-size:20px;font-weight:800;letter-spacing:-.02em}
+    .dc-kpi .s{font-size:11px;color:var(--gray-400);margin-top:2px}
+    .dc-kpi.hero{background:linear-gradient(135deg,#4f46e5,#6d28d9);border:none;color:#fff}
+    .dc-kpi.hero .l,.dc-kpi.hero .s{color:#c7d2fe}
+    .dc-src{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px}
+    .dc-chip{font-size:11.5px;background:var(--gray-100);color:var(--gray-600);border-radius:999px;padding:4px 10px;cursor:default}
+    .dc-chip.link{cursor:pointer;text-decoration:underline dotted}
+    .dc-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    .dc-toolbar input[type=search]{flex:1;min-width:170px;padding:9px 12px;border:1px solid var(--gray-300);border-radius:10px;font-size:14px}
+    .dc-toolbar select{padding:9px 10px;border:1px solid var(--gray-300);border-radius:10px;font-size:13px;background:#fff}
+    .dc-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px;-webkit-overflow-scrolling:touch}
+    .dc-tab{white-space:nowrap;font-size:13px;padding:7px 14px;border-radius:999px;border:1px solid var(--gray-200);background:#fff;color:var(--gray-600);cursor:pointer}
+    .dc-tab.active{background:var(--primary,#4f46e5);border-color:var(--primary,#4f46e5);color:#fff;font-weight:600}
+    .dc-tab .n{opacity:.75;font-size:11.5px;margin-left:4px}
+    /* cards (mobile) */
+    .dc-card{background:#fff;border:1px solid var(--gray-200);border-radius:14px;padding:14px 16px;margin-bottom:10px}
+    .dc-card .top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+    .dc-card .no{font-weight:700;font-size:14.5px}
+    .dc-card .who{font-size:13px;color:var(--gray-600);margin-top:2px}
+    .dc-card .meta{font-size:11.5px;color:var(--gray-400);margin-top:2px}
+    .dc-badge{font-size:11px;border-radius:999px;padding:3px 10px;font-weight:600;white-space:nowrap}
+    .dc-badge.out{background:#fef3c7;color:#92400e}
+    .dc-badge.part{background:#dbeafe;color:#1e40af}
+    .dc-badge.done{background:#dcfce7;color:#15803d}
+    .dc-badge.vat13{background:#fdf4ff;color:#86198f}
+    .dc-badge.vat11{background:#ecfeff;color:#155e75}
+    .dc-badge.bk{background:#eef2ff;color:#4338ca;cursor:pointer}
+    .dc-badge.gl{background:#f1f5f9;color:#475569}
+    .dc-amounts{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px;font-size:12px}
+    .dc-amounts .a .l{color:var(--gray-400);font-size:10.5px}
+    .dc-amounts .a .v{font-weight:700;font-size:13px}
+    .dc-amounts .a .v.hi{color:#b45309}
+    .dc-bar{height:6px;border-radius:999px;background:var(--gray-100);margin-top:10px;overflow:hidden;display:flex}
+    .dc-bar .real{background:#22c55e;height:100%}
+    .dc-bar .ref{background:#94a3b8;height:100%}
+    .dc-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+    .dc-actions .btn{padding:7px 12px;font-size:12.5px;border-radius:9px}
+    /* table (desktop) */
+    .dc-table{display:none;width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--gray-200);border-radius:12px;overflow:hidden}
+    .dc-table th{font-size:12px;color:var(--gray-500);text-align:left;padding:10px 12px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);white-space:nowrap}
+    .dc-table td{padding:10px 12px;border-bottom:1px solid var(--gray-100);font-size:13px;vertical-align:top}
+    .dc-table tr:hover td{background:#fafaff}
+    .dc-table .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+    @media(min-width:920px){#dcCards{display:none}.dc-table{display:table}}
+    .dc-empty{background:#fff;border:1px dashed var(--gray-300);border-radius:14px;padding:36px 20px;text-align:center;color:var(--gray-500)}
+    .dc-empty .big{font-size:40px;margin-bottom:8px}
+    details.dc-diag{margin-top:16px;font-size:12.5px;color:var(--gray-500)}
+    details.dc-diag summary{cursor:pointer;user-select:none;padding:6px 0}
+    details.dc-diag table{width:100%;border-collapse:collapse;margin-top:8px}
+    details.dc-diag td,details.dc-diag th{padding:5px 8px;border-bottom:1px solid var(--gray-100);text-align:left;font-size:12px}
+    details.dc-diag td.num{text-align:right;font-variant-numeric:tabular-nums}
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header" style="align-items:flex-start">
+      <div>
+        <h2 class="page-title">ศูนย์เงินมัดจำ</h2>
+        <p class="page-subtitle">มัดจำ/รับล่วงหน้า = หนี้สิน (217xx) บนงบดุล · VAT ตาม §78/§78/1 · รับรู้รายได้เมื่อส่งมอบจริง</p>
+        <div class="dc-freshness" id="dcFresh"><span class="dot"></span><span id="dcFreshText">กำลังโหลด…</span></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="Page.load(true)" title="โหลดข้อมูลสดจากเซิร์ฟเวอร์">⟳ รีเฟรช</button>
+        <button class="btn btn-primary" onclick="location.href='/pages/documents.html?new=deposit'">+ รับมัดจำใหม่</button>
+      </div>
+    </div>
+
+    <!-- แถบกระทบยอดกับ GL — หัวใจของ redesign: ตัวเลขหน้ากับบัญชีแยกประเภท
+         ต้องตรงกันเสมอ ไม่ตรง = ฟ้องทันที ไม่มีวันโชว์ 0 เงียบ ๆ อีก -->
+    <div id="dcTieout" class="dc-tieout ok" style="display:none"></div>
+
+    <div class="dc-kpis" id="dcKpis"></div>
+    <div class="dc-src" id="dcSrc"></div>
+
+    <div class="dc-tabs" id="dcTabs"></div>
+    <div class="dc-toolbar">
+      <input type="search" id="dcSearch" placeholder="ค้นหา เลขที่ / ลูกค้า / booking…" oninput="Page.render()">
+      <select id="dcSort" onchange="Page.render()">
+        <option value="date">ล่าสุดก่อน</option>
+        <option value="outstanding">คงค้างมากก่อน</option>
+        <option value="age">ค้างนานก่อน</option>
+      </select>
+    </div>
+
+    <div id="dcCards"></div>
+    <table class="dc-table" id="dcTable">
+      <thead><tr>
+        <th>เลขที่ / ลูกค้า</th><th>วันที่</th><th>VAT</th>
+        <th class="num">ฐาน</th><th class="num">รับรู้แล้ว</th><th class="num">คืนแล้ว</th><th class="num">คงค้าง</th>
+        <th>สถานะ</th><th></th>
+      </tr></thead>
+      <tbody id="dcTbody"></tbody>
+    </table>
+    <div id="dcEmpty" style="display:none"></div>
+
+    <details class="dc-diag" id="dcDiag" style="display:none">
+      <summary>🔍 ที่มาของตัวเลข (บัญชีมัดจำในผัง)</summary>
+      <div id="dcDiagBody"></div>
+    </details>
+  </div>
+
+  <!-- Realize modal -->
+  <div class="modal-overlay" id="realizeModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <h3 class="modal-title">รับรู้รายได้จากมัดจำ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('realizeModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div class="form-group">
+          <label class="form-label">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="realizeAmount">
+        </div>
+        <div class="form-group">
+          <label class="form-label">วันที่รับรู้ (tax point → งวด ภ.พ.30)</label>
+          <input type="date" class="form-input" id="realizeDate">
+        </div>
+        <div class="form-group">
+          <label class="form-label">ผังบัญชีรายได้ (เว้นว่าง = 41000/42000)</label>
+          <input type="text" class="form-input" id="realizeRevenueCode" placeholder="เช่น 41000">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('realizeModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.submitRealize()">รับรู้รายได้</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Refund modal -->
+  <div class="modal-overlay" id="refundModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <h3 class="modal-title">คืนเงินมัดจำ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('refundModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="refundInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <div class="form-group">
+          <label class="form-label">จำนวนเงินที่คืน (รวม VAT)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="refundAmount">
+        </div>
+        <div class="form-group">
+          <label class="form-label">วันที่คืน</label>
+          <input type="date" class="form-input" id="refundDate">
+        </div>
+        <div class="form-group">
+          <label class="form-label">เหตุผล</label>
+          <input type="text" class="form-input" id="refundReason" placeholder="เช่น ลูกค้ายกเลิกงาน">
+        </div>
+        <div style="font-size:12px;color:#92400e">⚠️ ระบบจะกลับรายการขายรอรับรู้ + ออกใบลดหนี้ให้อัตโนมัติ (เมื่อ VAT เคยถูกรายงาน)</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('refundModal')">ยกเลิก</button>
+        <button class="btn btn-danger" onclick="Page.submitRefund()">คืนเงินมัดจำ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      data: null,
+      tab: 'all',
+      _realizeId: null,
+      _refundId: null,
+      async init() {
+        if (!Layout.init('deposits')) return;
+        Layout.setTitle('ศูนย์เงินมัดจำ');
+        await this.load();
+        // กลับมาที่แท็บ → โหลดสดเสมอ (กันดูตัวเลขเก่าโดยไม่รู้ตัว)
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) this.load();
+        });
+      },
+      async load(manual) {
+        const api = Layout.api(); if (!api) return;
+        const fresh = document.getElementById('dcFreshText');
+        fresh.textContent = 'กำลังโหลด…';
+        try {
+          const res = await api.getDepositCenter();
+          this.data = res.data;
+          this.renderAll();
+          if (manual) Layout.toast('โหลดข้อมูลสดแล้ว ✓');
+        } catch (e) {
+          document.getElementById('dcFresh').classList.add('stale');
+          fresh.textContent = 'โหลดไม่สำเร็จ: ' + (e.message || '');
+          const t = document.getElementById('dcTieout');
+          t.style.display = 'flex'; t.className = 'dc-tieout err';
+          t.innerHTML = `<span class="ic">⛔</span><div><b>เชื่อมต่อเซิร์ฟเวอร์ไม่ได้</b><br>${Layout.esc(e.message || '')}</div>`;
+        }
+      },
+      renderAll() {
+        const d = this.data;
+        // 1) freshness — เวลาเซิร์ฟเวอร์ generate จริง ไม่ใช่เวลา browser
+        const gen = new Date(d.generatedAtUtc);
+        const f = document.getElementById('dcFresh');
+        f.classList.remove('stale');
+        document.getElementById('dcFreshText').textContent =
+          `ข้อมูลสดจากเซิร์ฟเวอร์ ${gen.toLocaleTimeString('th-TH')} น. · ${d.buildMarker}`;
+
+        // 2) tie-out banner
+        const t = document.getElementById('dcTieout');
+        t.style.display = 'flex';
+        const gl = d.tieOut.glNet, page = d.tieOut.pageNet, diff = d.tieOut.diff;
+        if (d.warning) {
+          t.className = 'dc-tieout err';
+          t.innerHTML = `<span class="ic">⛔</span><div><b>ตัวเลขไม่ตรงกับบัญชี — ห้ามเชื่อหน้านี้จนกว่าจะแก้</b><br>
+            ${Layout.esc(d.warning)}<br>GL คงค้าง: <b>${Layout.money(gl)}</b> · หน้าแสดง: <b>${Layout.money(page)}</b></div>`;
+        } else if (d.tieOut.ok) {
+          t.className = 'dc-tieout ok';
+          t.innerHTML = `<span class="ic">✓</span><div><b>ตรงกับบัญชีแยกประเภท (GL)</b> — หนี้สินมัดจำคงค้างสุทธิ <b>${Layout.money(gl)}</b> บาท</div>`;
+        } else {
+          t.className = 'dc-tieout warn';
+          t.innerHTML = `<span class="ic">⚠️</span><div><b>หน้ากับ GL ต่างกัน ${Layout.money(Math.abs(diff))} บาท</b> —
+            GL: ${Layout.money(gl)} · หน้าแสดง: ${Layout.money(page)}
+            <br>มักเกิดจากเศษปัด/JE ปรับปรุงมือ — กด "ที่มาของตัวเลข" ด้านล่างเพื่อไล่ดูรายบัญชี</div>`;
+        }
+
+        // 3) KPIs
+        const k = d.kpis;
+        document.getElementById('dcKpis').innerHTML = `
+          <div class="dc-kpi hero"><div class="l">มัดจำคงค้าง (ฐาน)</div><div class="v">${Layout.money(k.outstandingBase)}</div><div class="s">${k.openCount} ใบยังไม่ปิด</div></div>
+          <div class="dc-kpi"><div class="l">รับรู้รายได้แล้ว</div><div class="v">${Layout.money(k.realizedBase)}</div></div>
+          <div class="dc-kpi"><div class="l">คืนเงินแล้ว</div><div class="v">${Layout.money(k.refundedGross)}</div></div>
+          <div class="dc-kpi"><div class="l">VAT พักรอ (21913)</div><div class="v">${Layout.money(k.deferredVatParked)}</div><div class="s">ยังไม่เข้า ภ.พ.30</div></div>
+          <div class="dc-kpi"><div class="l">จำนวนใบทั้งหมด</div><div class="v">${k.totalCount}</div></div>`;
+
+        // 4) source chips
+        const s = d.sources;
+        document.getElementById('dcSrc').innerHTML = `
+          <span class="dc-chip">📄 เอกสารมัดจำ ${s.nativeDocs} ใบ</span>
+          ${s.doclessNet > 0.005 ? `<span class="dc-chip">🧾 JE ล้วน (ไม่ผูกเอกสาร) ${Layout.money(s.doclessNet)}</span>` : ''}
+          <span class="dc-chip link" onclick="document.getElementById('dcDiag').open=true;document.getElementById('dcDiag').scrollIntoView({behavior:'smooth'})">🏦 บัญชีมัดจำ ${s.depositAccounts} บัญชี ▸</span>`;
+
+        // 5) tabs (นับจำนวนจริงต่อแท็บ)
+        const rows = d.rows || [];
+        const counts = {
+          all: rows.length,
+          Outstanding: rows.filter(r => r.status === 'Outstanding').length,
+          Partial: rows.filter(r => r.status === 'Partial').length,
+          Realized: rows.filter(r => r.status === 'Realized').length,
+          refunded: rows.filter(r => (r.refundedAmount || 0) > 0.005).length,
+        };
+        const tabs = [['all', 'ทั้งหมด'], ['Outstanding', 'คงค้าง'], ['Partial', 'รับรู้บางส่วน'], ['Realized', 'ครบแล้ว'], ['refunded', 'มีคืนเงิน']];
+        document.getElementById('dcTabs').innerHTML = tabs.map(([id, label]) =>
+          `<button class="dc-tab ${this.tab === id ? 'active' : ''}" onclick="Page.setTab('${id}')">${label}<span class="n">${counts[id]}</span></button>`).join('');
+
+        // 6) diagnostics accordion
+        const diag = document.getElementById('dcDiag');
+        diag.style.display = '';
+        document.getElementById('dcDiagBody').innerHTML = `
+          <table><thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="num">คงค้างสุทธิ (GL)</th></tr></thead>
+          <tbody>${(s.accounts || []).map(a =>
+            `<tr><td>${Layout.esc(a.accountCode)}</td><td>${Layout.esc(a.accountName)}</td><td class="num">${Layout.money(a.netCredit)}</td></tr>`).join('')}
+          </tbody></table>
+          <div style="margin-top:6px">รวม GL สุทธิ: <b>${Layout.money(gl)}</b> · หน้าแสดง: <b>${Layout.money(page)}</b> · ผลต่าง: <b>${Layout.money(diff)}</b></div>`;
+
+        this.render();
+      },
+      setTab(t) { this.tab = t; this.renderAll(); },
+      filtered() {
+        let rows = (this.data?.rows || []).slice();
+        if (this.tab === 'refunded') rows = rows.filter(r => (r.refundedAmount || 0) > 0.005);
+        else if (this.tab !== 'all') rows = rows.filter(r => r.status === this.tab);
+        const q = (document.getElementById('dcSearch').value || '').trim().toLowerCase();
+        if (q) rows = rows.filter(r =>
+          (r.documentNumber || '').toLowerCase().includes(q)
+          || (r.contactName || '').toLowerCase().includes(q)
+          || (r.bookingNumber || '').toLowerCase().includes(q)
+          || (r.reference || '').toLowerCase().includes(q));
+        const sort = document.getElementById('dcSort').value;
+        if (sort === 'outstanding') rows.sort((a, b) => b.outstandingAmount - a.outstandingAmount);
+        else if (sort === 'age') rows.sort((a, b) => b.ageDays - a.ageDays);
+        else rows.sort((a, b) => new Date(b.documentDate) - new Date(a.documentDate));
+        return rows;
+      },
+      vatChip(r) {
+        if (!r.vatAmount || r.vatAmount <= 0) return '';
+        return r.outputVatDeferred && !r.outputVatRecognizedAt
+          ? '<span class="dc-badge vat13" title="VAT พักที่ 21913 — ยังไม่เข้า ภ.พ.30 จนกว่าจะรับรู้">VAT พักรอ</span>'
+          : '<span class="dc-badge vat11" title="VAT เข้า ภ.พ.30 แล้ว/ถึงกำหนด">VAT รายงานแล้ว</span>';
+      },
+      statusChip(st) {
+        const m = { Outstanding: ['out', 'คงค้าง'], Partial: ['part', 'รับรู้บางส่วน'], Realized: ['done', 'ครบแล้ว'] };
+        const [cls, label] = m[st] || ['gl', st];
+        return `<span class="dc-badge ${cls}">${label}</span>`;
+      },
+      render() {
+        const rows = this.filtered();
+        const cards = document.getElementById('dcCards');
+        const tbody = document.getElementById('dcTbody');
+        const empty = document.getElementById('dcEmpty');
+        const table = document.getElementById('dcTable');
+        if (!rows.length) {
+          cards.innerHTML = ''; tbody.innerHTML = ''; table.style.display = 'none';
+          empty.style.display = '';
+          const glHas = this.data && this.data.tieOut.glNet > 0.005;
+          empty.innerHTML = glHas && (this.data.rows || []).length === 0
+            ? `<div class="dc-empty" style="border-color:#fca5a5;color:#991b1b"><div class="big">⛔</div>
+               <b>GL มีมัดจำคงค้าง ${Layout.money(this.data.tieOut.glNet)} แต่แสดงรายการไม่ได้</b><br>ดูข้อความสีแดงด้านบน</div>`
+            : `<div class="dc-empty"><div class="big">🤝</div>
+               ยังไม่มีเงินมัดจำ${this.tab !== 'all' ? 'ในสถานะนี้' : ''}<br>
+               <span style="font-size:12.5px">รับมัดจำ: เมนูขาย → สร้างใบเสร็จ แล้วติ๊ก "เงินมัดจำ" หรือกดปุ่ม "+ รับมัดจำใหม่" ด้านบน</span></div>`;
+          return;
+        }
+        empty.style.display = 'none';
+        if (window.innerWidth >= 920) table.style.display = 'table';
+        // ── cards (mobile) ──
+        cards.innerHTML = rows.map(r => {
+          const isDocless = !r.id || r.id === '00000000-0000-0000-0000-000000000000';
+          const pctReal = r.baseAmount > 0 ? Math.min(100, r.realizedAmount / r.baseAmount * 100) : 0;
+          const refBase = r.baseAmount > 0 && r.refundedAmount > 0 ? Math.min(100 - pctReal, (r.refundedAmount / r.totalAmount) * 100) : 0;
+          return `<div class="dc-card">
+            <div class="top"><div>
+              <div class="no">${Layout.esc(r.documentNumber)} ${r.bookingNumber ? `<span class="dc-badge bk" onclick="Page.showBooking('${Layout.esc(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}</div>
+              <div class="who">${Layout.esc(r.contactName || '-')}</div>
+              <div class="meta">${new Date(r.documentDate).toLocaleDateString('th-TH')} · ค้างมา ${r.ageDays} วัน ${isDocless ? '· จาก GL' : ''}</div>
+            </div><div style="text-align:right">${this.statusChip(r.status)}<div style="margin-top:4px">${this.vatChip(r)}</div></div></div>
+            <div class="dc-amounts">
+              <div class="a"><div class="l">ฐาน</div><div class="v">${Layout.money(r.baseAmount)}</div></div>
+              <div class="a"><div class="l">รับรู้แล้ว</div><div class="v">${Layout.money(r.realizedAmount)}</div></div>
+              <div class="a"><div class="l">คืนแล้ว</div><div class="v">${Layout.money(r.refundedAmount || 0)}</div></div>
+              <div class="a"><div class="l">คงค้าง</div><div class="v hi">${Layout.money(r.outstandingAmount)}</div></div>
+            </div>
+            <div class="dc-bar"><div class="real" style="width:${pctReal}%"></div><div class="ref" style="width:${refBase}%"></div></div>
+            ${isDocless ? '' : `<div class="dc-actions">
+              ${r.status !== 'Realized' ? `<button class="btn btn-primary" onclick="Page.openRealize('${r.id}')">รับรู้รายได้</button>
+              <button class="btn btn-secondary" onclick="Page.openRefund('${r.id}')">คืนเงิน</button>` : ''}
+              <button class="btn btn-secondary" onclick="location.href='/pages/documents.html?view=${r.id}'">เปิดเอกสาร</button>
+            </div>`}
+          </div>`;
+        }).join('');
+        // ── table (desktop) ──
+        tbody.innerHTML = rows.map(r => {
+          const isDocless = !r.id || r.id === '00000000-0000-0000-0000-000000000000';
+          return `<tr>
+            <td><b>${Layout.esc(r.documentNumber)}</b>${r.bookingNumber ? ` <span class="dc-badge bk" onclick="Page.showBooking('${Layout.esc(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}<br>
+                <span style="color:var(--gray-500);font-size:12px">${Layout.esc(r.contactName || '-')}</span></td>
+            <td>${new Date(r.documentDate).toLocaleDateString('th-TH')}<br><span style="color:var(--gray-400);font-size:11px">${r.ageDays} วัน</span></td>
+            <td>${this.vatChip(r)}</td>
+            <td class="num">${Layout.money(r.baseAmount)}</td>
+            <td class="num" style="color:#15803d">${Layout.money(r.realizedAmount)}</td>
+            <td class="num" style="color:#64748b">${Layout.money(r.refundedAmount || 0)}</td>
+            <td class="num"><b>${Layout.money(r.outstandingAmount)}</b></td>
+            <td>${this.statusChip(r.status)}</td>
+            <td style="white-space:nowrap">${isDocless ? '' : `
+              ${r.status !== 'Realized' ? `<button class="btn btn-primary" style="padding:5px 10px;font-size:12px" onclick="Page.openRealize('${r.id}')">รับรู้</button>
+              <button class="btn btn-secondary" style="padding:5px 10px;font-size:12px" onclick="Page.openRefund('${r.id}')">คืน</button>` : ''}
+              <button class="btn btn-secondary" style="padding:5px 10px;font-size:12px" onclick="location.href='/pages/documents.html?view=${r.id}'">เปิด</button>`}</td>
+          </tr>`;
+        }).join('');
+      },
+      showBooking(bk) {
+        // ทุกเอกสารใน booking เดียวกัน (มัดจำ → ใบกำกับ → ใบเสร็จ)
+        location.href = '/pages/documents.html?booking=' + encodeURIComponent(bk);
+      },
+      row(id) { return (this.data?.rows || []).find(r => r.id === id); },
+      openRealize(id) {
+        const r = this.row(id); if (!r) return;
+        this._realizeId = id;
+        document.getElementById('realizeInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (ฐาน): <b>${Layout.money(r.outstandingAmount)}</b>`;
+        document.getElementById('realizeAmount').value = r.outstandingAmount;
+        document.getElementById('realizeDate').value = new Date().toISOString().slice(0, 10);
+        Layout.openModal('realizeModal');
+      },
+      async submitRealize() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const amount = parseFloat(document.getElementById('realizeAmount').value);
+          if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่รับรู้', 'error'); return; }
+          const dateRaw = document.getElementById('realizeDate').value;
+          await api.realizeDeposit(this._realizeId, {
+            amount,
+            realizeDate: dateRaw ? new Date(dateRaw).toISOString() : null,
+            revenueAccountCode: document.getElementById('realizeRevenueCode').value.trim() || null,
+          });
+          Layout.closeModal('realizeModal');
+          Layout.toast('รับรู้รายได้เรียบร้อย ✓');
+          this.load();
+        } catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
+      },
+      openRefund(id) {
+        const r = this.row(id); if (!r) return;
+        this._refundId = id;
+        document.getElementById('refundInfo').innerHTML =
+          `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (ฐาน): <b>${Layout.money(r.outstandingAmount)}</b> · รวม VAT: <b>${Layout.money(r.totalAmount)}</b>`;
+        document.getElementById('refundAmount').value = '';
+        document.getElementById('refundDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('refundReason').value = '';
+        Layout.openModal('refundModal');
+      },
+      async submitRefund() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const amount = parseFloat(document.getElementById('refundAmount').value);
+          if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่คืน', 'error'); return; }
+          const dateRaw = document.getElementById('refundDate').value;
+          await api.refundDeposit(this._refundId, {
+            amount,
+            refundDate: dateRaw ? new Date(dateRaw).toISOString() : null,
+            reason: document.getElementById('refundReason').value.trim() || null,
+          });
+          Layout.closeModal('refundModal');
+          Layout.toast('คืนเงินมัดจำเรียบร้อย ✓');
+          this.load();
+        } catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

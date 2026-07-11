@@ -34,6 +34,7 @@ public interface IDocumentService
     Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);
     /// <summary>วินิจฉัยหน้าเงินมัดจำ — บอกสาเหตุเมื่อ dashboard โชว์ 0.</summary>
     Task<DepositDiagnostics> GetDepositDiagnosticsAsync(Guid companyId);
+    Task<DepositCenterResponse> GetDepositCenterAsync(Guid companyId);
     /// <summary>สรุปมัดจำคงค้างของลูกค้ารายหนึ่ง (สำหรับหน้า contact + dropdown
     /// ตอนออกใบแจ้งหนี้เพื่อนำมัดจำมาหัก).</summary>
     Task<ContactDepositSummary> GetContactDepositSummaryAsync(Guid companyId, Guid contactId);
