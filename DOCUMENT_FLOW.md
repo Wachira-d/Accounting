@@ -1194,6 +1194,18 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 60 (audit ทุกประเภทเอกสาร — แก้ criticals ชุดแรก 15 จุด): void ใบเสร็จ_
+_settlement ถูก block (ให้ยกเลิก payment แทน — กัน AR ติดลบ/เก็บซ้ำ B3/F8);_
+_FindAccountAsync exact-match ข้าม header Level<4 (CN ซื้อเคย Cr "116"/"212"_
+_header F2); CN/DN เคารพ WHT basis Cash (gross AR/AP ไม่แตะ 11910 F2-sales);_
+_ห้าม CN/DN อ้างใบ Voided (§86/9-10 F9); void CN ซื้อคืน PaidAmount (Dr 212 probe_
+_F3); ภ.พ.30 ไม่เคลม VAT undue 11640 (excluded line F4) + CIL ออกจาก input_
+_whitelist (§82/4 F7); Overdue เฉพาะใบอนุมัติแล้ว + จ่ายใบ Overdue ได้ (F7-sales);_
+_convert ส่งต่อ BillDiscount/PricesIncludeVat/ส่วนลดบาท/IsVatClaimable (F1, เฉลี่ย_
+_ตาม partial); FIFO sign-agnostic + marginal-slice costing (A1/A2/A6); WAC rebuild_
+_หลัง void (A5); void payment จัดการ 50 ทวิ Draft (B5); apply มัดจำ stamp_
+_DepositAppliedAmount ลงใบ (E2); sensitivity ไม่โผล่ search/CSV (PDPA E3); HTML_
+_scale-back ยกเว้นมัดจำ defer (F14). backlog ที่เหลือดูรายงาน audit._
 _รอบ 59 (audit จำลอง scenario — ชุดใหญ่ 15 แก้): **สมมาตร apply↔void สมบูรณ์** —_
 _void/purge un-realize คิดจาก "บรรทัด JE จริงของใบเช็คเอาท์" (helper Unrealize_
 _DrivesDepositAsync: depBase = ΣDr 215/217, เคลียร์ RecognizedAt เฉพาะเมื่อใบมี_

@@ -816,7 +816,10 @@ public class ImportExportService : IImportExportService
 
     private async Task<List<Dictionary<string, string>>> ExportDocumentsAsync(Guid companyId, ExportRequest request)
     {
-        var query = _db.Documents.Where(d => d.CompanyId == companyId);
+        // เอกสาร sensitivity (payroll) ไม่ออก CSV รวม (PDPA audit E3) — ใช้
+        // รายงานฝั่ง payroll ที่คุมสิทธิ์แทน
+        var query = _db.Documents.Where(d => d.CompanyId == companyId
+            && d.Sensitivity == Models.Enums.SensitivityKind.None);
         if (request.FromDate.HasValue) query = query.Where(d => d.DocumentDate >= request.FromDate);
         if (request.ToDate.HasValue) query = query.Where(d => d.DocumentDate <= request.ToDate);
 

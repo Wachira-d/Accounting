@@ -147,35 +147,42 @@ public class InventoryCostingService : IInventoryCostingService
                     .OrderBy(m => m.MovementDate)
                     .Select(m => new { m.MovementDate, m.Quantity, m.UnitCost, m.Id })
                     .ToListAsync(ct);
+                // OUT ถูกเก็บ "คนละเครื่องหมาย" ตามผู้เขียน: เอกสาร/POS เก็บติดลบ,
+                // ปรับสต๊อกมือเก็บบวก (audit A1/A6) → ต้อง Σ|Quantity| ไม่งั้นยอด
+                // บริโภคสะสมกลายเป็นลบ → needed < 0 → costSum 0 → COGS ตกไป
+                // CostPrice (หรือ 0) ตั้งแต่การขายครั้งที่สองเป็นต้นไป
                 var outQty = await _db.StockMovements.AsNoTracking()
                     .Where(m => m.ProductId == productId
                                 && m.MovementType == "OUT"
                                 && !m.IsDeleted)
-                    .SumAsync(m => m.Quantity, ct);
-                // Consume oldest first until we've covered outQty + new request.
-                var needed = outQty + quantity;
-                decimal consumed = 0m, costSum = 0m;
+                    .SumAsync(m => Math.Abs(m.Quantity), ct);
+                // เดิน layer เก่า→ใหม่: ข้ามส่วนที่ OUT ก่อนหน้ากินไปแล้ว (outQty)
+                // แล้วคิดต้นทุนเฉพาะ "ก้อนใหม่" (quantity) — audit A2: เดิมเฉลี่ย
+                // costSum/consumed ทั้งประวัติ → ขายครั้งที่สองได้ต้นทุนเฉลี่ยรวม
+                // แทนต้นทุน layer ถัดไปตามหลัก FIFO
+                decimal skipped = 0m, taken = 0m, takeSum = 0m;
                 foreach (var layer in inLayers)
                 {
                     var available = layer.Quantity;
-                    var remaining = needed - consumed;
-                    if (remaining <= 0) break;
-                    var take = Math.Min(available, remaining);
-                    consumed += take;
-                    costSum += take * layer.UnitCost;
+                    var skip = Math.Min(available, Math.Max(0m, outQty - skipped));
+                    skipped += skip;
+                    var rem = available - skip;
+                    if (rem <= 0) continue;
+                    var need = quantity - taken;
+                    if (need <= 0) break;
+                    var take = Math.Min(rem, need);
+                    taken += take;
+                    takeSum += take * layer.UnitCost;
                 }
-                if (consumed < needed)
+                if (taken < quantity)
                 {
                     // Stock would go negative under FIFO accounting.
                     // Fall back to last known IN cost for the residual.
                     var lastInCost = inLayers.LastOrDefault()?.UnitCost ?? product.CostPrice;
-                    var residual = needed - consumed;
-                    costSum += residual * lastInCost;
-                    consumed = needed;
+                    takeSum += (quantity - taken) * lastInCost;
+                    taken = quantity;
                 }
-                // Effective unit cost for THIS outbound: average over the
-                // tail of the consumption (the new `quantity` slice).
-                return Math.Round(costSum / Math.Max(consumed, 1m), 4);
+                return Math.Round(takeSum / Math.Max(taken, 1m), 4);
             }
             case CostingMethod.Standard:
                 return product.CostPrice;
@@ -211,7 +218,7 @@ public class InventoryCostingService : IInventoryCostingService
             }
             else if (m.MovementType == "OUT")
             {
-                stock -= m.Quantity;
+                stock -= Math.Abs(m.Quantity);   // OUT เก็บได้ทั้ง +/− (audit A6)
                 // Outbound doesn't change WAC.
             }
             // ADJUST: skipped — adjustment treatment is policy-dependent.
