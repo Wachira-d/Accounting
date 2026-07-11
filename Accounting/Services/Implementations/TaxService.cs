@@ -415,11 +415,35 @@ public partial class TaxService : ITaxService
             // JE ของ PV มี SourceDocumentId → JE-only fallback ข้ามอยู่แล้ว
             // (ไม่ double count). PV ที่ไม่ติ๊ก flag = จ่ายเฉย ๆ ไม่เคลม VAT
             // (§82/5(1) ไม่มีใบกำกับเต็มรูป) → ไม่นับ.
+            // CIL ตัดออก (audit F7): ใบรับรองแทนใบเสร็จเคลมภาษีซื้อไม่ได้ (§82/4 ไม่มี
+            // ใบกำกับเต็มรูป) — JE ก็ fold VAT เข้า expense อยู่แล้ว การนับที่นี่ =
+            // เคลมเกินสิทธิ์ + นับซ้ำเมื่อ CIL ถูก convert มาจาก Expense ที่รายงานแล้ว
             else if (doc.DocumentType == DocumentType.PurchaseInvoice
                   || doc.DocumentType == DocumentType.Expense
-                  || doc.DocumentType == DocumentType.CertificateInLieu
                   || (doc.DocumentType == DocumentType.PaymentVoucher && doc.HasTaxInvoiceReference))
             {
+                // ภาษีซื้อ "ยังไม่ถึงกำหนด" (audit F4): เอกสารที่ post ลง 11640
+                // (ใบกำกับซื้อยังไม่ครบ §86/4) ห้ามเคลมใน ภ.พ.30 จนกว่าจะเติมใบ
+                // ครบ (InputVatBecameClaimableAt) — เดิมรายงานเคลมทันทีทั้งที่ GL
+                // ยังพักที่ 11640 = เคลมก่อนสิทธิ์ (สรรพากรประเมินคืนได้)
+                if (doc.InputVatPostedAsUndue && doc.InputVatBecameClaimableAt == null)
+                {
+                    report.Lines.Add(new TaxReportLine
+                    {
+                        TaxReportId = report.Id,
+                        LineOrder = lineOrder++,
+                        TaxPayerId = doc.Contact?.TaxId,
+                        TaxPayerName = doc.Contact?.Name ?? "",
+                        TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
+                        Description = $"[รอใบกำกับ §82/3] {doc.DocumentNumber} — ใบกำกับซื้อยังไม่ครบ ยังเคลมไม่ได้ (VAT พักที่ 11640)",
+                        IncomeAmount = doc.SubTotal,
+                        TaxRate = 7,
+                        TaxAmount = doc.VatAmount,
+                        DocumentId = doc.Id,
+                        IsExcluded = true
+                    });
+                    continue;
+                }
                 // ----- Rule B: detect prohibited input VAT (ภาษีซื้อต้องห้าม) -----
                 // Prohibited VAT = ผลรวมจาก (a) บรรทัดที่ user/AI ติ๊ก
                 // IsVatClaimable=false (explicit) + (b) บรรทัดที่ AccountId

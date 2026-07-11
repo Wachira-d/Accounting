@@ -36,7 +36,10 @@ public class GlobalSearchService
         // !IsDeleted → เอกสารที่ contact ถูกลบจะได้ชื่อ null. select ContactId แล้ว
         // resolve ชื่อจาก dict (IgnoreQueryFilters) ให้ครบ.
         var docRows = await _db.Documents.AsNoTracking()
+            // เอกสาร sensitivity (เช่น payroll) ห้ามโผล่ใน global search — ยอด/
+            // คู่สัญญาเงินเดือนรั่วถึงผู้ใช้ทุกคน (PDPA audit E3)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.Sensitivity == Models.Enums.SensitivityKind.None
                 && (d.DocumentNumber.ToLower().Contains(qLower)
                     || (d.Reference != null && d.Reference.ToLower().Contains(qLower))
                     || (d.Notes != null && d.Notes.ToLower().Contains(qLower))

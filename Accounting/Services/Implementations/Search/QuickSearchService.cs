@@ -76,7 +76,9 @@ public class QuickSearchService : IQuickSearchService
                 DeepLink: $"/pages/products.html?id={p.Id}"));
 
         var docs = await _db.Documents.AsNoTracking()
+            // เอกสาร sensitivity (payroll) ไม่โผล่ใน quick search (PDPA audit E3)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.Sensitivity == Models.Enums.SensitivityKind.None
                 && (EF.Functions.ILike(d.DocumentNumber, pattern)
                     || (d.Notes != null && EF.Functions.ILike(d.Notes, pattern))))
             .OrderByDescending(d => d.DocumentDate)

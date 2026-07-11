@@ -1097,7 +1097,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             // บนกระดาษต้องโชว์ยอดก่อนหักท้ายบิล — ไม่งั้นบรรทัดขัดกันเอง
             // (1 × 19,650 − ส่วนลด 0 = 17,526.76 ??) และไม่ตรงหน้าแก้ไข. scale
             // กลับตามสัดส่วนที่เฉลี่ย; ส่วนลดแสดงรวมเป็นแถวเดียวในสรุปท้ายบิล
-            if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m && !inclVat)
+            if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m && !inclVat && !IsDeferredVatDeposit(doc))
                 printedAmount = Math.Round(printedAmount * (doc.SubTotal + doc.BillDiscountAmount) / doc.SubTotal, 2);
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");

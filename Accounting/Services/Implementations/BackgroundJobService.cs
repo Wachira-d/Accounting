@@ -132,8 +132,11 @@ public class BackgroundJobService : BackgroundService
 
             var companyIds = await db.Documents
                 .Where(d => (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
-                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                    && d.Status != DocumentStatus.Paid
+                    // เฉพาะใบที่ "อนุมัติแล้ว" เท่านั้น (audit F7): เดิม exclude แค่
+                    // Voided/Draft/Paid → ใบ WaitingApproval/Rejected โดนธง Overdue
+                    // → approve ไม่ได้ (gate รับแค่ Draft/WaitingApproval) = ค้างถาวร
+                    && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent
+                        || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Overdue)
                     && d.DueDate.HasValue
                     && d.DueDate < today
                     && d.BalanceDue > 0)
@@ -146,8 +149,8 @@ public class BackgroundJobService : BackgroundService
                 var overdueDocuments = await db.Documents
                     .Where(d => d.CompanyId == companyId
                         && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
-                        && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
-                        && d.Status != DocumentStatus.Paid
+                        && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent
+                            || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Overdue)
                         && d.DueDate.HasValue
                         && d.DueDate < today
                         && d.BalanceDue > 0)

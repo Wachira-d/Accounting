@@ -2174,6 +2174,11 @@ public class DocumentService : IDocumentService
             invoice.Status = DocumentStatus.Paid;
         else if (invoice.BalanceDue > 0.005m && invoice.Status == DocumentStatus.Approved)
             invoice.Status = DocumentStatus.PartiallyPaid;   // audit #12
+        // stamp ยอดหักมัดจำลงใบแจ้งหนี้ (audit E2): list/PDF โชว์ "หักมัดจำ/รับสุทธิ"
+        // + API consumers เห็นยอดจริง (เดิมตั้งเฉพาะตอน create — apply ทีหลังไม่ตั้ง)
+        invoice.DepositAppliedAmount += request.Amount;
+        if (string.IsNullOrWhiteSpace(invoice.DepositAppliedRef))
+            invoice.DepositAppliedRef = deposit.DocumentNumber;
         deposit.DepositAppliedToDocumentId = invoiceId;
 
         await _db.SaveChangesAsync();
@@ -3283,6 +3288,16 @@ public class DocumentService : IDocumentService
         if (doc.Status == DocumentStatus.Voided)
             throw new InvalidOperationException("เอกสารนี้ถูกยกเลิกแล้ว");
 
+        // ใบเสร็จหลักฐานการชำระ (auto-issue ตอนบันทึกรับเงิน): ห้าม void ตรง ๆ —
+        // ใบนี้ไม่เคยผ่าน Approve (ไม่มี JE ของตัวเอง) แต่ VoidDocumentAsync จะรัน
+        // RevertSourceDocumentAdjustments → ลบ PaidAmount ของใบแจ้งหนี้ทั้งที่
+        // Payment + JE ยังอยู่ → AR ติดลบ + เก็บเงินซ้ำได้ (audit B3). ทางถูก:
+        // ยกเลิก "การชำระเงิน" (payment) → ระบบ void ใบเสร็จนี้ให้เอง (cascade ครบ)
+        if (doc.IsSettlementReceipt)
+            throw new InvalidOperationException(
+                "ใบเสร็จนี้ออกอัตโนมัติจากการบันทึกชำระเงิน — กรุณา 'ยกเลิกการชำระเงิน' แทน " +
+                "(ระบบจะยกเลิกใบเสร็จนี้และคืนยอดให้ครบอัตโนมัติ)");
+
         // Filing lock guard: an Approved document that's part of a TaxReport
         // already marked Filed (FilingLockedAt set) is sealed for audit —
         // the operator must Unlock the report first (admin) or use
@@ -4211,6 +4226,33 @@ public class DocumentService : IDocumentService
                 : DocumentStatus.PartiallyPaid;
         }
         doc.UpdatedAt = DateTime.UtcNow;
+
+        // 50 ทวิ ที่ auto-สร้างตอนบันทึกจ่าย (audit B5): ยกเลิก payment แล้วเอกสาร
+        // กลับเป็นยังไม่จ่าย → cert Draft ของใบนี้ต้อง void ด้วย ไม่งั้นค้างเข้า
+        // ภ.ง.ด.3/53 ทั้งที่การจ่ายไม่มีแล้ว. เฉพาะตอนไม่เหลือ payment อื่น (partial
+        // อื่นยังจ่ายอยู่ = cert ยังมีมูล). Issued cert → เตือนใน log ให้ยกเลิกมือ
+        // (ออกให้ผู้ถูกหักไปแล้ว ห้าม void เงียบ)
+        if (doc.WithholdingTaxAmount > 0 && doc.PaidAmount <= 0.005m)
+        {
+            var certs = await _db.WithholdingTaxCerts
+                .Where(w => w.CompanyId == companyId && w.DocumentId == doc.Id
+                    && w.Status != WithholdingTaxCertStatus.Voided)
+                .ToListAsync();
+            foreach (var cert in certs)
+            {
+                if (cert.Status == WithholdingTaxCertStatus.Draft)
+                {
+                    cert.Status = WithholdingTaxCertStatus.Voided;
+                    cert.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "VoidPayment {Doc}: หนังสือรับรอง 50 ทวิ {Cert} สถานะ {Status} ยังไม่ถูกยกเลิก — ออกให้ผู้ถูกหักแล้ว กรุณายกเลิก/ออกใหม่ด้วยตนเอง",
+                        doc.DocumentNumber, cert.CertNumber, cert.Status);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -4385,13 +4427,16 @@ public class DocumentService : IDocumentService
         // เงินที่จ่ายไปแล้ว). ดูจาก JE ต้นฉบับของ CN ว่าเครดิตบัญชีลูกหนี้ (113) ไหม.
         if (doc.DocumentType == DocumentType.CreditNote)
         {
-            var cnCreditedAr = await _db.JournalEntryLines.AnyAsync(l =>
+            // ฝั่งขาย: CN AR-mode เครดิต 113; ฝั่งซื้อ (audit F3): CN AP-mode
+            // "เดบิต" AP (212xx) — เดิมเช็คแค่ Cr 113 → CN ซื้อถูกมองเป็น cash-
+            // refund เสมอ → void แล้วไม่คืน PaidAmount ของ PI (ค้างเป็นยอดผี)
+            var cnAdjustedSource = await _db.JournalEntryLines.AnyAsync(l =>
                 l.JournalEntry.SourceDocumentId == doc.Id
                 && l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.OriginalEntryId == null
-                && l.CreditAmount > 0
-                && l.Account.AccountCode.StartsWith("113"));
-            if (!cnCreditedAr) return;   // cash-refund mode → ไม่แตะ source
+                && ((l.CreditAmount > 0 && l.Account.AccountCode.StartsWith("113"))
+                    || (l.DebitAmount > 0 && l.Account.AccountCode.StartsWith("212"))));
+            if (!cnAdjustedSource) return;   // cash-refund mode → ไม่แตะ source
         }
 
         source.PaidAmount = Math.Max(0m, source.PaidAmount - doc.TotalAmount);
@@ -4705,7 +4750,15 @@ public class DocumentService : IDocumentService
             s.Line.DiscountPercent, s.Line.VatRate, s.Line.WithholdingTaxRate, s.Line.AccountId,
             ProjectId: s.Line.ProjectId,
             ProductCode: s.Line.ProductCode,
-            SourceLineId: s.Line.Id)).ToList();
+            SourceLineId: s.Line.Id,
+            // ส่วนลดบาทรายบรรทัด + ธงภาษีซื้อต้องห้าม ต้องตามไปด้วย (audit F1/D1) —
+            // เดิมหาย → ใบปลายทางแพงกว่าต้นทาง + VAT ต้องห้ามกลับเคลมได้
+            IsVatClaimable: s.Line.IsVatClaimable,
+            DiscountAmount: s.Line.DiscountAmount > 0
+                ? (s.Qty >= s.Line.Quantity ? s.Line.DiscountAmount
+                    // partial convert: ส่วนลดบาทเฉลี่ยตามสัดส่วน qty ที่ยกไป
+                    : Math.Round(s.Line.DiscountAmount * (s.Line.Quantity > 0 ? s.Qty / s.Line.Quantity : 1m), 2))
+                : null)).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, documentDate ?? DateTime.UtcNow, dueDate ?? source.DueDate, source.ContactId,
@@ -4718,6 +4771,20 @@ public class DocumentService : IDocumentService
             // ต่างสกุลเงินแปลงแล้วกลายเป็นบาท)
             Currency: source.Currency,
             ExchangeRate: source.ExchangeRate,
+            // pricing semantics ของต้นทางต้องตามไปครบ (audit F1): เดิมหาย →
+            // ใบปลายทางคิด VAT บนฐานไม่หักส่วนลดท้ายบิล / ราคารวม VAT ถูกบวก
+            // VAT ซ้ำ (+7%) → ยอดสูงกว่าที่ตกลงกับลูกค้า + ภาษีขายเกินจริง
+            PricesIncludeVat: source.PricesIncludeVat,
+            BillDiscountPercent: source.BillDiscountPercent > 0 ? source.BillDiscountPercent : null,
+            // โหมดยอดบาท + partial convert: เฉลี่ยส่วนลดตามสัดส่วน gross ที่ยกไป
+            // (ยกครบ = เต็มจำนวน) — % scale ตัวเองอยู่แล้ว
+            BillDiscountAmount: source.BillDiscountPercent <= 0 && source.BillDiscountAmount > 0
+                ? Math.Round(source.BillDiscountAmount * Math.Min(1m,
+                    (source.SubTotal + source.BillDiscountAmount) > 0
+                        ? spec.Sum(s => s.Qty * s.Line.UnitPrice * (1 - s.Line.DiscountPercent / 100m))
+                          / (source.SubTotal + source.BillDiscountAmount)
+                        : 1m), 2)
+                : null,
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
             // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
             RelatedDocumentId: source.Id), createdBy);
@@ -5435,8 +5502,8 @@ public class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         // Validate document status allows payment
-        if (doc.Status != DocumentStatus.Approved && doc.Status != DocumentStatus.PartiallyPaid && doc.Status != DocumentStatus.Sent)
-            throw new InvalidOperationException("สามารถชำระเงินได้เฉพาะเอกสารที่อนุมัติแล้ว, ชำระบางส่วน หรือส่งแล้วเท่านั้น");
+        if (doc.Status != DocumentStatus.Approved && doc.Status != DocumentStatus.PartiallyPaid && doc.Status != DocumentStatus.Sent && doc.Status != DocumentStatus.Overdue)
+            throw new InvalidOperationException("สามารถชำระเงินได้เฉพาะเอกสารที่อนุมัติแล้ว, ชำระบางส่วน, ส่งแล้ว หรือเกินกำหนดเท่านั้น");
 
         // เฉพาะเอกสาร "ตั้งหนี้" เท่านั้นที่รับ/จ่ายชำระได้ — เอกสารอื่นทำ GL พัง:
         //   • ใบวางบิล/ใบเสนอราคา/PO ฯลฯ ไม่ลง JE ตอนอนุมัติ → ชำระแล้ว Cr AR
@@ -5777,7 +5844,7 @@ public class DocumentService : IDocumentService
             foreach (var alloc in request.Allocations)
             {
                 var d = docMap[alloc.DocumentId];
-                if (d.Status != DocumentStatus.Approved && d.Status != DocumentStatus.PartiallyPaid && d.Status != DocumentStatus.Sent)
+                if (d.Status != DocumentStatus.Approved && d.Status != DocumentStatus.PartiallyPaid && d.Status != DocumentStatus.Sent && d.Status != DocumentStatus.Overdue)
                     throw new InvalidOperationException(
                         $"เอกสาร {d.DocumentNumber} สถานะ {d.Status} ไม่สามารถชำระได้");
                 if (!PayableDocumentTypes.Contains(d.DocumentType))
@@ -6184,8 +6251,12 @@ public class DocumentService : IDocumentService
             // The override points at a deleted/inactive account —
             // fall through to the system default rather than throw.
         }
+        // exact-match ต้องเป็นบัญชี postable (Level >= 4) เท่านั้น — chart มาตรฐาน
+        // มี header ระดับ 3 ชื่อรหัสสั้น ("116", "212") ถ้า exact จับ header จะ
+        // ลงบัญชีลงกลุ่มแทนบัญชีจริง (audit F2: CN ซื้อเครดิต "116" header →
+        // 11610 ค้างสูงถาวร) → header หลุดไป prefix-search ที่กรอง Level >= 4 อยู่แล้ว
         var found = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
+                a.CompanyId == companyId && a.AccountCode == codePrefix && a.Level >= 4 && a.IsActive)
             ?? await _db.ChartOfAccounts
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4 && a.IsActive)
                 .OrderBy(a => a.AccountCode)
@@ -6804,6 +6875,20 @@ public class DocumentService : IDocumentService
                     Notes = $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
                     CreatedBy = actor,
                 });
+
+                // WAC ต้อง rebuild หลัง void ซื้อ (audit A5): เดิมปรับแค่ CurrentStock
+                // → avg ค้างค่าที่รวมล็อตที่ยกเลิกแล้ว → COGS ขายถัดไปผิด + 11500
+                // ไม่ตรงของจริง. rebuild เดินจาก movement ทั้งหมด (รวม reversal นี้)
+                if (_inventoryCosting != null
+                    && product.CostingMethod == Models.Enums.CostingMethod.WeightedAverage)
+                {
+                    try { await _inventoryCosting.RebuildAverageCostAsync(product.Id); }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Rebuild WAC หลัง void {Doc} ล้มเหลว (product {Product})",
+                            doc.DocumentNumber, product.Code);
+                    }
+                }
             }
             return;
         }
@@ -7333,6 +7418,12 @@ public class DocumentService : IDocumentService
                         && d.CompanyId == companyId);
             }
 
+            // §86/9-10: ห้ามออก CN/DN อ้างใบที่ถูกยกเลิกแล้ว (audit F9) — JE ของใบ
+            // เดิมถูก reverse ไปแล้ว การ Cr AR/Dr AP ซ้ำ = ยอดติดลบ
+            if (source != null && source.Status == DocumentStatus.Voided)
+                throw new InvalidOperationException(
+                    $"ไม่สามารถออก{(doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}อ้างอิง {source.DocumentNumber} ได้ — เอกสารต้นทางถูกยกเลิกแล้ว (§86/9-10)");
+
             var isPurchaseSide = source != null && (
                 source.DocumentType == DocumentType.PurchaseInvoice
                 || source.DocumentType == DocumentType.Expense
@@ -7360,11 +7451,20 @@ public class DocumentService : IDocumentService
             // Sales side:    CN→Cr counter, DN→Dr counter
             // Purchase side: CN→Dr counter, DN→Cr counter
             var counterIsDebit = isPurchaseSide ? isCreditNote : !isCreditNote;
+            // WHT basis = Cash (audit F2): ใบกำกับ/PI ต้นทางลง AR/AP แบบ "gross"
+            // (Total + WHT) โดยไม่แตะ 11910/2191x จนกว่าจะรับ/จ่ายเงินจริง →
+            // CN/DN โหมด AR/AP ต้อง mirror gross แบบเดียวกันและ "ไม่ลงขา WHT"
+            // — เดิมลงแบบ accrual เสมอ → AR ค้าง +WHT ถาวร / 11910 ติดลบ
+            var cnDnGrossWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
+                && !isCashSettlement && doc.WithholdingTaxAmount > 0;
+            var counterAmt = cnDnGrossWht
+                ? doc.TotalAmount + doc.WithholdingTaxAmount
+                : doc.TotalAmount;
             if (counterAcc != null)
             {
                 AddLine(counterAcc.Id,
-                    counterIsDebit ? doc.TotalAmount : 0,
-                    counterIsDebit ? 0 : doc.TotalAmount,
+                    counterIsDebit ? counterAmt : 0,
+                    counterIsDebit ? 0 : counterAmt,
                     counterDesc);
             }
 
@@ -7418,7 +7518,8 @@ public class DocumentService : IDocumentService
             }
 
             // === WHT line ===
-            if (doc.WithholdingTaxAmount > 0)
+            // (ข้ามเมื่อ basis Cash โหมด AR/AP — counter ลง gross แทน, ดู cnDnGrossWht)
+            if (doc.WithholdingTaxAmount > 0 && !cnDnGrossWht)
             {
                 // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable
                 // by counterparty type (Individual→ภ.ง.ด.3 21916, Juristic→ภ.ง.ด.53 21917).
