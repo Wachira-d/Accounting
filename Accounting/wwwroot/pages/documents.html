@@ -630,6 +630,10 @@
                     <option value="pct">%</option>
                   </select>
                 </span>
+                <!-- ยอดหลังหักส่วนลด (ฐานภาษี) — โชว์เฉพาะเมื่อมีส่วนลดท้ายบิล
+                     เพื่อให้เห็นชัดว่า VAT/WHT คิดจากฐานนี้ (ถูกหลักบัญชี) -->
+                <span id="sumAfterDiscLabel" style="color:var(--gray-600);font-weight:600;display:none">ยอดหลังหักส่วนลด (ฐานภาษี)</span>
+                <strong id="sumAfterDisc" style="text-align:right;display:none">0.00</strong>
                 <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
               </div>
@@ -3787,6 +3791,17 @@
         }
         // sumSubTotal = "ยอดรวมก่อน VAT" (ก่อนหักท้ายบิล) = sub
         document.getElementById('sumSubTotal').textContent = Layout.money(sub);
+        // แถว "ยอดหลังหักส่วนลด (ฐานภาษี)" — โชว์เฉพาะเมื่อมีส่วนลดท้ายบิล
+        // ให้เห็นชัดว่า VAT/WHT คิดจาก 42,000 ไม่ใช่ 47,088 (ลำดับถูกหลักบัญชี:
+        // รวม → หักส่วนลด → ฐานภาษี → VAT → WHT → สุทธิ)
+        const adLabel = document.getElementById('sumAfterDiscLabel');
+        const adVal = document.getElementById('sumAfterDisc');
+        if (adLabel && adVal) {
+          const show = billDisc > 0;
+          adLabel.style.display = show ? '' : 'none';
+          adVal.style.display = show ? '' : 'none';
+          if (show) adVal.textContent = Layout.money(sub - billDisc);
+        }
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
         const totalCalc = (sub - billDisc) + vat - wht;

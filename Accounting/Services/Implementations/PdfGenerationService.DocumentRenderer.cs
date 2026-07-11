@@ -584,6 +584,16 @@ public partial class PdfGenerationService
                     : doc.PricesIncludeVat
                         ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
                         : line.Amount;
+                // ส่วนลดท้ายบิล: line.Amount เก็บยอด "หลังเฉลี่ยส่วนลด" (สำหรับ GL/
+                // VAT) แต่บนกระดาษต้องโชว์ยอด "ก่อนหักท้ายบิล" — ไม่งั้นบรรทัดขัด
+                // กันเอง (1 × 19,650 − ส่วนลด 0 = 17,526.76 ??) และไม่ตรงหน้าแก้ไข.
+                // scale กลับด้วยสัดส่วนเดียวกับที่เฉลี่ยลง (Σก่อนหัก / Σหลังหัก) —
+                // ส่วนลดท้ายบิลแสดงเป็นแถวเดียวในสรุปท้ายบิล
+                // (เฉพาะ path ที่พิมพ์จาก line.Amount — โหมด PricesIncludeVat คิดจาก
+                //  qty×price ซึ่งเป็นยอดก่อนหักท้ายบิลอยู่แล้ว ห้าม scale ซ้ำ)
+                if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m
+                    && !IsDeferredVatDeposit(doc) && !doc.PricesIncludeVat)
+                    printedAmount = Math.Round(printedAmount * (doc.SubTotal + doc.BillDiscountAmount) / doc.SubTotal, 2);
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
                 Td(line.Description ?? "");
                 Td(line.Quantity.ToString("N2"), "right");
@@ -632,7 +642,13 @@ public partial class PdfGenerationService
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
                 Row("ส่วนลดรวม", doc.DiscountAmount.ToString("N2"));
             if (doc.BillDiscountAmount > 0)
+            {
                 Row("ส่วนลดท้ายบิล", $"({doc.BillDiscountAmount:N2})");
+                // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
+                // (ลำดับถูกหลักบัญชี: รวม → หักส่วนลด → ฐานภาษี → VAT → WHT → สุทธิ)
+                if (!hideVatBreakdown)
+                    Row("ยอดหลังหักส่วนลด (ฐานภาษี)", doc.SubTotal.ToString("N2"));
+            }
             if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown)
                 Row("ภาษีมูลค่าเพิ่ม 7%", doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)

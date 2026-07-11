@@ -789,7 +789,15 @@ public partial class PdfGenerationService : IPdfGenerationService
         // never set one up but the company Owner did — stamp the Owner's
         // signature there so the document isn't left with an empty authorized
         // line. Only fills the IMAGE-less case; never overrides a real signer.
-        if (signers.Count >= 2 && (signers[1].SignatureImageBytes is null || signers[1].SignatureImageBytes!.Length == 0))
+        // ⚠️ เฉพาะเอกสารที่ "อนุมัติแล้ว" เท่านั้น — Draft/รออนุมัติ/ถูกปฏิเสธ
+        // ต้องเว้นว่าง (เงื่อนไขเดียวกับตราประทับใน DocumentRenderer): เดิม
+        // fallback นี้ไม่เช็คสถานะ → ใบ DRAFT ก็มีลายเซ็นผู้มีอำนาจลงนาม = ผิด
+        // (เอกสารยังไม่ผ่านการอนุมัติจริง ห้ามมีหลักฐานลงนาม)
+        var authorizedSignable = doc.Status is not (Models.Enums.DocumentStatus.Draft
+            or Models.Enums.DocumentStatus.WaitingApproval
+            or Models.Enums.DocumentStatus.Rejected);
+        if (authorizedSignable && signers.Count >= 2
+            && (signers[1].SignatureImageBytes is null || signers[1].SignatureImageBytes!.Length == 0))
         {
             var ownerSig = await (
                 from cu in _db.Set<CompanyUser>().AsNoTracking()
@@ -1085,6 +1093,12 @@ public partial class PdfGenerationService : IPdfGenerationService
             var printedAmount = inclVat
                 ? Math.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2)
                 : line.Amount;
+            // ส่วนลดท้ายบิล: line.Amount = ยอดหลังเฉลี่ยส่วนลด (สำหรับ GL/VAT) แต่
+            // บนกระดาษต้องโชว์ยอดก่อนหักท้ายบิล — ไม่งั้นบรรทัดขัดกันเอง
+            // (1 × 19,650 − ส่วนลด 0 = 17,526.76 ??) และไม่ตรงหน้าแก้ไข. scale
+            // กลับตามสัดส่วนที่เฉลี่ย; ส่วนลดแสดงรวมเป็นแถวเดียวในสรุปท้ายบิล
+            if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m && !inclVat)
+                printedAmount = Math.Round(printedAmount * (doc.SubTotal + doc.BillDiscountAmount) / doc.SubTotal, 2);
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
             sb.AppendLine($"<td style='white-space:pre-line'>{line.Description}</td>");
@@ -1107,7 +1121,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
         if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ยอดรวมก่อน VAT</span><span>{preBillSubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดรวม</span><span>{doc.DiscountAmount:N2}</span></div>");
-        if (doc.BillDiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ส่วนลดท้ายบิล</span><span>({doc.BillDiscountAmount:N2})</span></div>");
+        if (doc.BillDiscountAmount > 0)
+        {
+            sb.AppendLine($"<div class='sum-row'><span>ส่วนลดท้ายบิล</span><span>({doc.BillDiscountAmount:N2})</span></div>");
+            // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
+            if (!hideVatBreakdown)
+                sb.AppendLine($"<div class='sum-row'><span>ยอดหลังหักส่วนลด (ฐานภาษี)</span><span>{doc.SubTotal:N2}</span></div>");
+        }
         if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>ภาษีหัก ณ ที่จ่าย</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         // หักเงินมัดจำ (display-only): ยอดรวมทั้งสิ้น → หักมัดจำ → ยอดชำระสุทธิ
