@@ -2711,6 +2711,28 @@ public class DocumentService : IDocumentService
                     doc.Status = DocumentStatus.Paid;
                 }
 
+                // ===== 50 ทวิ สำหรับเอกสารจ่ายที่ "จ่ายจบตอน approve" (audit F12) =====
+                // PV เงินสด standalone / เอกสาร settle แปลงมา → ไม่มี Payment row
+                // เลย → hook auto-gen ใน CreatePaymentAsync ไม่เคยยิง → ไม่มี 50 ทวิ
+                // ทั้งที่หักภาษีแล้วจ่ายเงินแล้ว (ต้องออกให้ผู้ถูกหักในวันจ่าย)
+                if (doc.Status == DocumentStatus.Paid
+                    && doc.WithholdingTaxAmount > 0
+                    && _whtService != null
+                    && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.Expense
+                        or DocumentType.PurchaseInvoice or DocumentType.CertificateInLieu)
+                {
+                    try
+                    {
+                        await _whtService.AutoGenerateFromDocumentAsync(
+                            companyId, doc.Id, false, approvedBy,
+                            doc.PaymentDate ?? doc.DocumentDate);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Auto-gen 50 ทวิ ตอน approve {Doc} ไม่สำเร็จ (ไม่ block)", doc.DocumentNumber);
+                    }
+                }
+
                 await ApplyProjectBillingAsync(companyId, doc, +1);
                 await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
 
@@ -4249,7 +4271,7 @@ public class DocumentService : IDocumentService
                 {
                     _logger.LogWarning(
                         "VoidPayment {Doc}: หนังสือรับรอง 50 ทวิ {Cert} สถานะ {Status} ยังไม่ถูกยกเลิก — ออกให้ผู้ถูกหักแล้ว กรุณายกเลิก/ออกใหม่ด้วยตนเอง",
-                        doc.DocumentNumber, cert.CertNumber, cert.Status);
+                        doc.DocumentNumber, cert.CertificateNumber, cert.Status);
                 }
             }
         }
@@ -4698,12 +4720,23 @@ public class DocumentService : IDocumentService
         // กันแปลงซ้ำเป็นเอกสารรับรู้รายได้ (Invoice/TaxInvoice) — 1 ต้นทางออกใบ
         // รับรู้รายได้ได้ใบเดียว (เดิมไม่กัน → Invoice→TaxInvoice 2 ครั้ง = รายได้
         // + ภาษีขายซ้ำ 2 เท่า, ภพ.30 นับซ้ำ). ยกเว้นใบที่ถูกยกเลิก/ปฏิเสธไปแล้ว.
-        if (targetType is DocumentType.Invoice or DocumentType.TaxInvoice)
+        // (audit F3) แหล่ง QT/BN: Receipt/RV ลูกก็ "รับรู้รายได้เอง" (standalone
+        // cash-sale JE — ไม่ใช่ settlement เพราะ QT/BN ไม่ตั้งหนี้) → ต้องนับเป็น
+        // revenue-child เดียวกับ Invoice/TaxInvoice. เดิม guard เช็คเฉพาะ
+        // Invoice/TaxInvoice → QT→Invoice แล้ว QT→Receipt (หรือสลับลำดับ) ผ่านได้
+        // ทั้งคู่ = รายได้ + ภาษีขาย 2 เท่าจากการขายครั้งเดียว
+        var sourceIsPreRevenue = source.DocumentType is DocumentType.Quotation or DocumentType.BillingNote;
+        var targetPostsRevenue = targetType is DocumentType.Invoice or DocumentType.TaxInvoice
+            || (sourceIsPreRevenue && targetType is DocumentType.Receipt or DocumentType.ReceiptVoucher);
+        if (targetPostsRevenue)
         {
+            var revenueChildTypes = sourceIsPreRevenue
+                ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.ReceiptVoucher }
+                : new[] { DocumentType.Invoice, DocumentType.TaxInvoice };
             var existingRevenueChild = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id
                     && !d.IsDeleted
-                    && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                    && revenueChildTypes.Contains(d.DocumentType)
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
                 .Select(d => new { d.DocumentNumber, d.DocumentType })
                 .FirstOrDefaultAsync();
@@ -5721,11 +5754,15 @@ public class DocumentService : IDocumentService
             {
                 try
                 {
-                    await _whtService.AutoGenerateFromDocumentAsync(companyId, doc.Id, false, createdBy);
+                    // ส่งวันจ่ายจริง (audit F13): ภ.ง.ด.3/53 เป็น cash basis — cert
+                    // ต้องลงเดือนที่จ่าย ไม่ใช่เดือนวันที่เอกสารตั้งหนี้
+                    await _whtService.AutoGenerateFromDocumentAsync(
+                        companyId, doc.Id, false, createdBy, payment.PaymentDate);
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Cert may already exist or other non-critical error — don't fail payment
+                    _logger.LogWarning(ex, "Auto-gen 50 ทวิ จากการชำระ {Doc} ไม่สำเร็จ (ไม่ block การชำระ)", doc.DocumentNumber);
                 }
             }
 
@@ -7658,6 +7695,20 @@ public class DocumentService : IDocumentService
                 // for the invoiced (ex-VAT) value. Partial invoices clear only
                 // their portion; the rest of the GR-NI stays for later bills.
                 AddLine(grNiAccount.Id, doc.SubTotal, 0, $"ตัดเจ้าหนี้รับของยังไม่วางบิล - {doc.DocumentNumber}");
+                // VAT ต้องห้าม (§82/5) บนใบที่อ้าง GRN (audit F1-purchase): GRN
+                // ตั้ง accrual แค่ฐาน ex-VAT → VAT ต้องห้ามยังไม่มีขา Dr ที่ไหน
+                // (ขา 116 ด้านล่างรวมเฉพาะ claimable) → JE ขาด Dr เท่ายอด VAT
+                // ต้องห้าม = ไม่สมดุล/ถูกยัดใส่บรรทัดใหญ่สุดเงียบ ๆ. ลงเป็นต้นทุน
+                // ตามบรรทัด (VAT เคลมไม่ได้ = ส่วนหนึ่งของต้นทุนสินค้า/ค่าใช้จ่าย)
+                var grnNonClaimResolver = await BuildPurchaseLineAccountResolverAsync(
+                    companyId, doc, defaultExpense?.Id);
+                foreach (var ncLine in doc.Lines.Where(l => !l.IsVatClaimable && l.VatAmount > 0))
+                {
+                    var ncAccId = grnNonClaimResolver(ncLine);
+                    if (!ncAccId.HasValue) continue;
+                    AddLine(ncAccId.Value, ncLine.VatAmount, 0,
+                        $"VAT ต้องห้ามรวมเป็นต้นทุน - {ncLine.Description}", ncLine.ProjectId);
+                }
             }
             else
             {

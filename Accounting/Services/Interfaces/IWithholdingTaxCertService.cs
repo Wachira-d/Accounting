@@ -20,7 +20,7 @@ public interface IWithholdingTaxCertService
     Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null);
 
     // Auto-generate from document/payment
-    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy);
+    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null);
     Task<List<PendingWhtDocumentResponse>> GetPendingDocumentsAsync(Guid companyId, int? year = null, int? month = null);
     Task<BulkGenerateWhtResponse> BulkGenerateAsync(Guid companyId, BulkGenerateWhtRequest request, string createdBy);
     /// <summary>Dismiss a document from the "waiting to issue cert" list — the

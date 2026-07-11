@@ -187,8 +187,23 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (recurring.EndDate.HasValue && DateTime.UtcNow > recurring.EndDate.Value)
             throw new InvalidOperationException("รายการนี้เลยวันสิ้นสุดแล้ว");
 
+        // audit D3: lock แถวกันชนกับ cron/ดับเบิลคลิก + เลื่อน NextRunDate เหมือน
+        // cron path — เดิม RunNow ไม่เลื่อน → cron รอบถัดไปเห็น NextRunDate เดิม
+        // ยัง due → สร้างเอกสารซ้ำ (เลขจริง อนุมัติแล้ว) จากงวดเดียวกัน
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        _ = await _db.RecurringTransactions
+            .FromSqlRaw("SELECT * FROM \"RecurringTransactions\" WHERE \"Id\" = {0} FOR UPDATE", recurring.Id)
+            .AsNoTracking()
+            .FirstOrDefaultAsync();
+        await _db.Entry(recurring).ReloadAsync();
+        if (recurring.Status != RecurringStatus.Active)
+            throw new InvalidOperationException("รายการนี้ไม่อยู่ในสถานะ Active");
+
         await ExecuteRecurringAsync(recurring, performedBy);
+        if (recurring.NextRunDate <= DateTime.UtcNow)
+            recurring.NextRunDate = GetNextRunDate(recurring);
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return MapToResponse(recurring);
     }
 
@@ -377,7 +392,13 @@ public class RecurringTransactionService : IRecurringTransactionService
                         VatRate: line.TryGetProperty("vatRate", out var vr) ? vr.GetDecimal() : 7,
                         WithholdingTaxRate: line.TryGetProperty("withholdingTaxRate", out var wt) ? wt.GetDecimal() : 0,
                         AccountId: line.TryGetProperty("accountId", out var aid) && aid.ValueKind == JsonValueKind.String ? Guid.Parse(aid.GetString()!) : null,
-                        ProjectId: lineProjectId
+                        ProjectId: lineProjectId,
+                        // audit D1: template ที่ใช้ส่วนลดบาท/ธง VAT ต้องห้าม/สินค้า
+                        // เดิมหาย → ใบที่ generate แพงกว่า template + VAT ต้องห้าม
+                        // กลับเคลมได้
+                        ProductCode: line.TryGetProperty("productCode", out var pc) && pc.ValueKind == JsonValueKind.String ? pc.GetString() : null,
+                        IsVatClaimable: !line.TryGetProperty("isVatClaimable", out var ivc) || ivc.ValueKind != JsonValueKind.False,
+                        DiscountAmount: line.TryGetProperty("discountAmount", out var da) && da.ValueKind == JsonValueKind.Number ? da.GetDecimal() : null
                     ));
                 }
             }
@@ -397,7 +418,12 @@ public class RecurringTransactionService : IRecurringTransactionService
                 ProjectId: projectId,
                 BankAccountId: bankAccountId,
                 PaymentAccountId: paymentAccountId,
-                ExpenseCategoryId: expenseCategoryId
+                ExpenseCategoryId: expenseCategoryId,
+                // audit D2: template ราคารวม VAT / มีส่วนลดท้ายบิล — เดิมไม่ส่ง →
+                // ราคารวม VAT ถูกบวก VAT ซ้ำ (+7%) และส่วนลดหาย
+                PricesIncludeVat: root.TryGetProperty("pricesIncludeVat", out var piv) && piv.ValueKind == JsonValueKind.True,
+                BillDiscountPercent: root.TryGetProperty("billDiscountPercent", out var bdp) && bdp.ValueKind == JsonValueKind.Number ? bdp.GetDecimal() : null,
+                BillDiscountAmount: root.TryGetProperty("billDiscountAmount", out var bda) && bda.ValueKind == JsonValueKind.Number ? bda.GetDecimal() : null
             );
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);

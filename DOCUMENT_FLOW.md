@@ -1194,6 +1194,23 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 61 (ปิด backlog สูงจาก audit รอบ 60): กัน**รายได้ซ้ำ** QT/BN → Invoice_
+_และ → Receipt (นับ Receipt/RV เป็น revenue-child ของ QT/BN ใน conversion guard_
+_F3); **ภ.พ.30 นับ Receipt ที่แปลงจาก QT/BN** (ขายเงินสด — VAT ลง GL แต่เดิม_
+_ถูก exclude เพราะมี RelatedDocumentId = นำส่งขาด F4-sales; settlement ของ_
+_Invoice/TaxInvoice ยัง exclude ตามเดิม); PI อ้าง GRN + VAT ต้องห้าม → Dr VAT_
+_เข้าเป็นต้นทุนตามบรรทัด (เดิม JE ไม่สมดุล F1-purchase); 50 ทวิ ลง**เดือนที่จ่าย_
+_จริง** (paymentDate param F13) + auto-สร้างตอน approve เอกสารจ่ายที่จบทันที_
+_(PV เงินสด/settle — เดิมไม่มี cert เลย F12); recurring ส่งต่อส่วนลดบาท/_
+_IsVatClaimable/ProductCode/BillDiscount/PricesIncludeVat (D1/D2) + RunNow lock_
+_+ เลื่อน NextRunDate กันออกใบซ้ำกับ cron (D3)._
+_ยัง backlog (ต้อง design/เสี่ยงสูง): F5 Invoice ไม่เข้า ภ.พ.30 (VAT ใน GL ตั้งแต่_
+_approve — ต้องเลือก post ตอน settle หรือรายงาน Invoice), F15 ภ.พ.36 ไม่มี JE,_
+_F10 Receipt ขายสดไม่ตัด COGS/สต๊อก (เสี่ยงชน POS ที่เขียน movement เอง), A8_
+_multi-warehouse, A4/A10 FIFO relayer ตอน void, A7 negative-stock enforcement,_
+_F16 หัวใบเสร็จ settlement ขึ้น "ใบกำกับภาษี", F6 คอลัมน์ exempt/0%, §65ตรี ครบ_
+_ทุกวงเล็บ, ใบกำกับอย่างย่อ (§86/6), F11 RecalcVatTotals JE_INPUT, F8 §82/3_
+_anchor ตามงวดรายงาน, D5 convert race._
 _รอบ 60 (audit ทุกประเภทเอกสาร — แก้ criticals ชุดแรก 15 จุด): void ใบเสร็จ_
 _settlement ถูก block (ให้ยกเลิก payment แทน — กัน AR ติดลบ/เก็บซ้ำ B3/F8);_
 _FindAccountAsync exact-match ข้าม header Level<4 (CN ซื้อเคย Cr "116"/"212"_
