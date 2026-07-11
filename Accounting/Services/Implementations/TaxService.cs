@@ -231,7 +231,12 @@ public partial class TaxService : ITaxService
         // resolve the type of every related doc across periods in one query,
         // keyed by id, so the loop below can route correctly.
         var relatedDocIds = docs
-            .Where(d => (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
+            .Where(d => (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote
+                         // Receipt/RV ต้องรู้ type ต้นทางด้วย (audit F4-sales): แยก
+                         // "settlement ของ Invoice/TaxInvoice" (ห้ามนับซ้ำ) กับ
+                         // "ขายเงินสดที่แปลงจาก QT/BN" (ต้องนับ — VAT ลง GL แล้ว)
+                         || d.DocumentType == DocumentType.Receipt
+                         || d.DocumentType == DocumentType.ReceiptVoucher)
                         && d.RelatedDocumentId.HasValue)
             .Select(d => d.RelatedDocumentId!.Value)
             .Distinct()
@@ -282,7 +287,15 @@ public partial class TaxService : ITaxService
             // แม้รายได้จะรอรับรู้ (Cr ขายรอรับรู้) ก็ตาม.
             else if ((doc.DocumentType == DocumentType.Receipt
                       || doc.DocumentType == DocumentType.ReceiptVoucher)
-                     && !doc.RelatedDocumentId.HasValue)
+                     // นับ standalone + ใบที่แปลงจาก QT/BN (ขายเงินสด — JE ลง Cr 21911
+                     // เองแล้ว ต้องเข้า ภ.พ.30; audit F4-sales เดิมถูก exclude เพราะมี
+                     // RelatedDocumentId → VAT อยู่ใน GL แต่ไม่เคยถูกรายงาน = นำส่งขาด).
+                     // ใบที่อ้าง Invoice/TaxInvoice = settlement → ใบกำกับต้นทางรายงาน
+                     // ไปแล้ว ห้ามนับซ้ำ (พฤติกรรมเดิม)
+                     && (!doc.RelatedDocumentId.HasValue
+                         || (relatedDocTypes.TryGetValue(doc.RelatedDocumentId.Value, out var rcptSrcType)
+                             && (rcptSrcType == DocumentType.Quotation
+                                 || rcptSrcType == DocumentType.BillingNote))))
             {
                 // มัดจำเคส Deferred output VAT: tax point เกิดเมื่อ RecognizedAt.
                 //   • ยังไม่ recognized → ข้าม (ยังไม่เข้า ภ.พ.30 — VAT อยู่ 21913)

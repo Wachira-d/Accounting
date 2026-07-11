@@ -372,7 +372,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     // ==================== Auto-Generate from Document ====================
 
     public async Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(
-        Guid companyId, Guid documentId, bool autoIssue, string createdBy)
+        Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null)
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null → 50 ทวิ ออกไม่ได้)
@@ -413,8 +413,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             CertificateNumber = certNumber,
             PayeeContactId = doc.ContactId,
             TaxFormType = taxFormType,
-            TaxYear = doc.DocumentDate.Year,
-            TaxMonth = doc.DocumentDate.Month,
+            // ภ.ง.ด.3/53 = cash basis: เดือนภาษีตาม "วันจ่ายจริง" (audit F13) —
+            // เดิมใช้ DocumentDate → cert ตกงวดเดือนตั้งหนี้ทั้งที่ยังไม่จ่าย
+            TaxYear = (paymentDate ?? doc.PaymentDate ?? doc.DocumentDate).Year,
+            TaxMonth = (paymentDate ?? doc.PaymentDate ?? doc.DocumentDate).Month,
             CertificateType = WithholdingTaxCertType.Withhold,
             DocumentId = documentId,
             CreatedBy = createdBy
@@ -431,7 +433,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 LineOrder = 1,
                 IncomeTypeCode = "8", // ค่าบริการอื่นๆ default
                 IncomeDescription = $"ตามเอกสาร {doc.DocumentNumber}",
-                PaymentDate = doc.DocumentDate,
+                PaymentDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate,
                 IncomeAmount = doc.SubTotal,
                 TaxRate = doc.SubTotal > 0 ? doc.WithholdingTaxAmount * 100 / doc.SubTotal : 3m,
                 TaxAmount = doc.WithholdingTaxAmount
@@ -446,7 +448,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     LineOrder = order++,
                     IncomeTypeCode = line.IncomeTypeCode ?? "8",
                     IncomeDescription = line.Description,
-                    PaymentDate = doc.DocumentDate,
+                    PaymentDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate,
                     IncomeAmount = line.Amount,
                     TaxRate = line.WithholdingTaxRate,
                     TaxAmount = line.WithholdingTaxAmount
