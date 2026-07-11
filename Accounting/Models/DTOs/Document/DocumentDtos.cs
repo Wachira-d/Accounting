@@ -326,7 +326,9 @@ public record DepositSummary(
     DateTime? OutputVatRecognizedAt,
     // เลขจอง (BookingNumber) — ผูกกับใบปลายทางที่ booking เดียวกัน;
     // UI ใช้ highlight + auto-suggest มัดจำเมื่อ user กรอก booking ตรงกัน
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    // ยอดที่คืนเงินแล้ว (gross รวม VAT) — Outstanding หักส่วนนี้แล้ว (audit #7)
+    decimal RefundedAmount = 0m);
 
 /// <summary>ตัววินิจฉัยหน้าเงินมัดจำ — บอกว่าระบบ "เห็น" อะไรบ้าง เพื่อหา
 /// สาเหตุเมื่อ dashboard โชว์ 0 (ไม่มีบัญชีมัดจำในผัง / ไม่มี JE เครดิต /
@@ -339,7 +341,12 @@ public record DepositDiagnostics(
     decimal TotalCreditNet,         // ΣCr − ΣDr รวมทุกบัญชีมัดจำ
     int DocLinkedCreditCount,       // credit lines ที่มี SourceDocumentId
     int DocLessCreditCount,         // credit lines ที่ไม่มี SourceDocumentId
-    string Hint);                   // คำแนะนำภาษาไทยว่าติดตรงไหน
+    string Hint,                    // คำแนะนำภาษาไทยว่าติดตรงไหน
+    // self-probe: จำนวนแถวที่ GetDepositsAsync (endpoint จริงของหน้า list) คืน
+    // ใน build เดียวกันนี้ — ฟันธง: probe > 0 แต่หน้าเห็น 0 = cache/SW เก่า 100%;
+    // probe = 0 ทั้งที่ native > 0 = บั๊กใน list builder (ดู ListEndpointError)
+    int ListEndpointCount = 0,
+    string? ListEndpointError = null);
 
 public record DepositAccountInfo(string AccountCode, string AccountName, decimal NetCredit);
 

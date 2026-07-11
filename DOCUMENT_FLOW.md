@@ -1194,6 +1194,27 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 59 (audit จำลอง scenario — ชุดใหญ่ 15 แก้): **สมมาตร apply↔void สมบูรณ์** —_
+_void/purge un-realize คิดจาก "บรรทัด JE จริงของใบเช็คเอาท์" (helper Unrealize_
+_DrivesDepositAsync: depBase = ΣDr 215/217, เคลียร์ RecognizedAt เฉพาะเมื่อใบมี_
+_Dr 21913 จริง) แทน field-ratio — ปิด F1 (gross drift +VAT/รอบ), F2 (void แล้ว_
+_VAT ผี ค้าง ภ.พ.30), F3 (ล้าง stamp ของ RealizeDeposit ผิดใบ → 21913 ติดลบ/_
+_21911 เบิ้ล). เคส A เพิ่ม guard ครบ (F4): one-shot+self-heal เหมือนเคส B +_
+_over-apply เทียบ GL net/subledger + row-lock FOR UPDATE กัน concurrent (F9B,_
+_ทั้งใบมัดจำและ JV+reload). purge un-realize subledger ก่อนลบ JE (F7). Apply_
+_classic: over-apply guard + one-shot + คุม status PartiallyPaid + stamp_
+_RecognizedAt เมื่อครบเท่านั้น (กัน 21913 ghost จาก partial). Refund: guard_
+_เทียบคงเหลือจริง (หัก realized) + **ออกใบลดหนี้จริง** (§86/10) เมื่อ VAT เคย_
+_ถูกรายงาน → ภ.พ.30 ลดยอดถูกต้อง. หน้า deposits: หัก refunded, clamp ≥0,_
+_fallback GL net เมื่อ SubTotal=0, DTO เพิ่ม RefundedAmount. create block_
+_IsDeposit+RelatedDocumentId (มัดจำต้อง standalone)._
+_รอบ 58 (audit จำลอง scenario): แก้ **ภ.พ.30 นับ VAT มัดจำซ้ำ** — มัดจำ defer ที่_
+_ถูกหักผ่าน drives/apply (DepositAppliedToDocumentId ตั้ง) เคยถูกดึงเข้า ภ.พ.30_
+_งวด RecognizedAt ทั้งที่ใบเช็คเอาท์/ใบกำกับปลายทางรายงาน VAT เต็มใบแล้ว → ยอด_
+_ขาย/ภาษีขายเกินจริง. แก้: exclude applied deposits จาก deferredRecognized query_
+_+ Receipt branch (standalone RealizeDeposit ยังรายงานปกติ). + deferred ตัดสิน_
+_**GL-first** (flag หรือขา Cr 21913 จริงใน JE ใบมัดจำ) เหมือน drives d7ee4d3 —_
+_มัดจำ integration ที่ flag ไม่ตั้งเคยถูกรายงานเดือนรับเงินทั้งที่ GL พัก 21913._
 _รอบ 57: drives — **หลักเดียวทุกเคส** (TakeTime §5): resolve เจอแล้ว → อ่าน "ขา Cr_
 _จริง" ของใบมัดจำ/JV แล้วกลับตามนั้น ไม่ assume โหมดจาก field/flag/setting._
 _เคส A ยกเครื่องเหมือนเคส B: อ่าน JE ของใบมัดจำ (SourceDocumentId, Posted||Reversed)_
