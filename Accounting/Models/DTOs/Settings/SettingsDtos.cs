@@ -102,7 +102,10 @@ public record UpdateCompanySettingsRequest(
     // ===== ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดผ่าน endpoint /settings/stamp) =====
     decimal? StampWidthMm = null,           // กว้าง (มม.) 0 = auto
     decimal? StampHeightMm = null,          // สูง (มม.)
-    string? StampAlign = null);             // Right / Left / Center (ในโซนลายเซ็น)
+    string? StampAlign = null,              // Right / Left / Center (ในโซนลายเซ็น)
+    // เปิด/ปิดช่อง "โครงการ" และ "ศูนย์ต้นทุน" บนฟอร์มเอกสาร (null = ไม่แก้)
+    bool? ShowProjectOnDocuments = null,
+    bool? ShowCostCenterOnDocuments = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -187,7 +190,9 @@ public record CompanySettingsResponse(
     string? StampUrl = null,
     decimal StampWidthMm = 32,
     decimal StampHeightMm = 32,
-    string StampAlign = "Right");
+    string StampAlign = "Right",
+    bool ShowProjectOnDocuments = true,
+    bool ShowCostCenterOnDocuments = true);
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

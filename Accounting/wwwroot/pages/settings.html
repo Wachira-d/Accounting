@@ -305,6 +305,24 @@
             </span>
           </label>
         </div>
+        <div class="form-group advanced-only" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sShowProjectOnDocuments" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">ช่อง "โครงการ" บนฟอร์มเอกสาร</span>
+              <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;line-height:1.5">เปิดเมื่อธุรกิจติดตามกำไรต่องาน/โครงการ (รับเหมา, บริการ) — ปิดแล้วฟอร์มเบาลง ไม่เห็นช่องนี้เลย ข้อมูลเดิมไม่หาย</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group advanced-only" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sShowCostCenterOnDocuments" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">ช่อง "ศูนย์ต้นทุน/แผนก" บนฟอร์มเอกสาร</span>
+              <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;line-height:1.5">เปิดเมื่อต้องการวัดค่าใช้จ่ายแยกตามแผนก/หน่วยงานภายใน — ปิดแล้วฟอร์มเบาลง ข้อมูลเดิมไม่หาย</span>
+            </span>
+          </label>
+        </div>
       </div>
 
       <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
@@ -1748,6 +1766,8 @@
           document.getElementById('sInvoiceFooter').value = s.invoiceFooter || '';
           document.getElementById('sReceiptFooter').value = s.receiptFooter || '';
           document.getElementById('sShowGlEntryOnDocument').checked = !!s.showGlEntryOnDocument;
+          document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
+          document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sEnforceManagerApproval').checked = !!s.enforceManagerApproval;
           this.renderTitleOverrides(s.documentTitleOverridesJson);
           // Email
@@ -1892,6 +1912,8 @@
             invoiceFooter: document.getElementById('sInvoiceFooter').value || null,
             receiptFooter: document.getElementById('sReceiptFooter').value || null,
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
+            showProjectOnDocuments: document.getElementById('sShowProjectOnDocuments').checked,
+            showCostCenterOnDocuments: document.getElementById('sShowCostCenterOnDocuments').checked,
             enforceManagerApproval: document.getElementById('sEnforceManagerApproval').checked,
             documentTitleOverridesJson: this.collectTitleOverrides(),
             // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)

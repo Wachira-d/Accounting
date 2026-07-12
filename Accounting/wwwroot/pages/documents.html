@@ -1070,9 +1070,17 @@
         }
         const api = Layout.api(); if (!api) return;
         // โหลดสถานะจด VAT — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี/เก็บ VAT ขาย (§90/2)
-        try { const sr = await api.getSettings(); this._vatRegistered = sr?.data?.vatRegistered !== false; }
-        catch { this._vatRegistered = true; }
+        try {
+          const sr = await api.getSettings();
+          this._vatRegistered = sr?.data?.vatRegistered !== false;
+          // แกนวิเคราะห์ เปิด/ปิดต่อบริษัท — ปิดแล้วซ่อนช่องทั้ง form + filter
+          // (ฟอร์มเบาลงสำหรับบริษัทที่ไม่ใช้ ข้อมูลเดิมไม่หาย)
+          this._showProject = sr?.data?.showProjectOnDocuments !== false;
+          this._showCostCenter = sr?.data?.showCostCenterOnDocuments !== false;
+        }
+        catch { this._vatRegistered = true; this._showProject = true; this._showCostCenter = true; }
         this.applyVatRegistrationLock();
+        this.applyAnalysisAxisVisibility();
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
         // Load active projects (for the document → project tagging dropdown).
         // ProjectId on a document propagates to JournalEntry on auto-post, so
@@ -1930,6 +1938,16 @@
 
       // §90/2 — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี/เก็บ VAT ขาย. ปิดตัวเลือก
       // ใบกำกับภาษีในฟอร์มสร้าง (ฝั่ง approve มี hard-block อีกชั้น) + ป้ายบอกเหตุ
+      // ซ่อน/แสดงช่อง โครงการ + ศูนย์ต้นทุน ตาม CompanySettings (เปิด/ปิดได้ที่
+      // ตั้งค่า → เอกสาร) — ปิด = ฟอร์มสั้นลง ไม่ต้องกรอก/ไม่เห็นเลย
+      applyAnalysisAxisVisibility() {
+        const hide = (el) => { const g = el && el.closest('.form-group'); if (g) g.style.display = this._showHidden ? '' : 'none'; };
+        if (this._showProject === false) {
+          hide(document.getElementById('fProject'));
+          const pf = document.getElementById('projectFilter'); if (pf) pf.style.display = 'none';
+        }
+        if (this._showCostCenter === false) hide(document.getElementById('fDimension'));
+      },
       applyVatRegistrationLock() {
         if (this._vatRegistered) return;
         const sel = document.getElementById('fDocType');

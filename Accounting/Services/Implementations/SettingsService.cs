@@ -44,6 +44,8 @@ public class SettingsService : ISettingsService
         if (request.InvoiceFooter != null) settings.InvoiceFooter = request.InvoiceFooter;
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
+        if (request.ShowProjectOnDocuments.HasValue) settings.ShowProjectOnDocuments = request.ShowProjectOnDocuments.Value;
+        if (request.ShowCostCenterOnDocuments.HasValue) settings.ShowCostCenterOnDocuments = request.ShowCostCenterOnDocuments.Value;
         if (request.DocumentTitleOverridesJson != null)
             settings.DocumentTitleOverridesJson = string.IsNullOrWhiteSpace(request.DocumentTitleOverridesJson) ? null : request.DocumentTitleOverridesJson;
         if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
@@ -551,7 +553,9 @@ public class SettingsService : ISettingsService
         s.StampUrl,
         s.StampWidthMm,
         s.StampHeightMm,
-        s.StampAlign);
+        s.StampAlign,
+        s.ShowProjectOnDocuments,
+        s.ShowCostCenterOnDocuments);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

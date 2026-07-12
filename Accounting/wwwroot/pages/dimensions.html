@@ -93,23 +93,28 @@
             <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="dimName" placeholder="เช่น ฝ่ายผลิต, ฝ่ายขาย"></div>
             <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="dimCode" placeholder="เช่น CC-PROD"></div>
           </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label" data-help="ศูนย์ต้นทุน = หน่วยที่ 'ใช้เงิน' (ฝ่ายผลิต/ธุรการ) · แผนก = โครงสร้างองค์กรทั่วไป · ศูนย์กำไร = หน่วยที่วัดทั้งรายได้และต้นทุน (เช่น BU) — 'โครงการ' ไม่อยู่ในนี้ ใช้เมนูโครงการ (งานชั่วคราว มีลูกค้า/งบ/กำไรต่องาน) · 'สาขา' ใช้แท็บสาขา (ผูกรหัสสรรพากร)">ชนิด *</label>
-              <select class="form-select" id="dimType">
-                <option value="1">ศูนย์ต้นทุน (Cost Center)</option>
-                <option value="3">แผนก (Department)</option>
-                <option value="2">ศูนย์กำไร (Profit Center)</option>
-              </select>
+          <!-- กรอกแค่ ชื่อ+รหัส ก็บันทึกได้ (ชนิด default = ศูนย์ต้นทุน) —
+               ที่เหลือเป็นตัวเลือกเสริม พับเก็บไว้ ไม่บังคับ -->
+          <details id="dimMore" style="margin-top:4px">
+            <summary style="cursor:pointer;font-size:13px;color:var(--gray-500);padding:6px 0">⚙️ ตัวเลือกเพิ่มเติม (ไม่บังคับ — ชนิด/ลำดับชั้น/งบประมาณ)</summary>
+            <div class="form-row" style="margin-top:8px">
+              <div class="form-group">
+                <label class="form-label" data-help="ศูนย์ต้นทุน = หน่วยที่ 'ใช้เงิน' (ฝ่ายผลิต/ธุรการ) · แผนก = โครงสร้างองค์กรทั่วไป · ศูนย์กำไร = หน่วยที่วัดทั้งรายได้และต้นทุน (เช่น BU) — 'โครงการ' ไม่อยู่ในนี้ ใช้เมนูโครงการ · 'สาขา' ใช้แท็บสาขา">ชนิด</label>
+                <select class="form-select" id="dimType">
+                  <option value="1">ศูนย์ต้นทุน (Cost Center)</option>
+                  <option value="3">แผนก (Department)</option>
+                  <option value="2">ศูนย์กำไร (Profit Center)</option>
+                </select>
+              </div>
+              <div class="form-group"><label class="form-label" data-help="จัดลำดับชั้นได้ เช่น ฝ่ายผลิต → ไลน์ A / ไลน์ B — รายงานจะรวมยอดลูกขึ้นหาแม่">อยู่ใต้ (มิติแม่)</label>
+                <select class="form-select" id="dimParent"><option value="">— ระดับบนสุด —</option></select></div>
             </div>
-            <div class="form-group"><label class="form-label" data-help="จัดลำดับชั้นได้ เช่น ฝ่ายผลิต → ไลน์ A / ไลน์ B — รายงานจะรวมยอดลูกขึ้นหาแม่">อยู่ใต้ (มิติแม่)</label>
-              <select class="form-select" id="dimParent"><option value="">— ระดับบนสุด —</option></select></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label">ผู้รับผิดชอบ</label><input type="text" class="form-input" id="dimManager" placeholder="ชื่อหัวหน้าหน่วย"></div>
-            <div class="form-group"><label class="form-label" data-help="ใส่ไว้เทียบกับค่าใช้จ่ายจริงในรายงานวิเคราะห์">งบประมาณ/ปี (บาท)</label><input type="number" step="0.01" min="0" class="form-input" id="dimBudget"></div>
-          </div>
-          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="dimDesc"></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ผู้รับผิดชอบ</label><input type="text" class="form-input" id="dimManager" placeholder="ชื่อหัวหน้าหน่วย"></div>
+              <div class="form-group"><label class="form-label" data-help="ใส่ไว้เทียบกับค่าใช้จ่ายจริงในรายงานวิเคราะห์">งบประมาณ/ปี (บาท)</label><input type="number" step="0.01" min="0" class="form-input" id="dimBudget"></div>
+            </div>
+            <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="dimDesc"></div>
+          </details>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('dimModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.saveDimension()" data-i18n="common.save">บันทึก</button></div>
       </div>
@@ -234,6 +239,7 @@ const Page = {
     document.getElementById('dimType').value = '1';
     document.getElementById('dimType').disabled = false;
     this._fillParentOptions(null);
+    document.getElementById('dimMore').open = false;
     Layout.openModal('dimModal');
   },
 
@@ -253,6 +259,7 @@ const Page = {
     this._fillParentOptions(id);
     document.getElementById('dimParent').value = d.parentId || '';
     document.getElementById('dimParent').disabled = true;
+    document.getElementById('dimMore').open = true;
     Layout.openModal('dimModal');
   },
 

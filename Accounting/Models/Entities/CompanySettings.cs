@@ -65,6 +65,12 @@ public class CompanySettings : TenantEntity
     // from the document's posted Journal Entry.
     public bool ShowGlEntryOnDocument { get; set; } = false;
 
+    // ===== แกนวิเคราะห์บนฟอร์มเอกสาร (เปิด/ปิดต่อบริษัท) =====
+    // บริษัทที่ไม่ใช้โครงการ/ศูนย์ต้นทุน ปิดได้ → ฟอร์มเบาลง ไม่เห็นช่องเลย
+    // (default เปิด — บริษัทเดิมที่ใช้อยู่ไม่กระทบ)
+    public bool ShowProjectOnDocuments { get; set; } = true;
+    public bool ShowCostCenterOnDocuments { get; set; } = true;
+
     /// <summary>หัวเรื่องเอกสารที่ผู้ใช้ตั้งเอง — JSON dict คีย์เป็นชื่อ enum
     /// DocumentType (Quotation/Invoice/TaxInvoice/…) สำหรับหัวพื้นฐานต่อประเภท
     /// + คีย์เงื่อนไข: "TaxInvoiceReceipt" (ใบกำกับ+รับเงินตอนออก), "CombinedInvoice"
