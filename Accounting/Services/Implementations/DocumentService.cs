@@ -9026,7 +9026,8 @@ public class DocumentService : IDocumentService
         DepositAppliedToDocumentId: d.DepositAppliedToDocumentId,
         BookingNumber: d.BookingNumber,
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
-        DepositAppliedAmount: d.DepositAppliedAmount);
+        DepositAppliedAmount: d.DepositAppliedAmount,
+        IsSettlementReceipt: d.IsSettlementReceipt);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

@@ -572,7 +572,11 @@ public record DocumentResponse(
     // ยอดมัดจำที่นำมาหักบนใบรับเงินนี้ (display) — ยอดรวม (TotalAmount) ยังเป็น
     // ยอดขายเต็ม, รับสุทธิ = TotalAmount − DepositAppliedAmount. ให้ list โชว์
     // "รับสุทธิ" กันงงเมื่อมีหักมัดจำ
-    decimal DepositAppliedAmount = 0m);
+    decimal DepositAppliedAmount = 0m,
+    // ใบเสร็จ "หลักฐานรับเงิน" ที่ระบบออกอัตโนมัติคู่การชำระ — ไม่มี JE/VAT ของ
+    // ตัวเอง (บัญชีอยู่ที่ Payment + ใบกำกับต้นทาง) → list ติดป้ายให้ผู้ใช้รู้ว่า
+    // ไม่ใช่ยอดขายซ้ำ
+    bool IsSettlementReceipt = false);
 
 public record ProjectCostBrief(
     Guid ProjectId,

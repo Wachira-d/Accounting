@@ -3530,6 +3530,11 @@
             // would just repeat the status badge (Voided/Rejected/Paid PV/
             // Approved CIL etc.), so the pill appears only when it adds NEW
             // info beyond status (e.g., "◐ จ่าย 50%" / "✓ แปลงครบ").
+            // ใบเสร็จหลักฐานรับเงิน (auto คู่การชำระ) — ป้ายกันงง: ไม่ใช่ยอดขายซ้ำ
+            // (JE/VAT อยู่ที่ Payment + ใบกำกับต้นทางแล้ว) ยกเลิกผ่าน "ยกเลิกการชำระเงิน"
+            const settlementBadge = d.isSettlementReceipt
+              ? `<span style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;white-space:nowrap" title="ใบเสร็จหลักฐานรับเงินของ ${Layout.esc(d.reference || 'ใบกำกับ/ใบแจ้งหนี้')} — ไม่ลงบัญชี/VAT ซ้ำ (ยอดขายอยู่ที่ใบกำกับต้นทาง)">🧾 หลักฐานรับเงิน${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>`
+              : '';
             const lifecycleBadge = (d.lifecycleStatus && (d.lifecycleReason || '').trim())
               ? `<span title="${this.escapeHtml(d.lifecycleReason || '')}" style="margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700">${this.escapeHtml(d.lifecycleReason)}</span>`
               : '';
@@ -3573,7 +3578,7 @@
             }
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}</td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
