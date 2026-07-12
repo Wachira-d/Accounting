@@ -443,21 +443,52 @@
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีรายการต้นทุน</div>';
         } catch (e) { document.getElementById('costsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
       },
+      // สีประจำหมวดต้นทุน (แถบสัดส่วน + จุดหน้าชื่อหมวด)
+      _costColors: { Labor:'#6366f1', Material:'#f59e0b', Subcontract:'#06b6d4', Overhead:'#94a3b8', Travel:'#ec4899', Other:'#cbd5e1' },
       async loadProfit(id) {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getProjectProfit(id);
           const d = res.data;
+          const bd = d.costBreakdown || [];
+          const colorOf = t => this._costColors[t] || this._costColors.Other;
+          // เดิม tab นี้พังเงียบ: backend ส่ง dict แต่หน้า .map() เป็น array +
+          // อ่าน d.profit ที่ไม่มีจริง (ของจริง grossProfit) → catch → "โหลดไม่ได้"
           document.getElementById('profitTab').innerHTML = `
-            <div class="grid grid-3 gap-4" style="padding:16px 0">
-              <div class="kpi-card"><div class="kpi-label">รายได้รวม</div><div class="kpi-value text-success">${Layout.money(d.totalRevenue || d.contractAmount)}</div></div>
-              <div class="kpi-card"><div class="kpi-label">ต้นทุนรวม</div><div class="kpi-value text-danger">${Layout.money(d.totalCost)}</div></div>
-              <div class="kpi-card"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value ${(d.profit || d.netProfit) >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(d.profit || d.netProfit)}</div></div>
+            <div class="grid grid-4 gap-4" style="padding:16px 0">
+              <div class="kpi-card"><div class="kpi-label">รายได้รับรู้แล้ว</div><div class="kpi-value text-success">${Layout.money(d.totalRevenue)}</div><div class="text-xs text-gray-400">สัญญา ${Layout.money(d.contractAmount)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนรวม</div><div class="kpi-value text-danger">${Layout.money(d.totalCost)}</div><div class="text-xs ${d.budgetVariance >= 0 ? 'text-gray-400' : 'text-danger'}">${d.budgetVariance >= 0 ? 'ต่ำกว่างบ ' + Layout.money(d.budgetVariance) : 'เกินงบ ' + Layout.money(-d.budgetVariance)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">กำไรขั้นต้น</div><div class="kpi-value ${d.grossProfit >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(d.grossProfit)}</div><div class="text-xs text-gray-400">margin ${(d.grossProfitPercent || 0).toFixed(1)}%</div></div>
+              <div class="kpi-card"><div class="kpi-label">ความคืบหน้า</div><div class="kpi-value">${(d.completionPercent || 0).toFixed(0)}%</div></div>
             </div>
-            ${d.costBreakdown ? `<h4 style="margin:16px 0 8px">สัดส่วนต้นทุน</h4>
-            <div class="table-container"><table class="table"><thead><tr><th>หมวด</th><th class="text-right">จำนวน</th><th class="text-right">สัดส่วน</th></tr></thead>
-            <tbody>${(d.costBreakdown||[]).map(c => `<tr><td>${c.category}</td><td class="text-right">${Layout.money(c.amount)}</td><td class="text-right">${(c.percentage||0).toFixed(1)}%</td></tr>`).join('')}</tbody></table></div>` : ''}`;
-        } catch (e) { document.getElementById('profitTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+            ${bd.length ? `
+            <h4 style="margin:12px 0 8px">สัดส่วนต้นทุน — ค่าแรง / วัสดุ / จ้างเหมา / อื่น ๆ</h4>
+            <!-- แถบสัดส่วนรวม (stacked) เห็นภาพทันทีว่าเงินไปหมวดไหน -->
+            <div style="display:flex;height:22px;border-radius:8px;overflow:hidden;border:1px solid var(--gray-200)">
+              ${bd.map(c => `<div title="${Layout.esc(c.label)} ${c.percent}%" style="width:${Math.max(c.percent,1)}%;background:${colorOf(c.costType)}"></div>`).join('')}
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 14px;font-size:12px;color:var(--gray-600)">
+              ${bd.map(c => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${colorOf(c.costType)};margin-right:4px"></span>${Layout.esc(c.label)} ${c.percent}%</span>`).join('')}
+            </div>
+            ${bd.map(c => `
+              <details style="background:#fff;border:1px solid var(--gray-200);border-radius:10px;margin-bottom:8px">
+                <summary style="cursor:pointer;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                  <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${colorOf(c.costType)};margin-right:6px"></span><b>${Layout.esc(c.label)}</b> <span style="color:var(--gray-400);font-size:12px">(${c.entryCount} รายการ)</span></span>
+                  <span style="white-space:nowrap"><b>${Layout.money(c.amount)}</b> <span style="color:var(--gray-400);font-size:12px">· ${c.percent}%</span></span>
+                </summary>
+                <div class="table-container" style="border-top:1px solid var(--gray-100)">
+                  <table class="table"><thead><tr><th>วันที่</th><th>รายละเอียด</th><th class="text-right">จำนวน × ต่อหน่วย</th><th class="text-right">ยอด</th><th>เอกสาร</th></tr></thead>
+                  <tbody>${(c.entries || []).map(e => `<tr>
+                    <td style="white-space:nowrap">${new Date(e.entryDate).toLocaleDateString('th-TH')}</td>
+                    <td>${Layout.esc(e.description)}</td>
+                    <td class="text-right" style="white-space:nowrap">${(e.quantity || 0).toLocaleString()} × ${Layout.money(e.unitCost)}</td>
+                    <td class="text-right"><b>${Layout.money(e.amount)}</b></td>
+                    <td>${e.documentId ? `<a href="/pages/documents.html?view=${e.documentId}" style="font-size:12px">${Layout.esc(e.documentNumber || 'เปิดเอกสาร')}</a>` : '<span style="color:var(--gray-300)">กรอกมือ</span>'}</td>
+                  </tr>`).join('')}</tbody></table>
+                </div>
+              </details>`).join('')}
+            ` : `<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีรายการต้นทุน — ต้นทุนจะเข้าอัตโนมัติเมื่อใบซื้อ/ใบสำคัญจ่าย tag โครงการนี้ หรือกรอกเองที่แท็บ "ต้นทุน"</div>`}`;
+        } catch (e) { document.getElementById('profitTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้: ' + Layout.esc(e.message || '') + '</div>'; }
       },
       openAddTask(id) {
         document.getElementById('taskProjectId').value = id;

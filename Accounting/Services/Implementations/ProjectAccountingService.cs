@@ -650,9 +650,42 @@ public class ProjectAccountingService : IProjectAccountingService
         var grossProfitPercent = totalRevenue != 0 ? (grossProfit / totalRevenue) * 100 : 0;
         var budgetVariance = project.BudgetAmount - totalCost;
 
+        // เลขเอกสารต้นทางสำหรับ drill-down (รายการ auto จากใบซื้อ/ใบสำคัญจ่าย)
+        var docIds = costEntries.Where(e => e.DocumentId.HasValue)
+            .Select(e => e.DocumentId!.Value).Distinct().ToList();
+        var docNumbers = docIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
+                .ToDictionaryAsync(d => d.Id, d => d.DocumentNumber);
+
+        static string LabelOf(string t) => t switch
+        {
+            "Labor" => "ค่าแรง",
+            "Material" => "ค่าวัสดุ/อุปกรณ์",
+            "Subcontract" => "ค่าจ้างเหมา",
+            "Overhead" => "โสหุ้ย/ค่าใช้จ่ายทั่วไป",
+            "Travel" => "ค่าเดินทาง/ที่พัก",
+            _ => string.IsNullOrWhiteSpace(t) ? "อื่น ๆ" : t,
+        };
+        // สัดส่วนต่อหมวด (เรียงมาก→น้อย) + รายละเอียดรายรายการต่อหมวด
+        // (ล่าสุดก่อน, cap 200/หมวด กัน payload บวมในโครงการใหญ่)
         var costBreakdown = costEntries
-            .GroupBy(e => e.CostType)
-            .ToDictionary(g => g.Key, g => g.Sum(e => e.Amount));
+            .GroupBy(e => string.IsNullOrWhiteSpace(e.CostType) ? "Other" : e.CostType)
+            .Select(g => new ProjectCostBreakdownItem(
+                g.Key, LabelOf(g.Key),
+                g.Sum(e => e.Amount),
+                totalCost > 0 ? Math.Round(g.Sum(e => e.Amount) / totalCost * 100, 1) : 0,
+                g.Count(),
+                g.OrderByDescending(e => e.EntryDate)
+                    .Take(200)
+                    .Select(e => new ProjectCostEntryDetail(
+                        e.EntryDate, e.Description, e.Quantity, e.UnitCost, e.Amount,
+                        e.DocumentId,
+                        e.DocumentId.HasValue ? docNumbers.GetValueOrDefault(e.DocumentId.Value) : null))
+                    .ToList()))
+            .OrderByDescending(b => b.Amount)
+            .ToList();
 
         return new ProjectProfitabilityResponse(
             project.Id, project.Name, project.ContractAmount,

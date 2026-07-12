@@ -104,7 +104,26 @@ public record ProjectProfitabilityResponse(
     decimal TotalCost, decimal TotalRevenue, decimal GrossProfit,
     decimal GrossProfitPercent, decimal BudgetVariance,
     decimal CompletionPercent,
-    Dictionary<string, decimal> CostBreakdown);
+    // สัดส่วนต้นทุนตามหมวด (ค่าแรง/วัสดุ/จ้างเหมา/โสหุ้ย/เดินทาง) พร้อม %
+    // และรายการรายละเอียดต่อหมวด (drill-down ถึงเอกสารต้นทาง)
+    List<ProjectCostBreakdownItem> CostBreakdown);
+
+public record ProjectCostBreakdownItem(
+    string CostType,          // Labor / Material / Subcontract / Overhead / Travel / อื่น ๆ
+    string Label,             // ป้ายไทย
+    decimal Amount,
+    decimal Percent,          // % ของต้นทุนรวม
+    int EntryCount,
+    List<ProjectCostEntryDetail> Entries);
+
+public record ProjectCostEntryDetail(
+    DateTime EntryDate,
+    string Description,
+    decimal Quantity,
+    decimal UnitCost,
+    decimal Amount,
+    Guid? DocumentId,
+    string? DocumentNumber);
 
 public record ProjectSummaryResponse(
     Guid Id, string Code, string Name, string Status,

@@ -108,6 +108,25 @@ public class DocumentService : IDocumentService
         if (!costTypes.Contains(doc.DocumentType)) return;
         if (doc.Lines == null || doc.Lines.Count == 0) return;
 
+        // จำแนกหมวดต้นทุนโครงการจากคำในรายการ (keyword ไทย/อังกฤษ) — ผู้ใช้แก้
+        // หมวดเองได้ทีหลังในแท็บต้นทุนของโครงการ ค่านี้เป็นแค่ default ที่ฉลาดขึ้น
+        static string ClassifyProjectCostType(string? desc)
+        {
+            var d = (desc ?? "").ToLowerInvariant();
+            if (d.Contains("จ้างเหมา") || d.Contains("ผู้รับเหมา") || d.Contains("subcontract"))
+                return "Subcontract";
+            if (d.Contains("ค่าแรง") || d.Contains("แรงงาน") || d.Contains("ค่าจ้าง")
+                || d.Contains("เงินเดือน") || d.Contains("โอที") || d.Contains("labor") || d.Contains("labour") || d.Contains("wage"))
+                return "Labor";
+            if (d.Contains("เดินทาง") || d.Contains("น้ำมันรถ") || d.Contains("ที่พัก")
+                || d.Contains("โรงแรม") || d.Contains("ตั๋ว") || d.Contains("travel"))
+                return "Travel";
+            if (d.Contains("ค่าเช่า") || d.Contains("ค่าไฟ") || d.Contains("ค่าน้ำ")
+                || d.Contains("ประกัน") || d.Contains("ค่าธรรมเนียม") || d.Contains("overhead"))
+                return "Overhead";
+            return "Material";   // ค่า default เดิม — วัสดุ/อุปกรณ์/สินค้า
+        }
+
         // Snapshot the lines that already have a PCE so we skip them
         // in O(1) rather than running an exists-query per line.
         var lineIds = doc.Lines.Select(l => l.Id).ToList();
@@ -137,7 +156,9 @@ public class DocumentService : IDocumentService
                 CompanyId = companyId,
                 ProjectId = projectId.Value,
                 EntryDate = doc.DocumentDate,
-                CostType = "Material",         // generic; could classify on AccountType later
+                // จำแนกหมวดต้นทุนจากคำในรายการ (เดิม hardcode "Material" หมด →
+                // ค่าแรง/จ้างเหมาจากใบซื้อกองผิดหมวด สัดส่วนต้นทุนโครงการเพี้ยน)
+                CostType = ClassifyProjectCostType(line.Description),
                 Description = $"{line.Description} [auto from {doc.DocumentNumber}]",
                 Quantity = line.Quantity,
                 UnitCost = line.UnitPrice,
