@@ -3393,8 +3393,11 @@
           if (dimSel && dimSel.options.length <= 1) {
             const dres = await Layout.api().getDimensions();
             const dims = dres?.data?.items || dres?.data || [];
+            // ตัด dimension ชนิด "Project" (มรดกเก่า — ซ้ำกับเมนูโครงการที่มี
+            // งบ/กำไรต่องานเต็มรูป) กันผู้ใช้ tag โครงการซ้ำสองที่แล้วรายงานแตก
+            const isLegacyProject = d => d.dimensionType === 5 || d.dimensionType === 'Project';
             dimSel.innerHTML = '<option value="">— ไม่ระบุ —</option>' +
-              dims.filter(d => d.isActive !== false).map(d =>
+              dims.filter(d => d.isActive !== false && !isLegacyProject(d)).map(d =>
                 `<option value="${d.id}">${Layout.esc(d.code ? d.code + ' - ' : '')}${Layout.esc(d.name)}</option>`).join('');
           }
         } catch { /* ไม่มีสิทธิ์/ฟีเจอร์ปิด — ปล่อยว่าง */ }

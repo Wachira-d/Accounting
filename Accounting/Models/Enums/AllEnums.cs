@@ -661,7 +661,12 @@ public enum DimensionType
     CostCenter = 1,
     ProfitCenter = 2,
     Department = 3,
+    /// <summary>ใช้แท็บ "สาขา" (Branch entity — ผูกรหัสสาขาสรรพากร) แทน;
+    /// คงค่าไว้เพื่อข้อมูลเก่า/ลิงก์ Branch.DimensionId</summary>
     Branch = 4,
+    /// <summary>LEGACY — ห้ามสร้างใหม่: ซ้ำกับ Project entity (เมนูโครงการ) ที่มี
+    /// งบ/สัญญา/POC/กำไรต่องานเต็มรูป. UI ตัดตัวเลือกนี้ออกแล้ว คงค่าไว้เพื่อ
+    /// ข้อมูลเก่าเท่านั้น</summary>
     Project = 5,
     Fund = 6,
     Segment = 7,

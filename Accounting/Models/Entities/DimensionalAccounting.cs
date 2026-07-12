@@ -5,8 +5,10 @@ namespace Accounting.Models.Entities;
 // ===== Cost Center / Profit Center / Department / Branch =====
 
 /// <summary>
-/// มิติบัญชี - ใช้สำหรับ Cost Center, Profit Center, Branch, Department, Project
-/// รองรับการวิเคราะห์ข้อมูลหลายมิติ (Multi-dimensional accounting)
+/// มิติบัญชี — หน่วยงาน "ถาวร" ตามโครงสร้างองค์กร: Cost Center, Profit Center,
+/// Department (+ Branch ผ่านลิงก์จาก Branch entity). รองรับ hierarchy + budget.
+/// ⚠️ "โครงการ" ไม่ใช่มิติ — ใช้ Project entity (งานชั่วคราว มีลูกค้า/งบ/POC/
+/// กำไรต่องาน); DimensionType.Project เป็น legacy ห้ามสร้างใหม่.
 /// </summary>
 public class AccountingDimension : TenantEntity
 {
