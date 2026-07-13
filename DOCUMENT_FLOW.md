@@ -1194,6 +1194,13 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 67: ใบเสร็จ settlement — ยกเว้น custom authorized signatory ด้วย (ต่อ รอบ 64)._
+_รอบ 64 ข้าม owner fallback ให้ใบ settlement แล้ว แต่ **ยังไม่ข้าม custom signatory**_
+_(opt-in `UseCustomAuthorizedSignatory`) ที่ override slot 1 ก่อนหน้า. `AuthorizedSignatoryName`_
+_เป็นค่า "เก็บไว้" ใน CompanySettings → แก้ชื่อ user แล้วไม่เปลี่ยนตาม = อาการ "ชื่อเก่า_
+_ไม่อัปเดต" + ลายเซ็นเจ้าของที่ผู้ใช้รายงานซ้ำ. แก้: เพิ่ม `!doc.IsSettlementReceipt` ที่_
+_เงื่อนไข custom signatory ด้วย → ใบเสร็จ settlement ใช้ผู้กดบันทึก (อ่านชื่อสดจาก Users)_
+_เสมอ ทั้ง custom + owner ข้ามหมด. ยืนยันไม่มี name snapshot ตอนสร้าง (ไม่เซ็ต PreparerName)._
 _รอบ 66 (backlog F11): `RecalcVatTotals` นับ JE_INPUT เป็นภาษีซื้อ. เดิมภาษีซื้อ_
 _จาก JE ล้วน (tag "JE_INPUT") ถูกเช็ค `!= "INPUT"` → หลุดไปรวมใน OutputVat +_
 _หายจาก InputVat = ภาษีขายเกิน + ภาษีซื้อขาด → NetVat ผิด (นำส่งเกิน) ตอนแก้ไข/_

@@ -801,7 +801,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // "ผู้มีอำนาจลงนาม" กลาง (เช่น กรรมการผู้จัดการ) ให้ใช้แทนลายเซ็น
         // "ผู้กดอนุมัติ" ทุกใบ. เงื่อนไข: เอกสารอนุมัติแล้วเท่านั้น + ไม่ทับ
         // ลายเซ็นลูกค้าเซ็นรับของ (POD บน DeliveryNote — ลูกค้าเซ็นจริง ห้ามแทน)
-        if (authorizedSignable && signers.Count >= 2
+        // ⚠️ ยกเว้น "ใบเสร็จรับเงิน settlement" (กดรับเงิน): ผู้ใช้ต้องการลายเซ็น
+        // "ผู้กดบันทึก" เท่านั้น — ไม่ใช่ custom signatory กลาง (ซึ่ง AuthorizedSignatoryName
+        // เป็นค่าที่ "เก็บไว้" ใน CompanySettings → แก้ชื่อ user แล้วไม่เปลี่ยนตาม =
+        // อาการ "ชื่อเก่าไม่อัปเดต" ที่ผู้ใช้รายงาน). settlement receipt → slot 1 =
+        // ผู้กด (อ่านชื่อสดจาก Users) เสมอ ทั้ง custom override + owner fallback ข้ามหมด
+        if (authorizedSignable && !doc.IsSettlementReceipt && signers.Count >= 2
             && !(doc.DocumentType == DocumentType.DeliveryNote
                  && !string.IsNullOrWhiteSpace(doc.DeliverySignatureBase64)))
         {
