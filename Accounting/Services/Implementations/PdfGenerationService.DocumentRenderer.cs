@@ -594,13 +594,17 @@ public partial class PdfGenerationService
                 if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m
                     && !IsDeferredVatDeposit(doc) && !doc.PricesIncludeVat)
                     printedAmount = Math.Round(printedAmount * (doc.SubTotal + doc.BillDiscountAmount) / doc.SubTotal, 2);
+                // รายการย่อย/บรรยายงาน (ไม่ระบุราคา): ราคา 0 + ยอด 0 → เว้นช่อง
+                // ตัวเลขว่างแทน "0.00" — ใช้แจกแจงงานย่อยใต้บรรทัดแม่ที่ถือราคา
+                // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้
+                var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
                 Td(line.Description ?? "");
-                Td(line.Quantity.ToString("N2"), "right");
+                Td(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"), "right");
                 if (t.ShowUnit) Td(line.Unit ?? "", "center");
-                Td(line.UnitPrice.ToString("N2"), "right");
-                if (t.ShowDiscount) Td(line.DiscountAmount.ToString("N2"), "right");
-                Td(printedAmount.ToString("N2"), "right");
+                Td(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"), "right");
+                if (t.ShowDiscount) Td(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"), "right");
+                Td(isDescriptiveLine ? "" : printedAmount.ToString("N2"), "right");
                 idx++;
             }
         });

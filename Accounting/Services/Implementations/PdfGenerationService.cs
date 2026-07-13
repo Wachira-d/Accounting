@@ -1132,14 +1132,16 @@ public partial class PdfGenerationService : IPdfGenerationService
             // กลับตามสัดส่วนที่เฉลี่ย; ส่วนลดแสดงรวมเป็นแถวเดียวในสรุปท้ายบิล
             if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m && !inclVat && !IsDeferredVatDeposit(doc))
                 printedAmount = Math.Round(printedAmount * (doc.SubTotal + doc.BillDiscountAmount) / doc.SubTotal, 2);
+            // รายการย่อย/บรรยายงาน (ไม่ระบุราคา) — ดูคอมเมนต์ใน native renderer
+            var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
             sb.AppendLine("<tr>");
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
             sb.AppendLine($"<td style='white-space:pre-line'>{line.Description}</td>");
-            sb.AppendLine($"<td class='right'>{line.Quantity:N2}</td>");
+            sb.AppendLine($"<td class='right'>{(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"))}</td>");
             if (template.ShowUnit) sb.AppendLine($"<td class='center'>{line.Unit}</td>");
-            sb.AppendLine($"<td class='right'>{line.UnitPrice:N2}</td>");
-            if (template.ShowDiscount) sb.AppendLine($"<td class='right'>{line.DiscountAmount:N2}</td>");
-            sb.AppendLine($"<td class='right'>{printedAmount:N2}</td>");
+            sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"))}</td>");
+            if (template.ShowDiscount) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"))}</td>");
+            sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : printedAmount.ToString("N2"))}</td>");
             sb.AppendLine("</tr>");
         }
         sb.AppendLine("</tbody></table>");
