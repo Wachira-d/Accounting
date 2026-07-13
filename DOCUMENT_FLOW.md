@@ -1194,6 +1194,11 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 66 (backlog F11): `RecalcVatTotals` นับ JE_INPUT เป็นภาษีซื้อ. เดิมภาษีซื้อ_
+_จาก JE ล้วน (tag "JE_INPUT") ถูกเช็ค `!= "INPUT"` → หลุดไปรวมใน OutputVat +_
+_หายจาก InputVat = ภาษีขายเกิน + ภาษีซื้อขาด → NetVat ผิด (นำส่งเกิน) ตอนแก้ไข/_
+_finalize รายงานที่ recompute. แก้: `IsInputLine` = "INPUT" or "JE_INPUT"_
+_(ตรงกับ LineSide ที่ generate ครั้งแรกถูกอยู่แล้ว — ปิด drift ระหว่าง 2 เส้นทาง)._
 _รอบ 65 (backlog F5 — ปิดช่องนำส่งภาษีขายขาด): ใบแจ้งหนี้ (Invoice) ที่มี VAT_
 _เข้า ภ.พ.30. เหตุ: `AutoPostToJournalAsync` ลง Cr 21911 ให้ทั้ง Invoice และ_
 _TaxInvoice เท่ากัน แต่ `TaxService.GenerateVatReport` รายงานเฉพาะ TaxInvoice →_

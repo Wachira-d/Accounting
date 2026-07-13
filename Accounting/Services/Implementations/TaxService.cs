@@ -1473,8 +1473,14 @@ public partial class TaxService : ITaxService
         if (report.TaxType != TaxType.VAT) return;
         var active = report.Lines.Where(l => !l.IsExcluded).ToList();
         var nonSummary = active.Where(l => l.IncomeTypeCode != "VAT_CREDIT_CF" && l.IncomeTypeCode != "EXEMPT");
-        report.OutputVat = nonSummary.Where(l => l.IncomeTypeCode != "INPUT").Sum(l => l.TaxAmount);
-        report.InputVat = nonSummary.Where(l => l.IncomeTypeCode == "INPUT").Sum(l => l.TaxAmount);
+        // F11 — ภาษีซื้อจาก JE ล้วน (ไม่มี source doc) tag "JE_INPUT" ต้องนับเป็น
+        // ภาษีซื้อ เหมือน "INPUT" — เดิม RecalcVatTotals เช็ค == "INPUT" อย่างเดียว
+        // → JE_INPUT หลุดไปรวมใน OutputVat (!= "INPUT") + หายจาก InputVat = ภาษีขาย
+        // เกินจริง + ภาษีซื้อขาด → NetVat ผิด (นำส่งเกิน). สอดคล้องกับ LineSide (บรรทัด
+        // 1360) ที่ถือ "INPUT" or "JE_INPUT" เป็นฝั่งซื้ออยู่แล้ว.
+        bool IsInputLine(TaxReportLine l) => l.IncomeTypeCode is "INPUT" or "JE_INPUT";
+        report.OutputVat = nonSummary.Where(l => !IsInputLine(l)).Sum(l => l.TaxAmount);
+        report.InputVat = nonSummary.Where(IsInputLine).Sum(l => l.TaxAmount);
         var creditCf = active.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").Sum(l => Math.Abs(l.TaxAmount));
         report.NetVat = report.OutputVat - report.InputVat - creditCf;
     }
