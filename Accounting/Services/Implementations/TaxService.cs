@@ -247,6 +247,32 @@ public partial class TaxService : ITaxService
                 .Where(d => d.CompanyId == companyId && relatedDocIds.Contains(d.Id))
                 .ToDictionaryAsync(d => d.Id, d => d.DocumentType);
 
+        // F5 — ใบแจ้งหนี้ (Invoice) ที่มี VAT: AutoPostToJournalAsync ลง Cr 21911
+        // (ภาษีขาย) ให้ทั้ง Invoice และ TaxInvoice เท่ากัน แต่ ภ.พ.30 เดิมรายงาน
+        // เฉพาะ TaxInvoice → ใบแจ้งหนี้ที่มี VAT (charge VAT ⇒ ต้องออกใบกำกับ §86/4
+        // + รายงาน §87) มีภาระภาษีขายใน GL แต่ไม่เคยถูกนำส่ง = นำส่งขาด → โดนปรับ.
+        // แก้: นับใบแจ้งหนี้ที่มี VAT เข้า ภ.พ.30 ด้วย — ยกเว้นใบที่ถูก "แทนที่"
+        // ด้วยใบกำกับภาษี (แปลง Invoice→TaxInvoice, ใบกำกับลูกรับ VAT ไปรายงานแล้ว)
+        // มิฉะนั้นนับซ้ำ. (ใบแจ้งหนี้→ใบเสร็จ = settlement ไม่ใช่การแทนที่ tax point
+        // → ใบแจ้งหนี้ยังเป็นเจ้าของ VAT, Receipt ลูกถูก exclude ที่ branch ด้านล่างแล้ว)
+        var invoiceIds = docs
+            .Where(d => d.DocumentType == DocumentType.Invoice && d.VatAmount != 0)
+            .Select(d => d.Id)
+            .ToList();
+        var supersededInvoiceIds = invoiceIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(t => t.CompanyId == companyId
+                    && t.DocumentType == DocumentType.TaxInvoice
+                    && t.RelatedDocumentId != null
+                    && invoiceIds.Contains(t.RelatedDocumentId.Value)
+                    && t.Status != DocumentStatus.Voided
+                    && t.Status != DocumentStatus.Rejected
+                    && !t.IsDeleted)
+                .Select(t => t.RelatedDocumentId!.Value)
+                .ToListAsync())
+                .ToHashSet();
+
         decimal outputVat = 0, inputVat = 0;
         decimal vatExemptAmount = 0;
         var lineOrder = 1;
@@ -260,8 +286,14 @@ public partial class TaxService : ITaxService
                 vatExemptAmount += exemptLines.Sum(l => l.Amount);
             }
 
-            // Output VAT - from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30
-            if (doc.DocumentType == DocumentType.TaxInvoice)
+            // Output VAT - from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30.
+            // + ใบแจ้งหนี้ (Invoice) ที่มี VAT และ "ไม่ถูกแทนที่ด้วยใบกำกับภาษี" (F5)
+            //   — VAT ลง GL (Cr 21911) แล้วต้องรายงานเข้า ภ.พ.30 ให้ตรงกัน มิฉะนั้น
+            //   นำส่งภาษีขายขาด. ใบที่ถูกแปลงเป็นใบกำกับภาษีแล้ว ใบกำกับลูกรายงานแทน.
+            if (doc.DocumentType == DocumentType.TaxInvoice
+                || (doc.DocumentType == DocumentType.Invoice
+                    && doc.VatAmount > 0
+                    && !supersededInvoiceIds.Contains(doc.Id)))
             {
                 outputVat += doc.VatAmount;
                 report.Lines.Add(new TaxReportLine

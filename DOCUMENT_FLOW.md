@@ -1194,6 +1194,15 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 65 (backlog F5 — ปิดช่องนำส่งภาษีขายขาด): ใบแจ้งหนี้ (Invoice) ที่มี VAT_
+_เข้า ภ.พ.30. เหตุ: `AutoPostToJournalAsync` ลง Cr 21911 ให้ทั้ง Invoice และ_
+_TaxInvoice เท่ากัน แต่ `TaxService.GenerateVatReport` รายงานเฉพาะ TaxInvoice →_
+_ใบแจ้งหนี้ที่มี VAT มีภาระภาษีขายใน GL แต่ไม่เคยถูกนำส่ง = ภ.พ.30 < GL (โดนปรับ)._
+_แก้: branch output VAT รับ Invoice (VatAmount>0) ด้วย ยกเว้นใบที่ถูกแปลงเป็น_
+_ใบกำกับภาษี (`supersededInvoiceIds` = Invoice ที่มี TaxInvoice child non-void_
+_อ้างถึง) กันนับซ้ำ. Invoice→Receipt = settlement (Receipt child ถูก exclude ที่_
+_branch เดิมอยู่แล้ว) ไม่กระทบ. **ค้าง (design)**: แปลง Invoice→TaxInvoice ที่_
+_ทั้งคู่มี VAT → GL 21911 เบิ้ล (ต้อง reverse JE ใบต้นทางตอน convert) แยกแก้._
 _รอบ 64: ใบเสร็จ settlement — ช่องผู้อนุมัติ = ลายเซ็นผู้กดบันทึก ไม่ใช่เจ้าของ._
 _ปัญหา: กดรับเงินจากใบกำกับ/ใบแจ้งหนี้ → ใบเสร็จโชว์ลายเซ็น+ชื่อ "เจ้าของ" (Owner)_
 _ไม่ใช่ผู้กด และผู้กดแก้ชื่อตัวเองแล้วไม่เปลี่ยนตาม. เหตุ: `ResolveSignersAsync`_
