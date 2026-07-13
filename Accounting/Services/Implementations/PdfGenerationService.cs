@@ -1965,10 +1965,22 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         // เว้นแต่ไม่มี free-text เลยจึงใช้ชื่ออาคารเท่าที่มี.
         var hasStreetAnchor = !string.IsNullOrWhiteSpace(buildingNumber)
             || !string.IsNullOrWhiteSpace(moo) || !string.IsNullOrWhiteSpace(street);
-        var streetPart = !string.IsNullOrWhiteSpace(structuredStreet)
-                && (hasStreetAnchor || string.IsNullOrWhiteSpace(freeText))
-            ? structuredStreet
-            : (freeText ?? "");
+        string streetPart;
+        if (!string.IsNullOrWhiteSpace(structuredStreet)
+            && (hasStreetAnchor || string.IsNullOrWhiteSpace(freeText)))
+        {
+            streetPart = structuredStreet;
+        }
+        else
+        {
+            // ตกไปใช้ free-text (เลขที่/ถนน อยู่ใน free-text ไม่ใช่ structured) —
+            // แต่ยังต้องเติมชื่ออาคารเข้าไปถ้า free-text ยังไม่มี ไม่งั้นชื่ออาคาร
+            // จะหายอีกครั้งในเคสนี้ (บั๊กที่ผู้ใช้รายงาน หาก contact เก็บที่อยู่แบบนี้)
+            streetPart = freeText ?? "";
+            if (!string.IsNullOrWhiteSpace(bName)
+                && !streetPart.Contains(bName!, StringComparison.Ordinal))
+                streetPart = (bName + " " + streetPart).Trim();
+        }
 
         // The street line must NEVER echo the locality we're about to print as
         // its own fields. Drop locality echoes **token by token** — NOT via
