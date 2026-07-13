@@ -829,7 +829,14 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
         }
 
-        if (authorizedSignable && signers.Count >= 2
+        // ⚠️ ใบเสร็จรับเงิน settlement (กดรับเงินจากใบกำกับ/ใบแจ้งหนี้): ช่องผู้มี
+        // อำนาจลงนาม = ลายเซ็น "ผู้กดบันทึกรับเงิน" (UpdatedBy) เท่านั้น — ผู้กด
+        // ผ่านการเช็คสิทธิ์อนุมัติมาแล้ว (ไม่มีสิทธิ์ = ใบนี้เป็น Draft, ไม่เข้าถึง
+        // จุดนี้). **ห้าม fallback ไปลายเซ็น Owner**: เดิมผู้กดที่ยังไม่ตั้งลายเซ็น
+        // → เด้งไปลายเซ็น+ชื่อเจ้าของ ทำให้ (1) โชว์ลายเซ็นเจ้าของผิดคน (2) ผู้กด
+        // แก้ชื่อตัวเองแล้วเอกสารไม่เปลี่ยนตาม เพราะกำลังโชว์ชื่อเจ้าของ ไม่ใช่ชื่อตน.
+        // ผู้กดยังไม่มีลายเซ็น = เว้นบรรทัดลายเซ็นไว้ (โชว์ชื่อผู้กดเหนือเส้น) ให้เซ็นมือ.
+        if (authorizedSignable && !doc.IsSettlementReceipt && signers.Count >= 2
             && (signers[1].SignatureImageBytes is null || signers[1].SignatureImageBytes!.Length == 0))
         {
             var ownerSig = await (
