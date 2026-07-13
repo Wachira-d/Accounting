@@ -1194,6 +1194,11 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 68: ใบเสร็จ settlement เก่า — โชว์ชื่อผู้กดที่ถูกต้องด้วย. ชื่อ/ลายเซ็นถูก_
+_resolve สดตอน render (ไม่ snapshot — ไม่มี field เก็บ HTML/PDF/ชื่อบนใบ) → ใบเดิม_
+_แสดงชื่อถูกอัตโนมัติหลัง deploy. เสริม robustness: ใบ settlement ที่ UpdatedBy ว่าง_
+_(ใบเก่า/บาง path) → approver ตกไปใช้ CreatedBy (= ผู้กดคนเดียวกัน) กันเว้นว่าง/เด้ง_
+_ไปเจ้าของ. ไม่ต้อง migrate DB._
 _รอบ 67: ใบเสร็จ settlement — ยกเว้น custom authorized signatory ด้วย (ต่อ รอบ 64)._
 _รอบ 64 ข้าม owner fallback ให้ใบ settlement แล้ว แต่ **ยังไม่ข้าม custom signatory**_
 _(opt-in `UseCustomAuthorizedSignatory`) ที่ override slot 1 ก่อนหน้า. `AuthorizedSignatoryName`_

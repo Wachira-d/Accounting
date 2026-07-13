@@ -666,6 +666,13 @@ public partial class PdfGenerationService : IPdfGenerationService
                 .FirstOrDefaultAsync();
             if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
                 approverId = uId;
+            // ใบเสร็จ settlement: ผู้อนุมัติ = ผู้กดบันทึกรับเงิน. ปกติ UpdatedBy ถูก
+            // ตั้งเป็นผู้กดตอนสร้าง แต่ใบเก่า/บาง path อาจ UpdatedBy ว่าง → ตกไปใช้
+            // CreatedBy (= ผู้กดคนเดียวกัน) เพื่อรับประกันว่าใบเดิมก็โชว์ชื่อผู้กดที่
+            // ถูกต้อง (อ่านสดจาก Users) ไม่ใช่เว้นว่าง/เด้งไปเจ้าของ
+            if (approverId == null && doc.IsSettlementReceipt
+                && Guid.TryParse(doc.CreatedBy, out var cbId))
+                approverId = cbId;
         }
 
         var userIds = new List<Guid>();
