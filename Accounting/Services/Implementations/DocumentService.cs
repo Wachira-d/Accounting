@@ -20,6 +20,7 @@ public class DocumentService : IDocumentService
     private readonly IAccountingService _accountingService;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IWithholdingTaxCertService _whtService;
+    private readonly IPermissionService? _permissionService;
     private readonly IEtaxInvoiceService _etaxService;
     private readonly ILogger<DocumentService> _logger;
     private readonly ILineNotifyService _lineNotify;
@@ -56,10 +57,12 @@ public class DocumentService : IDocumentService
         IApprovalService? approval = null,
         Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
         IFixedAssetService? fixedAssets = null,
-        Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null)
+        Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null,
+        IPermissionService? permissionService = null)
     {
         _fixedAssets = fixedAssets;
         _inventoryCosting = inventoryCosting;
+        _permissionService = permissionService;
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
         _approval = approval;
@@ -2785,12 +2788,18 @@ public class DocumentService : IDocumentService
                     // before the supplier's invoice arrives.
                     DocumentType.GoodsReceiptNote,
                 };
-                if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
+                // ใบเสร็จหลักฐานรับเงิน (settlement, สร้างเป็น Draft เมื่อผู้กด
+                // บันทึกไม่มีสิทธิ์อนุมัติ): การเงินทั้งหมดอยู่ที่ Payment แล้ว
+                // (JE Dr เงินสด/Cr ลูกหนี้ + PaidAmount) — อนุมัติใบนี้ = ออกเลขจริง
+                // + ประทับผู้อนุมัติ (ลายเซ็น) เท่านั้น ห้าม post JE/บวกยอดซ้ำ
+                if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType)
+                    && !doc.IsSettlementReceipt)
                 {
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
                 }
 
-                await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
+                if (!doc.IsSettlementReceipt)
+                    await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
 
                 // เอกสาร settle ที่อ้างเอกสารตั้งหนี้ (PV/Receipt/RV/CIL แปลงมา)
                 // = การจ่าย/รับเงินจริง — JE ของมันแตะเงินสด/ธนาคารแล้ว ตัวมันเอง
@@ -2826,8 +2835,11 @@ public class DocumentService : IDocumentService
                     }
                 }
 
-                await ApplyProjectBillingAsync(companyId, doc, +1);
-                await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
+                if (!doc.IsSettlementReceipt)
+                {
+                    await ApplyProjectBillingAsync(companyId, doc, +1);
+                    await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
+                }
 
                 // supersede ใบแจ้งหนี้ต้นทาง: TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved,
                 // ยังไม่ชำระ) เมื่ออนุมัติ → ล้างใบแจ้งหนี้เดิม (reverse JE + คืน stock +
@@ -5548,10 +5560,16 @@ public class DocumentService : IDocumentService
     /// จึงไม่ตัดหนี้ซ้ำผ่าน ApplySourceDocumentAdjustments. หัวพิมพ์ = "ใบเสร็จรับเงิน"
     /// (Receipt + VAT=0 ไม่ upgrade เป็นใบกำกับ).</summary>
     private async Task<Document> CreateSettlementReceiptAsync(
-        Guid companyId, Document invoice, Payment payment, string createdBy)
+        Guid companyId, Document invoice, Payment payment, string createdBy,
+        bool issueApproved = true)
     {
-        var number = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-            _db, companyId, DocumentType.Receipt, payment.PaymentDate);
+        // issueApproved: ผู้กดบันทึกมีสิทธิ์อนุมัติ → ใบสมบูรณ์ทันที (เลขจริง)
+        // ไม่มีสิทธิ์ → Draft (เลข placeholder — เลขจริงออกตอนผู้มีสิทธิ์อนุมัติ
+        // ผ่าน ApproveDocumentAsync ซึ่ง skip การลงบัญชีให้แล้วสำหรับใบ settlement)
+        var number = issueApproved
+            ? await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
+                _db, companyId, DocumentType.Receipt, payment.PaymentDate)
+            : $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
         var srcLabel = invoice.DocumentType == DocumentType.TaxInvoice ? "ใบกำกับภาษี"
             : invoice.DocumentType == DocumentType.DebitNote ? "ใบเพิ่มหนี้" : "ใบแจ้งหนี้";
         var receipt = new Document
@@ -5565,7 +5583,11 @@ public class DocumentService : IDocumentService
             IsSettlementReceipt = true,
             SettlementPaymentId = payment.Id,
             Reference = invoice.DocumentNumber,
-            Status = DocumentStatus.Paid,
+            Status = issueApproved ? DocumentStatus.Paid : DocumentStatus.Draft,
+            // ลายเซ็น "ผู้มีอำนาจลงนาม" = ผู้กดบันทึกรับเงิน (ResolveSignersAsync
+            // ใช้ UpdatedBy เป็น approver เมื่อไม่มี approval trail — เดิมว่าง →
+            // fallback ลายเซ็น Owner ทุกใบ)
+            UpdatedBy = issueApproved ? createdBy : null,
             PaymentType = Models.Enums.PaymentType.Cash,
             Currency = invoice.Currency,
             ExchangeRate = invoice.ExchangeRate,
@@ -5812,7 +5834,17 @@ public class DocumentService : IDocumentService
                 // ล้มการชำระที่สำเร็จแล้ว. ล้มเหลว → ข้ามใบเสร็จ (ผู้ใช้ออกทีหลังได้)
                 try
                 {
-                    var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy);
+                    // สิทธิ์ของ "ผู้กดบันทึกรับเงิน": มีสิทธิ์อนุมัติ Receipt → ออกใบ
+                    // เสร็จสมบูรณ์ทันที + ลายเซ็นผู้มีอำนาจ = คนกดบันทึก (ไม่ใช่ Owner
+                    // fallback แบบเดิม). ไม่มีสิทธิ์ → ใบเสร็จเป็น Draft รอผู้มีสิทธิ์
+                    // อนุมัติ/เซ็น (เลขจริงออกตอนอนุมัติ — gap-free §86/4).
+                    // fail-open เมื่อ permission service ไม่มี/createdBy ไม่ใช่ user
+                    // (integration/system) = พฤติกรรมเดิม
+                    var recorderCanApprove = true;
+                    if (_permissionService != null && Guid.TryParse(createdBy, out var recorderUid))
+                        recorderCanApprove = await Accounting.Helpers.DocumentPermissionHelper
+                            .CanApproveAsync(_permissionService, companyId, recorderUid, DocumentType.Receipt);
+                    var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove);
                     payment.ReceiptDocumentId = receiptDoc.Id;
                     await _db.SaveChangesAsync();
                 }
