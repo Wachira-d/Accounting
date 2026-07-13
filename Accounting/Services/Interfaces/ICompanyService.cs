@@ -26,6 +26,7 @@ public interface ICompanyService
     /// two outcomes so the controller can surface the right toast.</summary>
     Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request);
     Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId);
+    Task DeleteCompanyAsync(Guid companyId, Guid requestingUserId, string confirmName);
     Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole);
     Task UpdateMemberNameAsync(Guid companyId, Guid ownerId, Guid targetUserId, string newFullName);
 

@@ -427,6 +427,29 @@ public class CompanyService : ICompanyService
         _ => r.ToString(),
     };
 
+    /// <summary>ลบบริษัท (soft-delete — Owner เท่านั้น + พิมพ์ชื่อบริษัทยืนยัน).
+    /// ข้อมูลบัญชี "ไม่ถูกลบจริง" (พ.ร.บ.การบัญชี ม.10 เก็บ 5 ปี) — บริษัทหายจาก
+    /// รายการ/สลับบริษัทไม่ได้ (query filter !IsDeleted) แต่ audit trail คงอยู่.</summary>
+    public async Task DeleteCompanyAsync(Guid companyId, Guid requestingUserId, string confirmName)
+    {
+        await EnsureOwnerAccessAsync(companyId, requestingUserId);
+
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+
+        // Type-to-confirm: กันลบผิดบริษัท (หน้าจอสลับบริษัทได้ ผิดตัวเดียวหายทั้งบริษัท)
+        if (!string.Equals((confirmName ?? "").Trim(), company.Name.Trim(), StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "ชื่อบริษัทที่พิมพ์ยืนยันไม่ตรง — กรุณาพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยันการลบ");
+
+        company.IsDeleted = true;
+        company.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        _logger?.LogWarning("บริษัท {Name} ({Id}) ถูกลบ (soft-delete) โดย user {User}",
+            company.Name, companyId, requestingUserId);
+    }
+
     public async Task RemoveUserAsync(Guid companyId, Guid ownerId, Guid targetUserId)
     {
         await EnsureOwnerAccessAsync(companyId, ownerId);
