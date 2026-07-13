@@ -64,8 +64,8 @@ public class AdvancedArApService : IAdvancedArApService
 
         // ไม่ Include Contact (required nav + !IsDeleted filter → INNER JOIN
         // ตัดแถวที่ contact ถูกลบ) — reattach เอง (รวมที่ถูก soft-delete)
-        setting.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == setting.ContactId);
+        setting.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == setting.ContactId))!;
 
         // Recalculate outstanding from all AR docs (handles CN net).
         var outstandingBalance = await ComputeContactOutstandingArAsync(companyId, contactId);
@@ -301,8 +301,8 @@ public class AdvancedArApService : IAdvancedArApService
             ?? throw new KeyNotFoundException("ไม่พบจดหมายทวงหนี้");
 
         // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
-        letter.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == letter.ContactId);
+        letter.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == letter.ContactId))!;
 
         letter.Status = "Sent";
         letter.SentAt = DateTime.UtcNow;

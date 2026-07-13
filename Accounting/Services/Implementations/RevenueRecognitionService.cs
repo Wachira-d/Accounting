@@ -60,8 +60,8 @@ public class RevenueRecognitionService : IRevenueRecognitionService
 
         // ไม่ Include Contact (required nav + !IsDeleted → INNER JOIN ตัดสัญญาที่
         // contact ถูกลบ) — reattach เอง (รวมที่ถูก soft-delete)
-        contract.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contract.ContactId);
+        contract.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contract.ContactId))!;
 
         var obligations = contract.Obligations.Select(MapObligationToResponse).ToList();
         return MapContractToResponse(contract, contract.Contact?.Name ?? string.Empty, obligations);
@@ -116,8 +116,8 @@ public class RevenueRecognitionService : IRevenueRecognitionService
             ?? throw new KeyNotFoundException("ไม่พบสัญญา");
 
         // ไม่ Include Contact (INNER JOIN ตัดสัญญาที่ contact ถูกลบ) — reattach เอง
-        contract.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contract.ContactId);
+        contract.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contract.ContactId))!;
 
         if (request.Name != null) contract.Name = request.Name;
         if (request.EndDate.HasValue) contract.EndDate = request.EndDate.Value;

@@ -195,9 +195,9 @@ public class ProjectController : ControllerBase
         sb.AppendLine($"ความคืบหน้า %,{profit.CompletionPercent:F2}");
         sb.AppendLine($"Variance งบประมาณ,{profit.BudgetVariance:F2}");
         sb.AppendLine();
-        sb.AppendLine("Cost Breakdown,ยอด (บาท)");
-        foreach (var kv in profit.CostBreakdown)
-            sb.AppendLine($"{Esc(kv.Key)},{kv.Value:F2}");
+        sb.AppendLine("Cost Breakdown,ยอด (บาท),สัดส่วน %");
+        foreach (var b in profit.CostBreakdown)
+            sb.AppendLine($"{Esc(b.Label)},{b.Amount:F2},{b.Percent:F1}");
         sb.AppendLine();
         sb.AppendLine("Cash Flow YTD,ยอด (บาท)");
         sb.AppendLine($"กิจกรรมดำเนินงาน (Operating),{cashFlow.OperatingActivities.SubTotal:F2}");
