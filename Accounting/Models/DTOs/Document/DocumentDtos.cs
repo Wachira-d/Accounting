@@ -333,6 +333,41 @@ public record DepositSummary(
 /// <summary>ตัววินิจฉัยหน้าเงินมัดจำ — บอกว่าระบบ "เห็น" อะไรบ้าง เพื่อหา
 /// สาเหตุเมื่อ dashboard โชว์ 0 (ไม่มีบัญชีมัดจำในผัง / ไม่มี JE เครดิต /
 /// เอกสารไม่ติดธง). แสดงในหน้าเมื่อ list ว่าง.</summary>
+/// <summary>Deposit Center — payload เดียวจบสำหรับหน้าเงินมัดจำใหม่: รายการ +
+/// KPI + กระทบยอดกับ GL + แหล่งที่มา + เวลา generate. ออกแบบให้ "ตัวเลขโกหก
+/// ไม่ได้": ทุก response stamp เวลา + build marker, และ TieOut ฟ้องทันทีเมื่อ
+/// หน้ากับบัญชีแยกประเภทไม่ตรงกัน (แทนการโชว์ 0 เงียบ ๆ).</summary>
+public record DepositCenterResponse(
+    DateTime GeneratedAtUtc,
+    string BuildMarker,
+    DepositCenterKpis Kpis,
+    List<DepositSummary> Rows,
+    DepositCenterTieOut TieOut,
+    DepositCenterSources Sources,
+    string? Warning);
+
+public record DepositCenterKpis(
+    decimal OutstandingBase,     // มัดจำคงค้าง (ฐาน)
+    decimal RealizedBase,        // รับรู้รายได้แล้ว (ฐาน)
+    decimal RefundedGross,       // คืนเงินแล้ว (รวม VAT)
+    decimal DeferredVatParked,   // VAT พักรอเรียกเก็บ (21913 ยังไม่ recognize)
+    decimal VatReported,         // VAT ถึงกำหนด/รายงานแล้ว
+    int OpenCount,               // ใบที่ยังไม่รับรู้ครบ
+    int TotalCount);
+
+public record DepositCenterTieOut(
+    decimal GlNet,               // ยอดคงค้างสุทธิจากบัญชีแยกประเภท (ΣCr−ΣDr บัญชีมัดจำ)
+    decimal PageNet,             // ยอดคงค้างที่หน้าแสดง (Σ outstanding ทุกแถว)
+    decimal Diff,                // ผลต่าง (ควร ~0)
+    bool Ok);
+
+public record DepositCenterSources(
+    int NativeDocs,              // เอกสารติดธง IsDeposit
+    int GlDetectedDocs,          // ตรวจจับจาก GL (integration ไม่ติดธง)
+    decimal DoclessNet,          // JE ล้วนไม่ผูกเอกสาร
+    int DepositAccounts,         // จำนวนบัญชีมัดจำในผัง
+    List<DepositAccountInfo> Accounts);
+
 public record DepositDiagnostics(
     int MatchedAccountCount,
     List<DepositAccountInfo> MatchedAccounts,
@@ -537,7 +572,11 @@ public record DocumentResponse(
     // ยอดมัดจำที่นำมาหักบนใบรับเงินนี้ (display) — ยอดรวม (TotalAmount) ยังเป็น
     // ยอดขายเต็ม, รับสุทธิ = TotalAmount − DepositAppliedAmount. ให้ list โชว์
     // "รับสุทธิ" กันงงเมื่อมีหักมัดจำ
-    decimal DepositAppliedAmount = 0m);
+    decimal DepositAppliedAmount = 0m,
+    // ใบเสร็จ "หลักฐานรับเงิน" ที่ระบบออกอัตโนมัติคู่การชำระ — ไม่มี JE/VAT ของ
+    // ตัวเอง (บัญชีอยู่ที่ Payment + ใบกำกับต้นทาง) → list ติดป้ายให้ผู้ใช้รู้ว่า
+    // ไม่ใช่ยอดขายซ้ำ
+    bool IsSettlementReceipt = false);
 
 public record ProjectCostBrief(
     Guid ProjectId,

@@ -677,7 +677,7 @@ const Layout = {
       description: 'ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเสร็จ · ใบลดหนี้/เพิ่มหนี้' },
     { id: 'recurring', label: 'รายการเกิดซ้ำ / ส่งอัตโนมัติ', icon: '🔁', href: '/pages/recurring.html', feature: 'DocumentEngine',
       description: 'ตั้ง invoice/ค่าใช้จ่ายรายเดือน · อนุมัติ + ส่งอีเมลอัตโนมัติ · ตัวแปร <<month>> <<year>>' },
-    { id: 'deposits', label: 'เงินมัดจำ/รับล่วงหน้า', icon: '🤝', href: '/pages/deposits.html', feature: 'DocumentEngine',
+    { id: 'deposits', label: 'เงินมัดจำ/รับล่วงหน้า', icon: '🤝', href: '/pages/deposit-center.html', feature: 'DocumentEngine',
       description: 'มัดจำ/รับล่วงหน้าคงค้าง — ภาษีขายถึงกำหนดทันที (§78) รายได้รอรับรู้ (217xx) จนส่งมอบ · รับรู้รายได้บางส่วนได้' },
     { id: 'mobile-receipt', label: 'รับเงินสดด่วน (มือถือ)', icon: '📱', href: '/pages/mobile-receipt.html', feature: 'AdvancedReporting',
       description: 'หน้าจอ mobile-first สำหรับร้านค้า — numpad + วิธีรับเงิน + พิมพ์ใบเสร็จ 1 click' },

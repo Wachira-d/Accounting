@@ -15,9 +15,12 @@ public class CompanyController : ControllerBase
 {
     private readonly ICompanyService _companyService;
 
-    public CompanyController(ICompanyService companyService)
+    private readonly IPermissionService? _permissionService;
+
+    public CompanyController(ICompanyService companyService, IPermissionService? permissionService = null)
     {
         _companyService = companyService;
+        _permissionService = permissionService;
     }
 
     [HttpPost]
@@ -102,5 +105,41 @@ public class CompanyController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _companyService.RemoveUserAsync(companyId, userId, targetUserId);
         return NoContent();
+    }
+
+    /// <summary>ลบบริษัท (soft-delete) — Owner เท่านั้น + พิมพ์ชื่อบริษัทยืนยัน.
+    /// ข้อมูลบัญชีไม่ถูกลบจริง (พ.ร.บ.การบัญชี ม.10 เก็บ 5 ปี).</summary>
+    [HttpDelete("{companyId:guid}")]
+    public async Task<ActionResult> DeleteCompany(Guid companyId, [FromQuery] string confirmName)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.DeleteCompanyAsync(companyId, userId, confirmName);
+        return NoContent();
+    }
+
+    /// <summary>สิทธิ์ effective ของสมาชิกคนหนึ่งในบริษัทนี้ — ดูได้เฉพาะ
+    /// Owner หรือตัวสมาชิกเอง (คนอื่นห้ามส่องสิทธิ์กัน).</summary>
+    [HttpGet("{companyId:guid}/users/{targetUserId:guid}/permissions")]
+    public async Task<ActionResult<ApiResponse<object>>> GetMemberPermissions(Guid companyId, Guid targetUserId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var users = await _companyService.GetMembersAsync(companyId, userId); // ตรวจ membership ของผู้เรียกในตัว
+        var requester = users.FirstOrDefault(u => u.UserId == userId);
+        if (requester == null) return Forbid();
+        if (userId != targetUserId && requester.Role != Models.Enums.UserRole.Owner)
+            throw new InvalidOperationException("เฉพาะเจ้าของบริษัทหรือเจ้าตัวเท่านั้นที่ดูสิทธิ์ได้");
+        var member = users.FirstOrDefault(u => u.UserId == targetUserId)
+            ?? throw new KeyNotFoundException("ไม่พบสมาชิกในบริษัทนี้");
+        var permissions = _permissionService != null
+            ? await _permissionService.GetUserPermissionsAsync(companyId, targetUserId)
+            : new List<string>();
+        return Ok(new ApiResponse<object>(true, new
+        {
+            member.UserId,
+            member.FullName,
+            member.Email,
+            member.Role,
+            Permissions = permissions.OrderBy(p => p).ToList(),
+        }));
     }
 }

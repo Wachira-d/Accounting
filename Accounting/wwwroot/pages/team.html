@@ -223,6 +223,10 @@
           const nameEditBtn = isOwner
             ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="แก้ชื่อ-นามสกุล (ที่แสดงบนลายเซ็น/เอกสาร)" onclick="Page.editMemberName('${m.userId}','${(m.fullName||'').replace(/'/g,'&apos;')}')">&#9998; ชื่อ</button>`
             : '';
+          // ดูสิทธิ์ effective รายคน (Owner ดูได้ทุกคน / สมาชิกดูของตัวเอง)
+          const permBtn = (isOwner || isMe)
+            ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:12px" title="ดูสิทธิ์การใช้งานทั้งหมดของสมาชิกคนนี้ในบริษัทนี้" onclick="Page.viewPermissions('${m.userId}','${(m.fullName||'').replace(/'/g,'&apos;')}')">🔐 สิทธิ์</button>`
+            : '';
           // Owners can manage any other member, including demoting another Owner.
           // Self-edit / self-remove is always blocked — UI never offers it.
           if (isOwner && !isMe) {
@@ -250,7 +254,7 @@
             </div>
             <div class="member-actions">
               <span class="role-badge ${r.cls}">${r.icon} ${r.label}</span>
-              ${nameEditBtn}
+              ${nameEditBtn}${permBtn}
               ${actions}
             </div>
           </div>`;
@@ -296,6 +300,37 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      // ดูสิทธิ์ effective ของสมาชิก — จัดกลุ่มตาม prefix ให้อ่านง่าย
+      async viewPermissions(userId, name) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getMemberPermissions(userId);
+          const d = res.data;
+          const perms = d.permissions || [];
+          const groups = {};
+          perms.forEach(p => {
+            const key = p.replace(/^Perm[.:]?/i, '');
+            const g = key.split('.')[0] || 'อื่น ๆ';
+            (groups[g] = groups[g] || []).push(key.split('.').slice(1).join('.') || key);
+          });
+          const gLabel = { Document: '📄 เอกสาร', Accounting: '📒 บัญชี', Payroll: '💰 เงินเดือน', HR: '👥 บุคคล', Leave: '🏖️ ลางาน', Advance: '💳 เงินทดรอง', POS: '🛒 POS', Pii: '🔒 ข้อมูลส่วนบุคคล', SensitiveDocs: '🔒 เอกสารลับ', Organization: '🏢 องค์กร' };
+          const body = Object.keys(groups).sort().map(g =>
+            `<div style="margin-bottom:10px"><b>${gLabel[g] || g}</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">${groups[g].sort().map(x => `<span style="background:var(--gray-100);border-radius:999px;padding:2px 10px;font-size:12px">${Layout.esc(x)}</span>`).join('')}</div></div>`).join('');
+          Layout.confirmDialog ? null : null;
+          const wrap = document.createElement('div');
+          wrap.className = 'modal-overlay active';
+          wrap.id = 'permViewModal';
+          wrap.innerHTML = `<div class="modal" style="max-width:520px"><div class="modal-header">
+              <h3 class="modal-title">🔐 สิทธิ์ของ ${Layout.esc(name || d.fullName || '')}</h3>
+              <button class="modal-close" onclick="document.getElementById('permViewModal').remove()">&times;</button></div>
+            <div class="modal-body">
+              <div style="margin-bottom:10px;font-size:13px;color:var(--gray-500)">บทบาท: <b>${Layout.esc(String(d.role))}</b> · ${perms.length} สิทธิ์ในบริษัทนี้</div>
+              ${body || '<div style="color:var(--gray-400)">ใช้สิทธิ์ตามบทบาทมาตรฐาน (ไม่มีสิทธิ์เฉพาะเพิ่ม)</div>'}
+            </div>
+            <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('permViewModal').remove()">ปิด</button></div></div>`;
+          document.body.appendChild(wrap);
+        } catch (e) { Layout.toast(e.message || 'โหลดสิทธิ์ไม่สำเร็จ', 'error'); }
+      },
       async editMemberName(userId, currentName) {
         const name = prompt('แก้ชื่อ-นามสกุล (จะแสดงบนลายเซ็น/เอกสารเมื่อผู้ใช้ยังไม่ตั้งชื่อใต้ลายเซ็นเอง):', currentName || '');
         if (name === null) return;                       // ยกเลิก

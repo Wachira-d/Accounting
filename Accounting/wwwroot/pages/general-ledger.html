@@ -48,6 +48,7 @@
       </select>
       <select class="form-select" id="projectFilter" style="flex:1;min-width:140px"><option value="">ทุกโครงการ</option></select>
       <select class="form-select" id="dimBranchFilter" style="flex:1;min-width:120px"><option value="">ทุกสาขา</option></select>
+      <select class="form-select" id="dimCcFilter" style="flex:1;min-width:140px" title="กรองตามศูนย์ต้นทุน/แผนก"><option value="">ทุกศูนย์ต้นทุน</option></select>
       <button class="btn btn-primary" onclick="Page.load()">แสดงข้อมูล</button>
     </div>
 
@@ -178,9 +179,10 @@
           });
         } catch(e) {}
         try {
-          const [projRes, brRes] = await Promise.all([
+          const [projRes, brRes, dimRes] = await Promise.all([
             api.getActiveProjects?.().catch(()=>null),
-            api.getBranches?.().catch(()=>null)
+            api.getBranches?.().catch(()=>null),
+            api.getDimensions?.().catch(()=>null)
           ]);
           const projects = projRes?.data?.items || projRes?.data || [];
           const ps = document.getElementById('projectFilter');
@@ -190,6 +192,13 @@
           const bs = document.getElementById('dimBranchFilter');
           if (bs) bs.innerHTML = '<option value="">ทุกสาขา</option>' +
             brs.map(b => `<option value="${b.id}">${b.code ? `[${b.code}] ` : ''}${b.name || '-'}</option>`).join('');
+          // ศูนย์ต้นทุน/แผนก — backend GetGeneralLedger รองรับ dimensionId อยู่แล้ว
+          // แต่ UI ไม่เคยเปิดช่องกรอง (ตัด dimension ชนิด Project เก่าออก)
+          const dims = (dimRes?.data?.items || dimRes?.data || [])
+            .filter(d => d.isActive !== false && d.dimensionType !== 5 && d.dimensionType !== 'Project');
+          const cs = document.getElementById('dimCcFilter');
+          if (cs) cs.innerHTML = '<option value="">ทุกศูนย์ต้นทุน</option>' +
+            dims.map(d => `<option value="${d.id}">${d.code ? `[${d.code}] ` : ''}${d.name || '-'}</option>`).join('');
         } catch(e) {}
         await this.load();
       },
@@ -269,6 +278,8 @@
         if (accountId) q += `&accountId=${accountId}`;
         if (proj) q += `&projectId=${proj}`;
         if (br) q += `&branchId=${br}`;
+        const cc = document.getElementById('dimCcFilter')?.value;
+        if (cc) q += `&dimensionId=${cc}`;
         const content = document.getElementById('ledgerContent');
         content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px" data-i18n="common.loading">กำลังโหลด...</div>';
         try {

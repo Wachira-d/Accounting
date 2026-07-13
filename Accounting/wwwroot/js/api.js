@@ -204,6 +204,11 @@ const API = {
       approveDocument: (id, body) => API.post(`${base}/document/${id}/approve`, body ?? {}),
       completeTaxInvoice: (id, body) => API.post(`${base}/document/${id}/complete-tax-invoice`, body),
       getDeposits: (status = '') => API.get(`${base}/document/deposits${status ? `?status=${status}` : ''}`),
+      // Deposit Center (redesign): endpoint เดียวจบ — rows + KPI + GL tie-out + timestamp
+      getDepositCenter: () => API.get(`${base}/document/deposit-center`),
+      // จัดการบริษัท: ลบ (Owner + พิมพ์ชื่อยืนยัน) + ดูสิทธิ์สมาชิกรายคน
+      deleteCompany: (confirmName) => API.del(`${base}?confirmName=${encodeURIComponent(confirmName)}`),
+      getMemberPermissions: (userId) => API.get(`${base}/users/${userId}/permissions`),
       getDepositDiagnostics: () => API.get(`${base}/document/deposits/diagnostics`),
       realizeDeposit: (id, body) => API.post(`${base}/document/${id}/realize-deposit`, body),
       refundDeposit: (id, body) => API.post(`${base}/document/${id}/refund-deposit`, body),

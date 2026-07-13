@@ -336,6 +336,17 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DepositDiagnostics>(true, result));
     }
 
+    /// <summary>Deposit Center — payload เดียวจบ (รายการ + KPI + GL tie-out +
+    /// timestamp) สำหรับหน้าเงินมัดจำ redesign. URL ใหม่ ไม่เคยถูก cache ที่ชั้นไหน.</summary>
+    [HttpGet("deposit-center")]
+    public async Task<ActionResult<ApiResponse<DepositCenterResponse>>> GetDepositCenter(Guid companyId)
+    {
+        Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+        Response.Headers["Pragma"] = "no-cache";
+        var result = await _documentService.GetDepositCenterAsync(companyId);
+        return Ok(new ApiResponse<DepositCenterResponse>(true, result));
+    }
+
     /// <summary>เอกสารทั้งหมดที่ผูก booking เดียวกัน (มัดจำ → ใบสุดท้าย → ใบเสร็จ).</summary>
     [HttpGet("by-booking/{bookingNumber}")]
     public async Task<ActionResult<ApiResponse<List<DocumentResponse>>>> GetByBooking(

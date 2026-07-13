@@ -590,6 +590,26 @@ public class AdminController : ControllerBase
         }, null));
     }
 
+    /// <summary>ลบบริษัท (soft-delete) จาก admin console — SystemAdmin + พิมพ์ชื่อ
+    /// บริษัทยืนยัน. ข้อมูลบัญชีคงอยู่ตาม พ.ร.บ.การบัญชี ม.10 (5 ปี); บริษัทหาย
+    /// จากรายการ/สลับเข้าไม่ได้ทันทีทุก user (query filter !IsDeleted).</summary>
+    [HttpDelete("companies/{companyId:guid}")]
+    public async Task<ActionResult> DeleteCompany(Guid companyId, [FromQuery] string confirmName,
+        [FromServices] ILogger<AdminController>? logger = null)
+    {
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท (หรือถูกลบไปแล้ว)");
+        if (!string.Equals((confirmName ?? "").Trim(), company.Name.Trim(), StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "ชื่อบริษัทที่พิมพ์ยืนยันไม่ตรง — กรุณาพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษร");
+        company.IsDeleted = true;
+        company.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        logger?.LogWarning("ADMIN ลบบริษัท {Name} ({Id}) โดย {Admin}",
+            company.Name, companyId, User.Identity?.Name ?? "system-admin");
+        return NoContent();
+    }
+
     [HttpPut("companies/{companyId:guid}/users/{userId:guid}/role")]
     public async Task<ActionResult<ApiResponse<string>>> ChangeCompanyUserRole(
         Guid companyId, Guid userId, [FromBody] UpdateUserRoleRequest request)

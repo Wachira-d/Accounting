@@ -128,6 +128,8 @@ const AdminAPI = {
   // Error log (system-wide)
   errorLogs(params = '') { return this.get(`/error-logs${params}`); },
   purgeErrorLogs(days) { return this.del(`/error-logs/purge?olderThanDays=${days}`); },
+  // ลบบริษัท (soft-delete, SystemAdmin) — ต้องส่งชื่อบริษัทตรงทุกตัวอักษร
+  deleteCompany(companyId, confirmName) { return this.del(`/companies/${companyId}?confirmName=${encodeURIComponent(confirmName)}`); },
 
   // Site Settings
   siteSettings() { return this.get('/site-settings'); },

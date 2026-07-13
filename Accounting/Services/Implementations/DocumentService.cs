@@ -20,6 +20,7 @@ public class DocumentService : IDocumentService
     private readonly IAccountingService _accountingService;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IWithholdingTaxCertService _whtService;
+    private readonly IPermissionService? _permissionService;
     private readonly IEtaxInvoiceService _etaxService;
     private readonly ILogger<DocumentService> _logger;
     private readonly ILineNotifyService _lineNotify;
@@ -56,10 +57,12 @@ public class DocumentService : IDocumentService
         IApprovalService? approval = null,
         Accounting.Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
         IFixedAssetService? fixedAssets = null,
-        Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null)
+        Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null,
+        IPermissionService? permissionService = null)
     {
         _fixedAssets = fixedAssets;
         _inventoryCosting = inventoryCosting;
+        _permissionService = permissionService;
         _emailSchedule = emailSchedule;
         _advancedArAp = advancedArAp;
         _approval = approval;
@@ -108,6 +111,25 @@ public class DocumentService : IDocumentService
         if (!costTypes.Contains(doc.DocumentType)) return;
         if (doc.Lines == null || doc.Lines.Count == 0) return;
 
+        // จำแนกหมวดต้นทุนโครงการจากคำในรายการ (keyword ไทย/อังกฤษ) — ผู้ใช้แก้
+        // หมวดเองได้ทีหลังในแท็บต้นทุนของโครงการ ค่านี้เป็นแค่ default ที่ฉลาดขึ้น
+        static string ClassifyProjectCostType(string? desc)
+        {
+            var d = (desc ?? "").ToLowerInvariant();
+            if (d.Contains("จ้างเหมา") || d.Contains("ผู้รับเหมา") || d.Contains("subcontract"))
+                return "Subcontract";
+            if (d.Contains("ค่าแรง") || d.Contains("แรงงาน") || d.Contains("ค่าจ้าง")
+                || d.Contains("เงินเดือน") || d.Contains("โอที") || d.Contains("labor") || d.Contains("labour") || d.Contains("wage"))
+                return "Labor";
+            if (d.Contains("เดินทาง") || d.Contains("น้ำมันรถ") || d.Contains("ที่พัก")
+                || d.Contains("โรงแรม") || d.Contains("ตั๋ว") || d.Contains("travel"))
+                return "Travel";
+            if (d.Contains("ค่าเช่า") || d.Contains("ค่าไฟ") || d.Contains("ค่าน้ำ")
+                || d.Contains("ประกัน") || d.Contains("ค่าธรรมเนียม") || d.Contains("overhead"))
+                return "Overhead";
+            return "Material";   // ค่า default เดิม — วัสดุ/อุปกรณ์/สินค้า
+        }
+
         // Snapshot the lines that already have a PCE so we skip them
         // in O(1) rather than running an exists-query per line.
         var lineIds = doc.Lines.Select(l => l.Id).ToList();
@@ -137,7 +159,9 @@ public class DocumentService : IDocumentService
                 CompanyId = companyId,
                 ProjectId = projectId.Value,
                 EntryDate = doc.DocumentDate,
-                CostType = "Material",         // generic; could classify on AccountType later
+                // จำแนกหมวดต้นทุนจากคำในรายการ (เดิม hardcode "Material" หมด →
+                // ค่าแรง/จ้างเหมาจากใบซื้อกองผิดหมวด สัดส่วนต้นทุนโครงการเพี้ยน)
+                CostType = ClassifyProjectCostType(line.Description),
                 Description = $"{line.Description} [auto from {doc.DocumentNumber}]",
                 Quantity = line.Quantity,
                 UnitCost = line.UnitPrice,
@@ -1879,6 +1903,78 @@ public class DocumentService : IDocumentService
             hint, listCount, listError);
     }
 
+    /// <summary>Deposit Center — endpoint เดียวจบสำหรับหน้าเงินมัดจำ redesign:
+    /// รายการ + KPI + GL tie-out + แหล่งที่มา ใน payload เดียว (atomic — หน้า
+    /// ไม่มีวันโชว์ list ว่างพร้อม GL มียอดโดยไม่ฟ้อง). URL ใหม่ = ไม่เคยถูก
+    /// cache ที่ชั้นไหน (ปิดปัญหา "แก้แล้วยังขึ้น 0" จาก SW/browser/CDN เดิม).</summary>
+    public async Task<DepositCenterResponse> GetDepositCenterAsync(Guid companyId)
+    {
+        List<DepositSummary> rows;
+        string? warning = null;
+        try { rows = await GetDepositsAsync(companyId); }
+        catch (Exception ex)
+        {
+            rows = new List<DepositSummary>();
+            warning = $"โหลดรายการมัดจำล้มเหลว: {ex.Message}";
+            _logger.LogError(ex, "GetDepositCenterAsync: list failed for {Company}", companyId);
+        }
+
+        // GL side — คำนวณตรงจากบัญชีมัดจำ (โค้ดเดียวกับ diagnostics แต่ไม่ self-probe
+        // ซ้ำ เพราะ rows ข้างบนคือผลจริงอยู่แล้ว)
+        var depAcctList = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted
+                && (a.AccountCode.StartsWith("215") || a.AccountCode.StartsWith("217")
+                    || a.AccountName.Contains("มัดจำ")
+                    || a.AccountName.Contains("รับล่วงหน้า")
+                    || a.AccountName.Contains("รอรับรู้")))
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .ToListAsync();
+        var depAcctIdSet = depAcctList.Select(a => a.Id).ToList();
+        var glLines = depAcctIdSet.Count == 0
+            ? new List<(Guid AccountId, decimal Net, bool HasDoc)>()
+            : (await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => !l.IsDeleted
+                    && depAcctIdSet.Contains(l.AccountId)
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.ReversedByEntryId == null)
+                .Select(l => new { l.AccountId, Net = l.CreditAmount - l.DebitAmount, HasDoc = l.JournalEntry.SourceDocumentId != null })
+                .ToListAsync())
+                .Select(x => (x.AccountId, x.Net, x.HasDoc)).ToList();
+        var glNet = glLines.Sum(l => l.Net);
+        var accounts = depAcctList.Select(a => new DepositAccountInfo(
+            a.AccountCode, a.AccountName,
+            glLines.Where(l => l.AccountId == a.Id).Sum(l => l.Net))).ToList();
+
+        // KPIs จาก rows (แถว docless id=Guid.Empty นับรวมใน outstanding — เป็นหนี้สินจริง)
+        var outstanding = rows.Sum(r => r.OutstandingAmount);
+        var realized = rows.Where(r => r.Id != Guid.Empty).Sum(r => r.RealizedAmount);
+        var refunded = rows.Where(r => r.Id != Guid.Empty).Sum(r => r.RefundedAmount);
+        var deferredParked = rows.Where(r => r.OutputVatDeferred && r.OutputVatRecognizedAt == null)
+            .Sum(r => r.VatAmount);
+        var vatReported = rows.Where(r => r.Id != Guid.Empty && (!r.OutputVatDeferred || r.OutputVatRecognizedAt != null))
+            .Sum(r => r.VatAmount);
+        var openCount = rows.Count(r => r.Status != "Realized");
+
+        var diff = Math.Round(glNet - outstanding, 2);
+        // tolerance 1 บาท — เศษปัดสะสมจากการเฉลี่ยฐาน/VAT ต่อใบ
+        var tieOk = Math.Abs(diff) <= 1.00m;
+        if (warning == null && rows.Count == 0 && glNet > 0.005m)
+            warning = $"บัญชีแยกประเภทมีหนี้สินมัดจำคงค้าง {glNet:N2} บาท แต่ระบบแสดงรายการไม่ได้ — กรุณาส่งภาพหน้านี้ให้ผู้ดูแล";
+
+        var nativeDocs = rows.Count(r => r.Id != Guid.Empty);
+        var doclessNet = rows.Where(r => r.Id == Guid.Empty).Sum(r => r.OutstandingAmount);
+
+        return new DepositCenterResponse(
+            DateTime.UtcNow,
+            "deposit-center v1",
+            new DepositCenterKpis(outstanding, realized, refunded, deferredParked, vatReported, openCount, rows.Count),
+            rows,
+            new DepositCenterTieOut(glNet, outstanding, diff, tieOk),
+            new DepositCenterSources(nativeDocs, 0, doclessNet, depAcctList.Count, accounts),
+            warning);
+    }
+
     public async Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber)
     {
         if (string.IsNullOrWhiteSpace(bookingNumber)) return new List<DocumentResponse>();
@@ -2692,12 +2788,18 @@ public class DocumentService : IDocumentService
                     // before the supplier's invoice arrives.
                     DocumentType.GoodsReceiptNote,
                 };
-                if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType))
+                // ใบเสร็จหลักฐานรับเงิน (settlement, สร้างเป็น Draft เมื่อผู้กด
+                // บันทึกไม่มีสิทธิ์อนุมัติ): การเงินทั้งหมดอยู่ที่ Payment แล้ว
+                // (JE Dr เงินสด/Cr ลูกหนี้ + PaidAmount) — อนุมัติใบนี้ = ออกเลขจริง
+                // + ประทับผู้อนุมัติ (ลายเซ็น) เท่านั้น ห้าม post JE/บวกยอดซ้ำ
+                if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType)
+                    && !doc.IsSettlementReceipt)
                 {
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
                 }
 
-                await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
+                if (!doc.IsSettlementReceipt)
+                    await ApplySourceDocumentAdjustmentsAsync(companyId, doc);
 
                 // เอกสาร settle ที่อ้างเอกสารตั้งหนี้ (PV/Receipt/RV/CIL แปลงมา)
                 // = การจ่าย/รับเงินจริง — JE ของมันแตะเงินสด/ธนาคารแล้ว ตัวมันเอง
@@ -2733,8 +2835,11 @@ public class DocumentService : IDocumentService
                     }
                 }
 
-                await ApplyProjectBillingAsync(companyId, doc, +1);
-                await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
+                if (!doc.IsSettlementReceipt)
+                {
+                    await ApplyProjectBillingAsync(companyId, doc, +1);
+                    await ApplyStockMovementsAsync(companyId, doc, +1, approvedBy);
+                }
 
                 // supersede ใบแจ้งหนี้ต้นทาง: TaxInvoice ที่แปลงจากใบแจ้งหนี้ (approved,
                 // ยังไม่ชำระ) เมื่ออนุมัติ → ล้างใบแจ้งหนี้เดิม (reverse JE + คืน stock +
@@ -5455,10 +5560,16 @@ public class DocumentService : IDocumentService
     /// จึงไม่ตัดหนี้ซ้ำผ่าน ApplySourceDocumentAdjustments. หัวพิมพ์ = "ใบเสร็จรับเงิน"
     /// (Receipt + VAT=0 ไม่ upgrade เป็นใบกำกับ).</summary>
     private async Task<Document> CreateSettlementReceiptAsync(
-        Guid companyId, Document invoice, Payment payment, string createdBy)
+        Guid companyId, Document invoice, Payment payment, string createdBy,
+        bool issueApproved = true)
     {
-        var number = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
-            _db, companyId, DocumentType.Receipt, payment.PaymentDate);
+        // issueApproved: ผู้กดบันทึกมีสิทธิ์อนุมัติ → ใบสมบูรณ์ทันที (เลขจริง)
+        // ไม่มีสิทธิ์ → Draft (เลข placeholder — เลขจริงออกตอนผู้มีสิทธิ์อนุมัติ
+        // ผ่าน ApproveDocumentAsync ซึ่ง skip การลงบัญชีให้แล้วสำหรับใบ settlement)
+        var number = issueApproved
+            ? await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
+                _db, companyId, DocumentType.Receipt, payment.PaymentDate)
+            : $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
         var srcLabel = invoice.DocumentType == DocumentType.TaxInvoice ? "ใบกำกับภาษี"
             : invoice.DocumentType == DocumentType.DebitNote ? "ใบเพิ่มหนี้" : "ใบแจ้งหนี้";
         var receipt = new Document
@@ -5472,7 +5583,11 @@ public class DocumentService : IDocumentService
             IsSettlementReceipt = true,
             SettlementPaymentId = payment.Id,
             Reference = invoice.DocumentNumber,
-            Status = DocumentStatus.Paid,
+            Status = issueApproved ? DocumentStatus.Paid : DocumentStatus.Draft,
+            // ลายเซ็น "ผู้มีอำนาจลงนาม" = ผู้กดบันทึกรับเงิน (ResolveSignersAsync
+            // ใช้ UpdatedBy เป็น approver เมื่อไม่มี approval trail — เดิมว่าง →
+            // fallback ลายเซ็น Owner ทุกใบ)
+            UpdatedBy = issueApproved ? createdBy : null,
             PaymentType = Models.Enums.PaymentType.Cash,
             Currency = invoice.Currency,
             ExchangeRate = invoice.ExchangeRate,
@@ -5719,7 +5834,17 @@ public class DocumentService : IDocumentService
                 // ล้มการชำระที่สำเร็จแล้ว. ล้มเหลว → ข้ามใบเสร็จ (ผู้ใช้ออกทีหลังได้)
                 try
                 {
-                    var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy);
+                    // สิทธิ์ของ "ผู้กดบันทึกรับเงิน": มีสิทธิ์อนุมัติ Receipt → ออกใบ
+                    // เสร็จสมบูรณ์ทันที + ลายเซ็นผู้มีอำนาจ = คนกดบันทึก (ไม่ใช่ Owner
+                    // fallback แบบเดิม). ไม่มีสิทธิ์ → ใบเสร็จเป็น Draft รอผู้มีสิทธิ์
+                    // อนุมัติ/เซ็น (เลขจริงออกตอนอนุมัติ — gap-free §86/4).
+                    // fail-open เมื่อ permission service ไม่มี/createdBy ไม่ใช่ user
+                    // (integration/system) = พฤติกรรมเดิม
+                    var recorderCanApprove = true;
+                    if (_permissionService != null && Guid.TryParse(createdBy, out var recorderUid))
+                        recorderCanApprove = await Accounting.Helpers.DocumentPermissionHelper
+                            .CanApproveAsync(_permissionService, companyId, recorderUid, DocumentType.Receipt);
+                    var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove);
                     payment.ReceiptDocumentId = receiptDoc.Id;
                     await _db.SaveChangesAsync();
                 }
@@ -8933,7 +9058,8 @@ public class DocumentService : IDocumentService
         DepositAppliedToDocumentId: d.DepositAppliedToDocumentId,
         BookingNumber: d.BookingNumber,
         CombinedInvoiceTaxInvoice: d.CombinedInvoiceTaxInvoice,
-        DepositAppliedAmount: d.DepositAppliedAmount);
+        DepositAppliedAmount: d.DepositAppliedAmount,
+        IsSettlementReceipt: d.IsSettlementReceipt);
     }
 
     /// <summary>Build the redacted stub returned to API consumers who lack

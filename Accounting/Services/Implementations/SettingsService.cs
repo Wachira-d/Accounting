@@ -44,6 +44,13 @@ public class SettingsService : ISettingsService
         if (request.InvoiceFooter != null) settings.InvoiceFooter = request.InvoiceFooter;
         if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
         if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
+        if (request.ShowProjectOnDocuments.HasValue) settings.ShowProjectOnDocuments = request.ShowProjectOnDocuments.Value;
+        if (request.ShowCostCenterOnDocuments.HasValue) settings.ShowCostCenterOnDocuments = request.ShowCostCenterOnDocuments.Value;
+        if (request.UseCustomAuthorizedSignatory.HasValue) settings.UseCustomAuthorizedSignatory = request.UseCustomAuthorizedSignatory.Value;
+        // "" = ล้างค่า, null = ไม่แก้ (ให้ user ลบชื่อ/รูปได้)
+        if (request.AuthorizedSignatoryName != null) settings.AuthorizedSignatoryName = string.IsNullOrWhiteSpace(request.AuthorizedSignatoryName) ? null : request.AuthorizedSignatoryName.Trim();
+        if (request.AuthorizedSignatoryTitle != null) settings.AuthorizedSignatoryTitle = string.IsNullOrWhiteSpace(request.AuthorizedSignatoryTitle) ? null : request.AuthorizedSignatoryTitle.Trim();
+        if (request.AuthorizedSignatorySignatureBase64 != null) settings.AuthorizedSignatorySignatureBase64 = string.IsNullOrWhiteSpace(request.AuthorizedSignatorySignatureBase64) ? null : request.AuthorizedSignatorySignatureBase64.Trim();
         if (request.DocumentTitleOverridesJson != null)
             settings.DocumentTitleOverridesJson = string.IsNullOrWhiteSpace(request.DocumentTitleOverridesJson) ? null : request.DocumentTitleOverridesJson;
         if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
@@ -551,7 +558,13 @@ public class SettingsService : ISettingsService
         s.StampUrl,
         s.StampWidthMm,
         s.StampHeightMm,
-        s.StampAlign);
+        s.StampAlign,
+        s.ShowProjectOnDocuments,
+        s.ShowCostCenterOnDocuments,
+        s.UseCustomAuthorizedSignatory,
+        s.AuthorizedSignatoryName,
+        s.AuthorizedSignatoryTitle,
+        s.AuthorizedSignatorySignatureBase64);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,
