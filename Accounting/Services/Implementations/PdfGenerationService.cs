@@ -1046,7 +1046,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowCompanyNameEn && company.NameEn != null) sb.AppendLine($"<div class='company-name-en'>{company.NameEn}</div>");
         if (template.ShowCompanyAddress)
         {
-            var fullAddr = FormatThaiAddress(company.Address, company.BuildingNumber, company.Moo, company.StreetName,
+            var fullAddr = FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
                 company.SubDistrict, company.District, company.Province, company.PostalCode);
             if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{fullAddr}</div>");
         }
@@ -1090,7 +1090,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId}</div>");
         if (template.ShowContactAddress)
         {
-            var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.Moo, doc.Contact.StreetName,
+            var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
                 doc.Contact.SubDistrict, doc.Contact.District, doc.Contact.Province, doc.Contact.PostalCode);
             if (!string.IsNullOrWhiteSpace(caddr)) sb.AppendLine($"<div>{caddr}</div>");
         }
@@ -1330,9 +1330,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ใช้ FormatThaiAddress (เหมือน path เอกสารอื่น) — รวม structured fields
         // อย่างถูกต้อง + แปลง ตำบล/อำเภอ → แขวง/เขต สำหรับ กทม. + กัน locality
         // ซ้ำซ้อนเมื่อ free-text มีอยู่แล้ว.
-        var fullAddress = FormatThaiAddress(company.Address, company.BuildingNumber, company.Moo, company.StreetName,
+        var fullAddress = FormatThaiAddress(company.Address, company.BuildingNumber, company.BuildingName, company.Moo, company.StreetName,
             company.SubDistrict, company.District, company.Province, company.PostalCode);
-        var payeeAddr = FormatThaiAddress(cert.PayeeContact.Address, cert.PayeeContact.BuildingNumber, cert.PayeeContact.Moo, cert.PayeeContact.StreetName,
+        var payeeAddr = FormatThaiAddress(cert.PayeeContact.Address, cert.PayeeContact.BuildingNumber, cert.PayeeContact.BuildingName, cert.PayeeContact.Moo, cert.PayeeContact.StreetName,
             cert.PayeeContact.SubDistrict, cert.PayeeContact.District, cert.PayeeContact.Province, cert.PayeeContact.PostalCode);
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
 
@@ -1893,7 +1893,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// Falls back to the raw free-text when no structured locality exists.
     /// </summary>
     internal static string FormatThaiAddress(
-        string? freeText, string? buildingNumber, string? moo, string? street,
+        string? freeText, string? buildingNumber, string? buildingName, string? moo, string? street,
         string? subDistrict, string? district, string? province, string? postalCode)
     {
         var sub = subDistrict?.Trim();
@@ -1937,15 +1937,29 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             && (prov.Contains("กรุงเทพ") || prov.Contains("กทม"));
 
         // Street/house part: prefer the explicit structured fields, else the
-        // free text.
+        // free text. ชื่ออาคาร (buildingName) ต้องอยู่ในบรรทัดนี้ด้วย — เดิม
+        // ตกหล่นทำให้ที่อยู่บนเอกสารไม่มีชื่ออาคารทั้งที่ contact บันทึกไว้.
+        // กันซ้ำ: ถ้า street (เช่น head ที่ดึงจาก free-text) มีชื่ออาคารอยู่แล้ว
+        // ไม่ต้องเติมซ้ำอีกรอบ.
+        var bName = buildingName?.Trim();
+        if (!string.IsNullOrWhiteSpace(bName)
+            && (street?.Contains(bName, StringComparison.Ordinal) == true))
+            bName = null;
         var structuredStreet = string.Join(" ", new[]
         {
             buildingNumber?.Trim(),
+            bName,
             string.IsNullOrWhiteSpace(moo) ? null : $"หมู่ {moo!.Trim()}",
             street?.Trim(),
         }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
+        // ใช้ structured street เมื่อมี "จุดยึด" จริง (เลขที่/หมู่/ถนน) — ถ้ามี
+        // แค่ชื่ออาคารโดด ๆ ให้ตกไปใช้ free-text ที่มักครบกว่า (พฤติกรรมเดิม)
+        // เว้นแต่ไม่มี free-text เลยจึงใช้ชื่ออาคารเท่าที่มี.
+        var hasStreetAnchor = !string.IsNullOrWhiteSpace(buildingNumber)
+            || !string.IsNullOrWhiteSpace(moo) || !string.IsNullOrWhiteSpace(street);
         var streetPart = !string.IsNullOrWhiteSpace(structuredStreet)
+                && (hasStreetAnchor || string.IsNullOrWhiteSpace(freeText))
             ? structuredStreet
             : (freeText ?? "");
 

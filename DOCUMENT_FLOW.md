@@ -1194,6 +1194,14 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 63: ชื่ออาคาร (BuildingName) ขึ้นบนที่อยู่เอกสารครบ —_
+_`PdfGenerationService.FormatThaiAddress` รับพารามิเตอร์ buildingName เพิ่ม_
+_(เดิม structured street ประกอบจาก เลขที่+หมู่+ถนน เท่านั้น → contact ที่บันทึก_
+_ชื่ออาคารไว้หายจากเอกสารพิมพ์ทุกใบ); อัปเดต call site ทั้ง 6 จุด (HTML + native_
+_renderer, company + contact + 50ทวิ) + กันซ้ำเมื่อ street head จาก free-text_
+_มีชื่ออาคารอยู่แล้ว + คงพฤติกรรมเดิมเมื่อมีแค่ชื่ออาคารโดด ๆ (ตกไปใช้ free-text)._
+_`WithholdingTaxCertService.ComposeFullAddress` (API response) เติม buildingName_
+_ใน structured fallback ด้วย. e-Tax XML มี BuildingName element อยู่แล้วทั้ง 2 ฝั่ง._
 _รอบ 62: **Deposit Center** — redesign หน้าเงินมัดจำทั้งหน้า (`/pages/_
 _deposit-center.html` + endpoint ใหม่ `GET document/deposit-center`): payload_
 _เดียวจบ (rows + KPI + **GL tie-out** + sources + GeneratedAtUtc + build marker)_

@@ -413,7 +413,7 @@ public partial class PdfGenerationService
         if (t.ShowCompanyNameEn && !string.IsNullOrWhiteSpace(co.NameEn)) Line(co.NameEn!, 11);
         if (t.ShowCompanyAddress)
         {
-            var addr = FormatThaiAddress(co.Address, co.BuildingNumber, co.Moo, co.StreetName,
+            var addr = FormatThaiAddress(co.Address, co.BuildingNumber, co.BuildingName, co.Moo, co.StreetName,
                 co.SubDistrict, co.District, co.Province, co.PostalCode);
             if (!string.IsNullOrWhiteSpace(addr)) Line(addr);
         }
@@ -495,7 +495,7 @@ public partial class PdfGenerationService
                 cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}").FontSize(9).FontColor("#374151");
             if (t.ShowContactAddress)
             {
-                var addr = FormatThaiAddress(c.Address, c.BuildingNumber, c.Moo, c.StreetName,
+                var addr = FormatThaiAddress(c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
                     c.SubDistrict, c.District, c.Province, c.PostalCode);
                 if (!string.IsNullOrWhiteSpace(addr)) cc.Item().Text(addr).FontSize(9).FontColor("#374151");
             }
