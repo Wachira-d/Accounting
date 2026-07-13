@@ -796,6 +796,39 @@ public partial class PdfGenerationService : IPdfGenerationService
         var authorizedSignable = doc.Status is not (Models.Enums.DocumentStatus.Draft
             or Models.Enums.DocumentStatus.WaitingApproval
             or Models.Enums.DocumentStatus.Rejected);
+
+        // CUSTOM AUTHORIZED SIGNATORY (opt-in — ตั้งค่า → เอกสาร): บริษัทกำหนด
+        // "ผู้มีอำนาจลงนาม" กลาง (เช่น กรรมการผู้จัดการ) ให้ใช้แทนลายเซ็น
+        // "ผู้กดอนุมัติ" ทุกใบ. เงื่อนไข: เอกสารอนุมัติแล้วเท่านั้น + ไม่ทับ
+        // ลายเซ็นลูกค้าเซ็นรับของ (POD บน DeliveryNote — ลูกค้าเซ็นจริง ห้ามแทน)
+        if (authorizedSignable && signers.Count >= 2
+            && !(doc.DocumentType == DocumentType.DeliveryNote
+                 && !string.IsNullOrWhiteSpace(doc.DeliverySignatureBase64)))
+        {
+            var custom = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(c => c.CompanyId == doc.CompanyId && !c.IsDeleted && c.UseCustomAuthorizedSignatory)
+                .Select(c => new { c.AuthorizedSignatoryName, c.AuthorizedSignatoryTitle, c.AuthorizedSignatorySignatureBase64 })
+                .FirstOrDefaultAsync();
+            if (custom != null
+                && (!string.IsNullOrWhiteSpace(custom.AuthorizedSignatoryName)
+                    || !string.IsNullOrWhiteSpace(custom.AuthorizedSignatorySignatureBase64)))
+            {
+                string? cDataUri = null; byte[]? cBytes = null;
+                if (!string.IsNullOrWhiteSpace(custom.AuthorizedSignatorySignatureBase64))
+                {
+                    var raw = custom.AuthorizedSignatorySignatureBase64!.Trim();
+                    cDataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                        ? raw : "data:image/png;base64," + raw;
+                    cBytes = TryDecodeBase64Image(raw);
+                }
+                signers[1] = new DocumentSigner(cDataUri, cBytes,
+                    !string.IsNullOrWhiteSpace(custom.AuthorizedSignatoryName)
+                        ? custom.AuthorizedSignatoryName : signers[1].Name,
+                    !string.IsNullOrWhiteSpace(custom.AuthorizedSignatoryTitle)
+                        ? custom.AuthorizedSignatoryTitle : signers[1].Title);
+            }
+        }
+
         if (authorizedSignable && signers.Count >= 2
             && (signers[1].SignatureImageBytes is null || signers[1].SignatureImageBytes!.Length == 0))
         {

@@ -194,6 +194,18 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ShowCostCenterOnDocuments" boolean NOT NULL DEFAULT true;
             """,
             """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "UseCustomAuthorizedSignatory" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "AuthorizedSignatoryName" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "AuthorizedSignatoryTitle" varchar(200) NULL;
+            """,
+            """
+            ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "AuthorizedSignatorySignatureBase64" text NULL;
+            """,
+            """
             ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxCertificatePath" varchar(500) NULL;
             """,
             """
