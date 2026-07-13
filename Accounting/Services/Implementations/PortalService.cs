@@ -94,8 +94,8 @@ public class PortalService : IPortalService
             ?? throw new InvalidOperationException("Portal access not found.");
 
         // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
-        access.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId);
+        access.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId))!;
 
         if (request.CanViewInvoices.HasValue) access.CanViewInvoices = request.CanViewInvoices.Value;
         if (request.CanViewStatements.HasValue) access.CanViewStatements = request.CanViewStatements.Value;
@@ -175,8 +175,8 @@ public class PortalService : IPortalService
             ?? throw new InvalidOperationException("Portal access not found or inactive.");
 
         // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
-        access.Contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId);
+        access.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId))!;
 
         var company = await _db.Companies
             .FirstOrDefaultAsync(c => c.Id == companyId)

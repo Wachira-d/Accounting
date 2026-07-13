@@ -654,7 +654,9 @@
             <label class="form-label" data-i18n="common.note">หมายเหตุ
               <button type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
             </label>
-            <input type="text" class="form-input" id="fNotes">
+            <!-- textarea: Enter = ขึ้นบรรทัดใหม่ (input เดิม Enter จะ submit ฟอร์ม
+                 สร้างเอกสารทันที) — PDF แสดงตามบรรทัดที่พิมพ์ (white-space:pre-line) -->
+            <textarea class="form-input" id="fNotes" rows="2" placeholder="กด Enter ขึ้นบรรทัดใหม่ได้ — บนเอกสารจะแสดงคนละบรรทัดตามที่พิมพ์"></textarea>
           </div>
 
           <!-- ===== PV เคลม VAT (master switch + ใบกำกับผู้ขาย) — ย้ายมาท้ายฟอร์ม

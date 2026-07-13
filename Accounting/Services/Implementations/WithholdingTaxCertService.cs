@@ -584,7 +584,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     }
 
     private static string ComposeFullAddress(string? address, string? subDistrict, string? district, string? province, string? postalCode,
-        string? moo = null, string? buildingNumber = null, string? streetName = null)
+        string? moo = null, string? buildingNumber = null, string? streetName = null, string? buildingName = null)
     {
         // Many contacts have BOTH a free-form Address (already typed as a full
         // address by the user, e.g. "44/75 ม.3 ต.สุรศักดิ์ อ.ศรีราชา จ.ชลบุรี 20110")
@@ -609,6 +609,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             {
                 addr,
                 buildingNumber,
+                buildingName,   // ชื่ออาคาร — เดิมตกหล่นจาก structured fallback
                 string.IsNullOrEmpty(moo) ? null : $"หมู่ {moo}",
                 string.IsNullOrEmpty(streetName) ? null : $"ถ.{streetName}",
                 subDistrict, district, province, postalCode
@@ -620,11 +621,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         w.Id, w.CertificateNumber, w.CompanyId,
         company.Name, company.TaxId, company.BranchCode,
         ComposeFullAddress(company.Address, company.SubDistrict, company.District, company.Province, company.PostalCode,
-            company.Moo, company.BuildingNumber, company.StreetName),
+            company.Moo, company.BuildingNumber, company.StreetName, company.BuildingName),
         w.PayeeContactId, w.PayeeContact.Name, w.PayeeContact.TaxId,
         w.PayeeContact.BranchCode,
         ComposeFullAddress(w.PayeeContact.Address, w.PayeeContact.SubDistrict, w.PayeeContact.District, w.PayeeContact.Province, w.PayeeContact.PostalCode,
-            w.PayeeContact.Moo, w.PayeeContact.BuildingNumber, w.PayeeContact.StreetName),
+            w.PayeeContact.Moo, w.PayeeContact.BuildingNumber, w.PayeeContact.StreetName, w.PayeeContact.BuildingName),
         w.TaxFormType, GetTaxFormName(w.TaxFormType),
         w.TaxYear, w.TaxMonth, w.CertificateType, w.Status,
         w.TotalIncomeAmount, w.TotalTaxAmount,
