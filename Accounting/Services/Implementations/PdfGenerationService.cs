@@ -1072,7 +1072,14 @@ public partial class PdfGenerationService : IPdfGenerationService
                 company.SubDistrict, company.District, company.Province, company.PostalCode);
             if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{fullAddr}</div>");
         }
-        if (template.ShowCompanyTaxId) sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}</div>");
+        if (template.ShowCompanyTaxId)
+        {
+            // §86/4 + ประกาศฯ 199: ต้องระบุสาขา (00000 = สำนักงานใหญ่). เดิมไม่แสดง
+            var brc = string.IsNullOrWhiteSpace(company.TaxId)
+                ? FormatBranch(company.BranchCode, company.BranchName, lang)
+                : $"{company.TaxId} ({FormatBranch(company.BranchCode, company.BranchName, lang)})";
+            sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {brc}</div>");
+        }
         if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>โทร: {company.Phone}</div>");
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
         sb.AppendLine("</div></div>");
@@ -1109,7 +1116,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Contact
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{template.ContactSectionTitle}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
-        if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId}</div>");
+        if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId} ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})</div>");
         if (template.ShowContactAddress)
         {
             var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
@@ -2081,6 +2088,22 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         // between the copies — never swallow real content in between).
         s = Regex.Replace(s, @"กรุงเทพมหานคร(\s+กรุงเทพมหานคร)+", "กรุงเทพมหานคร");
         return Regex.Replace(s, @"\s{2,}", " ").Trim();
+    }
+
+    /// <summary>รูปแบบ "สาขา" ตามประกาศอธิบดีกรมสรรพากรฯ (VAT) ฉบับที่ 199
+    /// (ลว. 26 ธ.ค. 2556): รหัสสาขา <b>00000 = "สำนักงานใหญ่"</b> (ไม่ใช่ "สาขา
+    /// 00000"); รหัสอื่น = "สาขาที่ {code}" (+ ชื่อสาขาในวงเล็บถ้ามี). รหัสว่าง/ทุก
+    /// ตัวเป็นศูนย์ → ถือเป็นสำนักงานใหญ่ (ค่าปกติของกิจการที่มีที่เดียว). ใช้ทั้ง
+    /// ผู้ออกเอกสาร (บริษัท) และคู่ค้า (ผู้ซื้อ/ผู้รับเงิน) บนใบกำกับ/ใบสำคัญ ฯลฯ.</summary>
+    internal static string FormatBranch(string? branchCode, string? branchName, string lang)
+    {
+        var isEn = lang == "en";
+        var code = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
+        if (code.Length == 0 || code.All(ch => ch == '0'))
+            return isEn ? "Head Office" : "สำนักงานใหญ่";
+        var label = isEn ? $"Branch {code}" : $"สาขาที่ {code}";
+        if (!string.IsNullOrWhiteSpace(branchName)) label += $" ({branchName.Trim()})";
+        return label;
     }
 
     /// <summary>
