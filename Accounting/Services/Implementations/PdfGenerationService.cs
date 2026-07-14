@@ -1074,11 +1074,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (template.ShowCompanyTaxId)
         {
-            // §86/4 + ประกาศฯ 199: ต้องระบุสาขา (00000 = สำนักงานใหญ่). เดิมไม่แสดง
+            // §86/4 + ประกาศฯ 199: ต้องระบุสาขา (00000 = สำนักงานใหญ่). เดิมไม่แสดง.
+            // แสดงสาขาเฉพาะเมื่อมีเลขภาษี (สาขาเป็นเรื่องผู้จด VAT) — ตรงกับ native
+            // renderer ไม่ให้บุคคล/กิจการไม่มีเลขภาษีขึ้น "สำนักงานใหญ่" เกินจำเป็น
             var brc = string.IsNullOrWhiteSpace(company.TaxId)
-                ? FormatBranch(company.BranchCode, company.BranchName, lang)
-                : $"{company.TaxId} ({FormatBranch(company.BranchCode, company.BranchName, lang)})";
-            sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {brc}</div>");
+                ? ""
+                : $" ({FormatBranch(company.BranchCode, company.BranchName, lang)})";
+            sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}{brc}</div>");
         }
         if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>โทร: {company.Phone}</div>");
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
