@@ -75,7 +75,8 @@ public class RolePermissionService : IRolePermissionService
 
         if (request.AllowedMenuIds?.Count > 0)
         {
-            foreach (var menuId in request.AllowedMenuIds)
+            // Distinct — กัน client ส่ง id ซ้ำ → ชน unique index (CompanyRoleId, MenuItemId)
+            foreach (var menuId in request.AllowedMenuIds.Distinct())
             {
                 role.Permissions.Add(new CompanyRolePermission
                 {
@@ -117,9 +118,20 @@ public class RolePermissionService : IRolePermissionService
 
         if (request.AllowedMenuIds != null)
         {
-            _db.CompanyRolePermissions.RemoveRange(role.Permissions);
-            role.Permissions.Clear();
-            foreach (var menuId in request.AllowedMenuIds)
+            // DIFF แทน "ลบทั้งหมดแล้วเพิ่มใหม่" — เดิม RemoveRange(ทั้งหมด) + re-add
+            // ทำให้ key เดิมที่ยังเลือกอยู่ถูก DELETE+INSERT ใน SaveChanges เดียว →
+            // EF Core อาจสั่ง INSERT ก่อน DELETE → ชน unique index
+            // (CompanyRoleId, MenuItemId) → 500 ทุกครั้งที่แก้ role ที่มีสิทธิ์อยู่แล้ว.
+            // แก้: ลบเฉพาะที่ไม่เลือกแล้ว + เพิ่มเฉพาะที่ยังไม่มี (Distinct กัน client ซ้ำ).
+            var desired = request.AllowedMenuIds.Distinct().ToHashSet();
+            var toRemove = role.Permissions.Where(p => !desired.Contains(p.MenuItemId)).ToList();
+            if (toRemove.Count > 0)
+            {
+                _db.CompanyRolePermissions.RemoveRange(toRemove);
+                foreach (var p in toRemove) role.Permissions.Remove(p);
+            }
+            var existing = role.Permissions.Select(p => p.MenuItemId).ToHashSet();
+            foreach (var menuId in desired.Where(m => !existing.Contains(m)))
             {
                 role.Permissions.Add(new CompanyRolePermission
                 {
@@ -128,6 +140,9 @@ public class RolePermissionService : IRolePermissionService
                     CanAccess = true
                 });
             }
+            // สิทธิ์ที่คงอยู่ → บังคับ CanAccess = true (เผื่อเคยถูกปิดไว้)
+            foreach (var p in role.Permissions.Where(p => desired.Contains(p.MenuItemId)))
+                p.CanAccess = true;
         }
 
         role.UpdatedBy = userId.ToString();
