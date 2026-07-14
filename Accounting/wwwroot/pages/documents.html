@@ -4724,20 +4724,25 @@
           }
 
           // "บันทึกและอนุมัติ" — จบใน 1 คลิก: ออกเลขจริง + ลง GL + ตัดสต๊อก.
-          // ข้ามถ้า flow อื่น (ส่งอีเมล/รับเงินสด) อนุมัติไปแล้ว; ไม่มีสิทธิ์
-          // → เอกสารยังถูกบันทึกเป็นร่าง + แจ้งชัดเจน (ไม่ยิง 403)
+          // ข้ามถ้า flow อื่น (ส่งอีเมล/รับเงินสด) อนุมัติไปแล้ว.
+          // ⚠️ แก้บั๊ก "บันทึกสำเร็จแต่ไม่อนุมัติ": เดิม (1) เช็ค _canApproveDoc ฝั่ง
+          // client → ถ้า heuristic ไม่ตรง backend (เช่นมีสิทธิ์อนุมัติผ่าน UserRole
+          // แต่ไม่มี perm-key) จะ "ข้าม approve เงียบ ๆ"; (2) เรียก approve โดยไม่ส่ง
+          // acknowledgeWarnings → เอกสารที่มี soft-warning (422) ค้าง Draft ทั้งที่
+          // กดอนุมัติแยกในรายการผ่าน. แก้: ให้ backend ตัดสินสิทธิ์เอง + acknowledge
+          // soft-warning อัตโนมัติ (ปุ่มนี้ = ตั้งใจอนุมัติทันที; hard error §86/4/
+          // §82/5 ยัง block เหมือนเดิม) + จับ 403 แยกเป็นข้อความสิทธิ์
           if (approveAfter && savedDocId
               && !['Approved', 'Sent', 'PartiallyPaid', 'Paid'].includes(savedStatus)) {
-            const _adt = document.getElementById('fDocType')?.value;
-            if (!this._canApproveDoc(_adt)) {
-              Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);
-            } else {
-              try {
-                await api.approveDocument(savedDocId);
-                Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
-              } catch (ae) {
+            try {
+              await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
+              Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
+            } catch (ae) {
+              if (ae?.status === 403) {
+                Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);
+              } else {
                 Layout.toast('บันทึกเป็นร่างแล้ว แต่อนุมัติไม่ผ่าน: '
-                  + (ae.message || 'กรุณาตรวจข้อมูล (§86/4) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
+                  + (ae.message || 'กรุณาตรวจข้อมูล (§86/4/§82/5) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
               }
             }
           }
