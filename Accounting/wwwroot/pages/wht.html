@@ -450,6 +450,7 @@
             <div class="copy-labels">
               <div${copyNum===1?' class="copy-active"':''}><b>ฉบับที่ 1</b> <i>(สำหรับผู้ถูกหักภาษี ณ ที่จ่าย ใช้แนบพร้อมกับแบบแสดงรายการภาษี)</i></div>
               <div${copyNum===2?' class="copy-active"':''}><b>ฉบับที่ 2</b> <i>(สำหรับผู้ถูกหักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน)</i></div>
+              <div${copyNum===3?' class="copy-active"':''}><b>ฉบับที่ 3</b> <i>(สำหรับผู้หักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน)</i></div>
             </div>
 
             <!-- ========== MAIN FRAME ========== -->
@@ -648,7 +649,7 @@
                       <div class="sig-line" style="text-align:right;position:relative">
                         ลงชื่อ <span class="sig-dots">${signature.image
                           ? `<img class="sig-img" src="${signature.image.startsWith('data:') ? signature.image : `data:image/png;base64,${signature.image}`}" alt="signature">`
-                          : ''}</span> ผู้จ่ายเงิน
+                          : ''}</span> ผู้มีหน้าที่หักภาษี ณ ที่จ่าย
                       </div>
                       <div class="sig-date">
                         <span class="sig-date-line">${d.issuedDate
@@ -834,6 +835,7 @@
   </div>
   ${buildCopy(1)}
   ${buildCopy(2)}
+  ${buildCopy(3)}
 </body>
 </html>`);
         printWin.document.close();
