@@ -1194,6 +1194,11 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 74: เลขที่ 50 ทวิ เพิ่มเดือน — `WHT-{ปี}-{run}` → `WHT-{ปี}{เดือน2หลัก}-{run}`._
+_เดิม manual (`CreateAsync`) รันต่อปี (WHT-2026-0006) แต่ auto (`AutoGenerate`)_
+_รันต่อเดือน (WHT-202607-0006) — ไม่สอดคล้อง. แก้ manual ให้ใส่เดือน (TaxMonth ที่_
+_ผู้ใช้ระบุ = เดือนภาษี) รันต่อเดือน; auto เปลี่ยนฐานเดือนจาก UtcNow → เดือนของ_
+_paymentDate (tax month) ให้ตรง TaxMonth ในใบ. เลขเก่าไม่ชนกัน (prefix ต่างกัน)._
 _รอบ 73: 50 ทวิ — แก้ที่ **client-side renderer** ด้วย (wht.html สร้าง HTML print_
 _เองใน JS ไม่ผ่าน C# BuildWithholdingTaxCertHtml). รอบ 72 แก้แค่ 2 renderer ฝั่ง_
 _C# (HTML+native) → ปุ่ม "พิมพ์/บันทึก PDF" ที่ผู้ใช้เห็นยังขึ้น 2 ฉบับ+ป้ายเดิม._

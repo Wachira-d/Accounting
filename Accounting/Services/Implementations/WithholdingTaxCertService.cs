@@ -106,11 +106,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             taxFormType = DetermineTaxFormType(contact);
         }
 
-        // Cert# anchored on the *tax year* (CE), not the issue month — so a 50ทวิ
-        // issued in Jan 2026 for Dec 2025 still lands in the 2025 sequence and the
-        // year segment matches what's printed on the form. RD's e-Filing doesn't
-        // mandate a format, but it does require uniqueness within company × tax year.
-        var whtPrefix = $"WHT-{request.TaxYear}-";
+        // เลขที่ 50ทวิ = WHT-{ปีค.ศ.}{เดือน 2 หลัก}-{running 4 หลัก} รันต่อ "เดือนภาษี"
+        // (company × ปี × เดือน). เดือน = TaxMonth ที่ผู้ใช้ระบุ (เดือนของเงินได้ที่จ่าย)
+        // ไม่ใช่เดือนที่ออกใบ → ใบภาษี ธ.ค. ที่ออก ม.ค. ยังลงเดือน 12. RD e-Filing ไม่
+        // บังคับ format ขอแค่ unique ต่อ company × ปีภาษี — เพิ่มเดือนไม่กระทบ uniqueness
+        // และให้เลขเดียวกับใบที่ auto-gen จากใบสำคัญจ่าย (WHT-YYYYMM-####).
+        var mmSeg = request.TaxMonth is >= 1 and <= 12 ? request.TaxMonth : DateTime.UtcNow.Month;
+        var whtPrefix = $"WHT-{request.TaxYear}{mmSeg:D2}-";
         // Numeric MAX on the parsed suffix avoids the lexicographic bug that
         // returned "9999" once a tenant crossed 10,000 certs in a year
         // (same fix DocumentNumberGenerator uses). Cap padding at 5 digits
@@ -393,7 +395,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // Determine tax form type: ภ.ง.ด.53 for juristic persons, ภ.ง.ด.3 for individuals
         var taxFormType = DetermineTaxFormType(doc.Contact);
 
-        var autoYm = DateTime.UtcNow.ToString("yyyyMM");
+        // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
+        // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
+        var autoDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate;
+        var autoYm = autoDate.ToString("yyyyMM");
         var autoPrefix = $"WHT-{autoYm}-";
         // Numeric max (same fix as CreateAsync above).
         var autoExisting = await _db.WithholdingTaxCerts
