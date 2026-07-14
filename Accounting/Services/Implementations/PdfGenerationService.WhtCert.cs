@@ -25,8 +25,9 @@ namespace Accounting.Services.Implementations;
 ///   • footnote
 ///
 /// QuestPDF's Row/Column/Table/Border primitives recreate this faithfully.
-/// Two copies per cert: "ฉบับที่ 1" (filed with return) + "ฉบับที่ 2" (kept
-/// as evidence), each on its own A4 page.
+/// Three copies per cert: "ฉบับที่ 1" (ผู้ถูกหัก ใช้แนบแบบ) + "ฉบับที่ 2"
+/// (ผู้ถูกหัก เก็บเป็นหลักฐาน) + "ฉบับที่ 3" (ผู้หักภาษี เก็บเป็นหลักฐาน),
+/// each on its own A4 page.
 /// </summary>
 public partial class PdfGenerationService
 {
@@ -56,7 +57,7 @@ public partial class PdfGenerationService
 
         var pdf = QuestPDF.Fluent.Document.Create(container =>
         {
-            for (int copy = 1; copy <= 2; copy++)
+            for (int copy = 1; copy <= 3; copy++)
             {
                 var copyNum = copy;
                 container.Page(page =>
@@ -106,7 +107,7 @@ public partial class PdfGenerationService
         return pdf.GeneratePdf();
     }
 
-    // ── Copy header (ฉบับที่ 1 / 2) ──────────────────────────────────
+    // ── Copy header (ฉบับที่ 1 / 2 / 3) ──────────────────────────────
     private static void BuildCopyHeader(QuestPDF.Fluent.ColumnDescriptor col, int copyNum)
     {
         col.Item().Text(t =>
@@ -115,11 +116,17 @@ public partial class PdfGenerationService
             t.Span("(สำหรับผู้ถูกหักภาษี ณ ที่จ่าย ใช้แนบพร้อมกับแบบแสดงรายการภาษี)")
                 .FontSize(8).Italic().FontColor(copyNum == 1 ? Colors.Black : Colors.Grey.Medium);
         });
-        col.Item().PaddingBottom(2).Text(t =>
+        col.Item().Text(t =>
         {
             t.Span("ฉบับที่ 2 ").FontSize(10).Bold().FontColor(copyNum == 2 ? Colors.Black : Colors.Grey.Medium);
             t.Span("(สำหรับผู้ถูกหักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน)")
                 .FontSize(8).Italic().FontColor(copyNum == 2 ? Colors.Black : Colors.Grey.Medium);
+        });
+        col.Item().PaddingBottom(2).Text(t =>
+        {
+            t.Span("ฉบับที่ 3 ").FontSize(10).Bold().FontColor(copyNum == 3 ? Colors.Black : Colors.Grey.Medium);
+            t.Span("(สำหรับผู้หักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน)")
+                .FontSize(8).Italic().FontColor(copyNum == 3 ? Colors.Black : Colors.Grey.Medium);
         });
     }
 
@@ -447,7 +454,7 @@ public partial class PdfGenerationService
                         {
                             t.Span("ลงชื่อ ");
                             t.Span(string.IsNullOrWhiteSpace(signerName) ? "__________________" : signerName!).Bold();
-                            t.Span(" ผู้จ่ายเงิน");
+                            t.Span(" ผู้มีหน้าที่หักภาษี ณ ที่จ่าย");
                         });
                     }
                     else
@@ -456,7 +463,7 @@ public partial class PdfGenerationService
                         {
                             t.Span("ลงชื่อ ");
                             t.Span("__________________");
-                            t.Span(" ผู้จ่ายเงิน");
+                            t.Span(" ผู้มีหน้าที่หักภาษี ณ ที่จ่าย");
                         });
                         if (!string.IsNullOrWhiteSpace(signerName))
                             c.Item().AlignCenter().Text(t => { t.Span("( ").FontSize(8); t.Span(signerName!).Bold().FontSize(8); t.Span(" )").FontSize(8); });
