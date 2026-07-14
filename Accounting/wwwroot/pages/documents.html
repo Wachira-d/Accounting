@@ -1980,7 +1980,7 @@
         // ถ้า "ใช้งานใบกำกับภาษี" ติ๊กอยู่ → reload รายการ PI ของ contact ใหม่
         // + เติม Tax ID จาก contact ที่เพิ่งเลือก
         if (document.getElementById('fHasTaxInvoiceRef')?.checked) {
-          this._fillSupplierTaxIdFromContact();
+          this._fillSupplierTaxIdFromContact(true);   // force — เปลี่ยนตามผู้ติดต่อที่เพิ่งเลือก
           this._loadTaxInvoiceSourceDocs();
         }
         // For a Payment Voucher, ask the local model whether this supplier is
@@ -3130,15 +3130,17 @@
         this._updateTaxInvVatPreview(d);
       },
 
-      _fillSupplierTaxIdFromContact() {
+      _fillSupplierTaxIdFromContact(force = false) {
         const cid = document.getElementById('fContactId')?.value;
         const inp = document.getElementById('fSupplierTaxIdReadonly');
         if (!inp) return;
         // ถ้า field มี TaxId 13 หลักที่ valid อยู่แล้ว (เช่นมาจาก OCR handoff
         // ที่เติมไว้ก่อน) ไม่ต้อง overwrite — กันเคส contact เดิมยังไม่มี TaxId
         // แล้วเราไปลบทับด้วย "(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี)"
+        // ⚠️ force=true (ผู้ใช้ "เปลี่ยนผู้ติดต่อ") ต้องข้าม guard นี้ — ไม่งั้นเลข
+        // ผู้เสียภาษีผู้ขายค้างเป็นของ contact เดิม ไม่เปลี่ยนตามที่เพิ่งเลือก
         const cur = (inp.value || '').replace(/\D/g, '');
-        if (cur.length === 13) return;
+        if (!force && cur.length === 13) return;
         // หา contact จาก autocomplete cache (this._selectedContact ถ้าเพิ่ง
         // เลือก) → fallback list (this.contacts) → fallback fetch ตรง
         // (กรณี contact เพิ่งสร้างจาก OCR ยังไม่อยู่ในแคชหน้า)
@@ -3149,7 +3151,9 @@
         // ไม่พบในแคช — fetch ตรงจาก server (เคส OCR สร้าง contact ใหม่)
         // ก่อน fetch เก็บค่าปัจจุบันเป็น fallback (เคสที่ field มีค่าจาก OCR
         // handoff แต่ไม่ 13 หลัก เช่นมี dash) เพื่อกัน "(กำลังโหลด...)" ค้าง
-        const priorValue = inp.value;
+        // force (เปลี่ยนผู้ติดต่อ): ไม่เก็บค่าเก่าเป็น fallback — ถ้า contact ใหม่
+        // ไม่มี TaxId ต้องเคลียร์ ไม่ค้างเลขของ contact ก่อนหน้า
+        const priorValue = force ? '' : inp.value;
         inp.value = '(กำลังโหลด...)';
         if (!cid) { inp.value = '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)'; return; }
         Layout.api()?.getContact(cid)
@@ -4002,8 +4006,15 @@
         document.getElementById('fDueDate').value = '';
         ['fSupplierInvoiceNumber','fSupplierTaxInvoiceDate','fCreditDays','fPaymentTerms',
          'fDeliveryDate','fOwnershipTransferDate','fServiceUsedDate','fBookingNumber',
-         'fInputVatAccountCodeOverride']
+         'fInputVatAccountCodeOverride',
+         // ข้อมูลใบกำกับภาษีของผู้ขาย (input VAT / ภ.พ.30) — เดิมไม่ถูกล้าง →
+         // เอกสารใหม่ยังค้างเลขผู้เสียภาษี/เลขที่/วันที่ใบกำกับของใบก่อนหน้า
+         'fSupplierTaxIdReadonly','fSupplierInvoiceNumberPV','fSupplierTaxInvoiceDatePV']
           .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        // รหัสสาขาผู้ขาย: reset กลับ default 00000 (สำนักงานใหญ่)
+        { const br = document.getElementById('fSupplierBranchCode'); if (br) br.value = '00000'; }
+        // ล้าง contact cache ที่ใช้เติมเลขผู้เสียภาษีผู้ขาย เพื่อไม่ให้ใบใหม่ค้างของเก่า
+        this._selectedContact = null;
         document.getElementById('fRef').value = '';
         document.getElementById('fNotes').value = '';
         // Reset "ลูกค้าจ่ายเงินแล้ว" shortcut — a stale checked state from
