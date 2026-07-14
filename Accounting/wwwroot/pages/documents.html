@@ -1980,7 +1980,8 @@
         // ถ้า "ใช้งานใบกำกับภาษี" ติ๊กอยู่ → reload รายการ PI ของ contact ใหม่
         // + เติม Tax ID จาก contact ที่เพิ่งเลือก
         if (document.getElementById('fHasTaxInvoiceRef')?.checked) {
-          this._fillSupplierTaxIdFromContact(true);   // force — เปลี่ยนตามผู้ติดต่อที่เพิ่งเลือก
+          this._fillSupplierTaxIdFromContact(true);      // force — เปลี่ยนตามผู้ติดต่อที่เพิ่งเลือก
+          this._fillSupplierBranchFromContact(true);     // สาขาผู้ขาย ดึงจาก contact ที่เลือกด้วย
           this._loadTaxInvoiceSourceDocs();
         }
         // For a Payment Voucher, ask the local model whether this supplier is
@@ -3015,11 +3016,10 @@
         // (PV ที่ไม่มีใบกำกับ = ไม่มี VAT ซื้อ → ไม่ต้องมี per-line claim)
         this._syncVatClaimColumn();
         if (!checked) { this._validateTaxInvoiceClaim(); return; }
-        // Default 00000 เมื่อเปิดครั้งแรก
-        const branchInp = document.getElementById('fSupplierBranchCode');
-        if (branchInp && !branchInp.value) branchInp.value = '00000';
-        // เติม supplierTaxId จาก contact ปัจจุบัน
-        this._fillSupplierTaxIdFromContact();
+        // เติมเลขผู้เสียภาษี + รหัสสาขาผู้ขาย จาก contact ที่เลือก (สาขา default
+        // 00000 ถ้า contact ไม่มี) — force เพราะเพิ่งเปิดโหมด ดึงของ contact ล่าสุด
+        this._fillSupplierTaxIdFromContact(true);
+        this._fillSupplierBranchFromContact(true);
         // โหลดรายการใบของ contact ลง dropdown (mode system default)
         this._loadTaxInvoiceSourceDocs();
         this._updateTaxInvVatPreview();
@@ -3165,12 +3165,37 @@
               || (priorValue && priorValue !== '(กำลังโหลด...)' ? priorValue
                   : '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)');
             // cache ลง this._selectedContact ใช้รอบหน้า
-            if (taxId) this._selectedContact = { id: cid, name: r.data.name, taxId };
+            if (taxId) this._selectedContact = { id: cid, name: r.data.name, taxId, branchCode: r.data.branchCode };
           })
           .catch(() => {
             inp.value = (priorValue && priorValue !== '(กำลังโหลด...)' ? priorValue
               : '(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี — แก้ใน Contact)');
           });
+      },
+
+      // เติม "รหัสสาขาผู้ขาย" จากผู้ติดต่อที่เลือก (เหมือนเลขผู้เสียภาษี). สาขาบน
+      // ใบกำกับซื้อควรตรงกับสาขาของผู้ขาย — ดึงจาก Contact.BranchCode เป็น default
+      // (แก้เองต่อได้ตามใบจริง). force=true (เปลี่ยน contact/เปิดโหมด) = ทับเสมอ;
+      // ไม่ force = ไม่ทับถ้า user แก้เป็นค่าอื่นที่ไม่ใช่ default (00000/ว่าง).
+      _fillSupplierBranchFromContact(force = false) {
+        const cid = document.getElementById('fContactId')?.value;
+        const inp = document.getElementById('fSupplierBranchCode');
+        if (!inp) return;
+        const cur = (inp.value || '').trim();
+        if (!force && cur && cur !== '00000') return;
+        const setBr = (bc) => {
+          const d = (bc || '').replace(/\D/g, '');
+          inp.value = d.length ? d.padStart(5, '0').slice(0, 5) : '00000';
+        };
+        const c = this._selectedContact && this._selectedContact.id === cid
+          ? this._selectedContact
+          : (this.contacts || []).find(x => x.id === cid);
+        if (c && ('branchCode' in c)) { setBr(c.branchCode); return; }
+        if (!cid) { setBr('00000'); return; }
+        // ไม่พบในแคช → fetch ตรง (เคส contact ที่ยังไม่มี branchCode ในแคช)
+        Layout.api()?.getContact(cid)
+          .then(r => setBr(r?.data?.branchCode))
+          .catch(() => {});
       },
 
       _updateTaxInvVatPreview(srcDoc) {
