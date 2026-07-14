@@ -1194,6 +1194,45 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 69 (ทุกเอกสาร): OWNER fallback ไม่ทับผู้อนุมัติตัวจริงอีกต่อไป. เดิม fallback_
+_ทำงานทุกครั้งที่ slot 1 ไม่มี "รูปลายเซ็น" → ผู้อนุมัติจริงที่ยังไม่อัปโหลดลายเซ็น_
+_ถูกแทนด้วยลายเซ็น+ชื่อ "เจ้าของ" ทุกประเภทเอกสาร (โชว์ผิดคน + แก้ชื่อผู้อนุมัติ_
+_ไม่เปลี่ยนตาม). แก้: fallback ทำงานเฉพาะเมื่อ "ไม่มีผู้อนุมัติระบุเลย" (slot 1 ไม่มี_
+_ชื่อ) — ถ้ามีผู้อนุมัติจริง (ชื่อ resolve สดจาก Users) คงชื่อไว้ เว้นบรรทัดลายเซ็น_
+_ให้เซ็นมือ. custom signatory (opt-in) คงเดิม (ตั้งใจ fix ชื่อ — แก้ที่ Settings)._
+_รอบ 68: ใบเสร็จ settlement เก่า — โชว์ชื่อผู้กดที่ถูกต้องด้วย. ชื่อ/ลายเซ็นถูก_
+_resolve สดตอน render (ไม่ snapshot — ไม่มี field เก็บ HTML/PDF/ชื่อบนใบ) → ใบเดิม_
+_แสดงชื่อถูกอัตโนมัติหลัง deploy. เสริม robustness: ใบ settlement ที่ UpdatedBy ว่าง_
+_(ใบเก่า/บาง path) → approver ตกไปใช้ CreatedBy (= ผู้กดคนเดียวกัน) กันเว้นว่าง/เด้ง_
+_ไปเจ้าของ. ไม่ต้อง migrate DB._
+_รอบ 67: ใบเสร็จ settlement — ยกเว้น custom authorized signatory ด้วย (ต่อ รอบ 64)._
+_รอบ 64 ข้าม owner fallback ให้ใบ settlement แล้ว แต่ **ยังไม่ข้าม custom signatory**_
+_(opt-in `UseCustomAuthorizedSignatory`) ที่ override slot 1 ก่อนหน้า. `AuthorizedSignatoryName`_
+_เป็นค่า "เก็บไว้" ใน CompanySettings → แก้ชื่อ user แล้วไม่เปลี่ยนตาม = อาการ "ชื่อเก่า_
+_ไม่อัปเดต" + ลายเซ็นเจ้าของที่ผู้ใช้รายงานซ้ำ. แก้: เพิ่ม `!doc.IsSettlementReceipt` ที่_
+_เงื่อนไข custom signatory ด้วย → ใบเสร็จ settlement ใช้ผู้กดบันทึก (อ่านชื่อสดจาก Users)_
+_เสมอ ทั้ง custom + owner ข้ามหมด. ยืนยันไม่มี name snapshot ตอนสร้าง (ไม่เซ็ต PreparerName)._
+_รอบ 66 (backlog F11): `RecalcVatTotals` นับ JE_INPUT เป็นภาษีซื้อ. เดิมภาษีซื้อ_
+_จาก JE ล้วน (tag "JE_INPUT") ถูกเช็ค `!= "INPUT"` → หลุดไปรวมใน OutputVat +_
+_หายจาก InputVat = ภาษีขายเกิน + ภาษีซื้อขาด → NetVat ผิด (นำส่งเกิน) ตอนแก้ไข/_
+_finalize รายงานที่ recompute. แก้: `IsInputLine` = "INPUT" or "JE_INPUT"_
+_(ตรงกับ LineSide ที่ generate ครั้งแรกถูกอยู่แล้ว — ปิด drift ระหว่าง 2 เส้นทาง)._
+_รอบ 65 (backlog F5 — ปิดช่องนำส่งภาษีขายขาด): ใบแจ้งหนี้ (Invoice) ที่มี VAT_
+_เข้า ภ.พ.30. เหตุ: `AutoPostToJournalAsync` ลง Cr 21911 ให้ทั้ง Invoice และ_
+_TaxInvoice เท่ากัน แต่ `TaxService.GenerateVatReport` รายงานเฉพาะ TaxInvoice →_
+_ใบแจ้งหนี้ที่มี VAT มีภาระภาษีขายใน GL แต่ไม่เคยถูกนำส่ง = ภ.พ.30 < GL (โดนปรับ)._
+_แก้: branch output VAT รับ Invoice (VatAmount>0) ด้วย ยกเว้นใบที่ถูกแปลงเป็น_
+_ใบกำกับภาษี (`supersededInvoiceIds` = Invoice ที่มี TaxInvoice child non-void_
+_อ้างถึง) กันนับซ้ำ. Invoice→Receipt = settlement (Receipt child ถูก exclude ที่_
+_branch เดิมอยู่แล้ว) ไม่กระทบ. **ค้าง (design)**: แปลง Invoice→TaxInvoice ที่_
+_ทั้งคู่มี VAT → GL 21911 เบิ้ล (ต้อง reverse JE ใบต้นทางตอน convert) แยกแก้._
+_รอบ 64: ใบเสร็จ settlement — ช่องผู้อนุมัติ = ลายเซ็นผู้กดบันทึก ไม่ใช่เจ้าของ._
+_ปัญหา: กดรับเงินจากใบกำกับ/ใบแจ้งหนี้ → ใบเสร็จโชว์ลายเซ็น+ชื่อ "เจ้าของ" (Owner)_
+_ไม่ใช่ผู้กด และผู้กดแก้ชื่อตัวเองแล้วไม่เปลี่ยนตาม. เหตุ: `ResolveSignersAsync`_
+_มี Owner-signature fallback เมื่อ approver ยังไม่มีรูปลายเซ็น → ผู้กดที่ยังไม่ตั้ง_
+_ลายเซ็นเด้งไปลายเซ็น+ชื่อเจ้าของ. แก้: fallback นี้ **ข้ามใบ IsSettlementReceipt**_
+_→ ช่องผู้อนุมัติ = ผู้กด (UpdatedBy) เท่านั้น (ผ่านเช็คสิทธิ์อนุมัติแล้ว; ไม่มีสิทธิ์_
+_= ใบเป็น Draft). ชื่ออ่านสดจาก Users ทุกครั้ง แก้ชื่อแล้วเปลี่ยนตามทันที._
 _รอบ 63: ชื่ออาคาร (BuildingName) ขึ้นบนที่อยู่เอกสารครบ —_
 _`PdfGenerationService.FormatThaiAddress` รับพารามิเตอร์ buildingName เพิ่ม_
 _(เดิม structured street ประกอบจาก เลขที่+หมู่+ถนน เท่านั้น → contact ที่บันทึก_

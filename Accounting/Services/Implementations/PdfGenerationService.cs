@@ -666,6 +666,13 @@ public partial class PdfGenerationService : IPdfGenerationService
                 .FirstOrDefaultAsync();
             if (approverId == null && Guid.TryParse(doc.UpdatedBy, out var uId))
                 approverId = uId;
+            // ใบเสร็จ settlement: ผู้อนุมัติ = ผู้กดบันทึกรับเงิน. ปกติ UpdatedBy ถูก
+            // ตั้งเป็นผู้กดตอนสร้าง แต่ใบเก่า/บาง path อาจ UpdatedBy ว่าง → ตกไปใช้
+            // CreatedBy (= ผู้กดคนเดียวกัน) เพื่อรับประกันว่าใบเดิมก็โชว์ชื่อผู้กดที่
+            // ถูกต้อง (อ่านสดจาก Users) ไม่ใช่เว้นว่าง/เด้งไปเจ้าของ
+            if (approverId == null && doc.IsSettlementReceipt
+                && Guid.TryParse(doc.CreatedBy, out var cbId))
+                approverId = cbId;
         }
 
         var userIds = new List<Guid>();
@@ -801,7 +808,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // "ผู้มีอำนาจลงนาม" กลาง (เช่น กรรมการผู้จัดการ) ให้ใช้แทนลายเซ็น
         // "ผู้กดอนุมัติ" ทุกใบ. เงื่อนไข: เอกสารอนุมัติแล้วเท่านั้น + ไม่ทับ
         // ลายเซ็นลูกค้าเซ็นรับของ (POD บน DeliveryNote — ลูกค้าเซ็นจริง ห้ามแทน)
-        if (authorizedSignable && signers.Count >= 2
+        // ⚠️ ยกเว้น "ใบเสร็จรับเงิน settlement" (กดรับเงิน): ผู้ใช้ต้องการลายเซ็น
+        // "ผู้กดบันทึก" เท่านั้น — ไม่ใช่ custom signatory กลาง (ซึ่ง AuthorizedSignatoryName
+        // เป็นค่าที่ "เก็บไว้" ใน CompanySettings → แก้ชื่อ user แล้วไม่เปลี่ยนตาม =
+        // อาการ "ชื่อเก่าไม่อัปเดต" ที่ผู้ใช้รายงาน). settlement receipt → slot 1 =
+        // ผู้กด (อ่านชื่อสดจาก Users) เสมอ ทั้ง custom override + owner fallback ข้ามหมด
+        if (authorizedSignable && !doc.IsSettlementReceipt && signers.Count >= 2
             && !(doc.DocumentType == DocumentType.DeliveryNote
                  && !string.IsNullOrWhiteSpace(doc.DeliverySignatureBase64)))
         {
@@ -829,7 +841,17 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
         }
 
-        if (authorizedSignable && signers.Count >= 2
+        // ⚠️ OWNER FALLBACK — เฉพาะเมื่อ "ไม่มีผู้อนุมัติตัวจริง" เท่านั้น (ทุกเอกสาร).
+        // เดิม fallback ทำงานทุกครั้งที่ slot 1 ไม่มี "รูปลายเซ็น" → ผู้อนุมัติตัวจริง
+        // ที่ยังไม่ได้อัปโหลดลายเซ็น ถูกแทนที่ด้วย "ลายเซ็น+ชื่อเจ้าของ" = โชว์ผิดคน
+        // ทุกประเภทเอกสาร (ใบกำกับ/ค่าใช้จ่าย/ใบสำคัญจ่าย ฯลฯ) และแก้ชื่อผู้อนุมัติ
+        // แล้วไม่เปลี่ยนตามเพราะกำลังโชว์เจ้าของ. แก้: ถ้ามีผู้อนุมัติตัวจริง (slot 1
+        // มี "ชื่อ" resolve สดจาก Users แล้ว) → คงชื่อผู้อนุมัตินั้น เว้นบรรทัดลายเซ็น
+        // ให้เซ็นมือ ไม่เด้งไปเจ้าของ. ประทับลายเซ็นเจ้าของเฉพาะกรณี "ไม่มีผู้อนุมัติ
+        // ระบุเลย" (slot 1 ไม่มีชื่อ) = last resort ให้ใบไม่ว่างสนิท. ใบ settlement
+        // ข้ามทั้งหมด (ใช้ผู้กดบันทึกเท่านั้น ตามรอบ 64/67).
+        if (authorizedSignable && !doc.IsSettlementReceipt && signers.Count >= 2
+            && string.IsNullOrWhiteSpace(signers[1].Name)
             && (signers[1].SignatureImageBytes is null || signers[1].SignatureImageBytes!.Length == 0))
         {
             var ownerSig = await (
@@ -1958,10 +1980,22 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         // เว้นแต่ไม่มี free-text เลยจึงใช้ชื่ออาคารเท่าที่มี.
         var hasStreetAnchor = !string.IsNullOrWhiteSpace(buildingNumber)
             || !string.IsNullOrWhiteSpace(moo) || !string.IsNullOrWhiteSpace(street);
-        var streetPart = !string.IsNullOrWhiteSpace(structuredStreet)
-                && (hasStreetAnchor || string.IsNullOrWhiteSpace(freeText))
-            ? structuredStreet
-            : (freeText ?? "");
+        string streetPart;
+        if (!string.IsNullOrWhiteSpace(structuredStreet)
+            && (hasStreetAnchor || string.IsNullOrWhiteSpace(freeText)))
+        {
+            streetPart = structuredStreet;
+        }
+        else
+        {
+            // ตกไปใช้ free-text (เลขที่/ถนน อยู่ใน free-text ไม่ใช่ structured) —
+            // แต่ยังต้องเติมชื่ออาคารเข้าไปถ้า free-text ยังไม่มี ไม่งั้นชื่ออาคาร
+            // จะหายอีกครั้งในเคสนี้ (บั๊กที่ผู้ใช้รายงาน หาก contact เก็บที่อยู่แบบนี้)
+            streetPart = freeText ?? "";
+            if (!string.IsNullOrWhiteSpace(bName)
+                && !streetPart.Contains(bName!, StringComparison.Ordinal))
+                streetPart = (bName + " " + streetPart).Trim();
+        }
 
         // The street line must NEVER echo the locality we're about to print as
         // its own fields. Drop locality echoes **token by token** — NOT via
