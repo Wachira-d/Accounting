@@ -2479,6 +2479,22 @@ public class DocumentService : IDocumentService
                     "ถ้ายังไม่จด ให้ตั้ง VAT = 0 และใช้ใบแจ้งหนี้/ใบเสร็จแทนใบกำกับภาษี");
         }
 
+        // 🛡️ ภาษีซื้อ (input VAT / ภ.พ.30) — ใบที่ "ขอเครดิตภาษีซื้อ"
+        // (HasTaxInvoiceReference) ต้องอ้างใบกำกับภาษีเต็มรูปของผู้ขายที่ระบุ
+        // "เลขผู้เสียภาษีผู้ขาย 13 หลัก" (§86/4); ขาด/ไม่ถูกต้อง = เคลมภาษีซื้อไม่ได้
+        // (§82/5(1)(5)). ระบบเคลมด้วยเลขภาษีของ Contact ผู้ขายจริง จึงบังคับให้
+        // Contact มีเลขภาษี 13 หลักก่อนอนุมัติ — **hard block ไม่มี acknowledge bypass**
+        // (ห้ามปล่อยผ่าน: เคลมภาษีซื้อผิด/ไม่มีใบกำกับ = ลูกค้าโดนสรรพากรประเมินคืน+เบี้ยปรับ)
+        if (doc.HasTaxInvoiceReference == true && doc.VatAmount > 0 && doc.Contact != null)
+        {
+            var supTid = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+            if (supTid.Length != 13)
+                throw new InvalidOperationException(
+                    $"ผู้ขาย \"{doc.Contact.Name}\" ยังไม่มีเลขผู้เสียภาษี 13 หลัก — ขอเครดิตภาษีซื้อ (ภ.พ.30) " +
+                    "ไม่ได้ตาม §86/4/§82/5 กรุณาเพิ่มเลขผู้เสียภาษีของผู้ขายในข้อมูลผู้ติดต่อก่อน " +
+                    "หรือเอาการติ๊ก \"ขอเครดิตภาษีซื้อ\" ออก (บันทึกเป็นค่าใช้จ่ายที่เคลม VAT ไม่ได้)");
+        }
+
         // §86/4 hard-block (opt-in via CompanySettings.EnforceFullTaxInvoiceFields).
         // เมื่อบริษัทเปิด flag นี้ → block approval ของใบกำกับ/ใบเสร็จ/CN/DN
         // ที่ขาด field บังคับ (BuyerTaxId 13 หลัก + BuyerAddress + BuyerBranchCode 5 หลัก).
