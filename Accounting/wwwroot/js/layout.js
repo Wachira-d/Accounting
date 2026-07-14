@@ -221,6 +221,10 @@ const Layout = {
     // Permissions not loaded yet → don't flicker-hide; allow then re-render.
     if (!this.myPermissions) return true;
     if (this.myPermissions.isOwnerOrAdmin) return true;
+    // หน้า "ส่วนตัว" ของผู้ใช้เอง (ลายเซ็น/โปรไฟล์) เข้าได้ทุกคนเสมอ — ไม่ผูก
+    // สิทธิ์เมนูบริษัท. พนักงานที่มีสิทธิ์อนุมัติแต่ไม่มีสิทธิ์เข้า "ตั้งค่าบริษัท"
+    // ต้องอัพเดทลายเซ็นตัวเองได้ (ไม่งั้นเอกสารที่เขาอนุมัติจะเว้นช่องลายเซ็น)
+    if (menuId === 'my-signature') return true;
     const allowed = this.myPermissions.allowedMenuIds || [];
     // "*" = backend sentinel = "no custom CompanyRole assigned, show all"
     // (preserves legacy access for plain Employee / Manager UserRoles).
@@ -977,6 +981,7 @@ const Layout = {
             <span class="text-sm font-medium">${this.esc(this.user?.fullName || tUser)}</span>
           </div>
           <div class="dropdown-menu" id="userDropdown">
+            <a class="dropdown-item" href="/pages/my-signature.html">✍️ ลายเซ็นของฉัน</a>
             <a class="dropdown-item" href="/pages/account-subscription.html">🎫 License ของฉัน</a>
             <a class="dropdown-item" href="/pages/settings.html">⚙️ ${this.esc(tSettings)}</a>
             <div class="dropdown-divider"></div>

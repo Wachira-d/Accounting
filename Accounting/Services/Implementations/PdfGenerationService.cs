@@ -1072,7 +1072,16 @@ public partial class PdfGenerationService : IPdfGenerationService
                 company.SubDistrict, company.District, company.Province, company.PostalCode);
             if (!string.IsNullOrWhiteSpace(fullAddr)) sb.AppendLine($"<div>{fullAddr}</div>");
         }
-        if (template.ShowCompanyTaxId) sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}</div>");
+        if (template.ShowCompanyTaxId)
+        {
+            // §86/4 + ประกาศฯ 199: ต้องระบุสาขา (00000 = สำนักงานใหญ่). เดิมไม่แสดง.
+            // แสดงสาขาเฉพาะเมื่อมีเลขภาษี (สาขาเป็นเรื่องผู้จด VAT) — ตรงกับ native
+            // renderer ไม่ให้บุคคล/กิจการไม่มีเลขภาษีขึ้น "สำนักงานใหญ่" เกินจำเป็น
+            var brc = string.IsNullOrWhiteSpace(company.TaxId)
+                ? ""
+                : $" ({FormatBranch(company.BranchCode, company.BranchName, lang)})";
+            sb.AppendLine($"<div>เลขประจำตัวผู้เสียภาษี: {company.TaxId}{brc}</div>");
+        }
         if (template.ShowCompanyPhone && company.Phone != null) sb.AppendLine($"<div>โทร: {company.Phone}</div>");
         if (template.ShowCompanyEmail && company.Email != null) sb.AppendLine($"<div>Email: {company.Email}</div>");
         sb.AppendLine("</div></div>");
@@ -1109,7 +1118,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Contact
         sb.AppendLine($"<div class='contact-section'><div class='section-title'>{template.ContactSectionTitle}</div>");
         sb.AppendLine($"<div class='contact-name'>{doc.Contact.Name}</div>");
-        if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId}</div>");
+        if (template.ShowContactTaxId && doc.Contact.TaxId != null) sb.AppendLine($"<div>เลขผู้เสียภาษี: {doc.Contact.TaxId} ({FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang)})</div>");
         if (template.ShowContactAddress)
         {
             var caddr = FormatThaiAddress(doc.Contact.Address, doc.Contact.BuildingNumber, doc.Contact.BuildingName, doc.Contact.Moo, doc.Contact.StreetName,
@@ -1465,6 +1474,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<div class='copy-labels'>");
             sb.AppendLine($"<div{(copyNum == 1 ? " class='copy-active'" : "")}><b>ฉบับที่ 1</b> <i>(สำหรับผู้ถูกหักภาษี ณ ที่จ่าย ใช้แนบพร้อมกับแบบแสดงรายการภาษี)</i></div>");
             sb.AppendLine($"<div{(copyNum == 2 ? " class='copy-active'" : "")}><b>ฉบับที่ 2</b> <i>(สำหรับผู้ถูกหักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน)</i></div>");
+            sb.AppendLine($"<div{(copyNum == 3 ? " class='copy-active'" : "")}><b>ฉบับที่ 3</b> <i>(สำหรับผู้หักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน)</i></div>");
             sb.AppendLine("</div>");
 
             sb.AppendLine("<table class='F' cellspacing='0' cellpadding='0'>");
@@ -1480,7 +1490,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>ผู้มีหน้าที่หักภาษี ณ ที่จ่าย :-</td><td style='white-space:nowrap;text-align:right'>เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId)}</td></tr></table>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td colspan='2' style='text-align:right;font-size:12px;padding-top:2px'>เลขประจำตัวผู้เสียภาษีอากร {OldTaxIdBoxes(company.TaxId)}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(company.Name)}&nbsp;</u></td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ที่อยู่</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(fullAddress)}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>");
@@ -1490,7 +1500,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>ผู้ถูกหักภาษี ณ ที่จ่าย :-</td><td style='white-space:nowrap;text-align:right'>เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style='color:#900'>*</span> {TaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td colspan='2' style='text-align:right;font-size:12px;padding-top:2px'>เลขประจำตัวผู้เสียภาษีอากร {OldTaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(cert.PayeeContact.Name)}&nbsp;</u></td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(cert.PayeeContact.Name + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ที่อยู่</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(payeeAddr)}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>");
@@ -1542,7 +1552,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                 ? $"<img src='data:image/png;base64,{WebUtility.HtmlEncode(sigBase64)}' style='height:34px;vertical-align:middle' alt='' />"
                   + (string.IsNullOrWhiteSpace(sigName) ? "" : $" {WebUtility.HtmlEncode(sigName)}")
                 : "<span class='sig-dots'></span>";
-            sb.AppendLine($"<div class='sig-block'><div class='sig-line' style='text-align:right'>ลงชื่อ {sigInner} ผู้จ่ายเงิน</div><div class='sig-date'><span class='sig-dots-sm'>{issuedDay}</span> / <span class='sig-dots-sm'>{issuedMonth}</span> / <span class='sig-dots-sm'>{issuedYear}</span></div><div style='text-align:center;font-size:11px;color:#444'>(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div></div>");
+            sb.AppendLine($"<div class='sig-block'><div class='sig-line' style='text-align:right'>ลงชื่อ {sigInner} ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div><div class='sig-date'><span class='sig-dots-sm'>{issuedDay}</span> / <span class='sig-dots-sm'>{issuedMonth}</span> / <span class='sig-dots-sm'>{issuedYear}</span></div><div style='text-align:center;font-size:11px;color:#444'>(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div></div>");
             sb.AppendLine("<div class='stamp-area'>ประทับตรา<br>นิติบุคคล<br>(ถ้ามี)</div></td>");
             sb.AppendLine("</tr></table></td></tr>");
 
@@ -1555,6 +1565,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
         BuildCopy(1);
         BuildCopy(2);
+        BuildCopy(3);   // ฉบับที่ 3 — สำหรับผู้หักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน
 
         sb.AppendLine("</body></html>");
         return sb.ToString();
@@ -2081,6 +2092,35 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         // between the copies — never swallow real content in between).
         s = Regex.Replace(s, @"กรุงเทพมหานคร(\s+กรุงเทพมหานคร)+", "กรุงเทพมหานคร");
         return Regex.Replace(s, @"\s{2,}", " ").Trim();
+    }
+
+    /// <summary>รูปแบบ "สาขา" ตามประกาศอธิบดีกรมสรรพากรฯ (VAT) ฉบับที่ 199
+    /// (ลว. 26 ธ.ค. 2556): รหัสสาขา <b>00000 = "สำนักงานใหญ่"</b> (ไม่ใช่ "สาขา
+    /// 00000"); รหัสอื่น = "สาขาที่ {code}" (+ ชื่อสาขาในวงเล็บถ้ามี). รหัสว่าง/ทุก
+    /// ตัวเป็นศูนย์ → ถือเป็นสำนักงานใหญ่ (ค่าปกติของกิจการที่มีที่เดียว). ใช้ทั้ง
+    /// ผู้ออกเอกสาร (บริษัท) และคู่ค้า (ผู้ซื้อ/ผู้รับเงิน) บนใบกำกับ/ใบสำคัญ ฯลฯ.</summary>
+    internal static string FormatBranch(string? branchCode, string? branchName, string lang)
+    {
+        var isEn = lang == "en";
+        var code = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
+        if (code.Length == 0 || code.All(ch => ch == '0'))
+            return isEn ? "Head Office" : "สำนักงานใหญ่";
+        var label = isEn ? $"Branch {code}" : $"สาขาที่ {code}";
+        if (!string.IsNullOrWhiteSpace(branchName)) label += $" ({branchName.Trim()})";
+        return label;
+    }
+
+    /// <summary>ส่วนต่อท้าย "สาขา" สำหรับหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ต่อ
+    /// ท้ายชื่อคู่สัญญาแบบ inline (ไม่เพิ่มบรรทัด/ไม่กระทบ layout ฟอร์มราชการ).
+    /// แสดงเฉพาะ "นิติบุคคล" (เลขภาษี 13 หลักขึ้นต้น 0) — บุคคลธรรมดา (ภ.ง.ด.3,
+    /// เลขขึ้นต้น 1-8) ไม่มีสาขา จึงคืนค่าว่าง กันติดป้าย "สำนักงานใหญ่" ผิด. 50 ทวิ
+    /// ไม่ได้บังคับช่องสาขาตามกฎหมาย (คนละกรณีกับใบกำกับ §86/4) — เพิ่มเพื่อความ
+    /// ครบถ้วนในการระบุตัวผู้จ่าย/ผู้รับ (ช่วย ภ.ง.ด.53).</summary>
+    private static string CertBranchSuffix(string? taxId, string? branchCode, string? branchName)
+    {
+        var tid = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        if (tid.Length != 13 || !tid.StartsWith("0", StringComparison.Ordinal)) return "";
+        return "  (" + FormatBranch(branchCode, branchName, "th") + ")";
     }
 
     /// <summary>

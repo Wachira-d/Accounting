@@ -418,7 +418,10 @@ public partial class PdfGenerationService
             if (!string.IsNullOrWhiteSpace(addr)) Line(addr);
         }
         if (t.ShowCompanyTaxId && !string.IsNullOrWhiteSpace(co.TaxId))
-            Line($"เลขประจำตัวผู้เสียภาษี: {co.TaxId}");
+        {
+            var coBranch = FormatBranch(co.BranchCode, co.BranchName, "th");
+            Line($"เลขประจำตัวผู้เสียภาษี: {co.TaxId} ({coBranch})");
+        }
         if (t.ShowCompanyPhone && !string.IsNullOrWhiteSpace(co.Phone))
             Line($"โทร: {co.Phone}");
         if (t.ShowCompanyEmail && !string.IsNullOrWhiteSpace(co.Email))
@@ -492,7 +495,10 @@ public partial class PdfGenerationService
             cc.Item().Text(label).FontSize(9.5f).Bold().FontColor(accent);
             cc.Item().Text(c.Name ?? "").FontSize(11.5f).Bold().FontColor("#111827");
             if (t.ShowContactTaxId && !string.IsNullOrWhiteSpace(c.TaxId))
-                cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId}").FontSize(9).FontColor("#374151");
+            {
+                var cBranch = FormatBranch(c.BranchCode, c.BranchName, "th");
+                cc.Item().Text($"เลขผู้เสียภาษี: {c.TaxId} ({cBranch})").FontSize(9).FontColor("#374151");
+            }
             if (t.ShowContactAddress)
             {
                 var addr = FormatThaiAddress(c.Address, c.BuildingNumber, c.BuildingName, c.Moo, c.StreetName,
