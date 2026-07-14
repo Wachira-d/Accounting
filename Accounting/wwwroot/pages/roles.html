@@ -416,7 +416,8 @@
     },
 
     getSelectedMenuIds() {
-      return Array.from(document.querySelectorAll('.perm-cb:checked')).map(cb => cb.value);
+      // dedupe — กัน id ซ้ำ (เช่น checkbox เดียวกันโผล่หลายที่) → ชน unique index ฝั่ง DB
+      return [...new Set(Array.from(document.querySelectorAll('.perm-cb:checked')).map(cb => cb.value))];
     },
 
     selectAll() {

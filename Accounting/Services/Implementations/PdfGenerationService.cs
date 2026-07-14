@@ -2103,11 +2103,38 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     {
         var isEn = lang == "en";
         var code = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
-        if (code.Length == 0 || code.All(ch => ch == '0'))
-            return isEn ? "Head Office" : "สำนักงานใหญ่";
-        var label = isEn ? $"Branch {code}" : $"สาขาที่ {code}";
-        if (!string.IsNullOrWhiteSpace(branchName)) label += $" ({branchName.Trim()})";
-        return label;
+        var name = branchName?.Trim();
+        var codeIsHeadOffice = code.Length == 0 || code.All(ch => ch == '0');
+
+        if (!codeIsHeadOffice)
+        {
+            var label = isEn ? $"Branch {code}" : $"สาขาที่ {code}";
+            // แนบชื่อสาขาถ้ามี — ยกเว้นเมื่อชื่อสาขาเป็นคำว่า "สำนักงานใหญ่/สนญ"
+            // (ค่า default ที่ฟอร์ม auto-เติม) ซึ่งขัดกับรหัสสาขาจริง → ไม่ต้องต่อท้าย
+            if (!string.IsNullOrWhiteSpace(name) && !IsHeadOfficeName(name))
+                label += $" ({name})";
+            return label;
+        }
+
+        // รหัสสาขา = 00000/ว่าง → ปกติ "สำนักงานใหญ่". แต่ถ้า "ชื่อสาขา" เป็น "เลขล้วน"
+        // ที่ไม่ใช่ศูนย์ทั้งหมด (เช่น "00001") = ผู้ใช้กรอกเลขสาขาผิดช่อง (ใส่ใน "ชื่อ
+        // สาขา" แทน "รหัสสาขา" ซึ่งฟอร์ม default ไว้ 00000) → ถือตามนั้น. เช็คเข้มด้วย
+        // regex เลขล้วนเพื่อกัน false-positive (เช่น "สำนักงานใหญ่ ชั้น 5" ไม่โดนแปลง).
+        if (!string.IsNullOrWhiteSpace(name)
+            && Regex.IsMatch(name, @"^0*\d{1,5}$") && name.Any(ch => ch != '0'))
+        {
+            var nd = new string(name.Where(char.IsDigit).ToArray());
+            return isEn ? $"Branch {nd}" : $"สาขาที่ {nd}";
+        }
+        return isEn ? "Head Office" : "สำนักงานใหญ่";
+    }
+
+    /// <summary>ชื่อสาขาที่แท้จริงหมายถึง "สำนักงานใหญ่" (ทุกสะกดที่พบบ่อย) — ใช้กัน
+    /// การต่อท้าย/แสดงชื่อ default ที่ขัดกับรหัสสาขา.</summary>
+    private static bool IsHeadOfficeName(string? name)
+    {
+        var n = name?.Trim();
+        return n is "สำนักงานใหญ่" or "สนญ" or "สนญ." or "สำนักงานใหญ" or "Head Office" or "HeadOffice" or "HO";
     }
 
     /// <summary>ส่วนต่อท้าย "สาขา" สำหรับหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ต่อ

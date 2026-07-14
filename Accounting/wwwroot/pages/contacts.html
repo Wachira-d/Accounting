@@ -68,8 +68,7 @@
             <div id="fuzzyMatchList"></div>
           </div>
           <div class="form-row" id="taxIdRow">
-            <div class="form-group" style="flex:2"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
-            <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา</label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
+            <div class="form-group" style="flex:1"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล DBD</button></div></div>
           </div>
           <!-- ฟิลด์เฉพาะนิติบุคคล -->
           <div id="juristicFields" style="margin-bottom:12px">
@@ -184,7 +183,10 @@
               <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="fMoo" placeholder="3" maxlength="5"></div>
               <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
             </div>
-            <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
+            <div class="form-row" id="branchRow">
+              <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา <span style="font-weight:normal;color:#64748b;font-size:11px">(00000 = สำนักงานใหญ่)</span></label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
+              <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
+            </div>
           </div>
           </div><!-- /addrThaiBox -->
 
