@@ -87,8 +87,10 @@ public partial class PdfGenerationService
                         col.Item().Border(2f).BorderColor(Colors.Black).Column(form =>
                         {
                             BuildTitleBar(form, cert.CertificateNumber);
-                            BuildPartyBlock(form, "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย", company.TaxId, company.Name, fullAddress);
-                            BuildPartyBlock(form, "ผู้ถูกหักภาษี ณ ที่จ่าย", cert.PayeeContact.TaxId, cert.PayeeContact.Name, payeeAddr);
+                            BuildPartyBlock(form, "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย", company.TaxId,
+                                company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName), fullAddress);
+                            BuildPartyBlock(form, "ผู้ถูกหักภาษี ณ ที่จ่าย", cert.PayeeContact.TaxId,
+                                cert.PayeeContact.Name + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr);
                             BuildFormTypeRow(form, cert);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);

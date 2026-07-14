@@ -1489,7 +1489,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>ผู้มีหน้าที่หักภาษี ณ ที่จ่าย :-</td><td style='white-space:nowrap;text-align:right'>เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId)}</td></tr></table>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td colspan='2' style='text-align:right;font-size:12px;padding-top:2px'>เลขประจำตัวผู้เสียภาษีอากร {OldTaxIdBoxes(company.TaxId)}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(company.Name)}&nbsp;</u></td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ที่อยู่</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(fullAddress)}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>");
@@ -1499,7 +1499,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>ผู้ถูกหักภาษี ณ ที่จ่าย :-</td><td style='white-space:nowrap;text-align:right'>เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style='color:#900'>*</span> {TaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td colspan='2' style='text-align:right;font-size:12px;padding-top:2px'>เลขประจำตัวผู้เสียภาษีอากร {OldTaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(cert.PayeeContact.Name)}&nbsp;</u></td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ชื่อ</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(cert.PayeeContact.Name + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>ที่อยู่</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(payeeAddr)}&nbsp;</u></td></tr></table>");
             sb.AppendLine("<div class='hint-text'>(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>");
@@ -2106,6 +2106,19 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         var label = isEn ? $"Branch {code}" : $"สาขาที่ {code}";
         if (!string.IsNullOrWhiteSpace(branchName)) label += $" ({branchName.Trim()})";
         return label;
+    }
+
+    /// <summary>ส่วนต่อท้าย "สาขา" สำหรับหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ต่อ
+    /// ท้ายชื่อคู่สัญญาแบบ inline (ไม่เพิ่มบรรทัด/ไม่กระทบ layout ฟอร์มราชการ).
+    /// แสดงเฉพาะ "นิติบุคคล" (เลขภาษี 13 หลักขึ้นต้น 0) — บุคคลธรรมดา (ภ.ง.ด.3,
+    /// เลขขึ้นต้น 1-8) ไม่มีสาขา จึงคืนค่าว่าง กันติดป้าย "สำนักงานใหญ่" ผิด. 50 ทวิ
+    /// ไม่ได้บังคับช่องสาขาตามกฎหมาย (คนละกรณีกับใบกำกับ §86/4) — เพิ่มเพื่อความ
+    /// ครบถ้วนในการระบุตัวผู้จ่าย/ผู้รับ (ช่วย ภ.ง.ด.53).</summary>
+    private static string CertBranchSuffix(string? taxId, string? branchCode, string? branchName)
+    {
+        var tid = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        if (tid.Length != 13 || !tid.StartsWith("0", StringComparison.Ordinal)) return "";
+        return "  (" + FormatBranch(branchCode, branchName, "th") + ")";
     }
 
     /// <summary>
