@@ -4422,6 +4422,20 @@
           if (!document.getElementById('fSupplierBranchCode')?.value.trim()) {
             Layout.toast('กรุณาระบุรหัสสาขาผู้ขาย (00000 = สำนักงานใหญ่)', 'error'); return;
           }
+          // 🛡️ เลขผู้เสียภาษีผู้ขายต้อง (1) เป็น 13 หลัก และ (2) ตรงกับผู้ติดต่อที่เลือก
+          // — ขอเครดิตภาษีซื้อ ภ.พ.30 กับเลขที่ไม่ตรง/ไม่มี = ผิด §86/4/§82/5(1)(5)
+          // (ห้ามปล่อยผ่าน — ระบบเคลมด้วยเลขของ contact จริง เลขที่แสดงต้องตรงกัน)
+          const _stDigits = (document.getElementById('fSupplierTaxIdReadonly')?.value || '').replace(/\D/g, '');
+          const _cTax = (((this._selectedContact?.id === contactId ? this._selectedContact?.taxId : null)
+              || (this.contacts || []).find(x => x.id === contactId)?.taxId || '')).replace(/\D/g, '');
+          if (_stDigits.length !== 13) {
+            Layout.toast('ผู้ขาย (ผู้ติดต่อ) ยังไม่มีเลขผู้เสียภาษี 13 หลัก — ขอเครดิตภาษีซื้อ (ภ.พ.30) ไม่ได้ตาม §86/4/§82/5 กรุณาเพิ่มเลขผู้เสียภาษีของผู้ขายใน Contact ก่อน', 'error', 8000);
+            return;
+          }
+          if (_cTax.length === 13 && _cTax !== _stDigits) {
+            Layout.toast(`⚠️ เลขผู้เสียภาษีผู้ขายที่ใช้เคลม (${_stDigits}) ไม่ตรงกับผู้ติดต่อที่เลือก (${_cTax}) — เลือกผู้ติดต่อใหม่หรือรีเฟรชหน้าก่อนบันทึก (กันเคลมภาษีซื้อผิดคน §82/5)`, 'error', 9000);
+            return;
+          }
         }
         if (_docType === 'CertificateInLieu') {
           if (!document.getElementById('fCertReason')?.value.trim()) {
