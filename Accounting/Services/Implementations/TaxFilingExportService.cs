@@ -55,12 +55,17 @@ public class TaxFilingExportService : ITaxFilingExportService
         var thaiYear = year + 543;
         var period = $"{thaiYear:D4}{month:D2}";
 
-        var allDetails = payrollRuns.SelectMany(p => p.Details)
-            .Where(d => d.WithholdingTax > 0).ToList();
         // ใช้ TaxableGross ถ้ามี (รายได้ที่นำมาคำนวณ WHT — Gross −
         // สวัสดิการยกเว้นภาษี). Fallback GrossIncome สำหรับข้อมูลเก่า
         // ที่ยังไม่ migrate.
         decimal IncomeForTax(PayrollDetail d) => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
+        // ภ.ง.ด.1 แสดงพนักงานทุกคนที่ได้รับเงินได้ ม.40(1) ในงวด — รวมคนที่ภาษี
+        // หัก ณ ที่จ่าย = 0 (เงินเดือนต่ำกว่าเกณฑ์) ด้วย. เดิมกรอง WithholdingTax > 0
+        // → บริษัทที่ทุกคนเงินเดือนต่ำกว่าเกณฑ์ได้ไฟล์ว่าง (T|0) ทั้งที่มีพนักงานจริง
+        // และไม่ตรงกับหน้ารายงาน (GeneratePnd1Async แสดงทุกคน). แสดงเงินได้ + ภาษี 0
+        // = เปิดเผยครบถ้วน ปลอดภัยกับสรรพากร (ยอดภาษีนำส่งยังถูก = ผลรวมที่หักจริง)
+        var allDetails = payrollRuns.SelectMany(p => p.Details)
+            .Where(d => IncomeForTax(d) > 0).ToList();
         var totalIncome = allDetails.Sum(IncomeForTax);
         var totalTax = allDetails.Sum(d => d.WithholdingTax);
 
