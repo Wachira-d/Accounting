@@ -665,7 +665,10 @@ public partial class TaxService : ITaxService
                         TaxReportId = report.Id,
                         LineOrder = lineOrder++,
                         TransactionDate = je.EntryDate,
-                        Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
+                        // เลขที่ใบกำกับ = เลขเอกสารจริง (REC/TIV ที่ JE อ้างถึง) —
+                        // แกะจาก Reference/Description; ไม่เจอ → เลขที่ JE. คำอธิบาย
+                        // เต็มอยู่คอลัมน์ TaxPayerName แล้ว
+                        Description = ExtractDocRefFromJe(je),
                         TaxPayerName = jePayerName,
                         TaxPayerId = jePayerId,
                         IncomeAmount = baseAmount,
@@ -688,7 +691,7 @@ public partial class TaxService : ITaxService
                         TaxReportId = report.Id,
                         LineOrder = lineOrder++,
                         TransactionDate = je.EntryDate,
-                        Description = $"[ภาษีซื้อ-JE] {je.EntryNumber} {je.Description}".Trim(),
+                        Description = ExtractDocRefFromJe(je),   // เลขเอกสารจริงที่ JE อ้างถึง
                         TaxPayerName = jePayerName,
                         TaxPayerId = jePayerId,
                         IncomeAmount = baseAmount,
@@ -878,7 +881,10 @@ public partial class TaxService : ITaxService
                     TaxReportId = report.Id,
                     LineOrder = lineOrder++,
                     TransactionDate = je.EntryDate,
-                    Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
+                    // เลขที่เอกสาร = เลขเอกสารจริงที่ JE อ้างถึง (แกะจาก ref/desc);
+                    // ย้ายคำอธิบายไปคอลัมน์ชื่อผู้ถูกหัก (WHT JE line ไม่มี TaxPayerName)
+                    Description = ExtractDocRefFromJe(je),
+                    TaxPayerName = je.Description,
                     IncomeAmount = baseAmount,
                     TaxRate = estimatedRate,
                     TaxAmount = whtAmount,
@@ -1222,6 +1228,24 @@ public partial class TaxService : ITaxService
     /// columns in รายงานภาษีซื้อ/ขาย accept that, but the user sees
     /// at least the JE description text instead of a totally blank row.
     /// </summary>
+    /// <summary>ดึง "เลขที่เอกสารจริง" (เช่น REC260601001 / TIV... ที่ JE อ้างถึง)
+    /// จาก Reference/Description/ขา JE — สำหรับ JE ที่ไม่มี SourceDocument link
+    /// (integration checkout / drives) เพื่อให้ช่อง "เลขที่ใบกำกับ" ในรายงานภาษี
+    /// ขึ้นเลขเอกสารจริง ไม่ใช่เลข JE (JV-INT-...). จับ token ตัวอักษรพิมพ์ใหญ่
+    /// 2-6 ตัว + ตัวเลข (คั่น -/ ได้) เช่น REC260601001, TIV-202606-0002; ไม่เจอ
+    /// → คืนเลขที่ JE.</summary>
+    private static string ExtractDocRefFromJe(JournalEntry je)
+    {
+        var texts = new[] { je.Reference ?? "", je.Description ?? "", je.Note ?? "" }
+            .Concat(je.Lines?.Select(l => l.Description ?? "") ?? Array.Empty<string>());
+        foreach (var t in texts)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(t, @"[A-Z]{2,6}[-/]?\d[\d/-]*\d");
+            if (m.Success) return m.Value.Trim();
+        }
+        return je.EntryNumber;
+    }
+
     private static (string Name, string? TaxId) ExtractTaxpayerFromJournalEntry(JournalEntry je)
     {
         var sources = new[] {
