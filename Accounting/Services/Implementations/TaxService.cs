@@ -665,7 +665,9 @@ public partial class TaxService : ITaxService
                         TaxReportId = report.Id,
                         LineOrder = lineOrder++,
                         TransactionDate = je.EntryDate,
-                        Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
+                        // เลขที่ใบกำกับ = เลขที่ JE เท่านั้น (ไม่พ่วงคำอธิบายยาว —
+                        // คำอธิบาย/ชื่อผู้ซื้ออยู่คอลัมน์ TaxPayerName แล้ว)
+                        Description = je.EntryNumber,
                         TaxPayerName = jePayerName,
                         TaxPayerId = jePayerId,
                         IncomeAmount = baseAmount,
@@ -688,7 +690,7 @@ public partial class TaxService : ITaxService
                         TaxReportId = report.Id,
                         LineOrder = lineOrder++,
                         TransactionDate = je.EntryDate,
-                        Description = $"[ภาษีซื้อ-JE] {je.EntryNumber} {je.Description}".Trim(),
+                        Description = je.EntryNumber,   // เลขที่ใบกำกับ = เลขที่ JE เท่านั้น
                         TaxPayerName = jePayerName,
                         TaxPayerId = jePayerId,
                         IncomeAmount = baseAmount,
@@ -878,7 +880,10 @@ public partial class TaxService : ITaxService
                     TaxReportId = report.Id,
                     LineOrder = lineOrder++,
                     TransactionDate = je.EntryDate,
-                    Description = $"[JE] {je.EntryNumber} {je.Description}".Trim(),
+                    // เลขที่เอกสาร = เลขที่ JE; ย้ายคำอธิบายไปคอลัมน์ชื่อผู้ถูกหัก
+                    // (WHT JE line ไม่มี TaxPayerName เดิม → ใส่ je.Description กันข้อมูลหาย)
+                    Description = je.EntryNumber,
+                    TaxPayerName = je.Description,
                     IncomeAmount = baseAmount,
                     TaxRate = estimatedRate,
                     TaxAmount = whtAmount,
