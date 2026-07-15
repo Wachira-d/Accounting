@@ -1236,7 +1236,7 @@ const Page = {
       const res = await api.getEmployees('?pageSize=200');
       const items = res.data?.items || res.data || [];
       const sel = document.getElementById('leaveEmpId');
-      sel.innerHTML = '<option value="">-- เลือกพนักงาน --</option>' + items.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('');
+      sel.innerHTML = '<option value="">-- เลือกพนักงาน --</option>' + items.map(e => `<option value="${e.id}">${Layout.esc((e.firstNameTh || e.firstName || '') + ' ' + (e.lastNameTh || e.lastName || ''))}</option>`).join('');
     } catch (err) { /* ignore */ }
   },
 
