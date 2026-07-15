@@ -1194,6 +1194,12 @@ _→ block + ชี้ทางออก (เติม/ติ๊กไม่ร�
 _อัปโหลด `/settings/stamp` → `CompanySettings.StampPath` + ขนาด/ตำแหน่ง_
 _(StampWidthMm/HeightMm/Align); ประทับในโซนลายเซ็น **เฉพาะเอกสารที่อนุมัติแล้ว**_
 _(เงื่อนไขเดียวกับช่องผู้อนุมัติ) ทั้ง PDF native + HTML preview._
+_รอบ 77: integration Expense/PV รองรับ `AutoApprove` (default true = เดิม). false =_
+_สร้าง Draft: ไม่ลง GL + ไม่ออก 50 ทวิ ตอน create (เดิม hardcode Approved + JE +_
+_50 ทวิ เสมอ). อนุมัติภายหลังผ่าน `ApproveDocumentAsync` → post JE + ออก 50 ทวิ._
+_เพิ่มเงื่อนไข 50 ทวิ ตอน approve ให้ครอบ "จ่ายเต็มแล้ว" (BalanceDue<=0+PaidAmount>0)_
+_ไม่ใช่แค่ Status Paid — กันใบ PV Draft ที่จ่ายแล้วมาอนุมัติทีหลังไม่ออก 50 ทวิ._
+_backward-compat: ผู้เรียกเดิมไม่ส่ง AutoApprove = true เหมือนเดิม._
 _รอบ 76: gate ภาษีซื้อ (§82/5) — ใบที่ "ขอเครดิตภาษีซื้อ" (HasTaxInvoiceReference)_
 _ต้องให้ Contact ผู้ขายมีเลขภาษี 13 หลัก มิฉะนั้น **block อนุมัติ (hard, ไม่มี_
 _acknowledge bypass)** ใน `ApproveDocumentAsync` — เคลมภาษีซื้อโดยผู้ขายไม่มีเลข_

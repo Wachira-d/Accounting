@@ -199,7 +199,13 @@ public record InboundExpenseRequest(
     string? PreparerName = null,
     string? PreparerSignatureBase64 = null,
     /// <summary>Resync update — เหมือน InboundInvoiceRequest.ResyncUpdate.</summary>
-    bool ResyncUpdate = false);
+    bool ResyncUpdate = false,
+    /// <summary>true (default, backward-compat) = สร้างเป็น Approved + ลง JE +
+    /// ออก 50 ทวิ ทันที (พฤติกรรมเดิม). false = สร้างเป็น "ฉบับร่าง (Draft)" —
+    /// ยังไม่ลง GL และยังไม่ออก 50 ทวิ; จะลง JE + ออก 50 ทวิ เมื่ออนุมัติ
+    /// (ApproveDocumentAsync) ภายหลัง. ผู้เรียกเดิมที่ไม่ส่ง field นี้ = true
+    /// เหมือนเดิม ไม่กระทบระบบที่เชื่อมต่ออยู่.</summary>
+    bool AutoApprove = true);
 
 /// <summary>ใบสำคัญจ่าย (การจ่ายเงินจริง) จากระบบภายนอก — สำหรับ voucher
 /// ที่จ่ายเงินไปแล้วในระบบต้นทาง: สร้างเอกสาร PV เดียวจบ (Dr ค่าใช้จ่าย /
@@ -216,7 +222,11 @@ public record InboundPaymentVoucherRequest(
     bool IncludeVat = true,
     List<InboundAttachment>? Attachments = null,
     string? PreparerName = null,
-    string? PreparerSignatureBase64 = null);
+    string? PreparerSignatureBase64 = null,
+    /// <summary>true (default, backward-compat) = สร้าง PV เป็น Approved + ลง JE
+    /// + ออก 50 ทวิ ทันที (พฤติกรรมเดิม). false = สร้างเป็นฉบับร่าง (Draft) —
+    /// ยังไม่ลง GL/ยังไม่ออก 50 ทวิ จนกว่าจะอนุมัติภายหลัง. ไม่ส่ง = true.</summary>
+    bool AutoApprove = true);
 
 /// <summary>ใบรับรองแทนใบเสร็จจากระบบภายนอก</summary>
 public record InboundCertificateInLieuRequest(
