@@ -22,7 +22,27 @@ namespace Accounting.Controllers;
 public class CashForecastController : ControllerBase
 {
     private readonly AccountingDbContext _db;
-    public CashForecastController(AccountingDbContext db) { _db = db; }
+    private readonly Accounting.Services.Implementations.ICashForecastService _forecastService;
+    public CashForecastController(AccountingDbContext db,
+        Accounting.Services.Implementations.ICashForecastService forecastService)
+    { _db = db; _forecastService = forecastService; }
+
+    /// <summary>Day-by-day forecast แบบละเอียด (opening/closing, byDay running balance,
+    /// risks, top debtors/creditors, upcoming receipts/payments) จาก
+    /// ICashForecastService — ใช้โดยหน้า cash-forecast.html. แยกจาก GET หลัก
+    /// (แบบ band ที่ cash-management.html ใช้) เพื่อไม่ให้ shape ชนกัน.</summary>
+    [HttpGet("detailed")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Treasury.CashForecastResponse>>> GetDetailed(
+        Guid companyId,
+        [FromQuery] int? days, [FromQuery] Guid? projectId, [FromQuery] decimal? minimumCashFloor,
+        CancellationToken ct)
+    {
+        var req = new Accounting.Models.DTOs.Treasury.CashForecastRequest(
+            HorizonDays: days ?? 30, ProjectId: projectId,
+            IncludePayroll: true, MinimumCashFloor: minimumCashFloor);
+        var result = await _forecastService.ForecastAsync(companyId, req, ct);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Treasury.CashForecastResponse>(true, result));
+    }
 
     public sealed record CashForecastBand(
         string Label, DateTime FromDate, DateTime ToDate,

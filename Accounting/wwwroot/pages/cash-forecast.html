@@ -166,7 +166,7 @@
           const params = [`days=${days}`];
           if (projectId) params.push(`projectId=${projectId}`);
           if (floor > 0) params.push(`minimumCashFloor=${floor}`);
-          const r = await API.get(`/api/companies/${cid}/cash-forecast?${params.join('&')}`);
+          const r = await API.get(`/api/companies/${cid}/cash-forecast/detailed?${params.join('&')}`);
           this.render(r.data);
           this.loadAiNarrative(r.data, days);
         } catch (e) {
