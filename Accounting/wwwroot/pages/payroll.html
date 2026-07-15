@@ -1236,7 +1236,7 @@ const Page = {
       const res = await api.getEmployees('?pageSize=200');
       const items = res.data?.items || res.data || [];
       const sel = document.getElementById('leaveEmpId');
-      sel.innerHTML = '<option value="">-- เลือกพนักงาน --</option>' + items.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('');
+      sel.innerHTML = '<option value="">-- เลือกพนักงาน --</option>' + items.map(e => `<option value="${e.id}">${Layout.esc((e.firstNameTh || e.firstName || '') + ' ' + (e.lastNameTh || e.lastName || ''))}</option>`).join('');
     } catch (err) { /* ignore */ }
   },
 
@@ -1331,24 +1331,24 @@ const Page = {
         content.innerHTML = `
           <h3 style="margin-bottom:16px">ภงด.1 - ${month}/${parseInt(year)+543}</h3>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
-            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.employeeCount || 0}</div></div>
-            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalIncome)}</div></div>
-            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTax)}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.totalEmployees ?? d.employeeCount ?? 0}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalTaxableIncome ?? d.totalIncome)}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTaxWithheld ?? d.totalTax)}</div></div>
           </div>
-          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
-          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.income)}</td><td class="text-right">${Layout.money(e.tax)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
+          <tbody>${(d.lines || d.employees).map(e => `<tr><td>${e.fullName||e.name||'-'}</td><td>${e.citizenId||e.idCard||'-'}</td><td class="text-right">${Layout.money(e.taxableIncome ?? e.income)}</td><td class="text-right">${Layout.money(e.taxWithheld ?? e.tax)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       } else {
         res = await api.getSso(year, month);
         const d = res.data || {};
         content.innerHTML = `
           <h3 style="margin-bottom:16px">ประกันสังคม - ${month}/${parseInt(year)+543}</h3>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
-            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.employeeCount || 0}</div></div>
-            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.employeeContribution)}</div></div>
-            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบนายจ้าง</div><div class="font-medium text-lg text-primary">${Layout.money(d.employerContribution)}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.totalEmployees ?? d.employeeCount ?? 0}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.totalEmployeeContribution ?? d.employeeContribution)}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบนายจ้าง</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalEmployerContribution ?? d.employerContribution)}</div></div>
           </div>
-          ${d.employees ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
-          <tbody>${d.employees.map(e => `<tr><td>${e.name||'-'}</td><td>${e.idCard||'-'}</td><td class="text-right">${Layout.money(e.wage)}</td><td class="text-right">${Layout.money(e.contribution)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
+          <tbody>${(d.lines || d.employees).map(e => `<tr><td>${e.fullName||e.name||'-'}</td><td>${e.socialSecurityNumber||e.idCard||'-'}</td><td class="text-right">${Layout.money(e.salaryBase ?? e.wage)}</td><td class="text-right">${Layout.money(e.employeeContribution ?? e.contribution)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       }
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },

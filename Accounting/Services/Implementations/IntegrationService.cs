@@ -2567,12 +2567,16 @@ public class IntegrationService : IIntegrationService
             // Net payable = gross − withholding tax (consistent with manual entry).
             var totalAmount = (request.IncludeVat ? subTotal : subTotal + totalVat) - totalWht;
 
+            // AutoApprove=true (default, backward-compat) → Approved + JE + 50 ทวิ
+            // ทันทีเหมือนเดิม. false → สร้าง Draft: ยังไม่ลง GL/ยังไม่ออก 50 ทวิ
+            // จนกว่าจะอนุมัติผ่าน ApproveDocumentAsync (ซึ่ง post JE + ออก 50 ทวิ เอง)
+            var autoApprove = request.AutoApprove;
             var document = new Document
             {
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = DocumentType.Expense,
-                Status = DocumentStatus.Approved,
+                Status = autoApprove ? DocumentStatus.Approved : DocumentStatus.Draft,
                 DocumentDate = NormalizeDate(request.DocumentDate),
                 DueDate = NormalizeDate(request.DueDate ?? request.DocumentDate.AddDays(30)),
                 ContactId = supplier.Id,
@@ -2601,12 +2605,18 @@ public class IntegrationService : IIntegrationService
             await _db.SaveChangesAsync();
             await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
-            var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
-
-            // Auto-issue the withholding-tax certificate so an int_ key sync is
-            // self-sufficient (no separate manual WHT step). Best-effort — a
-            // failure here must not fail the already-committed expense sync.
-            var whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+            // Draft (autoApprove=false) → ยังไม่ลง GL และยังไม่ออก 50 ทวิ. ทั้งสองจะ
+            // เกิดตอนอนุมัติ (ApproveDocumentAsync post JE + ออก 50 ทวิ ตอนจ่าย/approve).
+            Guid? journalEntryId = null;
+            string whtNote = "";
+            if (autoApprove)
+            {
+                journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "expense");
+                // Auto-issue the withholding-tax certificate so an int_ key sync is
+                // self-sufficient (no separate manual WHT step). Best-effort — a
+                // failure here must not fail the already-committed expense sync.
+                whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+            }
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -2615,7 +2625,9 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Expense created" + whtNote, document.Id, supplier.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true,
+                (autoApprove ? "Expense created" : "Expense created as Draft (pending approval — GL + 50 ทวิ on approve)") + whtNote,
+                document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
@@ -2696,12 +2708,17 @@ public class IntegrationService : IIntegrationService
             // disbursement — created already-paid (Cash, no balance, no due
             // date). The two-step "expense + payment" mapping is no longer
             // needed for vouchers the partner has already paid.
+            // AutoApprove=true (default) → Approved + JE + 50 ทวิ ทันที (เดิม).
+            // false → Draft: ยังไม่ลง GL/ยังไม่ออก 50 ทวิ จนกว่าจะอนุมัติภายหลัง
+            // (คงยอด PaidAmount/BalanceDue เป็น "จ่ายแล้ว" — เป็น draft ของใบจ่ายจริง;
+            // ApproveDocumentAsync จะ post JE + ออก 50 ทวิ ตอนอนุมัติ)
+            var autoApprove = request.AutoApprove;
             var document = new Document
             {
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = DocumentType.PaymentVoucher,
-                Status = DocumentStatus.Approved,
+                Status = autoApprove ? DocumentStatus.Approved : DocumentStatus.Draft,
                 DocumentDate = NormalizeDate(request.DocumentDate),
                 PaymentDate = paymentDate,
                 ContactId = supplier.Id,
@@ -2723,11 +2740,16 @@ public class IntegrationService : IIntegrationService
             await _db.SaveChangesAsync();
             await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
-            var journalEntryId = await CreatePaymentVoucherJournalAsync(companyId, document);
-
-            // Auto-issue the WHT certificate — a paid voucher with withholding
-            // is exactly when the 50 ทวิ must be handed to the supplier.
-            var whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+            // Draft (autoApprove=false) → ยังไม่ post JE และยังไม่ออก 50 ทวิ; เกิดตอนอนุมัติ
+            Guid? journalEntryId = null;
+            string whtNote = "";
+            if (autoApprove)
+            {
+                journalEntryId = await CreatePaymentVoucherJournalAsync(companyId, document);
+                // Auto-issue the WHT certificate — a paid voucher with withholding
+                // is exactly when the 50 ทวิ must be handed to the supplier.
+                whtNote = await TryAutoGenerateWhtAsync(companyId, document);
+            }
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -2736,7 +2758,9 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Payment voucher created" + whtNote, document.Id, supplier.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true,
+                (autoApprove ? "Payment voucher created" : "Payment voucher created as Draft (pending approval — GL + 50 ทวิ on approve)") + whtNote,
+                document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {

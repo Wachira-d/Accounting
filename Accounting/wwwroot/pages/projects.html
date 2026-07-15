@@ -157,7 +157,7 @@
             return `<tr>
             <td class="font-medium">${p.code}</td>
             <td>${p.name}</td>
-            <td>${p.contactName || '-'}</td>
+            <td>${p.customerName || '-'}</td>
             <td class="text-right">${Layout.money(p.budgetAmount)}</td>
             <td class="text-right ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</td>
             <td>
@@ -344,25 +344,25 @@
             <div style="padding:18px">
               <div style="font-size:13px;color:#64748b;margin-bottom:10px">${r.message || ''}</div>
               <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
-                <div class="kpi-card"><div class="kpi-label">Operating</div><div class="kpi-value" style="color:${color(d.netCashFromOperating)}">${sign(d.netCashFromOperating)}${fmt(d.netCashFromOperating)}</div></div>
-                <div class="kpi-card"><div class="kpi-label">Investing</div><div class="kpi-value" style="color:${color(d.netCashFromInvesting)}">${sign(d.netCashFromInvesting)}${fmt(d.netCashFromInvesting)}</div></div>
-                <div class="kpi-card"><div class="kpi-label">Financing</div><div class="kpi-value" style="color:${color(d.netCashFromFinancing)}">${sign(d.netCashFromFinancing)}${fmt(d.netCashFromFinancing)}</div></div>
-                <div class="kpi-card" style="background:#eff6ff"><div class="kpi-label">Net change</div><div class="kpi-value" style="color:${color(d.netChangeInCash)};font-weight:700">${sign(d.netChangeInCash)}${fmt(d.netChangeInCash)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Operating</div><div class="kpi-value" style="color:${color(d.operatingActivities?.subTotal)}">${sign(d.operatingActivities?.subTotal)}${fmt(d.operatingActivities?.subTotal)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Investing</div><div class="kpi-value" style="color:${color(d.investingActivities?.subTotal)}">${sign(d.investingActivities?.subTotal)}${fmt(d.investingActivities?.subTotal)}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Financing</div><div class="kpi-value" style="color:${color(d.financingActivities?.subTotal)}">${sign(d.financingActivities?.subTotal)}${fmt(d.financingActivities?.subTotal)}</div></div>
+                <div class="kpi-card" style="background:#eff6ff"><div class="kpi-label">Net change</div><div class="kpi-value" style="color:${color(d.netCashChange)};font-weight:700">${sign(d.netCashChange)}${fmt(d.netCashChange)}</div></div>
               </div>
-              ${(d.operatingActivities||[]).length ? `
+              ${(d.operatingActivities?.items||[]).length ? `
                 <h4 style="margin:10px 0 6px;font-size:13px">กิจกรรมดำเนินการ (Operating)</h4>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
-                  ${(d.operatingActivities||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
+                  ${(d.operatingActivities.items||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
                 </table>` : ''}
-              ${(d.investingActivities||[]).length ? `
+              ${(d.investingActivities?.items||[]).length ? `
                 <h4 style="margin:14px 0 6px;font-size:13px">กิจกรรมลงทุน (Investing)</h4>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
-                  ${(d.investingActivities||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
+                  ${(d.investingActivities.items||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
                 </table>` : ''}
-              ${(d.financingActivities||[]).length ? `
+              ${(d.financingActivities?.items||[]).length ? `
                 <h4 style="margin:14px 0 6px;font-size:13px">กิจกรรมจัดหาเงิน (Financing)</h4>
                 <table style="width:100%;font-size:12px;border-collapse:collapse">
-                  ${(d.financingActivities||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
+                  ${(d.financingActivities.items||[]).map(a => `<tr><td style="padding:3px 6px">${a.description||''}</td><td style="padding:3px 6px;text-align:right;color:${color(a.amount)}">${sign(a.amount)}${fmt(a.amount)}</td></tr>`).join('')}
                 </table>` : ''}
             </div>`;
         } catch (e) {
@@ -391,9 +391,9 @@
                 <div class="kpi-card"><div class="kpi-label">เสร็จไปแล้ว</div><div class="kpi-value">${(p.completionPercent || 0).toFixed(0)}%</div></div>
               </div>
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
-                <div class="kpi-card" style="background:#f0fdf4"><div class="kpi-label">รายได้รับรู้</div><div class="kpi-value" style="color:#15803d">${fmt(profit.actualRevenue || p.actualRevenue)}</div></div>
-                <div class="kpi-card" style="background:#fef2f2"><div class="kpi-label">ต้นทุนเกิดขึ้น</div><div class="kpi-value" style="color:#dc2626">${fmt(profit.actualCost || p.actualCost)}</div></div>
-                <div class="kpi-card" style="background:#eff6ff"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value" style="color:${color((profit.actualRevenue || 0) - (profit.actualCost || 0))}">${fmt((profit.actualRevenue || p.actualRevenue || 0) - (profit.actualCost || p.actualCost || 0))}</div></div>
+                <div class="kpi-card" style="background:#f0fdf4"><div class="kpi-label">รายได้รับรู้</div><div class="kpi-value" style="color:#15803d">${fmt(profit.totalRevenue ?? p.actualRevenue)}</div></div>
+                <div class="kpi-card" style="background:#fef2f2"><div class="kpi-label">ต้นทุนเกิดขึ้น</div><div class="kpi-value" style="color:#dc2626">${fmt(profit.totalCost ?? p.actualCost)}</div></div>
+                <div class="kpi-card" style="background:#eff6ff"><div class="kpi-label">กำไรสุทธิ</div><div class="kpi-value" style="color:${color((profit.totalRevenue ?? 0) - (profit.totalCost ?? 0))}">${fmt((profit.totalRevenue ?? p.actualRevenue ?? 0) - (profit.totalCost ?? p.actualCost ?? 0))}</div></div>
               </div>
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
                 <div class="kpi-card"><div class="kpi-label">ยังเก็บไม่ได้ (AR)</div><div class="kpi-value" style="color:#d97706">${fmt(out.receivable)}</div></div>

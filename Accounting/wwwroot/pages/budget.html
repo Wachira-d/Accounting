@@ -191,7 +191,7 @@
             this.addLine();
             const row = document.getElementById('linesBody').lastElementChild;
             row.querySelector('[data-f="account"]').value = l.accountId;
-            row.querySelector('[data-f="amount"]').value = l.budgetAmount;
+            row.querySelector('[data-f="amount"]').value = l.totalBudget;   // BudgetLineResponse ใช้ totalBudget (เดิมอ่าน budgetAmount → ว่าง)
           });
           if (!b.lines?.length) this.addLine();
           this.calcTotal();
@@ -205,7 +205,14 @@
         document.querySelectorAll('#linesBody tr').forEach(row => {
           const amt = parseFloat(row.querySelector('[data-f="amount"]').value) || 0;
           if (amt > 0) {
-            lines.push({ accountId: row.querySelector('[data-f="account"]').value, budgetAmount: amt });
+            // BudgetLineRequest ฝั่ง backend รับเป็นรายเดือน Month1..Month12 (ไม่มี
+            // budgetAmount) — เดิมส่ง budgetAmount → bind ไม่ติด งบบันทึกเป็น 0.
+            // UI เป็นยอด "รายปี" ต่อบัญชี → เกลี่ยเท่ากัน 12 เดือน เศษลงเดือน 12
+            const line = { accountId: row.querySelector('[data-f="account"]').value };
+            const per = Math.round((amt / 12) * 100) / 100;
+            for (let m = 1; m <= 12; m++)
+              line['month' + m] = m === 12 ? +(amt - per * 11).toFixed(2) : per;
+            lines.push(line);
           }
         });
         const data = {

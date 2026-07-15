@@ -2833,7 +2833,13 @@ public class DocumentService : IDocumentService
                 // PV เงินสด standalone / เอกสาร settle แปลงมา → ไม่มี Payment row
                 // เลย → hook auto-gen ใน CreatePaymentAsync ไม่เคยยิง → ไม่มี 50 ทวิ
                 // ทั้งที่หักภาษีแล้วจ่ายเงินแล้ว (ต้องออกให้ผู้ถูกหักในวันจ่าย)
-                if (doc.Status == DocumentStatus.Paid
+                // "จ่ายจบตอน approve" = Status Paid หรือ จ่ายเต็มแล้ว (BalanceDue<=0 +
+                // PaidAmount>0) แม้ label ยังเป็น Approved — ครอบใบ PV จ่ายแล้วที่สร้าง
+                // เป็น Draft (เช่น integration AutoApprove=false) แล้วมาอนุมัติทีหลัง
+                // ให้ออก 50 ทวิ ครบ. guard cert-exists ใน AutoGenerate กันออกซ้ำอยู่แล้ว.
+                var whtPaidOnApprove = doc.Status == DocumentStatus.Paid
+                    || (doc.BalanceDue <= 0.005m && doc.PaidAmount > 0.005m);
+                if (whtPaidOnApprove
                     && doc.WithholdingTaxAmount > 0
                     && _whtService != null
                     && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.Expense

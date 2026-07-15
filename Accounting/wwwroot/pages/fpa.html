@@ -177,7 +177,7 @@
             <td class="font-medium">${s.name}</td>
             <td>${s.scenarioType || '-'}</td>
             <td>${s.fiscalYear}</td>
-            <td>${(s.assumptions || []).length} รายการ</td>
+            <td>${s.assumptionCount || 0} รายการ</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.viewScenario('${s.id}')" data-i18n="common.view">ดู</button>
               <button class="btn btn-sm btn-ghost" onclick="Page.openAddAssumption('${s.id}')">+สมมติฐาน</button>
@@ -282,11 +282,11 @@
           const grid = document.getElementById('kpiGrid');
           if (!items.length) { grid.innerHTML = '<div class="text-gray-400 text-center" style="grid-column:1/-1;padding:40px">ยังไม่มี KPI กดปุ่ม "+ สร้าง KPI" เพื่อเริ่มต้น</div>'; return; }
           grid.innerHTML = items.map(k => {
-            const statusColor = k.status === 'Good' ? 'var(--success)' : k.status === 'Warning' ? 'var(--warning)' : 'var(--danger)';
+            const statusColor = k.latestStatus === 'Good' ? 'var(--success)' : k.latestStatus === 'Warning' ? 'var(--warning)' : 'var(--danger)';
             return `<div class="card" style="padding:20px;border-left:4px solid ${statusColor}">
               <div class="text-xs text-gray-500">${k.category||'General'}</div>
               <div class="font-semibold" style="font-size:16px;margin:4px 0">${k.name}</div>
-              <div style="font-size:28px;font-weight:700;color:${statusColor}">${k.value != null ? k.value.toFixed(2) : '-'}</div>
+              <div style="font-size:28px;font-weight:700;color:${statusColor}">${k.latestValue != null ? k.latestValue.toFixed(2) : '-'}</div>
               <div class="text-xs text-gray-400 mt-1">เป้าหมาย: ${k.targetValue != null ? k.targetValue.toFixed(2) : '-'}</div>
               <button class="btn btn-sm btn-ghost mt-2" onclick="Page.viewKpiHistory('${k.id}')">ดูประวัติ</button>
             </div>`;
@@ -338,15 +338,15 @@
         const api = Layout.api(); if (!api) return;
         const y = document.getElementById('ratioYear').value;
         try {
-          const res = await api.getFpaFinancialRatios(`?fiscalYear=${y}`);
+          const res = await api.getFpaFinancialRatios(`?asOfDate=${y}-12-31`);
           const d = res.data;
           if (!d) { document.getElementById('ratioGrid').innerHTML = '<p class="text-gray-400" style="grid-column:1/-1;text-align:center;padding:40px" data-i18n="common.noData">ไม่มีข้อมูล</p>'; return; }
           const render = (title, items) => `<div class="card" style="padding:20px"><h4 style="margin-bottom:12px">${title}</h4>${items.map(([label, val]) => `<div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray-100)"><span class="text-sm">${label}</span><span class="font-semibold">${val != null ? (typeof val === 'number' ? val.toFixed(2) : val) : '-'}</span></div>`).join('')}</div>`;
           document.getElementById('ratioGrid').innerHTML =
-            render('Liquidity', [['Current Ratio', d.currentRatio], ['Quick Ratio', d.quickRatio], ['Cash Ratio', d.cashRatio]]) +
-            render('Profitability', [['Gross Margin %', d.grossMargin], ['Net Margin %', d.netMargin], ['ROA %', d.returnOnAssets], ['ROE %', d.returnOnEquity]]) +
-            render('Efficiency', [['Asset Turnover', d.assetTurnover], ['Receivable Days', d.receivableDays], ['Payable Days', d.payableDays], ['Inventory Days', d.inventoryDays]]) +
-            render('Leverage', [['Debt/Equity', d.debtToEquity], ['Debt/Assets', d.debtToAssets], ['Interest Coverage', d.interestCoverage]]);
+            render('Liquidity', [['Current Ratio', d.currentRatio], ['Quick Ratio', d.quickRatio], ['Working Capital', d.workingCapital]]) +
+            render('Profitability', [['Gross Margin %', d.grossProfitMargin], ['Net Margin %', d.netProfitMargin], ['ROA %', d.returnOnAssets], ['ROE %', d.returnOnEquity]]) +
+            render('Efficiency', [['Asset Turnover', d.assetTurnover], ['Receivable Days', d.daysSalesOutstanding], ['Payable Days', d.daysPayableOutstanding], ['Inventory Days', d.daysInventoryOutstanding]]) +
+            render('Leverage', [['Debt/Equity', d.debtToEquity], ['Cash Conversion Cycle', d.cashConversionCycle], ['Interest Coverage', d.interestCoverage]]);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // Break-even
@@ -360,14 +360,14 @@
           document.getElementById('breakEvenContent').innerHTML = `
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
               <div class="kpi-card"><div class="kpi-label">จุดคุ้มทุน (บาท)</div><div class="kpi-value">${Layout.money(d.breakEvenRevenue)}</div></div>
-              <div class="kpi-card"><div class="kpi-label">ต้นทุนคงที่</div><div class="kpi-value">${Layout.money(d.fixedCosts)}</div></div>
-              <div class="kpi-card"><div class="kpi-label">ต้นทุนผันแปร</div><div class="kpi-value">${Layout.money(d.variableCosts)}</div></div>
-              <div class="kpi-card"><div class="kpi-label">Contribution Margin %</div><div class="kpi-value">${(d.contributionMarginRatio||0).toFixed(1)}%</div></div>
+              <div class="kpi-card"><div class="kpi-label">ต้นทุนคงที่</div><div class="kpi-value">${Layout.money(d.totalFixedCosts)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">รายได้ปัจจุบัน</div><div class="kpi-value">${Layout.money(d.currentRevenue)}</div></div>
+              <div class="kpi-card"><div class="kpi-label">Contribution Margin %</div><div class="kpi-value">${(d.averageContributionMarginPercent||0).toFixed(1)}%</div></div>
             </div>
             <div class="card" style="padding:20px">
               <h4 style="margin-bottom:12px">สรุป</h4>
-              <p>รายได้ปัจจุบัน: <strong>${Layout.money(d.actualRevenue)}</strong></p>
-              <p>Margin of Safety: <strong class="${(d.marginOfSafety||0)>=0?'text-success':'text-danger'}">${(d.marginOfSafety||0).toFixed(1)}%</strong></p>
+              <p>รายได้ปัจจุบัน: <strong>${Layout.money(d.currentRevenue)}</strong></p>
+              <p>Margin of Safety: <strong class="${(d.marginOfSafetyPercent||0)>=0?'text-success':'text-danger'}">${(d.marginOfSafetyPercent||0).toFixed(1)}%</strong> (${Layout.money(d.marginOfSafety)})</p>
               <p>${(d.marginOfSafety||0)>=0 ? 'บริษัทมีรายได้เหนือจุดคุ้มทุน' : 'บริษัทยังไม่ถึงจุดคุ้มทุน'}</p>
             </div>`;
         } catch (e) { Layout.toast(e.message, 'error'); }
