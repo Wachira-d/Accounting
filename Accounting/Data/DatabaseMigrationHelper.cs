@@ -3337,6 +3337,12 @@ public static class DatabaseMigrationHelper
                 ON "Payments" ("CompanyId", "DocumentId")
                 WHERE "IsDeleted" = false;
             """,
+            // outbound integration payments-list — filter/order ตาม (CompanyId, PaymentDate)
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Payments_CompanyId_PaymentDate"
+                ON "Payments" ("CompanyId", "PaymentDate" DESC)
+                WHERE "IsDeleted" = false;
+            """,
             """
             CREATE INDEX IF NOT EXISTS "IX_JournalEntryLines_AccountId_Date"
                 ON "JournalEntryLines" ("AccountId", "JournalEntryId");
