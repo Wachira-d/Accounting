@@ -1214,6 +1214,91 @@ public class IntegrationService : IIntegrationService
         return contact;
     }
 
+    private static string NormalizeTaxId(string? taxId) =>
+        string.IsNullOrEmpty(taxId) ? "" : new string(taxId.Where(char.IsDigit).ToArray());
+
+    /// <summary>Resolve/สร้างผู้จำหน่ายจาก integration แบบ "กัน contact ซ้ำ" —
+    /// match ตามลำดับความแม่น แล้วค่อยสร้างใหม่ (upsert):
+    ///   1. SupplierContactId (Contact.Id ของ NextAcc ตรง ๆ) — แม่นสุด
+    ///   2. ExternalId (รหัสผู้ติดต่อของระบบต้นทาง เช่น TakeTime)
+    ///   3. TaxId แบบ normalize ตัวเลขล้วน (กัน "0-1055-..." vs "0105512...")
+    ///   4. ชื่อ trim + case-insensitive
+    /// พบแล้วเติม ExternalId/TaxId ให้ถ้ายังว่าง (enrich) → รอบถัดไป match แม่นขึ้น.
+    /// เดิม match ด้วย TaxId exact-string + ชื่อ exact → integration ยิงเลขภาษี
+    /// คนละรูปแบบ/ชื่อมีช่องว่าง = สร้าง contact ซ้ำ.</summary>
+    private async Task<Contact> ResolveSupplierAsync(Guid companyId, Guid integrationId,
+        Guid? supplierContactId, string? supplierExternalId, string? supplierName, string? supplierTaxId)
+    {
+        var taxDigits = NormalizeTaxId(supplierTaxId);
+        var nameTrim = supplierName?.Trim();
+        var extId = string.IsNullOrWhiteSpace(supplierExternalId) ? null : supplierExternalId!.Trim();
+
+        Contact? supplier = null;
+
+        // (1) Contact.Id ตรง ๆ
+        if (supplierContactId is { } cid && cid != Guid.Empty)
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.Id == cid && c.CompanyId == companyId && !c.IsDeleted);
+
+        // (2) External id ของระบบต้นทาง
+        if (supplier == null && extId != null)
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && c.ExternalId == extId && !c.IsDeleted);
+
+        // (3) เลขผู้เสียภาษี normalize ตัวเลขล้วน (stored ถูก normalize แล้วใน migration)
+        if (supplier == null && taxDigits.Length > 0)
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && c.TaxId == taxDigits && !c.IsDeleted);
+
+        // (4) ชื่อ trim + case-insensitive
+        if (supplier == null && !string.IsNullOrWhiteSpace(nameTrim))
+        {
+            var lower = nameTrim.ToLower();
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && c.Name.Trim().ToLower() == lower && !c.IsDeleted);
+        }
+
+        if (supplier == null)
+        {
+            var sysName = await _db.Set<ExternalIntegration>().AsNoTracking()
+                .Where(i => i.Id == integrationId).Select(i => i.SystemName).FirstOrDefaultAsync();
+            supplier = new Contact
+            {
+                CompanyId = companyId,
+                Name = string.IsNullOrWhiteSpace(nameTrim) ? "ผู้จำหน่ายทั่วไป" : nameTrim,
+                TaxId = taxDigits.Length > 0 ? taxDigits : null,
+                ExternalId = extId,
+                ExternalSystem = extId != null ? sysName : null,
+                IsCustomer = false,
+                IsSupplier = true,
+                IsActive = true
+            };
+            _db.Set<Contact>().Add(supplier);
+            await _db.SaveChangesAsync();
+            return supplier;
+        }
+
+        // enrich contact เดิม — เติม external id / tax id ที่ยังว่าง เพื่อรอบถัดไป match แม่นขึ้น
+        var dirty = false;
+        if (string.IsNullOrWhiteSpace(supplier.ExternalId) && extId != null)
+        {
+            supplier.ExternalId = extId;
+            if (string.IsNullOrWhiteSpace(supplier.ExternalSystem))
+                supplier.ExternalSystem = await _db.Set<ExternalIntegration>().AsNoTracking()
+                    .Where(i => i.Id == integrationId).Select(i => i.SystemName).FirstOrDefaultAsync();
+            dirty = true;
+        }
+        if (string.IsNullOrWhiteSpace(supplier.TaxId) && taxDigits.Length > 0)
+        {
+            supplier.TaxId = taxDigits;
+            dirty = true;
+        }
+        if (!supplier.IsSupplier) { supplier.IsSupplier = true; dirty = true; }
+        if (dirty) await _db.SaveChangesAsync();
+
+        return supplier;
+    }
+
     /// <summary>
     /// Best-effort withholding-tax certificate auto-issue for an
     /// integration-synced purchase document. Returns a short note to append
@@ -2536,27 +2621,9 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // Resolve supplier contact
-            Contact? supplier = null;
-            if (!string.IsNullOrEmpty(request.SupplierTaxId))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
-            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
-
-            if (supplier == null)
-            {
-                supplier = new Contact
-                {
-                    CompanyId = companyId,
-                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
-                    TaxId = request.SupplierTaxId,
-                    IsCustomer = false,
-                    IsSupplier = true,
-                    IsActive = true
-                };
-                _db.Set<Contact>().Add(supplier);
-                await _db.SaveChangesAsync();
-            }
+            // Resolve supplier contact (dedupe: contactId → externalId → taxId(digits) → name)
+            var supplier = await ResolveSupplierAsync(companyId, integrationId,
+                request.SupplierContactId, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
@@ -2672,27 +2739,9 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // Resolve supplier contact — same cascade as the expense sync.
-            Contact? supplier = null;
-            if (!string.IsNullOrEmpty(request.SupplierTaxId))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
-            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
-
-            if (supplier == null)
-            {
-                supplier = new Contact
-                {
-                    CompanyId = companyId,
-                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
-                    TaxId = request.SupplierTaxId,
-                    IsCustomer = false,
-                    IsSupplier = true,
-                    IsActive = true
-                };
-                _db.Set<Contact>().Add(supplier);
-                await _db.SaveChangesAsync();
-            }
+            // Resolve supplier contact (dedupe: contactId → externalId → taxId(digits) → name)
+            var supplier = await ResolveSupplierAsync(companyId, integrationId,
+                request.SupplierContactId, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
@@ -2943,27 +2992,9 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // Resolve supplier contact
-            Contact? supplier = null;
-            if (!string.IsNullOrEmpty(request.SupplierTaxId))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
-            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
-
-            if (supplier == null)
-            {
-                supplier = new Contact
-                {
-                    CompanyId = companyId,
-                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
-                    TaxId = request.SupplierTaxId,
-                    IsCustomer = false,
-                    IsSupplier = true,
-                    IsActive = true
-                };
-                _db.Set<Contact>().Add(supplier);
-                await _db.SaveChangesAsync();
-            }
+            // Resolve supplier contact (dedupe: externalId → taxId(digits) → name)
+            var supplier = await ResolveSupplierAsync(companyId, integrationId,
+                null, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
@@ -3446,22 +3477,32 @@ public class IntegrationService : IIntegrationService
 
     public async Task<OutboundPagedResponse<OutboundDocumentResponse>> GetDocumentsForExternalAsync(Guid companyId, OutboundQueryParams query)
     {
-        var q = _db.Documents
-            .Include(d => d.Lines)
+        // Performance: read-only outbound → AsNoTracking (ตัด change-tracker
+        // snapshot ต่อ entity), cap PageSize (กัน caller ขอ "ทั้งเดือน" ทีเดียว
+        // แล้ว materialize เอกสาร+บรรทัดหลายพันแบบ tracked = แขวน >60 วิ), และ
+        // Include(Lines) แบบ split-query (กัน JOIN 1-to-many ระเบิดแถวตอน page ใหญ่).
+        // ใช้ index (CompanyId, DocumentType, DocumentDate) / (CompanyId, DocumentDate).
+        var baseQ = _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted);
 
-        if (query.FromDate.HasValue) q = q.Where(d => d.DocumentDate >= query.FromDate.Value);
-        if (query.ToDate.HasValue) q = q.Where(d => d.DocumentDate <= query.ToDate.Value);
+        if (query.FromDate.HasValue) baseQ = baseQ.Where(d => d.DocumentDate >= query.FromDate.Value);
+        if (query.ToDate.HasValue) baseQ = baseQ.Where(d => d.DocumentDate <= query.ToDate.Value);
         if (!string.IsNullOrEmpty(query.Status) && Enum.TryParse<DocumentStatus>(query.Status, true, out var status))
-            q = q.Where(d => d.Status == status);
+            baseQ = baseQ.Where(d => d.Status == status);
         if (!string.IsNullOrEmpty(query.Type) && Enum.TryParse<DocumentType>(query.Type, true, out var docType))
-            q = q.Where(d => d.DocumentType == docType);
+            baseQ = baseQ.Where(d => d.DocumentType == docType);
 
-        var total = await q.CountAsync();
-        var docs = await q
+        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+        var page = Math.Max(1, query.Page);
+
+        var total = await baseQ.CountAsync();
+        var docs = await baseQ
             .OrderByDescending(d => d.DocumentDate)
-            .Skip((query.Page - 1) * query.PageSize)
-            .Take(query.PageSize)
+            .ThenBy(d => d.Id)   // tiebreaker — pagination + split-query ต้อง order คงที่
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Include(d => d.Lines)
+            .AsSplitQuery()
             .ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
@@ -3525,8 +3566,8 @@ public class IntegrationService : IIntegrationService
                     : null))
             .ToList();
 
-        var totalPages = (int)Math.Ceiling((double)total / query.PageSize);
-        return new OutboundPagedResponse<OutboundDocumentResponse>(items, total, query.Page, query.PageSize, totalPages);
+        var totalPages = (int)Math.Ceiling((double)total / pageSize);
+        return new OutboundPagedResponse<OutboundDocumentResponse>(items, total, page, pageSize, totalPages);
     }
 
     public async Task<OutboundPagedResponse<OutboundContactResponse>> GetContactsForExternalAsync(Guid companyId, OutboundQueryParams query)
@@ -3542,11 +3583,13 @@ public class IntegrationService : IIntegrationService
                 q = q.Where(c => !c.IsCustomer);
         }
 
+        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+        var page = Math.Max(1, query.Page);
         var total = await q.CountAsync();
-        var items = await q
-            .OrderBy(c => c.Name)
-            .Skip((query.Page - 1) * query.PageSize)
-            .Take(query.PageSize)
+        var items = await q.AsNoTracking()
+            .OrderBy(c => c.Name).ThenBy(c => c.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(c => new OutboundContactResponse(
                 c.Id, c.Name, c.TaxId, c.BranchCode,
                 c.ContactType.ToString(), c.IsCustomer, c.IsSupplier,
@@ -3556,32 +3599,35 @@ public class IntegrationService : IIntegrationService
                 c.CountryCode, c.ContactPerson, c.IsActive, c.Moo))
             .ToListAsync();
 
-        var totalPages = (int)Math.Ceiling((double)total / query.PageSize);
-        return new OutboundPagedResponse<OutboundContactResponse>(items, total, query.Page, query.PageSize, totalPages);
+        var totalPages = (int)Math.Ceiling((double)total / pageSize);
+        return new OutboundPagedResponse<OutboundContactResponse>(items, total, page, pageSize, totalPages);
     }
 
     public async Task<OutboundPagedResponse<OutboundPaymentResponse>> GetPaymentsForExternalAsync(Guid companyId, OutboundQueryParams query)
     {
-        var q = _db.Set<Payment>()
-            .Include(p => p.Document)
+        // ไม่ Include(Document) — projection ด้านล่างดึงเฉพาะ DocumentNumber ผ่าน
+        // LEFT JOIN อัตโนมัติ (Include ถูก projection override อยู่แล้ว) + AsNoTracking
+        var q = _db.Set<Payment>().AsNoTracking()
             .Where(p => p.CompanyId == companyId && !p.IsDeleted);
 
         if (query.FromDate.HasValue) q = q.Where(p => p.PaymentDate >= query.FromDate.Value);
         if (query.ToDate.HasValue) q = q.Where(p => p.PaymentDate <= query.ToDate.Value);
 
+        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+        var page = Math.Max(1, query.Page);
         var total = await q.CountAsync();
         var items = await q
-            .OrderByDescending(p => p.PaymentDate)
-            .Skip((query.Page - 1) * query.PageSize)
-            .Take(query.PageSize)
+            .OrderByDescending(p => p.PaymentDate).ThenBy(p => p.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(p => new OutboundPaymentResponse(
                 p.Id, p.PaymentNumber, p.DocumentId, p.Document != null ? p.Document.DocumentNumber : null,
                 p.PaymentDate, p.Amount, p.PaymentMethod.ToString(),
                 p.Reference, p.Notes, p.CreatedAt))
             .ToListAsync();
 
-        var totalPages = (int)Math.Ceiling((double)total / query.PageSize);
-        return new OutboundPagedResponse<OutboundPaymentResponse>(items, total, query.Page, query.PageSize, totalPages);
+        var totalPages = (int)Math.Ceiling((double)total / pageSize);
+        return new OutboundPagedResponse<OutboundPaymentResponse>(items, total, page, pageSize, totalPages);
     }
 
     public async Task<List<OutboundAccountBalanceResponse>> GetAccountBalancesForExternalAsync(Guid companyId)

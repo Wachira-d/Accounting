@@ -58,6 +58,79 @@ public class BulkCleanupController : ControllerBase
         return Ok(new ApiResponse<CleanupSummary>(true, s));
     }
 
+    // ── Duplicate-contact diagnostic (read-only) — ตอบคำถามทีม integration
+    // ว่า "ทั้งบริษัทมี contact ซ้ำกี่ราย" ก่อนตัดสินใจ merge มือ vs สร้าง endpoint.
+    // จับซ้ำ 2 แบบ: (ก) เลขผู้เสียภาษี normalize ตัวเลขล้วนตรงกัน (ข) ชื่อ trim
+    // lower ตรงกัน. นับ DocumentCount ต่อ contact ช่วยตัดสินว่าจะเก็บตัวไหน.
+    private record RawContact(Guid Id, string Name, string? TaxId, string? ExternalId);
+    public record DuplicateContactEntry(Guid Id, string Name, string? TaxId, int DocumentCount, bool IsFromIntegration);
+    public record DuplicateContactGroup(string Key, string MatchBy, int Count, List<DuplicateContactEntry> Contacts);
+    public record DuplicateContactReport(int TotalContacts, int TaxIdDuplicateGroups,
+        int NameDuplicateGroups, int DuplicateContactsTotal, List<DuplicateContactGroup> Groups);
+
+    /// <summary>true ถ้า request มาจาก X-Api-Key/X-Integration-Key ที่ผูกกับ
+    /// companyId นี้ (ApiKeyMiddleware ตั้ง Items เหล่านี้ + คีย์ act ได้เฉพาะ
+    /// บริษัทตัวเอง). ใช้เปิดให้ integration ดึงรายงาน read-only ได้จากแอปตัวเอง
+    /// โดยไม่ต้องมี Owner JWT — เฉพาะ endpoint อ่านอย่างเดียวนี้เท่านั้น.</summary>
+    private bool IsCompanyScopedApiKey(Guid companyId) =>
+        HttpContext.Items.TryGetValue("IsApiKeyAuth", out var ak) && ak is true
+        && HttpContext.Items.TryGetValue("CompanyId", out var kc) && kc is Guid kg && kg == companyId;
+
+    [HttpGet("duplicate-contacts")]
+    public async Task<ActionResult<ApiResponse<DuplicateContactReport>>> GetDuplicateContacts(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        // read-only diagnostic — อนุญาต Owner JWT หรือ API key ที่ผูกกับบริษัทนี้
+        // (ให้ integration เช่น TakeTime กดดูจากแอปตัวเองผ่าน X-Api-Key ได้).
+        // endpoint ที่ลบ/ล้างข้อมูลด้านล่างยังคง Owner JWT เท่านั้น.
+        if (!IsCompanyScopedApiKey(companyId) && !await IsOwnerAsync(companyId, userId)) return Forbid();
+
+        var contacts = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new RawContact(c.Id, c.Name, c.TaxId, c.ExternalId))
+            .ToListAsync();
+
+        // จำนวนเอกสารต่อ contact (ช่วยตัดสินว่าจะเก็บตัวไหนตอน merge)
+        var docCounts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted)
+            .GroupBy(d => d.ContactId)
+            .Select(g => new { ContactId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ContactId, x => x.Count);
+
+        static string Digits(string? s) => string.IsNullOrEmpty(s) ? "" : new string(s.Where(char.IsDigit).ToArray());
+
+        DuplicateContactEntry ToEntry(RawContact c) => new(
+            c.Id, c.Name, c.TaxId,
+            docCounts.GetValueOrDefault(c.Id, 0),
+            !string.IsNullOrWhiteSpace(c.ExternalId));
+
+        var groups = new List<DuplicateContactGroup>();
+
+        // (ก) ซ้ำด้วยเลขผู้เสียภาษี (ตัวเลขล้วน, ต้องมีเลข)
+        foreach (var grp in contacts.Where(c => Digits(c.TaxId).Length > 0)
+                     .GroupBy(c => Digits(c.TaxId)).Where(g => g.Count() > 1))
+            groups.Add(new DuplicateContactGroup(grp.Key, "TaxId", grp.Count(),
+                grp.Select(ToEntry).OrderByDescending(e => e.DocumentCount).ToList()));
+
+        var taxIdGroupCount = groups.Count;
+
+        // (ข) ซ้ำด้วยชื่อ (trim + lower) — เฉพาะที่ยังไม่ถูกจับด้วย TaxId group
+        var alreadyGrouped = groups.SelectMany(g => g.Contacts.Select(c => c.Id)).ToHashSet();
+        foreach (var grp in contacts.Where(c => !string.IsNullOrWhiteSpace(c.Name))
+                     .GroupBy(c => c.Name.Trim().ToLowerInvariant()).Where(g => g.Count() > 1))
+        {
+            var fresh = grp.Where(c => !alreadyGrouped.Contains(c.Id)).ToList();
+            if (fresh.Count > 1)
+                groups.Add(new DuplicateContactGroup(grp.First().Name.Trim(), "Name", fresh.Count,
+                    fresh.Select(ToEntry).OrderByDescending(e => e.DocumentCount).ToList()));
+        }
+
+        var dupTotal = groups.Sum(g => g.Count);
+        var report = new DuplicateContactReport(
+            contacts.Count, taxIdGroupCount, groups.Count - taxIdGroupCount, dupTotal, groups);
+        return Ok(new ApiResponse<DuplicateContactReport>(true, report));
+    }
+
     public record DeleteTransactionsRequest(string Confirmation);
 
     /// <summary>Wipe all transactional data — documents, journal entries,

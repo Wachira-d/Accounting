@@ -81,6 +81,21 @@ public static class DatabaseMigrationHelper
             """,
             // Contact LINE binding — ส่งเอกสารผ่าน LINE flex message ให้ลูกค้า
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "LineUserId" varchar(100) NULL;""",
+            // Integration external id — match ผู้ติดต่อเดิมเวลา sync กัน contact ซ้ำ
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalId" varchar(200) NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "ExternalSystem" varchar(100) NULL;""",
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Contacts_CompanyId_ExternalSystem_ExternalId"
+                ON "Contacts" ("CompanyId", "ExternalSystem", "ExternalId")
+                WHERE "ExternalId" IS NOT NULL;
+            """,
+            // Normalize เลขผู้เสียภาษีเดิมให้เป็นตัวเลขล้วน (ตัด -, เว้นวรรค) ครั้งเดียว
+            // → match แบบ digits-only ใน integration ทำงานถูก + กัน contact ซ้ำจาก
+            // รูปแบบเลขต่างกัน ("0-1055-..." vs "0105512..."). TaxId semantics = ตัวเลข.
+            """
+            UPDATE "Contacts" SET "TaxId" = regexp_replace("TaxId", '[^0-9]', '', 'g')
+            WHERE "TaxId" IS NOT NULL AND "TaxId" ~ '[^0-9]';
+            """,
             """
             ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BuildingNumber" varchar(50) NULL;
             """,
@@ -3320,6 +3335,12 @@ public static class DatabaseMigrationHelper
             """
             CREATE INDEX IF NOT EXISTS "IX_Payments_CompanyId_Document"
                 ON "Payments" ("CompanyId", "DocumentId")
+                WHERE "IsDeleted" = false;
+            """,
+            // outbound integration payments-list — filter/order ตาม (CompanyId, PaymentDate)
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Payments_CompanyId_PaymentDate"
+                ON "Payments" ("CompanyId", "PaymentDate" DESC)
                 WHERE "IsDeleted" = false;
             """,
             """

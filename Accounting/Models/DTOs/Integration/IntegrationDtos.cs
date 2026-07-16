@@ -205,7 +205,11 @@ public record InboundExpenseRequest(
     /// ยังไม่ลง GL และยังไม่ออก 50 ทวิ; จะลง JE + ออก 50 ทวิ เมื่ออนุมัติ
     /// (ApproveDocumentAsync) ภายหลัง. ผู้เรียกเดิมที่ไม่ส่ง field นี้ = true
     /// เหมือนเดิม ไม่กระทบระบบที่เชื่อมต่ออยู่.</summary>
-    bool AutoApprove = true);
+    bool AutoApprove = true,
+    /// <summary>Contact.Id ของผู้จำหน่ายในระบบ NextAcc โดยตรง (ถ้าต้นทางเคยรู้).
+    /// ใช้ match ผู้จำหน่ายแบบแม่นที่สุด — ก่อน SupplierExternalId/TaxId/ชื่อ
+    /// — กัน contact ซ้ำจาก integration.</summary>
+    Guid? SupplierContactId = null);
 
 /// <summary>ใบสำคัญจ่าย (การจ่ายเงินจริง) จากระบบภายนอก — สำหรับ voucher
 /// ที่จ่ายเงินไปแล้วในระบบต้นทาง: สร้างเอกสาร PV เดียวจบ (Dr ค่าใช้จ่าย /
@@ -226,7 +230,10 @@ public record InboundPaymentVoucherRequest(
     /// <summary>true (default, backward-compat) = สร้าง PV เป็น Approved + ลง JE
     /// + ออก 50 ทวิ ทันที (พฤติกรรมเดิม). false = สร้างเป็นฉบับร่าง (Draft) —
     /// ยังไม่ลง GL/ยังไม่ออก 50 ทวิ จนกว่าจะอนุมัติภายหลัง. ไม่ส่ง = true.</summary>
-    bool AutoApprove = true);
+    bool AutoApprove = true,
+    /// <summary>Contact.Id ของผู้จำหน่ายในระบบ NextAcc โดยตรง — match แม่นสุด
+    /// ก่อน SupplierExternalId/TaxId/ชื่อ กัน contact ซ้ำจาก integration.</summary>
+    Guid? SupplierContactId = null);
 
 /// <summary>ใบรับรองแทนใบเสร็จจากระบบภายนอก</summary>
 public record InboundCertificateInLieuRequest(
