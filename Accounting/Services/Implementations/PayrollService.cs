@@ -290,7 +290,7 @@ public class PayrollService : IPayrollService
         return await GetEmployeeAsync(companyId, employee.Id);
     }
 
-    public async Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId, bool includePii = false)
+    public async Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId, bool includePii = false, bool includeSalary = true)
     {
         var employee = await _db.Set<Employee>()
             .Include(e => e.DepartmentRef)
@@ -299,10 +299,10 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
 
-        return MapToEmployeeResponse(employee, includePii);
+        return MapToEmployeeResponse(employee, includePii, includeSalary);
     }
 
-    public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false)
+    public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false, bool includeSalary = true)
     {
         var query = _db.Set<Employee>()
             .Include(e => e.DepartmentRef)
@@ -3338,14 +3338,17 @@ public class PayrollService : IPayrollService
     /// <summary>PDPA ม.26 mask flag: เมื่อ caller ไม่มี permission "pii:view"
     /// → CitizenId, Phone, Email mask ด้วย PiiMask helper. Default คือ
     /// masked (deny by default). controller ต้อง opt-in.</summary>
-    private static EmployeeResponse MapToEmployeeResponse(Employee e, bool includePii = false)
+    private static EmployeeResponse MapToEmployeeResponse(Employee e, bool includePii = false, bool includeSalary = true)
     {
         var citizenId = includePii ? e.CitizenId : Accounting.Helpers.PiiMask.CitizenId(e.CitizenId);
         var phone = includePii ? e.Phone : Accounting.Helpers.PiiMask.Phone(e.Phone);
         var email = includePii ? e.Email : Accounting.Helpers.PiiMask.Email(e.Email);
+        // เงินเดือน = ข้อมูลอ่อนไหว (payroll sensitivity) — ผู้ไม่มีสิทธิ์ดูเงินเดือน
+        // ได้ค่า 0 (ยังใช้เลือกพนักงานใน dropdown/org chart ได้ แต่ไม่เห็นฐานเงินเดือน)
+        var baseSalary = includeSalary ? e.BaseSalary : 0m;
         return new(e.Id, e.EmployeeCode, e.TitleTh, e.FirstNameTh, e.LastNameTh,
             e.FirstNameEn, e.LastNameEn, citizenId, e.Department, e.Position,
-            e.EmploymentType, e.StartDate, e.EndDate, e.BaseSalary,
+            e.EmploymentType, e.StartDate, e.EndDate, baseSalary,
             e.SalaryType, e.IsActive, e.CreatedAt,
             e.DepartmentId, e.DepartmentRef?.Name,
             e.PositionId, e.PositionRef?.Title,

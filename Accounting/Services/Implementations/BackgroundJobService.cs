@@ -159,19 +159,25 @@ public class BackgroundJobService : BackgroundService
 
                 foreach (var doc in overdueDocuments)
                 {
-                    if (doc.Status != DocumentStatus.Overdue)
+                    // งานนี้เป็นเจ้าของการ flip Status → Overdue (OverdueDunningJob พึ่งพา).
+                    // LINE alert ภายในบริษัท ยิง "เฉพาะตอนใบเพิ่งเกินกำหนดครั้งแรก"
+                    // เท่านั้น — เดิมยิงทุก cycle ต่อใบ = spam กลุ่ม LINE ของบริษัท.
+                    // (customer-facing dunning แบบ staged/throttled เป็นของ OverdueDunningJob แยก)
+                    var firstTimeOverdue = doc.Status != DocumentStatus.Overdue;
+                    if (firstTimeOverdue)
+                    {
                         doc.Status = DocumentStatus.Overdue;
-
-                    var daysOverdue = (today - doc.DueDate!.Value).Days;
-                    try
-                    {
-                        await lineNotify.NotifyOverdueInvoiceAsync(
-                            doc.CompanyId, doc.DocumentNumber,
-                            doc.Contact?.Name ?? "ไม่ระบุ", doc.BalanceDue, daysOverdue);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "LINE notify skipped for overdue doc {DocId}", doc.Id);
+                        var daysOverdue = (today - doc.DueDate!.Value).Days;
+                        try
+                        {
+                            await lineNotify.NotifyOverdueInvoiceAsync(
+                                doc.CompanyId, doc.DocumentNumber,
+                                doc.Contact?.Name ?? "ไม่ระบุ", doc.BalanceDue, daysOverdue);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "LINE notify skipped for overdue doc {DocId}", doc.Id);
+                        }
                     }
                 }
 
