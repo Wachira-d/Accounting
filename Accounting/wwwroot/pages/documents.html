@@ -212,7 +212,7 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th style="width:36px"><input type="checkbox" id="docCheckAll" onchange="Page.toggleAllDocs(this.checked)"></th><th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th data-i18n="common.date">วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอดรวม</th><th class="text-right">ค้างชำระ</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="docCheckAll" onchange="Page.toggleAllDocs(this.checked)"></th><th onclick="Page.setSort('number')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามเลขที่">เลขที่ <span id="sortInd_number" style="color:var(--primary);font-size:11px"></span></th><th data-i18n="common.type">ประเภท</th><th onclick="Page.setSort('date')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามวันที่"><span data-i18n="common.date">วันที่</span> <span id="sortInd_date" style="color:var(--primary);font-size:11px"></span></th><th>ผู้ติดต่อ</th><th class="text-right" onclick="Page.setSort('amount')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามยอดรวม">ยอดรวม <span id="sortInd_amount" style="color:var(--primary);font-size:11px"></span></th><th class="text-right">ค้างชำระ</th><th onclick="Page.setSort('status')" style="cursor:pointer;user-select:none" title="กดเพื่อเรียงตามสถานะ"><span data-i18n="common.status">สถานะ</span> <span id="sortInd_status" style="color:var(--primary);font-size:11px"></span></th><th data-i18n="common.manage">จัดการ</th></tr></thead>
         <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
@@ -3499,6 +3499,26 @@
         this.loadPeriods();
         this.load();
       },
+      // เรียงตามคอลัมน์ — กดหัวคอลัมน์ toggle ▲/▼. state: sortBy + sortDesc
+      // (default ว่าง = backend เรียง วันที่ล่าสุด + เลขที่มาก→น้อย)
+      setSort(key) {
+        if (this.sortBy === key) {
+          this.sortDesc = !this.sortDesc;
+        } else {
+          this.sortBy = key;
+          // ครั้งแรก: วันที่/ยอดรวม/เลขที่ เริ่มจากมาก→น้อย, สถานะเริ่มจากน้อย→มาก
+          this.sortDesc = (key === 'date' || key === 'amount' || key === 'number');
+        }
+        this.page = 1;
+        this._updateSortIndicators();
+        this.load();
+      },
+      _updateSortIndicators() {
+        ['number', 'date', 'amount', 'status'].forEach(k => {
+          const el = document.getElementById('sortInd_' + k);
+          if (el) el.textContent = (this.sortBy === k) ? (this.sortDesc ? '▼' : '▲') : '';
+        });
+      },
       async load() {
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
@@ -3522,6 +3542,7 @@
         const dateTo = document.getElementById('dateTo')?.value;
         if (dateFrom) q += `&fromDate=${dateFrom}`;
         if (dateTo) q += `&toDate=${dateTo}`;
+        if (this.sortBy) q += `&sortBy=${this.sortBy}&sortDesc=${this.sortDesc ? 'true' : 'false'}`;
         try {
           const res = await api.getDocuments(q);
           const data = res.data;

@@ -1174,8 +1174,38 @@ public class DocumentService : IDocumentService
         }
 
         var total = await query.CountAsync();
-        var items = await query
-            .OrderByDescending(d => d.DocumentDate)
+
+        // เรียงลำดับ — รองรับกดหัวคอลัมน์ (เลขที่/วันที่/ยอดรวม/สถานะ) + tiebreaker
+        // คงที่ (เลขที่ + Id) เพื่อผลลัพธ์ deterministic. เดิม order แค่ DocumentDate
+        // → เอกสารวันเดียวกันเรียงมั่ว (ตามลำดับ insert). ไม่ sort ด้วย Contact.Name
+        // (required nav + filter !IsDeleted → INNER JOIN ตัดใบที่ contact ถูกลบ).
+        IOrderedQueryable<Document> ordered;
+        if (string.IsNullOrWhiteSpace(request.SortBy))
+        {
+            // default: ล่าสุดก่อน + เลขที่มาก→น้อยในวันเดียวกัน
+            ordered = query.OrderByDescending(d => d.DocumentDate)
+                           .ThenByDescending(d => d.DocumentNumber);
+        }
+        else
+        {
+            var desc = request.SortDesc;
+            ordered = request.SortBy.Trim().ToLowerInvariant() switch
+            {
+                "number" or "documentnumber" or "docnumber" =>
+                    desc ? query.OrderByDescending(d => d.DocumentNumber) : query.OrderBy(d => d.DocumentNumber),
+                "amount" or "total" or "totalamount" =>
+                    desc ? query.OrderByDescending(d => d.TotalAmount) : query.OrderBy(d => d.TotalAmount),
+                "status" =>
+                    desc ? query.OrderByDescending(d => d.Status) : query.OrderBy(d => d.Status),
+                "duedate" =>
+                    desc ? query.OrderByDescending(d => d.DueDate) : query.OrderBy(d => d.DueDate),
+                _ => // "date" หรือค่าที่ไม่รู้จัก → วันที่เอกสาร
+                    desc ? query.OrderByDescending(d => d.DocumentDate) : query.OrderBy(d => d.DocumentDate),
+            };
+            ordered = ordered.ThenByDescending(d => d.DocumentNumber).ThenBy(d => d.Id);
+        }
+
+        var items = await ordered
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
