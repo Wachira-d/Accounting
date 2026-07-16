@@ -160,7 +160,9 @@ public class DocumentController : ControllerBase
         // post-filtered after mapping. Lets partner ERPs sync only "still
         // has work" docs without parsing Status+BalanceDue+conversion %
         // separately.
-        [FromQuery] string? lifecycle = null)
+        [FromQuery] string? lifecycle = null,
+        // เรียงลำดับ (กดหัวคอลัมน์): number | date | amount | status | duedate
+        [FromQuery] string? sortBy = null, [FromQuery] bool sortDesc = false)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
 
@@ -177,7 +179,7 @@ public class DocumentController : ControllerBase
         if (types != null && types.Count > 0 && !visibility.ShowsEverything)
             effTypes = types.Where(t => visibility.Allows(t)).ToList();
 
-        var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search),
+        var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search, sortBy, sortDesc),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, effTypes);
 
         // Visibility redaction — จำเป็นเฉพาะ list ที่ "ไม่ได้ระบุ type/types"
