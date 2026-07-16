@@ -712,7 +712,24 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             // Local model returns the matched Document id JSON when
             // confidence ≥ 0.70 (its floor); below that, both local and
             // AI may decline — Convert handles null PrimaryAnswer.
-            return string.IsNullOrWhiteSpace(resp.PrimaryAnswer) ? null : Convert(resp);
+            if (string.IsNullOrWhiteSpace(resp.PrimaryAnswer)) return null;
+
+            // 🛡️ anti-hallucination guard (กฎเหล็ก #1) — AI/local อาจคืน document id
+            // ที่ "แต่งขึ้น" หรือของ tenant อื่น. ตรวจว่า id ที่ตอบมีจริง + เป็นของ
+            // บริษัทนี้ + contact เดียวกัน ก่อนบอกผู้ใช้ว่า "ซ้ำกับใบนี้". ถ้า id ไม่ผ่าน
+            // → ไม่ยืนยันว่าซ้ำ (คืน null) กันเตือนผิด/ลิงก์ไปเอกสารที่ไม่มีอยู่.
+            if (!Guid.TryParse(resp.PrimaryAnswer?.Trim(), out var matchedId))
+                return null;
+            var exists = await _db.Documents.AsNoTracking().AnyAsync(d =>
+                d.Id == matchedId && d.CompanyId == companyId
+                && d.ContactId == contactId && !d.IsDeleted, ct);
+            if (!exists)
+            {
+                _logger.LogWarning("Duplicate detection returned id {Id} not valid for company {Company}/contact {Contact} — declining",
+                    matchedId, companyId, contactId);
+                return null;
+            }
+            return Convert(resp);
         }
         catch (Exception ex)
         {

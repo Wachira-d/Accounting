@@ -133,8 +133,8 @@
           if (!s) return;
           document.getElementById('summaryCards').innerHTML = `
             <div class="kpi-card"><div class="kpi-label">สินเชื่อทั้งหมด</div><div class="kpi-value">${s.totalLoans || 0}</div></div>
-            <div class="kpi-card"><div class="kpi-label">ยอดคงเหลือรวม</div><div class="kpi-value text-danger">${Layout.money(s.totalOutstanding)}</div></div>
-            <div class="kpi-card"><div class="kpi-label">ชำระเดือนนี้</div><div class="kpi-value text-warning">${Layout.money(s.monthlyPayment || s.nextPaymentDue)}</div></div>`;
+            <div class="kpi-card"><div class="kpi-label">ยอดคงเหลือรวม</div><div class="kpi-value text-danger">${Layout.money(s.totalOutstandingPrincipal)}</div></div>
+            <div class="kpi-card"><div class="kpi-label">ชำระเดือนนี้</div><div class="kpi-value text-warning">${Layout.money(s.totalMonthlyPayment)}</div></div>`;
         } catch (e) { /* ignore */ }
       },
       async load() {

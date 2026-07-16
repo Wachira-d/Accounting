@@ -144,13 +144,23 @@ const Page = {
       const res = await api.getCurrencies();
       const items = res.data?.items || res.data || [];
       this.currencies = items;
+      // backend ไม่มี latestRate ใน CompanyCurrencyResponse — ดึงจากตารางอัตราแลกเปลี่ยนล่าสุดแทน
+      let latestRates = {};
+      try {
+        const rateRes = await api.getExchangeRates('');
+        const rates = rateRes.data?.items || rateRes.data || [];
+        for (const r of rates) {
+          const key = r.fromCurrency;
+          if (!latestRates[key] || new Date(r.effectiveDate) > new Date(latestRates[key].effectiveDate)) latestRates[key] = r;
+        }
+      } catch (e) { /* ไม่มีอัตรา — แสดง '-' */ }
       const tbody = document.getElementById('currBody');
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสกุลเงิน กดเพิ่มสกุลเงินเพื่อเริ่มต้น</td></tr>'; return; }
       tbody.innerHTML = items.map(c => `<tr>
-        <td><span class="font-medium">${c.code || c.currencyCode}</span></td>
-        <td>${c.name || c.currencyName || '-'}</td>
+        <td><span class="font-medium">${c.currencyCode || c.code}</span></td>
+        <td>${c.currencyName || c.name || '-'}</td>
         <td>${c.symbol || '-'}</td>
-        <td class="text-right">${c.latestRate ? Layout.money(c.latestRate) : '-'}</td>
+        <td class="text-right">${latestRates[c.currencyCode || c.code]?.midRate != null ? latestRates[c.currencyCode || c.code].midRate.toFixed(4) : '-'}</td>
         <td>${Layout.statusBadge(c.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td><button class="btn btn-sm btn-secondary" onclick="Page.editCurrency('${c.id}')" data-i18n="common.edit">แก้ไข</button></td>
       </tr>`).join('');
@@ -200,7 +210,7 @@ const Page = {
         <td>${Layout.date(r.effectiveDate || r.date)}</td>
         <td>${r.fromCurrency || r.sourceCurrency}</td>
         <td>${r.toCurrency || r.targetCurrency}</td>
-        <td class="text-right font-medium">${r.rate?.toFixed(4) || r.exchangeRate?.toFixed(4) || '-'}</td>
+        <td class="text-right font-medium">${(r.midRate ?? r.buyRate)?.toFixed(4) || '-'}</td>
         <td>${r.source || 'Manual'}</td>
       </tr>`).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }

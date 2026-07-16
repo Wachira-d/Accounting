@@ -8526,7 +8526,14 @@ public class DocumentService : IDocumentService
             // a GRN line is ignored for posting (the goods value = SubTotal).
             journalType = JournalType.Purchase;
             var grNi = await EnsureGrNiAccountAsync(companyId);
-            if (grNi == null) return;   // chart can't support it → no JE (legacy behaviour)
+            if (grNi == null)
+                // เดิม return เงียบ ๆ → JE ไม่ลง แต่ ApplyStockMovements (เรียกหลังจากนี้
+                // ใน transaction เดียวกัน) ยังเพิ่มสต๊อก → GL กับ subledger แยกทางกัน
+                // ตรวจ TB ไม่เจอจนกว่าจะ reconcile มือ. บล็อกการอนุมัติแทน (เหมือน
+                // guard pendingLines<2 ด้านล่าง) — JE throw ก่อน stock move → rollback ทั้งคู่.
+                throw new InvalidOperationException(
+                    "ไม่สามารถบันทึกบัญชีรับสินค้า (GR-NI) ได้: สร้างบัญชี 21240 เจ้าหนี้-รับสินค้ายังไม่วางบิล ไม่สำเร็จ. " +
+                    "กรุณาตรวจสอบผังบัญชีก่อนอนุมัติใบรับสินค้า");
 
             // บรรทัดสินค้า TrackStock → Dr สินค้าคงเหลือ (perpetual) เหมือน PI
             var resolveGrnLineAcc = await BuildPurchaseLineAccountResolverAsync(

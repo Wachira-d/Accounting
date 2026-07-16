@@ -740,7 +740,8 @@ const API = {
       updateObligationProgress: (id, d) => API.put(`${base}/revenue-recognition/obligations/${id}/progress`, d),
       generateRevenueSchedule: (id) => API.post(`${base}/revenue-recognition/contracts/${id}/generate-schedule`),
       recognizeRevenue: (id) => API.post(`${base}/revenue-recognition/schedules/${id}/recognize`),
-      getDeferredRevenue: () => API.get(`${base}/revenue-recognition/deferred-revenue`),
+      // asOfDate บังคับฝั่ง backend — ไม่ส่ง = default(DateTime) ปี 0001 → รายงานว่างเสมอ
+      getDeferredRevenue: (asOfDate) => API.get(`${base}/revenue-recognition/deferred-revenue?asOfDate=${asOfDate || new Date().toISOString().slice(0, 10)}`),
       // Time & Billing
       getTimeEntries: (q = '') => API.get(`${base}/time-billing/entries${q}`),
       getTimeEntry: (id) => API.get(`${base}/time-billing/entries/${id}`),

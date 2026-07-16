@@ -366,8 +366,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      Status=Paid (เป็นเอกสารการจ่าย/รับเงินจริง ไม่ใช่ลูกหนี้/เจ้าหนี้ใหม่)
 2. **AI warning collection** (`:1528`) — AI rule-based ตรวจหา anomaly
    (ราคาผิดปกติ, vendor ไม่ตรงประเภท ฯลฯ)
-3. **ออกเลขจริง** (`:1742`) — `DocumentNumberGenerator.NextAsync` — gap-free
-   running per (CompanyId, BranchCode, TaxYear) ตาม §86/4
+3. **ออกเลขจริง** — `DocumentNumberGenerator.NextAsync` — รูปแบบจริงในโค้ด =
+   `{PREFIX}-{yyyyMMdd}-{NNNN}` (เลข running รีเซ็ต **รายวัน**, key ต่อ
+   `(CompanyId, prefix)` ผ่าน `pg_advisory_xact_lock` กันเลขซ้ำใน transaction).
+   วันที่ฝังในเลข → เลขไม่ซ้ำข้ามวัน; DB มี partial unique index
+   `UX_Documents_CompanyId_DocumentNumber` เป็น backstop (ยกเว้น draft/soft-deleted).
+   หมายเหตุ compliance: ยัง**ไม่**เป็น running ต่อปีภาษี/แยกสาขาแบบเต็มตาม §86/4
+   (multi-branch) — ดู backlog "ปรับ scheme เลขเอกสาร" (ต้องมี migration path)
 4. **Snapshot Tax Point** (`:1760`) — `TaxPointResolver.Resolve(doc)` →
    `doc.TaxPointDate` = MIN(delivery / ownership transfer / payment received /
    invoice issue) ตาม §78 / §78/1 → ตัดสินงวด ภ.พ.30

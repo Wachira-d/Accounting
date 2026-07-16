@@ -37,6 +37,15 @@ public class PayrollController : ControllerBase
             Models.Constants.PermissionKeys.PiiView);
     }
 
+    /// <summary>เงินเดือน (BaseSalary) = ข้อมูลอ่อนไหว payroll — คืน true ถ้า user
+    /// มีสิทธิ์ดู. ใช้กับ read ของพนักงานเพื่อ mask ฐานเงินเดือน (แต่ยังคืน row
+    /// ให้ dropdown/org chart ได้), ต่างจาก CheckPayrollAccessAsync ที่บล็อกทั้ง endpoint.</summary>
+    private async Task<bool> CanViewPayrollAsync(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        return await _sensitivity.CanViewAsync(companyId, userId, Models.Enums.SensitivityKind.Payroll);
+    }
+
     /// <summary>Gate every payroll endpoint behind the Payroll sensitivity rule.
     /// Returns 403 with a structured body so integrations distinguish "no access"
     /// from "no such record". Owner / SystemAdmin pass through.</summary>
@@ -56,12 +65,16 @@ public class PayrollController : ControllerBase
     // Employees
     [HttpPost("employees")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> CreateEmployee(Guid companyId, [FromBody] CreateEmployeeRequest request)
-        => StatusCode(201, new ApiResponse<EmployeeResponse>(true, await _service.CreateEmployeeAsync(companyId, request)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return StatusCode(201, new ApiResponse<EmployeeResponse>(true, await _service.CreateEmployeeAsync(companyId, request)));
+    }
 
     [HttpGet("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> GetEmployee(Guid companyId, Guid employeeId)
         => Ok(new ApiResponse<EmployeeResponse>(true,
-            await _service.GetEmployeeAsync(companyId, employeeId, await CanViewPiiAsync(companyId))));
+            await _service.GetEmployeeAsync(companyId, employeeId, await CanViewPiiAsync(companyId),
+                await CanViewPayrollAsync(companyId))));
 
     [HttpGet("employees")]
     public async Task<ActionResult<ApiResponse<PagedResponse<EmployeeResponse>>>> GetEmployees(
@@ -69,7 +82,7 @@ public class PayrollController : ControllerBase
         [FromQuery] string? search = null)
         => Ok(new ApiResponse<PagedResponse<EmployeeResponse>>(true,
             await _service.GetEmployeesAsync(companyId, new PagedRequest(page, pageSize, search),
-                await CanViewPiiAsync(companyId))));
+                await CanViewPiiAsync(companyId), await CanViewPayrollAsync(companyId))));
 
     /// <summary>Lookup-by-external for partner ERPs/HRIS — caller passes
     /// its own (ExternalSystem, ExternalId) and gets back our employee
@@ -87,6 +100,7 @@ public class PayrollController : ControllerBase
     [HttpDelete("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteEmployee(Guid companyId, Guid employeeId)
     {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
         try { await _service.DeleteEmployeeAsync(companyId, employeeId); return Ok(new ApiResponse<bool>(true, true, "ลบพนักงานแล้ว")); }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
     }
@@ -94,13 +108,17 @@ public class PayrollController : ControllerBase
     [HttpPost("employees/{employeeId:guid}/restore")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> RestoreEmployee(Guid companyId, Guid employeeId)
     {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
         try { return Ok(new ApiResponse<EmployeeResponse>(true, await _service.RestoreEmployeeAsync(companyId, employeeId), "กู้คืนพนักงานแล้ว")); }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
     [HttpPut("employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<EmployeeResponse>>> UpdateEmployee(Guid companyId, Guid employeeId, [FromBody] UpdateEmployeeRequest request)
-        => Ok(new ApiResponse<EmployeeResponse>(true, await _service.UpdateEmployeeAsync(companyId, employeeId, request)));
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<EmployeeResponse>(true, await _service.UpdateEmployeeAsync(companyId, employeeId, request)));
+    }
 
     [HttpPost("employees/sync")]
     public async Task<ActionResult<ApiResponse<SyncEmployeesResponse>>> SyncEmployees(
@@ -113,7 +131,10 @@ public class PayrollController : ControllerBase
 
     [HttpPost("employees/{employeeId:guid}/terminate")]
     public async Task<ActionResult<ApiResponse<bool>>> Terminate(Guid companyId, Guid employeeId, [FromQuery] DateTime endDate)
-    { await _service.TerminateEmployeeAsync(companyId, employeeId, endDate); return Ok(new ApiResponse<bool>(true, true)); }
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        await _service.TerminateEmployeeAsync(companyId, employeeId, endDate); return Ok(new ApiResponse<bool>(true, true));
+    }
 
     /// <summary>คำนวณค่าชดเชยตามมาตรา 118 (preview เท่านั้น) — ใช้แสดงตัวเลขให้ HR
     /// ดูก่อนออกใบเงินเดือนสุดท้ายหรือบันทึก Expense voucher; ไม่บันทึก GL.</summary>

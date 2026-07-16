@@ -40,12 +40,16 @@ public class DocumentConversionTests
     }
 
     [Fact]
-    public void PurchaseOrder_converts_to_purchase_invoice_and_expense()
+    public void PurchaseOrder_converts_to_grn_and_purchase_invoice_but_not_expense()
     {
         var targets = DocumentService.GetValidConversionTargets(DocumentType.PurchaseOrder);
 
-        Assert.Contains(DocumentType.PurchaseInvoice, targets);
-        Assert.Contains(DocumentType.Expense, targets);
+        // PR→PO→GRN→PurchaseInvoice = trade chain (เจ้าหนี้การค้า 21210).
+        Assert.Contains(DocumentType.PurchaseInvoice, targets);   // ข้าม GRN เมื่อซื้อบริการ
+        Assert.Contains(DocumentType.GoodsReceiptNote, targets);  // รับของบางส่วน
+        // ใบบันทึกค่าใช้จ่าย (Expense) = รายจ่ายนอกการค้า (เจ้าหนี้อื่น 21220)
+        // แยกออกจาก PO chain โดยเจตนา เพื่อให้ 2 บัญชีเจ้าหนี้กระทบยอดแยกกันได้
+        Assert.DoesNotContain(DocumentType.Expense, targets);
     }
 
     [Theory]

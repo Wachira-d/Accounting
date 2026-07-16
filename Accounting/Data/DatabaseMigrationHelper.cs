@@ -3274,6 +3274,17 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_Documents_CompanyId_Type_Date"
                 ON "Documents" ("CompanyId", "DocumentType", "DocumentDate" DESC);
             """,
+            // §86/4 backstop — เลขเอกสารที่ออกจริงต้องไม่ซ้ำต่อ (CompanyId, DocumentNumber).
+            // เดิมกันด้วย pg_advisory_xact_lock ตอนออกเลขเท่านั้น (ไม่มี index กัน insert
+            // ที่หลุด lock/นอก transaction). ทำเป็น partial unique: ยกเว้น draft
+            // (DRAFT-{guid} placeholder) และ soft-deleted เพื่อไม่ชนกับ lifecycle ปกติ.
+            // ถ้ามี dup เดิมในฐานข้อมูล → CREATE ล้ม แต่ถูก catch+log ใน ApplyMissingColumns
+            // (advisory lock ยังกันต่อไป) — เคลียร์ dup แล้ว index จะสร้างได้รอบถัดไป.
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_Documents_CompanyId_DocumentNumber"
+                ON "Documents" ("CompanyId", "DocumentNumber")
+                WHERE "IsDeleted" = false AND "DocumentNumber" NOT LIKE 'DRAFT-%';
+            """,
             // Document.ExchangeRate — multi-currency FX rate persisted per doc
             // so JE auto-post can convert non-THB amounts to THB consistently.
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRate" numeric(18,6) NOT NULL DEFAULT 1;""",

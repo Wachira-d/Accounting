@@ -179,6 +179,11 @@
           const maxAmount = doc.balanceDue || doc.totalAmount;
           if (amount > maxAmount) { Layout.toast(`จำนวนเงินเกินยอดคงค้าง (${Layout.money(maxAmount)})`, 'error'); return; }
         }
+        // กันกดซ้ำ — double-click ระหว่างรอ network = บันทึกรับเงินซ้ำ 2 รายการ
+        if (this._saving) return;
+        this._saving = true;
+        const saveBtn = document.querySelector('#formModal .btn-primary');
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'กำลังบันทึก...'; }
         try {
           await api.createPayment({
             documentId: docId,
@@ -191,6 +196,10 @@
           });
           Layout.closeModal('formModal'); Layout.toast('บันทึกการชำระเงินสำเร็จ'); await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+        finally {
+          this._saving = false;
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'บันทึก'; }
+        }
       }
     };
     Page.init();

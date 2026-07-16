@@ -499,6 +499,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerif
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
@@ -703,6 +704,21 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"[startup] Could not pre-create wwwroot/uploads tree: {ex.Message} — uploads may fail until folder is created manually.");
 }
+// 🔒 บล็อก static serving ของ /uploads/attachments/* — เป็นเอกสารการเงินราย
+// tenant (ใบเสร็จ/สลิป/เอกสารแนบ) ที่เดิมโหลดได้โดยไม่ต้อง login ผ่าน URL ตรง
+// (ไฟล์ static ทำงานก่อน UseAuthentication). UI โหลดผ่าน endpoint
+// /attachments/{id}/download ที่ตรวจ JWT + CompanyId อยู่แล้ว → ตัดทางตรงทิ้ง
+// เพื่อกัน URL รั่ว (browser history/log) ข้าม tenant. subfolder สาธารณะอื่น
+// (logos/banners/products/stamps/cms) ยังเสิร์ฟตามปกติเพราะใช้แสดงใน PDF/storefront.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Path.StartsWithSegments("/uploads/attachments"))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next();
+});
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),

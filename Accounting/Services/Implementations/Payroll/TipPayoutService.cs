@@ -51,11 +51,14 @@ public class TipPayoutService : ITipPayoutService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<TipPayoutService> _logger;
+    private readonly Accounting.Services.Interfaces.IWithholdingTaxCertService _whtCert;
 
-    public TipPayoutService(AccountingDbContext db, ILogger<TipPayoutService> logger)
+    public TipPayoutService(AccountingDbContext db, ILogger<TipPayoutService> logger,
+        Accounting.Services.Interfaces.IWithholdingTaxCertService whtCert)
     {
         _db = db;
         _logger = logger;
+        _whtCert = whtCert;
     }
 
     public async Task<TipPayoutResult> DistributeAndPayoutAsync(Guid companyId,
@@ -98,9 +101,14 @@ public class TipPayoutService : ITipPayoutService
 
         var lines = new List<StaffTipPayoutLine>();
         var staffIds = staffSharePercent.Keys.ToList();
-        var staffMap = await _db.Set<Employee>().AsNoTracking()
+        var staffEntities = await _db.Set<Employee>().AsNoTracking()
             .Where(e => staffIds.Contains(e.Id) && e.CompanyId == companyId && !e.IsDeleted)
-            .ToDictionaryAsync(e => e.Id, e => $"{e.FirstNameTh} {e.LastNameTh}".Trim(), ct);
+            .Select(e => new { e.Id, Name = $"{e.FirstNameTh} {e.LastNameTh}".Trim(), e.ContactId })
+            .ToListAsync(ct);
+        var staffMap = staffEntities.ToDictionary(e => e.Id, e => e.Name);
+        var staffContactId = staffEntities.ToDictionary(e => e.Id, e => e.ContactId);
+        // เก็บรายการที่ต้องออก 50 ทวิ (มี WHT + ผูก Contact ผู้รับ) → ออกหลัง commit JE
+        var certTargets = new List<(Guid StaffId, Guid ContactId, decimal Gross, decimal Wht)>();
 
         decimal totalWhtWithheld = 0m;
         decimal totalNet = 0m;
@@ -128,7 +136,12 @@ public class TipPayoutService : ITipPayoutService
                 WhtRate: withholding > 0 ? WhtRate : 0m,
                 WhtAmount: withholding,
                 NetPaid: net,
-                Wht50TawiCertId: null));   // TODO: integrate WhtCertService
+                Wht50TawiCertId: null));   // เติมหลัง commit (ดู certTargets ด้านล่าง)
+
+            // มี WHT + ผูก Contact ผู้รับ → คิว 50 ทวิ (ม.50(7)). พนักงานที่ยังไม่ผูก
+            // Contact จะยังไม่ออก cert (log เตือน) — ไม่บล็อกการจ่าย
+            if (withholding > 0 && staffContactId.GetValueOrDefault(staffId) is Guid cid)
+                certTargets.Add((staffId, cid, grossTip, withholding));
 
             totalWhtWithheld += withholding;
             totalNet += net;
@@ -151,6 +164,46 @@ public class TipPayoutService : ITipPayoutService
             _logger.LogInformation(
                 "Tip payout posted: pool {Pool:N2}, staff {Count}, WHT {Wht:N2}, net {Net:N2}, JE {JeNum}",
                 totalTip, lines.Count, totalWhtWithheld, totalNet, je.EntryNumber);
+
+            // ออกหนังสือรับรอง 50 ทวิ (ม.50(7)) — best-effort หลัง commit JE:
+            // cert เป็นเอกสารประกอบ ไม่ควร roll back การจ่ายเงินที่ลง GL แล้ว.
+            // ทิปจ่ายบุคคล = ม.40(2) ค่าบริการ → ภงด.3 (WithholdingTax3), IncomeTypeCode "2".
+            foreach (var t in certTargets)
+            {
+                try
+                {
+                    var certReq = new Models.DTOs.Tax.CreateWithholdingTaxCertRequest(
+                        PayeeContactId: t.ContactId,
+                        TaxFormType: Models.Enums.TaxType.WithholdingTax3,
+                        TaxYear: periodEnd.Year,
+                        TaxMonth: periodEnd.Month,
+                        CertificateType: Models.DTOs.Tax.WithholdingTaxCertType.Withhold,
+                        Lines: new List<Models.DTOs.Tax.WithholdingTaxCertLineRequest>
+                        {
+                            new(
+                                IncomeTypeCode: "2",
+                                IncomeDescription: $"ค่าบริการ (ทิป) งวด {periodStart:yyyy-MM-dd} ถึง {periodEnd:yyyy-MM-dd}",
+                                PaymentDate: DateTime.UtcNow.Date,
+                                IncomeAmount: t.Gross,
+                                TaxRate: WhtRate,
+                                TaxAmount: t.Wht,
+                                Condition: "หักภาษี ณ ที่จ่าย")
+                        });
+                    var cert = await _whtCert.CreateAsync(companyId, certReq, actor);
+                    var idx = lines.FindIndex(l => l.StaffId == t.StaffId);
+                    if (idx >= 0) lines[idx] = lines[idx] with { Wht50TawiCertId = cert.Id };
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "ออก 50 ทวิ ทิปไม่สำเร็จสำหรับพนักงาน {StaffId} — JE จ่ายแล้ว ออก cert ภายหลังได้", t.StaffId);
+                }
+            }
+            var staffNoContact = staffSharePercent.Keys
+                .Where(id => certTargets.All(t => t.StaffId != id))
+                .Count(id => staffContactId.GetValueOrDefault(id) == null
+                    && lines.Any(l => l.StaffId == id && l.WhtAmount > 0));
+            if (staffNoContact > 0)
+                _logger.LogWarning("{Count} พนักงานถูกหัก WHT ทิปแต่ยังไม่ผูก Contact → ยังไม่ออก 50 ทวิ", staffNoContact);
 
             return new TipPayoutResult(
                 TotalTipPool: totalTip,

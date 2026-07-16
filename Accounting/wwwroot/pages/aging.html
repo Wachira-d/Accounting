@@ -125,7 +125,7 @@
                       <td class="text-right">${Layout.money(d.totalAmount)}</td>
                       <td class="text-right ${d.balanceDue < 0 ? 'text-success' : ''}">${Layout.money(d.balanceDue)}</td>
                       <td class="text-right ${d.agingDays > 90 ? 'text-danger' : d.agingDays > 60 ? 'text-warning' : ''}">${d.agingDays}</td>
-                      <td><span class="pill pill-${d.balanceDue < 0 ? 'success' : d.agingDays > 90 ? 'danger' : d.agingDays > 30 ? 'warning' : 'info'}">${d.bucket}</span></td>
+                      <td><span class="pill pill-${d.balanceDue < 0 ? 'success' : d.agingDays > 90 ? 'danger' : d.agingDays > 30 ? 'warning' : 'info'}">${d.agingBucket || ''}</span></td>
                     </tr>`).join('')}</tbody>
                   </table>
                 </td></tr>

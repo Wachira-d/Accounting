@@ -171,7 +171,7 @@ const Page = {
       const res = await api.getCommissionCalcs(y, m);
       const items = res.data?.items || res.data || [];
       content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">ยอดขาย</th><th class="text-right">อัตรา</th><th class="text-right">คอมมิชชัน</th><th data-i18n="common.status">สถานะ</th></tr></thead>
-      <tbody>${items.map(c => `<tr><td class="font-medium">${c.employeeName||'-'}</td><td class="text-right">${Layout.money(c.totalSales||c.salesAmount)}</td><td class="text-right">${c.rate||c.percentage||'-'}%</td><td class="text-right text-primary font-medium">${Layout.money(c.commissionAmount||c.amount)}</td><td>${Layout.statusBadge(c.status||'Pending')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูลคอมมิชชัน</p>';
+      <tbody>${items.map(c => `<tr><td class="font-medium">${c.employeeName||'-'}</td><td class="text-right">${Layout.money(c.basisAmount)}</td><td class="text-right">${c.basisAmount > 0 ? ((c.commissionAmount / c.basisAmount) * 100).toFixed(2) : '-'}%</td><td class="text-right text-primary font-medium">${Layout.money(c.commissionAmount)}</td><td>${Layout.statusBadge(c.status||'Pending')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีข้อมูลคอมมิชชัน</p>';
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 
