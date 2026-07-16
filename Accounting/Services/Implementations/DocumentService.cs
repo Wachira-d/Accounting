@@ -2508,9 +2508,16 @@ public class DocumentService : IDocumentService
             .Select(c => (bool?)c.EnforceFullTaxInvoiceFields)
             .FirstOrDefaultAsync() ?? true;
         // ใบกำกับภาษี (TaxInvoice) เป็นเอกสาร §86/4 ตามกฎหมาย → บังคับ field ผู้ซื้อ
-        // เสมอ ไม่ว่า flag (opt-out ได้เฉพาะ Receipt/CN/DN). ใบที่ไม่ครบ = ลูกค้า
-        // เคลมภาษีซื้อไม่ได้.
+        // เสมอ ไม่ว่า flag. **ใบเสร็จ/ใบสำคัญรับที่เก็บ VAT จริง (ไม่ใช่มัดจำพักรอ)
+        // ก็เป็นใบกำกับภาษีโดยสภาพเช่นกัน** → บังคับเสมอไม่ขึ้นกับ opt-in flag ด้วย:
+        // กันเคสหัวเอกสารขัดกับเนื้อ (โชว์ VAT 7% แต่หัวไม่ขึ้น "ใบกำกับภาษี" เพราะ
+        // ข้อมูลผู้ซื้อไม่ครบ). ถ้าผู้ซื้อครบ → หัว upgrade เป็นใบกำกับ/ใบเสร็จ; ถ้า
+        // ไม่ครบ (นิติบุคคล) → block ให้เติมข้อมูล หรือติ๊กไม่ประสงค์ใบกำกับ (→ ใบเสร็จล้วน).
+        // opt-out ผ่าน flag ยังใช้กับ CN/DN. ใบที่ไม่ครบ = ลูกค้าเคลมภาษีซื้อไม่ได้.
+        var vatBearingReceipt = doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+            && doc.VatAmount > 0;
         var mustEnforce864 = doc.DocumentType == DocumentType.TaxInvoice
+            || vatBearingReceipt
             || (enforce864 && rd864Types.Contains(doc.DocumentType));
         // ยกเว้นลูกค้าเงินสด "ไม่ประสงค์รับใบกำกับภาษี" — ประกาศอธิบดีฯ ฉบับ 199
         // บังคับเลขผู้เสียภาษี/สาขาผู้ซื้อเฉพาะเมื่อผู้ซื้อเป็นผู้ประกอบการจด VAT;
