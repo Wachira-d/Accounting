@@ -81,8 +81,8 @@ public class BulkCleanupController : ControllerBase
 
         // จำนวนเอกสารต่อ contact (ช่วยตัดสินว่าจะเก็บตัวไหนตอน merge)
         var docCounts = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.ContactId != null)
-            .GroupBy(d => d.ContactId!.Value)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted)
+            .GroupBy(d => d.ContactId)
             .Select(g => new { ContactId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.ContactId, x => x.Count);
 
