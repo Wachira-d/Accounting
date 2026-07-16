@@ -584,6 +584,11 @@ public class Contact : TenantEntity
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public string? ContactPerson { get; set; }
+    /// <summary>รหัสผู้ติดต่อในระบบต้นทาง (integration เช่น TakeTime) — เก็บไว้
+    /// match ผู้จำหน่าย/ลูกค้าเดิมเวลา sync รอบถัดไป กัน contact ซ้ำ. คู่กับ
+    /// ExternalSystem บอกว่ามาจากระบบไหน (กันชนกันข้าม integration).</summary>
+    public string? ExternalId { get; set; }
+    public string? ExternalSystem { get; set; }
     /// <summary>LINE userId ของลูกค้า (ผูกผ่าน LINE OA / bind flow) — ใช้ส่ง
     /// เอกสาร (ใบแจ้งหนี้/ใบเสร็จ) ผ่าน LINE flex message. null = ลูกค้ายัง
     /// ไม่ผูก LINE → ระบบ fallback ไป email/print. PDPA: anonymize ตอน erase.</summary>

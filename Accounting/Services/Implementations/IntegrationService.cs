@@ -1214,6 +1214,91 @@ public class IntegrationService : IIntegrationService
         return contact;
     }
 
+    private static string NormalizeTaxId(string? taxId) =>
+        string.IsNullOrEmpty(taxId) ? "" : new string(taxId.Where(char.IsDigit).ToArray());
+
+    /// <summary>Resolve/สร้างผู้จำหน่ายจาก integration แบบ "กัน contact ซ้ำ" —
+    /// match ตามลำดับความแม่น แล้วค่อยสร้างใหม่ (upsert):
+    ///   1. SupplierContactId (Contact.Id ของ NextAcc ตรง ๆ) — แม่นสุด
+    ///   2. ExternalId (รหัสผู้ติดต่อของระบบต้นทาง เช่น TakeTime)
+    ///   3. TaxId แบบ normalize ตัวเลขล้วน (กัน "0-1055-..." vs "0105512...")
+    ///   4. ชื่อ trim + case-insensitive
+    /// พบแล้วเติม ExternalId/TaxId ให้ถ้ายังว่าง (enrich) → รอบถัดไป match แม่นขึ้น.
+    /// เดิม match ด้วย TaxId exact-string + ชื่อ exact → integration ยิงเลขภาษี
+    /// คนละรูปแบบ/ชื่อมีช่องว่าง = สร้าง contact ซ้ำ.</summary>
+    private async Task<Contact> ResolveSupplierAsync(Guid companyId, Guid integrationId,
+        Guid? supplierContactId, string? supplierExternalId, string? supplierName, string? supplierTaxId)
+    {
+        var taxDigits = NormalizeTaxId(supplierTaxId);
+        var nameTrim = supplierName?.Trim();
+        var extId = string.IsNullOrWhiteSpace(supplierExternalId) ? null : supplierExternalId!.Trim();
+
+        Contact? supplier = null;
+
+        // (1) Contact.Id ตรง ๆ
+        if (supplierContactId is { } cid && cid != Guid.Empty)
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.Id == cid && c.CompanyId == companyId && !c.IsDeleted);
+
+        // (2) External id ของระบบต้นทาง
+        if (supplier == null && extId != null)
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && c.ExternalId == extId && !c.IsDeleted);
+
+        // (3) เลขผู้เสียภาษี normalize ตัวเลขล้วน (stored ถูก normalize แล้วใน migration)
+        if (supplier == null && taxDigits.Length > 0)
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && c.TaxId == taxDigits && !c.IsDeleted);
+
+        // (4) ชื่อ trim + case-insensitive
+        if (supplier == null && !string.IsNullOrWhiteSpace(nameTrim))
+        {
+            var lower = nameTrim.ToLower();
+            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                c.CompanyId == companyId && c.Name.Trim().ToLower() == lower && !c.IsDeleted);
+        }
+
+        if (supplier == null)
+        {
+            var sysName = await _db.Set<ExternalIntegration>().AsNoTracking()
+                .Where(i => i.Id == integrationId).Select(i => i.SystemName).FirstOrDefaultAsync();
+            supplier = new Contact
+            {
+                CompanyId = companyId,
+                Name = string.IsNullOrWhiteSpace(nameTrim) ? "ผู้จำหน่ายทั่วไป" : nameTrim,
+                TaxId = taxDigits.Length > 0 ? taxDigits : null,
+                ExternalId = extId,
+                ExternalSystem = extId != null ? sysName : null,
+                IsCustomer = false,
+                IsSupplier = true,
+                IsActive = true
+            };
+            _db.Set<Contact>().Add(supplier);
+            await _db.SaveChangesAsync();
+            return supplier;
+        }
+
+        // enrich contact เดิม — เติม external id / tax id ที่ยังว่าง เพื่อรอบถัดไป match แม่นขึ้น
+        var dirty = false;
+        if (string.IsNullOrWhiteSpace(supplier.ExternalId) && extId != null)
+        {
+            supplier.ExternalId = extId;
+            if (string.IsNullOrWhiteSpace(supplier.ExternalSystem))
+                supplier.ExternalSystem = await _db.Set<ExternalIntegration>().AsNoTracking()
+                    .Where(i => i.Id == integrationId).Select(i => i.SystemName).FirstOrDefaultAsync();
+            dirty = true;
+        }
+        if (string.IsNullOrWhiteSpace(supplier.TaxId) && taxDigits.Length > 0)
+        {
+            supplier.TaxId = taxDigits;
+            dirty = true;
+        }
+        if (!supplier.IsSupplier) { supplier.IsSupplier = true; dirty = true; }
+        if (dirty) await _db.SaveChangesAsync();
+
+        return supplier;
+    }
+
     /// <summary>
     /// Best-effort withholding-tax certificate auto-issue for an
     /// integration-synced purchase document. Returns a short note to append
@@ -2536,27 +2621,9 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // Resolve supplier contact
-            Contact? supplier = null;
-            if (!string.IsNullOrEmpty(request.SupplierTaxId))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
-            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
-
-            if (supplier == null)
-            {
-                supplier = new Contact
-                {
-                    CompanyId = companyId,
-                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
-                    TaxId = request.SupplierTaxId,
-                    IsCustomer = false,
-                    IsSupplier = true,
-                    IsActive = true
-                };
-                _db.Set<Contact>().Add(supplier);
-                await _db.SaveChangesAsync();
-            }
+            // Resolve supplier contact (dedupe: contactId → externalId → taxId(digits) → name)
+            var supplier = await ResolveSupplierAsync(companyId, integrationId,
+                request.SupplierContactId, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
@@ -2672,27 +2739,9 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // Resolve supplier contact — same cascade as the expense sync.
-            Contact? supplier = null;
-            if (!string.IsNullOrEmpty(request.SupplierTaxId))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
-            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
-
-            if (supplier == null)
-            {
-                supplier = new Contact
-                {
-                    CompanyId = companyId,
-                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
-                    TaxId = request.SupplierTaxId,
-                    IsCustomer = false,
-                    IsSupplier = true,
-                    IsActive = true
-                };
-                _db.Set<Contact>().Add(supplier);
-                await _db.SaveChangesAsync();
-            }
+            // Resolve supplier contact (dedupe: contactId → externalId → taxId(digits) → name)
+            var supplier = await ResolveSupplierAsync(companyId, integrationId,
+                request.SupplierContactId, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
@@ -2943,27 +2992,9 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
-            // Resolve supplier contact
-            Contact? supplier = null;
-            if (!string.IsNullOrEmpty(request.SupplierTaxId))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.SupplierTaxId && !c.IsDeleted);
-            if (supplier == null && !string.IsNullOrEmpty(request.SupplierName))
-                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.SupplierName.ToLower() && !c.IsDeleted);
-
-            if (supplier == null)
-            {
-                supplier = new Contact
-                {
-                    CompanyId = companyId,
-                    Name = request.SupplierName ?? "ผู้จำหน่ายทั่วไป",
-                    TaxId = request.SupplierTaxId,
-                    IsCustomer = false,
-                    IsSupplier = true,
-                    IsActive = true
-                };
-                _db.Set<Contact>().Add(supplier);
-                await _db.SaveChangesAsync();
-            }
+            // Resolve supplier contact (dedupe: externalId → taxId(digits) → name)
+            var supplier = await ResolveSupplierAsync(companyId, integrationId,
+                null, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu, request.DocumentDate);
             var vatRate = request.VatRate ?? 7m;
