@@ -101,6 +101,38 @@ public static class Section65TerValidator
                 continue;
             }
 
+            // (1)(2) เงินสำรอง/เงินกองทุน — บวกกลับเต็ม ยกเว้นกองทุนสำรองเลี้ยงชีพ (PVD)
+            // ที่จ่ายเข้ากองทุนจดทะเบียนแล้ว (§65 ตรี(2) ข้อยกเว้น). keyword อาจ
+            // false-positive → NeedsConfirmation ให้นักบัญชียืนยัน
+            if ((hay.Contains("เงินสำรอง") || hay.Contains("สำรองเผื่อ") || hay.Contains("reserve") || hay.Contains("provision"))
+                && !hay.Contains("สำรองเลี้ยงชีพ") && !hay.Contains("provident") && !hay.Contains("pvd"))
+            {
+                findings.Add(new("RD-65ter(1)(2)", "ป.รัษฎากร §65 ตรี (1)(2)",
+                    lineAmt, $"เงินสำรอง/เงินกองทุน (ที่ไม่ใช่ PVD จดทะเบียน) — บวกกลับ {lineAmt:N2} (โปรดยืนยัน)",
+                    HardBlock: false, NeedsConfirmation: true));
+                continue;
+            }
+
+            // (3) รายจ่ายส่วนตัว/เสน่หา — บวกกลับเต็ม (warning ให้ยืนยัน เพราะอาศัย keyword)
+            if (hay.Contains("ส่วนตัว") || hay.Contains("เสน่หา") || hay.Contains("personal use") || hay.Contains("ของขวัญส่วนตัว"))
+            {
+                findings.Add(new("RD-65ter(3)", "ป.รัษฎากร §65 ตรี (3)",
+                    lineAmt, $"รายจ่ายส่วนตัว/เสน่หา — บวกกลับ {lineAmt:N2} (โปรดยืนยันว่าไม่เกี่ยวกิจการ)",
+                    HardBlock: false, NeedsConfirmation: true));
+                continue;
+            }
+
+            // (7) เงินบริจาค — หักได้บางส่วน (ทั่วไป ≤2% กำไรสุทธิ; การศึกษา/กีฬา +2%).
+            // cap ต้องคำนวณตอนปิดรอบ (ต้องรู้กำไรสุทธิ) → ที่นี่ flag เตือนอย่างเดียว
+            // ไม่บวกกลับเต็ม (AddBack=0) กันคำนวณผิด (over add-back)
+            if (hay.Contains("บริจาค") || hay.Contains("donation") || hay.Contains("การกุศล") || hay.Contains("charit"))
+            {
+                findings.Add(new("RD-65ter(7)", "ป.รัษฎากร §65 ตรี (7)",
+                    0m, $"เงินบริจาค {lineAmt:N2} — หักได้ไม่เกิน 2% กำไรสุทธิ (การศึกษา/กีฬา +2%); คำนวณส่วนเกินตอนปิดรอบบัญชี",
+                    HardBlock: false, NeedsConfirmation: true));
+                continue;
+            }
+
             // (4) ค่ารับรอง — สะสมไว้คิด cap ทีเดียวท้ายสุด
             if (hay.Contains("รับรอง") || hay.Contains("entertain") || hay.Contains("เลี้ยงรับรอง"))
             {
