@@ -187,10 +187,11 @@ const Page = {
     const api = Layout.api(); if (!api) return;
     try {
       const res = await api.getDeferredRevenue();
-      const items = res.data?.items || res.data || [];
+      // backend คืน DeferredRevenueReportResponse: { totalDeferred, totalRecognized, byContract: [{contractName, contactName, contractValue, recognized, deferred}] }
+      const items = res.data?.byContract || [];
       const content = document.getElementById('deferredContent');
       content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>สัญญา</th><th>ลูกค้า</th><th class="text-right">มูลค่าสัญญา</th><th class="text-right">รับรู้แล้ว</th><th class="text-right">รอรับรู้</th></tr></thead>
-      <tbody>${items.map(d => `<tr><td class="font-medium">${d.contractNumber||'-'}</td><td>${d.customerName||'-'}</td><td class="text-right">${Layout.money(d.totalAmount)}</td><td class="text-right">${Layout.money(d.recognizedAmount)}</td><td class="text-right text-primary font-medium">${Layout.money(d.deferredAmount||((d.totalAmount||0)-(d.recognizedAmount||0)))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
+      <tbody>${items.map(d => `<tr><td class="font-medium">${Layout.esc(d.contractName||'-')}</td><td>${Layout.esc(d.contactName||'-')}</td><td class="text-right">${Layout.money(d.contractValue)}</td><td class="text-right">${Layout.money(d.recognized)}</td><td class="text-right text-primary font-medium">${Layout.money(d.deferred)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
     } catch (err) { document.getElementById('deferredContent').innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 };

@@ -169,8 +169,8 @@
               <div class="table-container"><table class="table" style="font-size:13px;">
                 <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th><th class="text-right">สัดส่วน</th></tr></thead>
                 <tbody>${pb.map(p => {
-                  const pct = d.totalSales > 0 ? (p.total / d.totalSales * 100).toFixed(1) : 0;
-                  return `<tr><td>${Page.payLabel(p.method)}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.total)}</td><td class="text-right">${pct}%</td></tr>`;
+                  const pct = d.totalSales > 0 ? ((p.amount || 0) / d.totalSales * 100).toFixed(1) : 0;
+                  return `<tr><td>${Page.payLabel(p.method)}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.amount)}</td><td class="text-right">${pct}%</td></tr>`;
                 }).join('')}</tbody>
               </table></div>`;
           } else {
@@ -189,27 +189,17 @@
           chart.innerHTML = '<p class="text-center text-gray-400" style="width:100%;align-self:center;" data-i18n="common.noData">ไม่มีข้อมูล</p>';
           return;
         }
-        // Show a simple summary bar for the period
+        // backend สรุปเป็นยอดรวมทั้งช่วง (ยังไม่มี breakdown รายวัน) — แสดงยอดจริงเท่านั้น
+        // ห้ามสร้างกราฟรายวันจากการสุ่ม/เกลี่ยค่า เพราะเป็นตัวเลขเงินปลอมที่ทำให้เข้าใจผิด
         const from = document.getElementById('dateFrom').value;
         const to = document.getElementById('dateTo').value;
         const days = Math.max(1, Math.ceil((new Date(to) - new Date(from)) / 86400000) + 1);
-        const avg = totalSales / days;
-        // Generate approximate daily bars
-        const bars = [];
-        for (let i = 0; i < Math.min(days, 14); i++) {
-          const dt = new Date(new Date(from).getTime() + i * 86400000);
-          const label = `${dt.getDate()}/${dt.getMonth()+1}`;
-          const val = avg * (0.5 + Math.random()); // approximate
-          bars.push({ label, value: i === days - 1 ? totalSales - bars.reduce((s,b) => s + b.value, 0) : val });
-        }
-        const maxVal = Math.max(...bars.map(b => b.value), 1);
-        chart.innerHTML = bars.map(b => `
-          <div class="bar-col">
-            <div class="bar-value">${Layout.money(b.value)}</div>
-            <div class="bar" style="height:${Math.max(b.value/maxVal*100, 5)}%"></div>
-            <div class="bar-label">${b.label}</div>
-          </div>
-        `).join('');
+        chart.innerHTML = `
+          <div style="width:100%;align-self:center;text-align:center;padding:20px">
+            <div class="text-2xl font-bold">${Layout.money(totalSales)}</div>
+            <div class="text-sm text-gray-500" style="margin-top:4px">ยอดขายรวม ${days} วัน (เฉลี่ย ${Layout.money(totalSales / days)}/วัน)</div>
+            <div class="text-xs text-gray-400" style="margin-top:8px">ระบบยังไม่รองรับกราฟแยกรายวัน — ดูรายละเอียดรายบิลได้ที่แท็บ "ออเดอร์"</div>
+          </div>`;
       },
 
       async loadOrders() {

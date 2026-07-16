@@ -248,12 +248,12 @@
           const res = await api.getAuditSummary(q);
           const d = res.data || {};
           let html = '<div class="grid grid-3 gap-4" style="margin-bottom:16px">';
-          html += `<div class="card"><div class="text-gray-500 text-xs">รายการทั้งหมด</div><div class="text-2xl font-bold">${d.totalLogs || d.total || 0}</div></div>`;
-          html += `<div class="card"><div class="text-gray-500 text-xs">ผู้ใช้ที่ใช้งาน</div><div class="text-2xl font-bold">${d.activeUsers || d.uniqueUsers || 0}</div></div>`;
-          html += `<div class="card"><div class="text-gray-500 text-xs">ประเภทที่เปลี่ยนแปลง</div><div class="text-2xl font-bold">${d.entityTypes || d.uniqueEntityTypes || 0}</div></div>`;
+          html += `<div class="card"><div class="text-gray-500 text-xs">รายการทั้งหมด</div><div class="text-2xl font-bold">${d.totalActions || 0}</div></div>`;
+          html += `<div class="card"><div class="text-gray-500 text-xs">ผู้ใช้ที่ใช้งาน</div><div class="text-2xl font-bold">${d.userSummary?.length || 0}</div></div>`;
+          html += `<div class="card"><div class="text-gray-500 text-xs">ประเภทที่เปลี่ยนแปลง</div><div class="text-2xl font-bold">${d.entitySummary?.length || 0}</div></div>`;
           html += '</div>';
-          if (d.actionBreakdown || d.byAction) {
-            const breakdown = d.actionBreakdown || d.byAction;
+          if (d.actionSummary?.length) {
+            const breakdown = d.actionSummary;
             html += '<div class="card"><h4 class="text-sm font-semibold" style="margin-bottom:12px">แยกตามการกระทำ</h4><div class="table-container"><table class="table"><thead><tr><th>การกระทำ</th><th class="text-right">จำนวน</th></tr></thead><tbody>';
             if (Array.isArray(breakdown)) {
               breakdown.forEach(b => { html += `<tr><td>${this.actionMap[b.action] || b.action}</td><td class="text-right font-medium">${b.count}</td></tr>`; });
@@ -262,14 +262,9 @@
             }
             html += '</tbody></table></div></div>';
           }
-          if (d.userBreakdown || d.byUser) {
-            const breakdown = d.userBreakdown || d.byUser;
+          if (d.userSummary?.length) {
             html += '<div class="card" style="margin-top:16px"><h4 class="text-sm font-semibold" style="margin-bottom:12px">แยกตามผู้ใช้</h4><div class="table-container"><table class="table"><thead><tr><th>ผู้ใช้</th><th class="text-right">จำนวน</th></tr></thead><tbody>';
-            if (Array.isArray(breakdown)) {
-              breakdown.forEach(b => { html += `<tr><td>${b.userEmail || b.user}</td><td class="text-right font-medium">${b.count}</td></tr>`; });
-            } else {
-              for (const [user, count] of Object.entries(breakdown)) { html += `<tr><td>${user}</td><td class="text-right font-medium">${count}</td></tr>`; }
-            }
+            d.userSummary.forEach(b => { html += `<tr><td>${b.userEmail || '-'}</td><td class="text-right font-medium">${b.actionCount}</td></tr>`; });
             html += '</tbody></table></div></div>';
           }
           document.getElementById('summaryContent').innerHTML = html;
