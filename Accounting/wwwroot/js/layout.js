@@ -284,10 +284,18 @@ const Layout = {
       'ภาษี & e-Filing', 'รายงาน & วิเคราะห์', 'ตั้งค่า & ผู้ใช้',
       'เครื่องมือ: AI · OCR · นำเข้าข้อมูล',  // hosts document-scan (OCR) จาก home strip
     ]);
+    // ผู้ใช้ที่มี "custom role" (allowedMenuIds เจาะจง ไม่ใช่ '*'/owner) → เมนูที่
+    // admin ติ๊กให้ = shortlist ที่ตั้งใจไว้แล้ว ต้องแสดงครบ. ไม่งั้น simple-mode
+    // (SIMPLE_ALLOWED) จะไปซ่อนเมนูที่ตั้งสิทธิ์ให้ทับอีกชั้น เช่น ซื้อสินค้า/
+    // ชำระเงิน/เอกสารฝั่งจ่าย ที่ไม่อยู่ในชอร์ตลิสต์ → user เห็นเมนูไม่ครบตามสิทธิ์
+    const _p = this.myPermissions;
+    const hasCustomGrants = !!_p && !_p.isOwnerOrAdmin
+      && Array.isArray(_p.allowedMenuIds) && _p.allowedMenuIds.length > 0
+      && !_p.allowedMenuIds.includes('*');
     const items = this.navItems.filter(item => {
       // section headers + non-item entries pass through; the render loop's
       // flush() then drops sections that end up empty after item filtering.
-      if (item.section) return uiMode !== 'simple' || SIMPLE_SECTIONS.has(item.section);
+      if (item.section) return uiMode !== 'simple' || hasCustomGrants || SIMPLE_SECTIONS.has(item.section);
       const visible =
         (!item.id || !hidden.includes(item.id))
         && (!item.id || this.hasMenuAccess(item.id))
@@ -296,7 +304,9 @@ const Layout = {
       // เมนูเฉพาะบริษัทจด VAT (ภ.พ.30 / ภาษีซื้อรอ / ภ.พ.30 ย้อนหลัง) — ซ่อน
       // เมื่อบริษัทไม่จด VAT (ไม่มีภาระยื่น). default true → ไม่กระทบถ้ายังไม่โหลด
       if (item.vatOnly && this._vatRegistered === false) return false;
-      if (uiMode === 'simple' && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
+      // simple-mode shortlist ใช้เฉพาะผู้ใช้สิทธิ์เต็ม ('*'/owner) — custom role
+      // เห็นเมนูตามที่ตั้งสิทธิ์ให้ครบ ไม่โดนตัดซ้ำ
+      if (uiMode === 'simple' && !hasCustomGrants && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
       return true;
     });
 
