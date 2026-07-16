@@ -685,7 +685,14 @@ public partial class TaxService : ITaxService
                     var baseAmount = companyVatRate > 0
                         ? Math.Round(inputVatAmt / (companyVatRate / 100m), 2, MidpointRounding.AwayFromZero)
                         : 0m;
-                    inputVat += inputVatAmt;
+                    // §82/5(1)/§86/4: ภาษีซื้อจาก JE ล้วนที่ "ไม่มีเลขผู้เสียภาษีผู้ขาย
+                    // 13 หลัก" เคลมไม่ได้ (ไม่ใช่ใบกำกับเต็มรูป) — เช่น JE "รับสินค้า
+                    // เข้าสต๊อก" จาก integration (TakeTime) ที่โพสต์ภาษีซื้อแต่ไม่แนบ
+                    // เลขภาษีผู้ขาย → mark excluded ไม่รวมในยอดเคลม (เก็บไว้ audit).
+                    // ภาษีซื้อจริงต้องมาจากใบกำกับซื้อ/ใบสำคัญจ่ายที่มีเลขภาษีผู้ขายครบ
+                    var jeInputTid = new string((jePayerId ?? "").Where(char.IsDigit).ToArray());
+                    var jeInputClaimable = jeInputTid.Length == 13;
+                    if (jeInputClaimable) inputVat += inputVatAmt;
                     report.Lines.Add(new TaxReportLine
                     {
                         TaxReportId = report.Id,
@@ -697,7 +704,8 @@ public partial class TaxService : ITaxService
                         IncomeAmount = baseAmount,
                         TaxRate = companyVatRate,
                         TaxAmount = inputVatAmt,
-                        IncomeTypeCode = "JE_INPUT"
+                        IncomeTypeCode = "JE_INPUT",
+                        IsExcluded = !jeInputClaimable
                     });
                 }
             }

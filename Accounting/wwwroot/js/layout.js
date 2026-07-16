@@ -240,8 +240,12 @@ const Layout = {
     const allowed = this.myPermissions.allowedMenuIds || [];
     if (allowed.includes('*')) return;
     if (!this.hasMenuAccess(this.currentPage)) {
-      this.toast('คุณไม่มีสิทธิ์เข้าถึงหน้านี้ — กำลังพาไปหน้าแดชบอร์ด', 'error');
-      setTimeout(() => { window.location.href = '/app.html'; }, 1500);
+      // ปลายทาง fallback: ถ้าไม่มีสิทธิ์แดชบอร์ดด้วย → เด้งไปแดชบอร์ดที่โหลด
+      // ไม่ได้ = ค้าง (bounce loop). พาไปหน้าที่ "เข้าได้แน่นอน" แทน — ลายเซ็น
+      // ของฉัน (ทุกคนเข้าได้) เพื่อให้ผู้ใช้ที่ถูกจำกัดสิทธิ์ยังอัพลายเซ็นตัวเองได้
+      const target = this.hasMenuAccess('dashboard') ? '/app.html' : '/pages/my-signature.html';
+      this.toast('คุณไม่มีสิทธิ์เข้าถึงหน้านี้ — กำลังพาไปหน้าที่คุณเข้าได้', 'error');
+      setTimeout(() => { window.location.href = target; }, 1500);
     }
   },
 
