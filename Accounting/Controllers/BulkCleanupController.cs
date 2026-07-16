@@ -68,11 +68,22 @@ public class BulkCleanupController : ControllerBase
     public record DuplicateContactReport(int TotalContacts, int TaxIdDuplicateGroups,
         int NameDuplicateGroups, int DuplicateContactsTotal, List<DuplicateContactGroup> Groups);
 
+    /// <summary>true ถ้า request มาจาก X-Api-Key/X-Integration-Key ที่ผูกกับ
+    /// companyId นี้ (ApiKeyMiddleware ตั้ง Items เหล่านี้ + คีย์ act ได้เฉพาะ
+    /// บริษัทตัวเอง). ใช้เปิดให้ integration ดึงรายงาน read-only ได้จากแอปตัวเอง
+    /// โดยไม่ต้องมี Owner JWT — เฉพาะ endpoint อ่านอย่างเดียวนี้เท่านั้น.</summary>
+    private bool IsCompanyScopedApiKey(Guid companyId) =>
+        HttpContext.Items.TryGetValue("IsApiKeyAuth", out var ak) && ak is true
+        && HttpContext.Items.TryGetValue("CompanyId", out var kc) && kc is Guid kg && kg == companyId;
+
     [HttpGet("duplicate-contacts")]
     public async Task<ActionResult<ApiResponse<DuplicateContactReport>>> GetDuplicateContacts(Guid companyId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        if (!await IsOwnerAsync(companyId, userId)) return Forbid();
+        // read-only diagnostic — อนุญาต Owner JWT หรือ API key ที่ผูกกับบริษัทนี้
+        // (ให้ integration เช่น TakeTime กดดูจากแอปตัวเองผ่าน X-Api-Key ได้).
+        // endpoint ที่ลบ/ล้างข้อมูลด้านล่างยังคง Owner JWT เท่านั้น.
+        if (!IsCompanyScopedApiKey(companyId) && !await IsOwnerAsync(companyId, userId)) return Forbid();
 
         var contacts = await _db.Contacts.AsNoTracking()
             .Where(c => c.CompanyId == companyId && !c.IsDeleted)
