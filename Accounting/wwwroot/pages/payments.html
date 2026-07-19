@@ -178,6 +178,16 @@
         if (doc) {
           const maxAmount = doc.balanceDue || doc.totalAmount;
           if (amount > maxAmount) { Layout.toast(`จำนวนเงินเกินยอดคงค้าง (${Layout.money(maxAmount)})`, 'error'); return; }
+          // §86/4: รับเงินใบแจ้งหนี้ที่มี VAT โดยยังไม่ออกใบกำกับ — เตือนก่อน
+          // (แปลงเป็นใบกำกับ "หลังรับเงิน" ไม่ได้ — supersede block เมื่อจ่ายแล้ว)
+          if (doc.documentType === 'Invoice' && Number(doc.vatAmount || 0) > 0) {
+            const ok = confirm(
+              'ใบแจ้งหนี้นี้มี VAT และยังไม่ได้ออกใบกำกับภาษี\n' +
+              'ตามกฎหมายเมื่อรับเงินต้องออกใบกำกับภาษี (แปลงหลังรับเงินไม่ได้)\n\n' +
+              'แนะนำ: ไปที่หน้าเอกสาร → แปลงเป็นใบกำกับภาษีก่อน แล้วค่อยรับเงิน\n\n' +
+              'กด OK เพื่อรับเงินต่อโดยไม่ออกใบกำกับ (ลูกค้าเคลมภาษีซื้อไม่ได้)');
+            if (!ok) return;
+          }
         }
         // กันกดซ้ำ — double-click ระหว่างรอ network = บันทึกรับเงินซ้ำ 2 รายการ
         if (this._saving) return;

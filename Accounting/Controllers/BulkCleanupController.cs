@@ -102,6 +102,51 @@ public class BulkCleanupController : ControllerBase
         return Ok(new ApiResponse<DoubleRevenueReport>(true, report));
     }
 
+    // ── Paid-VAT-invoice diagnostic (read-only) — หา "ใบแจ้งหนี้ (Invoice) ที่มี
+    // VAT + รับเงินแล้ว แต่ไม่มีใบกำกับภาษีลูก active" = tax point เกิดแล้ว (รับเงิน)
+    // แต่ยังไม่ได้ออกใบกำกับตาม §86/4 → ลูกค้าเคลมภาษีซื้อไม่ได้ + ผู้ขายผิดหน้าที่
+    // ออกใบกำกับ. (VAT ขายลง GL/ภ.พ.30 ครบแล้วผ่าน F5 — ที่ขาดคือ "เอกสาร" ใบกำกับ)
+    // frontend เตือนก่อนรับเงินแล้ว (recordPayment/payments) — ตัวนี้ไว้กวาด legacy.
+    public record PaidVatInvoiceEntry(Guid Id, string DocumentNumber, DateTime DocumentDate,
+        string ContactName, decimal VatAmount, decimal TotalAmount, decimal PaidAmount, string Status);
+    public record PaidVatInvoiceReport(int Count, decimal TotalVat, List<PaidVatInvoiceEntry> Invoices);
+
+    [HttpGet("paid-vat-invoices")]
+    public async Task<ActionResult<ApiResponse<PaidVatInvoiceReport>>> GetPaidVatInvoicesWithoutTaxInvoice(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!IsCompanyScopedApiKey(companyId) && !await IsOwnerAsync(companyId, userId)) return Forbid();
+
+        var rows = await (
+            from inv in _db.Documents.AsNoTracking()
+            where inv.CompanyId == companyId && !inv.IsDeleted
+                && inv.DocumentType == DocumentType.Invoice
+                && inv.VatAmount > 0 && inv.PaidAmount > 0.005m
+                && inv.Status != DocumentStatus.Voided && inv.Status != DocumentStatus.Rejected
+                // ไม่มีใบกำกับภาษีลูก active
+                && !_db.Documents.Any(t => t.CompanyId == companyId && !t.IsDeleted
+                    && t.RelatedDocumentId == inv.Id && t.DocumentType == DocumentType.TaxInvoice
+                    && t.Status != DocumentStatus.Voided && t.Status != DocumentStatus.Rejected)
+            orderby inv.DocumentDate descending
+            select new { inv.Id, inv.DocumentNumber, inv.DocumentDate, inv.ContactId,
+                inv.VatAmount, inv.TotalAmount, inv.PaidAmount, inv.Status })
+            .ToListAsync();
+
+        // ชื่อผู้ติดต่อ (batch, รวมที่ถูกลบ — กัน INNER JOIN ตัดแถว)
+        var cids = rows.Select(r => r.ContactId).Distinct().ToList();
+        var names = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && cids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+
+        var items = rows.Select(r => new PaidVatInvoiceEntry(
+            r.Id, r.DocumentNumber, r.DocumentDate,
+            names.GetValueOrDefault(r.ContactId, "-"),
+            r.VatAmount, r.TotalAmount, r.PaidAmount, r.Status.ToString())).ToList();
+
+        return Ok(new ApiResponse<PaidVatInvoiceReport>(true,
+            new PaidVatInvoiceReport(items.Count, items.Sum(i => i.VatAmount), items)));
+    }
+
     // ── Duplicate-contact diagnostic (read-only) — ตอบคำถามทีม integration
     // ว่า "ทั้งบริษัทมี contact ซ้ำกี่ราย" ก่อนตัดสินใจ merge มือ vs สร้าง endpoint.
     // จับซ้ำ 2 แบบ: (ก) เลขผู้เสียภาษี normalize ตัวเลขล้วนตรงกัน (ข) ชื่อ trim
