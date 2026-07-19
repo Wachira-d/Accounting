@@ -58,6 +58,50 @@ public class BulkCleanupController : ControllerBase
         return Ok(new ApiResponse<CleanupSummary>(true, s));
     }
 
+    // ── Double-revenue diagnostic (read-only) — หา "ใบแจ้งหนี้ที่ลง GL แล้ว
+    // + มีใบกำกับภาษีลูก active ที่ลง GL ด้วย" = รายได้/ภาษีขายถูกบันทึก 2 ครั้ง.
+    // เกิดจากข้อมูลก่อน SupersedeSourceInvoiceAsync ถูก deploy (แปลง INV→TIV
+    // แล้ว INV เดิมไม่ถูก reverse/void). ใช้ไล่เก็บกวาดให้งบถูกต้องตามกฎหมาย:
+    // ทางแก้ต่อรายการ = ยกเลิกการชำระ/ใบเสร็จลูกของ TIV → ยกเลิก TIV → แปลง
+    // INV ใหม่ (supersede ทำงาน + บรรทัดครบหลัง fix) → บันทึกรับเงินใหม่.
+    public record DoubleRevenuePair(
+        Guid InvoiceId, string InvoiceNumber, DateTime InvoiceDate, string InvoiceStatus, decimal InvoiceTotal,
+        Guid TaxInvoiceId, string TaxInvoiceNumber, string TaxInvoiceStatus, decimal TaxInvoiceTotal,
+        bool AmountMismatch);
+    public record DoubleRevenueReport(int PairCount, decimal TotalDoubledRevenue, List<DoubleRevenuePair> Pairs);
+
+    [HttpGet("double-revenue")]
+    public async Task<ActionResult<ApiResponse<DoubleRevenueReport>>> GetDoubleRevenue(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!IsCompanyScopedApiKey(companyId) && !await IsOwnerAsync(companyId, userId)) return Forbid();
+
+        // INV ที่ "ลง GL แล้ว" (พ้น Draft/WaitingApproval, ไม่ voided/rejected)
+        var postedStatuses = new[] { DocumentStatus.Approved, DocumentStatus.Sent,
+            DocumentStatus.PartiallyPaid, DocumentStatus.Paid, DocumentStatus.Overdue };
+
+        var pairs = await (
+            from tiv in _db.Documents.AsNoTracking()
+            join inv in _db.Documents.AsNoTracking() on tiv.RelatedDocumentId equals inv.Id
+            where tiv.CompanyId == companyId && !tiv.IsDeleted
+                && tiv.DocumentType == DocumentType.TaxInvoice
+                && postedStatuses.Contains(tiv.Status)
+                && inv.CompanyId == companyId && !inv.IsDeleted
+                && inv.DocumentType == DocumentType.Invoice
+                && postedStatuses.Contains(inv.Status)   // ⬅ INV ควรถูก void โดย supersede — ยัง posted = ซ้ำ
+            select new DoubleRevenuePair(
+                inv.Id, inv.DocumentNumber, inv.DocumentDate, inv.Status.ToString(), inv.TotalAmount,
+                tiv.Id, tiv.DocumentNumber, tiv.Status.ToString(), tiv.TotalAmount,
+                inv.TotalAmount != tiv.TotalAmount))
+            .ToListAsync();
+
+        var report = new DoubleRevenueReport(
+            pairs.Count,
+            pairs.Sum(p => p.TaxInvoiceTotal),   // รายได้ส่วนที่ลงซ้ำ ≈ ยอด TIV (INV ควรถูก reverse)
+            pairs.OrderByDescending(p => p.InvoiceDate).ToList());
+        return Ok(new ApiResponse<DoubleRevenueReport>(true, report));
+    }
+
     // ── Duplicate-contact diagnostic (read-only) — ตอบคำถามทีม integration
     // ว่า "ทั้งบริษัทมี contact ซ้ำกี่ราย" ก่อนตัดสินใจ merge มือ vs สร้าง endpoint.
     // จับซ้ำ 2 แบบ: (ก) เลขผู้เสียภาษี normalize ตัวเลขล้วนตรงกัน (ข) ชื่อ trim
