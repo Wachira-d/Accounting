@@ -5032,9 +5032,18 @@ public class DocumentService : IDocumentService
         var orderedLines = source.Lines.OrderBy(l => l.LineOrder).ToList();
         List<(DocumentLine Line, decimal Qty)> spec;
 
-        if (axis == FulfillmentAxis.None)
+        // Invoice → TaxInvoice = "อัปเกรดชนิดเอกสารรับรู้รายได้ใบเดียวกัน" (ทั้งฉบับ)
+        // ไม่ใช่ "วางบิลบางส่วน" → ต้องคัดลอกทุกบรรทัดเต็ม. เดิมวิ่งผ่าน billing-axis
+        // gate (Invoice กับ TaxInvoice อยู่ axis เดียวกัน) → ถ้าบรรทัดใดถูกมองว่า
+        // "บิลแล้ว" (consumption ≥ qty จาก child เก่า/งวดก่อน) จะถูกตัดทิ้งเงียบ →
+        // ใบกำกับ/ใบเสร็จยอดขาดไม่ตรงใบแจ้งหนี้ (bug ที่พบ). การแปลงซ้ำถูกกันด้วย
+        // ValidateConversionAsync (double revenue) อยู่แล้ว จึงคัดลอกเต็มปลอดภัย.
+        var wholeDocRevenueUpgrade = source.DocumentType == DocumentType.Invoice
+            && targetType == DocumentType.TaxInvoice;
+
+        if (axis == FulfillmentAxis.None || wholeDocRevenueUpgrade)
         {
-            // Settlement / adjustment target — copy every line verbatim.
+            // Settlement / adjustment target หรือ upgrade ทั้งฉบับ — copy every line verbatim.
             spec = orderedLines.Select(l => (l, l.Quantity)).ToList();
         }
         else
