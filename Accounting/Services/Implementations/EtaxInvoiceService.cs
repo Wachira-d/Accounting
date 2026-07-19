@@ -545,9 +545,11 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var etax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.Id == etaxId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
 
-        if (etax.Status == EtaxStatus.Accepted || etax.Status == EtaxStatus.Submitted)
+        // block เฉพาะ Accepted (ได้รับตอบรับจาก RD จริง) — Submitted (ยังไม่ตอบรับ)
+        // ยกเลิกได้ก่อนนำส่ง ภ.พ.30 (สอดคล้องกับ guard ใน VoidDocumentAsync)
+        if (etax.Status == EtaxStatus.Accepted)
             throw new InvalidOperationException(
-                "ไม่สามารถยกเลิก e-Tax ที่ส่ง/อนุมัติโดยกรมสรรพากรแล้ว " +
+                "ไม่สามารถยกเลิก e-Tax ที่ได้รับการตอบรับจากกรมสรรพากรแล้ว (Accepted) " +
                 "ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
 
         if (etax.Status == EtaxStatus.Voided)

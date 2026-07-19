@@ -3492,14 +3492,20 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "เอกสารนี้อยู่ในรายงานภาษีที่ Filed แล้ว — กรุณา Unlock รายงานหรือใช้ 'Reject & Reverse' ก่อน");
 
-        // Block void if eTax has been submitted/accepted by RD — must contact RD to revoke first
+        // Block void เฉพาะเมื่อ e-Tax "ได้รับตอบรับจากกรมสรรพากรแล้ว" (Accepted =
+        // มีเลขตอบรับจริง) — จุด no-return ตามกฎหมายคือถูกรับเข้าระบบ RD แล้ว.
+        // "Submitted" (เซ็น/คิว/ส่งแต่ยังไม่ได้ตอบรับ) ยัง "ยกเลิก + ออกใหม่" ได้
+        // ก่อนนำส่ง ภ.พ.30 รายเดือน (แก้เอกสารผิดก่อนยื่นเป็นเรื่องปกติ) — เดิม
+        // block ทั้ง Submitted+Accepted → ยกเลิกไม่ได้ทั้งที่ยังไม่ปิดรอบ/ยังไม่ยื่น.
+        // งวดภาษีที่ Filed แล้วถูกกันด้วย filing-lock guard ด้านบนอยู่แล้ว; e-Tax
+        // ที่ Submitted จะถูก cascade void พร้อมเอกสาร (ข้อ 3 ด้านล่าง).
         var lockedEtax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.DocumentId == documentId
             && e.CompanyId == companyId
-            && (e.Status == EtaxStatus.Submitted || e.Status == EtaxStatus.Accepted));
+            && e.Status == EtaxStatus.Accepted);
         if (lockedEtax != null)
             throw new InvalidOperationException(
                 $"ไม่สามารถยกเลิกเอกสารนี้ได้ เนื่องจาก e-Tax เลขที่ {lockedEtax.EtaxRefNumber} " +
-                "ถูกส่งหรืออนุมัติโดยกรมสรรพากรแล้ว ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
+                "ได้รับการตอบรับจากกรมสรรพากรแล้ว (Accepted) — ต้องยื่นขอยกเลิกที่กรมสรรพากรก่อน");
 
         // กันยกเลิกเอกสารต้นทางที่มี "เอกสารลูก" active อ้างอยู่ (แปลงไปแล้ว เช่น
         // Invoice→TaxInvoice/Receipt) — ยกเลิกต้นทางจะทำให้ลูกลอย (orphan): ภพ.30/
@@ -3569,11 +3575,12 @@ public class DocumentService : IDocumentService
                         systemTriggered: true);
                 }
 
-                // 3) Void linked EtaxInvoice (keep XML/PDF for audit; only flag status)
+                // 3) Void linked EtaxInvoice (keep XML/PDF for audit; only flag status).
+                // รวม Submitted ด้วย (ยังไม่ได้รับตอบรับ RD → ยกเลิกได้พร้อมเอกสาร);
+                // Accepted ถูกกันตั้งแต่ guard ด้านบนแล้ว (มาไม่ถึงตรงนี้).
                 var etaxes = await _db.EtaxInvoices
                     .Where(e => e.DocumentId == documentId && e.CompanyId == companyId
-                        && e.Status != EtaxStatus.Voided && e.Status != EtaxStatus.Submitted
-                        && e.Status != EtaxStatus.Accepted)
+                        && e.Status != EtaxStatus.Voided && e.Status != EtaxStatus.Accepted)
                     .ToListAsync();
                 foreach (var etax in etaxes)
                 {
