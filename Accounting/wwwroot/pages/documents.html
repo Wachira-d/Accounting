@@ -4501,8 +4501,20 @@
         // "ใบแจ้งหนี้/ใบกำกับภาษี" ใบเดียว — ติ๊ก checkbox บนฟอร์ม (ฝั่งขาย
         // Invoice/TaxInvoice) → บังคับ type=TaxInvoice ให้ทำงานเป็นใบกำกับ
         // เต็มรูป (VAT/ภพ.30/§86/4/e-Tax) แล้วส่ง flag ให้ PDF พิมพ์หัวรวม.
-        const _combineTax = (_docType === 'Invoice' || _docType === 'TaxInvoice')
+        let _combineTax = (_docType === 'Invoice' || _docType === 'TaxInvoice')
           && (document.getElementById('fCombinedTaxInvoice')?.checked || false);
+        // §86/4 + tax point (§78/§78-1): "ใบแจ้งหนี้ที่รับเงินเลย" + มี VAT +
+        // ผู้ซื้อไม่ได้ปฏิเสธใบกำกับ = จุดความรับผิด VAT เกิดแล้ว → ต้องออก
+        // "ใบกำกับภาษี" ไม่ใช่ใบแจ้งหนี้เปล่า (ลูกค้าเคลมภาษีซื้อไม่ได้ + ผู้ขาย
+        // ไม่ได้ออกใบกำกับตามกฎหมาย). auto-upgrade เป็น "ใบแจ้งหนี้/ใบกำกับภาษี"
+        // ให้เอง (เฉพาะตอนติ๊กรับเงินเลย — ใบแจ้งหนี้ปกติที่ยังไม่รับเงินไม่กระทบ).
+        const _paidOnIssueNow = document.getElementById('fPaidOnIssue')?.checked || false;
+        const _buyerDeclinedTax = document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false;
+        const _hasVatLine = lines.some(l => (l.vatRate || 0) > 0);
+        if (_docType === 'Invoice' && _paidOnIssueNow && _hasVatLine && !_buyerDeclinedTax && !_combineTax) {
+          _combineTax = true;
+          Layout.toast('ขายรับเงินสด + มี VAT → ออกเป็น "ใบแจ้งหนี้/ใบกำกับภาษี" ให้อัตโนมัติตาม §86/4 (ถ้าผู้ซื้อไม่ต้องการใบกำกับ ให้ติ๊ก "ไม่ประสงค์รับใบกำกับภาษี")', 'info', 7000);
+        }
         const _effectiveDocType = _combineTax ? 'TaxInvoice' : _docType;
         const payload = {
           documentType: _effectiveDocType,
