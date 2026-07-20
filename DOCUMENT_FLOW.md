@@ -145,9 +145,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     TaxInvoice + post JE (Dr ลูกหนี้/Cr รายได้+VAT) ระบบรับชำระเต็มยอดคงเหลือ
     ทันทีผ่าน `CreatePaymentAsync(IssueReceiptDocument:false,
     OverridePaymentAccountId)` → **ไม่ออกใบเสร็จแยก** → ใบกำกับ BalanceDue=0 →
-    `ServedAsReceipt` พิมพ์หัว "ใบกำกับภาษี/ใบเสร็จรับเงิน" + e-Tax TAX_INVOICE.
+    ตั้ง `IssuedAsCashReceipt=true` (persist) → พิมพ์หัว "ใบเสร็จรับเงิน/
+    ใบกำกับภาษี" + e-Tax **T03** (ใบเสร็จรับเงิน/ใบกำกับภาษี, ผ่าน TaxInvoice schema).
     สุทธิ GL = Dr เงินสด(PaymentAccountId)/Cr รายได้+VAT. ยุบ 3 ใบ (TIV+REC×2)
     เหลือใบเดียว (spec TakeTime). fail-soft: ชำระไม่สำเร็จ = ใบกำกับค้างชำระ ไม่ล้ม sync
+  - **Deposit fields บน `InboundInvoiceRequest`** (`DepositAppliedAmount`,
+    `DepositAppliedRef`, `DepositOutputVatDeferred`, `DepositAppliedDrivesJournal`)
+    → persist ลง `Document` ตรง ๆ ตอนสร้าง (deposit/checkout spec). ค่า default
+    = display-only; `DepositAppliedDrivesJournal=true` เท่านั้นที่ drive JE
+    self-contained (กลับ 217xx/21913) — ทำงานผ่าน `AutoPostToJournalAsync` เท่านั้น
+    ไม่ใช่ mapping-JE path นี้ ดังนั้น IsCashSale settle จ่ายเต็ม BalanceDue ตามเดิม
   - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
     **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
     สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)
@@ -1200,7 +1207,7 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
-_Last verified against codebase: 2026-07-09 (รอบ 52) — รอบ 13-14: OCR API=web UI,_
+_Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._
 _รอบ 15: §82/3 block+reclassify, §82/5(6) car/fuel, §81/1 VAT-reg warning,_
@@ -1343,6 +1350,17 @@ _ตาม partial); FIFO sign-agnostic + marginal-slice costing (A1/A2/A6); WAC
 _หลัง void (A5); void payment จัดการ 50 ทวิ Draft (B5); apply มัดจำ stamp_
 _DepositAppliedAmount ลงใบ (E2); sensitivity ไม่โผล่ search/CSV (PDPA E3); HTML_
 _scale-back ยกเว้นมัดจำ defer (F14). backlog ที่เหลือดูรายงาน audit._
+_รอบ 60 (TakeTime cash-sale spec — B2B ขายเงินสด ใบเดียว จบ = e-Tax T03):
+เพิ่ม `Document.IssuedAsCashReceipt` (bool, persist, migration ALTER ADD COLUMN).
+IsCashSale settle สำเร็จ (BalanceDue→0) → ตั้ง flag → e-Tax **T03**
+"ใบเสร็จรับเงิน/ใบกำกับภาษี" (EtaxInvoiceService docTypeCode/Name switch เพิ่ม
+`TaxInvoice when IssuedAsCashReceipt`) + หัว PDF "ใบเสร็จรับเงิน/ใบกำกับภาษี"
+(PdfGenerationService.ComputeDocumentTitle). ต่าง ServedAsReceipt (NotMapped,
+คิดตอน render) ตรงที่ persist → คุม e-Tax type ได้ (ServedAsReceipt คุมแค่หัว).
++ InboundInvoiceRequest รับ deposit fields (DepositAppliedAmount/Ref/
+OutputVatDeferred/DrivesJournal) → persist ลง Document ตอนสร้าง (รองรับ resync
++ deposit/checkout). settle จ่ายเต็ม BalanceDue ตามเดิม (DepositAppliedAmount
+display-only เว้น DrivesJournal ซึ่ง fire แค่ AutoPost path ไม่ใช่ mapping-JE นี้)._
 _รอบ 59 (audit จำลอง scenario — ชุดใหญ่ 15 แก้): **สมมาตร apply↔void สมบูรณ์** —_
 _void/purge un-realize คิดจาก "บรรทัด JE จริงของใบเช็คเอาท์" (helper Unrealize_
 _DrivesDepositAsync: depBase = ΣDr 215/217, เคลียร์ RecognizedAt เฉพาะเมื่อใบมี_

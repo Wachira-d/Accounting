@@ -82,6 +82,14 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool ServedAsReceipt { get; set; }
 
+    /// <summary>ขายเงินสด B2B (integration isCashSale) — ใบกำกับภาษีที่รับชำระครบ
+    /// พร้อมออก ทำหน้าที่เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษี" ในตัว. persist (ต่างจาก
+    /// ServedAsReceipt ที่คำนวณตอน render) เพราะ e-Tax generator ต้องรู้ตอน export
+    /// → ออก e-Tax **T03 "ใบเสร็จรับเงิน/ใบกำกับภาษี"** (schema TaxInvoice, RD รับ)
+    /// แทน 388. + หัว PDF พิมพ์ "ใบเสร็จรับเงิน/ใบกำกับภาษี". books ยังผ่านเส้น
+    /// TaxInvoice ปกติ (deposit+settle ที่ verified) — flag นี้แค่ classification/หัว.</summary>
+    public bool IssuedAsCashReceipt { get; set; }
+
     /// <summary>Capability token สำหรับลิงก์ "ลูกค้ากดยอมรับใบเสนอราคาออนไลน์"
     /// — random hex 64 ตัว สร้างเมื่อผู้ใช้ขอลิงก์ (POST accept-link). ผู้ถือ
     /// ลิงก์ดู/ยอมรับใบเสนอราคาได้โดยไม่ต้อง login (read-only + accept เท่านั้น).</summary>

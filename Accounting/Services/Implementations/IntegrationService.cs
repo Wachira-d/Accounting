@@ -692,6 +692,12 @@ public class IntegrationService : IIntegrationService
                 // Preparer identity from the source system → "ผู้จัดทำ" slot.
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
                 PreparerSignatureBase64 = TrimPreparerSignature(request.PreparerSignatureBase64),
+                // มัดจำที่หักออกแล้ว (spec deposit/checkout) — display-only field เว้นแต่
+                // DepositAppliedDrivesJournal=true จึงจะ drive JE (Dr เงินสดสุทธิ + reverse 217xx/21913).
+                DepositAppliedAmount = request.DepositAppliedAmount > 0m ? request.DepositAppliedAmount : 0m,
+                DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
+                DepositOutputVatDeferred = request.DepositOutputVatDeferred,
+                DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal,
                 Lines = lines
             };
 
@@ -726,7 +732,16 @@ public class IntegrationService : IIntegrationService
                         Notes: "ขายเงินสด — รับชำระพร้อมออกใบกำกับ (cash sale)",
                         OverridePaymentAccountId: request.PaymentAccountId,
                         IssueReceiptDocument: false), createdBy: "integration-cashsale");
-                    cashSaleNote = " + รับชำระเต็มยอด (ใบเดียว: ใบกำกับภาษี/ใบเสร็จรับเงิน)";
+                    // mark เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษี" → e-Tax export T03 + หัวรวม
+                    // (เอกสารเดียวจบ; books ผ่านเส้น TaxInvoice ที่ verified — settle
+                    // ล้าง AR วันเดียว). reload + set flag (doc ถูกแก้ใน CreatePayment).
+                    var settled = await _db.Documents.FirstOrDefaultAsync(d => d.Id == document.Id);
+                    if (settled != null && settled.BalanceDue <= 0.005m)
+                    {
+                        settled.IssuedAsCashReceipt = true;
+                        await _db.SaveChangesAsync();
+                    }
+                    cashSaleNote = " + รับชำระเต็มยอด (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03)";
                 }
                 catch (Exception exPay)
                 {

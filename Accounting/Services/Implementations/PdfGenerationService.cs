@@ -979,7 +979,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             || Buyer864Incomplete(doc);
         if (!hasCustomTitle && !buyerDeclined)
         {
-            if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
+            // ขายเงินสด B2B (IssuedAsCashReceipt) → หัวตรงกับ e-Tax T03 pairing เป๊ะ
+            // "ใบเสร็จรับเงิน/ใบกำกับภาษี" (ก่อน combined/servedAsReceipt)
+            if (doc.DocumentType == DocumentType.TaxInvoice && doc.IssuedAsCashReceipt)
+                title = isEn ? "Receipt / Tax Invoice" : Ov("CashReceiptTaxInvoice", "ใบเสร็จรับเงิน/ใบกำกับภาษี");
+            else if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
                 title = isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี");
             else if (((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
                         && doc.VatAmount > 0 && !IsDeferredVatDeposit(doc))

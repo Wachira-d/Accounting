@@ -604,6 +604,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // ตรงกับหัวกระดาษ PDF (TypeCode-name pairing บังคับ exact ตาม Schematron)
         var docTypeCode = doc.DocumentType switch
         {
+            // ขายเงินสด B2B (IssuedAsCashReceipt) → T03 ใบเสร็จรับเงิน/ใบกำกับภาษี
+            // (เช็คก่อน Combined/388 เพราะ cash sale = receipt+tax invoice ในใบเดียว)
+            DocumentType.TaxInvoice when doc.IssuedAsCashReceipt => "T03",
             DocumentType.TaxInvoice when doc.CombinedInvoiceTaxInvoice => "T02",  // ใบแจ้งหนี้/ใบกำกับภาษี
             DocumentType.TaxInvoice => "388",
             DocumentType.Receipt => "T03",       // ใบเสร็จรับเงิน/ใบกำกับภาษี
@@ -615,6 +618,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // DCN equivalents — exact strings, no extra qualifiers
         var docTypeName = doc.DocumentType switch
         {
+            DocumentType.TaxInvoice when doc.IssuedAsCashReceipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",  // T03 pairing
             DocumentType.TaxInvoice when doc.CombinedInvoiceTaxInvoice => "ใบแจ้งหนี้/ใบกำกับภาษี",
             DocumentType.TaxInvoice => "ใบกำกับภาษี",
             DocumentType.Receipt => "ใบเสร็จรับเงิน/ใบกำกับภาษี",   // exact match required
