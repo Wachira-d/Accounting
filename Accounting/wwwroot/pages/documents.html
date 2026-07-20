@@ -5842,7 +5842,7 @@
                 <label id="rpIssueReceiptRow" style="display:flex;gap:8px;align-items:flex-start;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;font-size:13px">
                   <input type="checkbox" id="rpIssueReceipt" checked style="margin-top:2px">
                   <span><b>ออกใบเสร็จรับเงินให้ลูกค้า</b> (ลงวันที่รับเงินจริง)<br>
-                  <span style="color:#15803d;font-size:11px">ใบเสร็จอ้างอิงใบกำกับ/ใบแจ้งหนี้เดิม · VAT รับรู้ที่ใบกำกับแล้วไม่คิดซ้ำ · ไม่ลง JE ซ้ำ</span></span>
+                  <span id="rpIssueReceiptHint" style="color:#15803d;font-size:11px">ใบเสร็จอ้างอิงใบกำกับ/ใบแจ้งหนี้เดิม · VAT รับรู้ที่ใบกำกับแล้วไม่คิดซ้ำ · ไม่ลง JE ซ้ำ</span></span>
                 </label>
               </div>
               <div class="modal-footer">
@@ -5869,7 +5869,24 @@
         const rpIssueRow = document.getElementById('rpIssueReceiptRow');
         if (rpIssueRow) rpIssueRow.style.display = _salesSide ? 'flex' : 'none';
         const rpIssueCb = document.getElementById('rpIssueReceipt');
-        if (rpIssueCb) rpIssueCb.checked = _salesSide;   // default เปิดสำหรับฝั่งขาย
+        const rpIssueHint = document.getElementById('rpIssueReceiptHint');
+        // Smart default: ใบกำกับภาษีที่จ่าย "ครบทั้งใบในงวดเดียว" (งวดแรก + เต็มยอด)
+        // → ใบกำกับทำหน้าที่ใบเสร็จในตัว (หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน")
+        // → ไม่ต้องออกใบเสร็จแยก (default ปิด). จ่ายบางส่วน/ผ่อนหลายงวด → ต้องออก
+        // ใบเสร็จต่องวด (default เปิด). ผู้ใช้ปรับเองได้เสมอ. อัปเดตตามยอดที่พิมพ์.
+        const _refreshIssueDefault = () => {
+          if (!_salesSide || !rpIssueCb) return;
+          const amt = parseFloat(amountEl.value || '0') || 0;
+          const firstFull = _rpDt === 'TaxInvoice'
+            && sourceTotal > 0 && Math.abs(balanceDue - sourceTotal) < 0.01  // งวดแรก (ยังไม่เคยจ่าย)
+            && amt >= balanceDue - 0.01;                                     // จ่ายเต็มยอด
+          rpIssueCb.checked = !firstFull;
+          if (rpIssueHint) rpIssueHint.textContent = firstFull
+            ? 'จ่ายครบทั้งใบในงวดเดียว → ใบกำกับนี้จะเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ในตัว ไม่ต้องออกใบเสร็จแยก (ติ๊กได้ถ้าลูกค้าขอใบเสร็จแยก)'
+            : 'ใบเสร็จอ้างอิงใบกำกับ/ใบแจ้งหนี้เดิม · VAT รับรู้ที่ใบกำกับแล้วไม่คิดซ้ำ · ไม่ลง JE ซ้ำ (จ่ายบางส่วน/ผ่อนหลายงวดต้องออกใบเสร็จต่องวด)';
+        };
+        _refreshIssueDefault();
+        amountEl.oninput = _refreshIssueDefault;
         // Populate the bank-override dropdown with the company's bank
         // accounts. Default option (empty value) keeps the doc's channel.
         const rpBank = document.getElementById('rpBankOverride');
