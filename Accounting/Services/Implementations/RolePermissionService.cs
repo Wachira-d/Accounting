@@ -97,8 +97,10 @@ public class RolePermissionService : IRolePermissionService
     {
         await EnsureOwnerAccessAsync(companyId, userId);
 
+        // ไม่ Include(Permissions) — เดิม track permission เดิมไว้แล้วสั่ง DELETE ราย
+        // entity ทำให้เจอ DbUpdateConcurrencyException ("expected 1 row, affected 0")
+        // เมื่อแถวหายไประหว่างทาง (double-submit / duplicate / แถวถูกลบไปแล้ว) → 500.
         var role = await _db.CompanyRoles
-            .Include(r => r.Permissions)
             .FirstOrDefaultAsync(r => r.Id == roleId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ Role");
 
@@ -115,61 +117,48 @@ public class RolePermissionService : IRolePermissionService
         if (request.Color != null) role.Color = request.Color;
         if (request.Icon != null) role.Icon = request.Icon;
         if (request.SortOrder.HasValue) role.SortOrder = request.SortOrder.Value;
+        role.UpdatedBy = userId.ToString();
 
         if (request.AllowedMenuIds != null)
         {
-            // DIFF + two-phase save — เดิม RemoveRange(ทั้งหมด) + re-add ทำให้ key เดิม
-            // ที่ยังเลือกอยู่ถูก DELETE+INSERT ใน SaveChanges เดียว → EF Core อาจสั่ง
-            // INSERT ก่อน DELETE → ชน unique index (CompanyRoleId, MenuItemId) → 500.
-            //
-            // ที่นี่เราแยกเป็น 2 เฟส และ "commit ลบก่อน แล้วค่อย insert" เพื่อกัน
-            // ทุกความเป็นไปได้ของการ ordering แม้ DB จะมี duplicate row ค้างจากอดีต:
-            //   1. ลบเฉพาะที่ไม่เลือกแล้ว + ลบ duplicate ที่ค้าง (เก็บไว้ 1 แถว/menuId)
-            //   2. SaveChanges (deletes ลงจริงก่อน)
-            //   3. เพิ่มเฉพาะที่ยังไม่มี + บังคับ CanAccess=true ให้ที่คงอยู่
-            //   4. SaveChanges (inserts)
+            // Replace สิทธิ์ทั้งชุดแบบ bulletproof:
+            //   ExecuteDelete = SQL DELETE ตรง ๆ (ไม่ผ่าน change-tracker) → ไม่มีทาง
+            //   เกิด DbUpdateConcurrencyException, ลบได้ 0..N แถวไม่สน (รับ duplicate/
+            //   แถวหายจากอดีต), แล้วค่อย INSERT ชุดใหม่หลังลบ commit → ไม่ชน unique
+            //   index (CompanyRoleId, MenuItemId) ใน batch เดียว. ห่อ transaction ให้
+            //   ลบ+เพิ่มเป็น atomic (ล้มกลางคัน role ไม่เหลือสิทธิ์ว่าง).
             var desired = request.AllowedMenuIds
                 .Where(m => !string.IsNullOrWhiteSpace(m))
                 .Select(m => m.Trim())
                 .Distinct()
-                .ToHashSet();
+                .ToList();
 
-            var toRemove = new List<CompanyRolePermission>();
-            var kept = new HashSet<string>();
-            foreach (var p in role.Permissions.ToList())
-            {
-                // ลบถ้า (ก) ไม่ถูกเลือกแล้ว หรือ (ข) เป็น duplicate ของ menuId ที่เก็บไว้แล้ว
-                if (!desired.Contains(p.MenuItemId) || !kept.Add(p.MenuItemId))
-                    toRemove.Add(p);
-            }
-            if (toRemove.Count > 0)
-            {
-                _db.CompanyRolePermissions.RemoveRange(toRemove);
-                foreach (var p in toRemove) role.Permissions.Remove(p);
-                role.UpdatedBy = userId.ToString();
-                await _db.SaveChangesAsync(); // เฟส 1: ยืนยันการลบก่อน insert
-            }
-
-            var existing = role.Permissions.Select(p => p.MenuItemId).ToHashSet();
-            foreach (var menuId in desired.Where(m => !existing.Contains(m)))
-            {
-                role.Permissions.Add(new CompanyRolePermission
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            await _db.CompanyRolePermissions
+                .Where(p => p.CompanyRoleId == roleId)
+                .ExecuteDeleteAsync();
+            foreach (var menuId in desired)
+                _db.CompanyRolePermissions.Add(new CompanyRolePermission
                 {
-                    CompanyRoleId = role.Id,
+                    CompanyRoleId = roleId,
                     MenuItemId = menuId,
                     CanAccess = true
                 });
-            }
-            // สิทธิ์ที่คงอยู่ → บังคับ CanAccess = true (เผื่อเคยถูกปิดไว้)
-            foreach (var p in role.Permissions.Where(p => desired.Contains(p.MenuItemId)))
-                p.CanAccess = true;
+            await _db.SaveChangesAsync();   // UPDATE role metadata + INSERT สิทธิ์ใหม่
+            await tx.CommitAsync();
         }
-
-        role.UpdatedBy = userId.ToString();
-        await _db.SaveChangesAsync(); // เฟส 2: metadata role + inserts สิทธิ์ใหม่
+        else
+        {
+            await _db.SaveChangesAsync();   // อัปเดตเฉพาะ metadata role
+        }
 
         var memberCount = await _db.CompanyUsers
             .CountAsync(cu => cu.CompanyId == companyId && cu.CompanyRoleId == roleId);
+
+        // เติม Permissions ให้ response (ไม่ได้ Include ตอนโหลด) — query สดหลังบันทึก
+        role.Permissions = await _db.CompanyRolePermissions.AsNoTracking()
+            .Where(p => p.CompanyRoleId == roleId)
+            .ToListAsync();
 
         return MapToResponse(role, memberCount);
     }
