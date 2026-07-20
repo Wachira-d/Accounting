@@ -1368,7 +1368,19 @@ Dr 217xx/VAT-reversal / Cr รายได้+VAT+ล้าง AR. drives ต้
 ไม่ล้ม sync). display-only mode (DrivesJournal=false): stamp DepositAppliedAmount
 ที่ create เพื่อ render "หักมัดจำ/รับสุทธิ" เท่านั้น ไม่แตะ GL, settle จ่ายเต็ม.
 ⚠ ยัง gate ด้วย toggle ฝั่ง TakeTime (`Nexaacc_CashSale_Deposit`) จนกว่า
-test GL บน Windows ผ่าน._
+test GL บน Windows ผ่าน. **สมมาตร void (step 2b ใหม่ใน VoidDocumentAsync):**
+JV ตัดชำระด้วยมัดจำ (ApplyDepositToInvoiceAsync) มี SourceDocumentId=ใบมัดจำ
+จึงหลุด step 2 (กลับเฉพาะ JE ของใบที่ void) → เพิ่ม 2b: หา deposit ที่
+DepositAppliedToDocumentId ชี้มาใบนี้ → reverse JV (คัดเฉพาะ JE ที่มีขา Cr 113
+กัน realize-JE) + คืน subledger (RealizedAmount/RecognizedAt เฉพาะผู้ stamp
+Dr 21913/AppliedToDocumentId) — ปิดช่อง AR ติดลบ + มัดจำถูกกลืนถาวร (ครอบ
+ApplyDeposit ฝั่ง UI ที่มีช่องเดิมนี้ด้วย); เคส drives (ขา reversal ฝังใน JE
+ใบเช็คเอาท์ ไม่มี JV) ข้าม 2b โดยธรรมชาติ → 7c ทำงานตามเดิม. **Self-heal
+(TrySettleCashSaleAsync ใช้ร่วม 3 จุด: create / retry "Already synced" /
+resyncUpdate):** create รอบแรก fail-soft → partner ยิงซ้ำหรือ resync → settle
+ต่อจากขั้นที่ค้าง (มัดจำ apply แล้วข้าม — ดูจาก DepositAppliedAmount ที่ drives
+ไม่ pre-stamp, ยอดปิดแล้ว → heal flag T03 อย่างเดียว); resync re-stamp deposit
+fields จาก request (source of truth — guard PaidAmount==0 ผ่านแล้วจึงปลอดภัย)._
 _รอบ 59 (audit จำลอง scenario — ชุดใหญ่ 15 แก้): **สมมาตร apply↔void สมบูรณ์** —_
 _void/purge un-realize คิดจาก "บรรทัด JE จริงของใบเช็คเอาท์" (helper Unrealize_
 _DrivesDepositAsync: depBase = ΣDr 215/217, เคลียร์ RecognizedAt เฉพาะเมื่อใบมี_

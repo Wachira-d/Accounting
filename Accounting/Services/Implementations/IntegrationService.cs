@@ -495,12 +495,18 @@ public class IntegrationService : IIntegrationService
                     if (request.ResyncUpdate)
                         return await ResyncUpdateInvoiceAsync(companyId, integrationId, existing, request, log, sw);
 
+                    // ── Self-heal ขายเงินสด: create รอบแรก fail-soft (ชำระ/หักมัดจำ
+                    // ล้ม → ใบค้างชำระ) → partner ยิงซ้ำ (idempotent retry) ต้องได้
+                    // settle ต่อจนจบ ไม่ใช่ติด "Already synced" ค้างชำระตลอด.
+                    // ยอดปิดแล้ว = no-op/heal flag T03 (helper กันทำซ้ำทุกขั้น).
+                    var healNote = await TrySettleCashSaleAsync(companyId, existing, request);
+
                     log.Status = "Skipped";
                     log.CreatedDocumentId = existing.Id;
                     log.ErrorMessage = "Document already exists (idempotent skip)";
                     log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
                     await SaveSyncLog(log, integrationId);
-                    return new InboundSyncResponse(true, "Already synced", existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+                    return new InboundSyncResponse(true, "Already synced" + (healNote ?? ""), existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
                 }
             }
             else
@@ -713,83 +719,9 @@ public class IntegrationService : IIntegrationService
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "invoice");
 
             // ── B2B cash sale (IsCashSale) — ยุบ 3 ใบเหลือใบเดียว (spec TakeTime) ──
-            // (ก) หักมัดจำ (ถ้ามี drives) ผ่าน ApplyDepositToInvoiceAsync → (ข) รับชำระ
-            // ยอดสุทธิเป็นเงินสด **โดยไม่ออกใบเสร็จแยก** → (ค) BalanceDue=0 → set
-            // IssuedAsCashReceipt=true → พิมพ์หัว "ใบเสร็จรับเงิน/ใบกำกับภาษี" + e-Tax
-            // T03. GL: Dr เงินสด(สุทธิ) + Dr 217xx/VAT-reversal / Cr รายได้+VAT+ล้าง AR.
-            // fail-soft: ถ้าชำระ/หักมัดจำไม่สำเร็จ ใบกำกับยังอยู่ (ค้างชำระ) ไม่ล้ม sync.
-            string? cashSaleNote = null;
-            if (request.IsCashSale && _documentService != null
-                && document.DocumentType == DocumentType.TaxInvoice)
-            {
-                try
-                {
-                    // ── (ก) หักมัดจำแบบ "ขับ JE" ก่อนรับเงินสด (spec deposit/checkout) ──
-                    // reuse เส้น verified ApplyDepositToInvoiceAsync (Dr 217xx + Dr
-                    // [21913|21911] / Cr ลูกหนี้) — กลับบัญชี deferred ของใบมัดจำที่อ้าง
-                    // โดยไม่รับรู้รายได้/VAT ซ้ำ (ใบกำกับ Cr รายได้+VAT เต็มไปแล้ว). ลด
-                    // BalanceDue เหลือ "สุทธิหลังหักมัดจำ" → settle ข้างล่างรับแค่ส่วนต่าง.
-                    // ทำเฉพาะ drives mode; display-only stamp ที่ create ไม่แตะ GL.
-                    var depApplied = 0m;
-                    if (request.DepositAppliedAmount > 0m && request.DepositAppliedDrivesJournal
-                        && !string.IsNullOrWhiteSpace(request.DepositAppliedRef))
-                    {
-                        var depRef = request.DepositAppliedRef.Trim();
-                        var deposit = await _db.Documents.FirstOrDefaultAsync(d =>
-                            d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                            && d.DocumentNumber == depRef);
-                        if (deposit == null)
-                            throw new InvalidOperationException(
-                                $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำ {depRef} เป็นเอกสารมัดจำ (IsDeposit) ในระบบ — " +
-                                "ตรวจ depositAppliedRef หรือ sync ใบมัดจำก่อน (drives ต้องมีใบมัดจำจริงเพื่อกลับบัญชี deferred)");
-                        // ApplyDepositToInvoiceAsync มี guard ครบ (over-apply/one-shot/FX/
-                        // contact match/deferred VAT recognition) — แก้ document (tracked
-                        // instance เดียวกัน) → BalanceDue เหลือสุทธิทันที
-                        await _documentService.ApplyDepositToInvoiceAsync(companyId, document.Id,
-                            new Models.DTOs.Document.ApplyDepositRequest(
-                                deposit.Id, request.DepositAppliedAmount,
-                                request.PaymentDate ?? document.DocumentDate),
-                            "integration-cashsale");
-                        depApplied = request.DepositAppliedAmount;
-                    }
-
-                    // ── (ข) รับชำระ "ยอดคงเหลือสุทธิ" เป็นเงินสด (ไม่ออกใบเสร็จแยก) ──
-                    if (document.BalanceDue > 0.005m)
-                    {
-                        var pm = Enum.TryParse<Models.Enums.PaymentMethod>(request.PaymentMethod, true, out var parsedPm)
-                            ? parsedPm : Models.Enums.PaymentMethod.Cash;
-                        await _documentService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
-                            DocumentId: document.Id,
-                            PaymentDate: request.PaymentDate ?? document.DocumentDate,
-                            Amount: document.BalanceDue,
-                            PaymentMethod: pm,
-                            Reference: request.ExternalRef,
-                            BankAccount: null,
-                            Notes: depApplied > 0m
-                                ? "ขายเงินสด — รับชำระสุทธิหลังหักมัดจำ (cash sale)"
-                                : "ขายเงินสด — รับชำระพร้อมออกใบกำกับ (cash sale)",
-                            OverridePaymentAccountId: request.PaymentAccountId,
-                            IssueReceiptDocument: false), createdBy: "integration-cashsale");
-                    }
-
-                    // ── (ค) mark เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษี" → e-Tax export T03 + หัวรวม
-                    // เมื่อยอดคงเหลือถูกปิด (จากมัดจำ + เงินสด). reload (doc ถูกแก้ในขั้นบน).
-                    var settled = await _db.Documents.FirstOrDefaultAsync(d => d.Id == document.Id);
-                    if (settled != null && settled.BalanceDue <= 0.005m)
-                    {
-                        settled.IssuedAsCashReceipt = true;
-                        await _db.SaveChangesAsync();
-                    }
-                    cashSaleNote = depApplied > 0m
-                        ? $" + หักมัดจำ {depApplied:N2} + รับชำระสุทธิ (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03)"
-                        : " + รับชำระเต็มยอด (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03)";
-                }
-                catch (Exception exPay)
-                {
-                    _logger.LogWarning(exPay, "IsCashSale settle failed for {DocNum} — ใบกำกับค้างชำระ ให้บันทึกรับเงินเอง", document.DocumentNumber);
-                    cashSaleNote = " (⚠ ออกใบกำกับแล้วแต่รับชำระ/หักมัดจำอัตโนมัติไม่สำเร็จ — บันทึกรับเงินในระบบ)";
-                }
-            }
+            // ขั้นตอนทั้งหมดอยู่ใน TrySettleCashSaleAsync (แชร์กับ self-heal ตอน
+            // retry "Already synced" + resyncUpdate — ดู doc comment ของ helper)
+            var cashSaleNote = await TrySettleCashSaleAsync(companyId, document, request);
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -2217,6 +2149,98 @@ public class IntegrationService : IIntegrationService
 
     /// <summary>Resync update ใบแจ้งหนี้/ใบกำกับจากระบบภายนอก — เลขเอกสารคงเดิม
     /// แต่กลับ JE เดิม + สร้างบรรทัด/ยอดใหม่ + post JE ใหม่ (audit trail ครบ).</summary>
+    /// <summary>Settle ขายเงินสด B2B (IsCashSale=true บน TaxInvoice จาก integration):
+    ///   (ก) หักมัดจำแบบขับ JE ผ่าน ApplyDepositToInvoiceAsync — เส้น verified
+    ///       (Dr 217xx + Dr [21913|21911] / Cr ลูกหนี้, ไม่รับรู้รายได้/VAT ซ้ำ,
+    ///       guard over-apply/one-shot/FX/contact ครบ) → BalanceDue เหลือสุทธิ
+    ///   (ข) รับชำระยอดคงเหลือสุทธิเป็นเงินสด (ไม่ออกใบเสร็จแยก)
+    ///   (ค) ยอดปิด → IssuedAsCashReceipt=true → หัว "ใบเสร็จรับเงิน/ใบกำกับภาษี"
+    ///       + e-Tax T03
+    /// fail-soft: ขั้นไหนล้ม → คืน note เตือน ใบกำกับค้างชำระ ไม่ throw ไม่ล้ม sync.
+    /// idempotent (จุด self-heal: create / retry "Already synced" / resyncUpdate):
+    /// มัดจำที่ apply สำเร็จแล้วถูกข้าม — ดูจาก DepositAppliedAmount ซึ่ง drives ไม่
+    /// pre-stamp ตอน create (ApplyDeposit stamp เองตอนสำเร็จ); ยอดปิดแล้ว → no-op
+    /// หรือ heal flag T03 อย่างเดียว.</summary>
+    private async Task<string?> TrySettleCashSaleAsync(Guid companyId, Document document, InboundInvoiceRequest request)
+    {
+        if (!request.IsCashSale || _documentService == null
+            || document.DocumentType != DocumentType.TaxInvoice)
+            return null;
+        try
+        {
+            // ── (ก) หักมัดจำแบบ "ขับ JE" ก่อนรับเงินสด (spec deposit/checkout) ──
+            // เฉพาะ drives mode; display-only stamp ที่ create ไม่แตะ GL
+            var depApplied = 0m;
+            if (request.DepositAppliedAmount > 0m && request.DepositAppliedDrivesJournal
+                && !string.IsNullOrWhiteSpace(request.DepositAppliedRef)
+                && document.DepositAppliedAmount < request.DepositAppliedAmount - 0.005m)
+            {
+                var depRef = request.DepositAppliedRef.Trim();
+                var deposit = await _db.Documents.FirstOrDefaultAsync(d =>
+                    d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                    && d.DocumentNumber == depRef);
+                if (deposit == null)
+                    throw new InvalidOperationException(
+                        $"หักมัดจำแบบขับ JE: ไม่พบใบมัดจำ {depRef} เป็นเอกสารมัดจำ (IsDeposit) ในระบบ — " +
+                        "ตรวจ depositAppliedRef หรือ sync ใบมัดจำก่อน (drives ต้องมีใบมัดจำจริงเพื่อกลับบัญชี deferred)");
+                // DbContext scope เดียวกัน → document เป็น tracked instance เดียวกับ
+                // ที่ ApplyDeposit แก้ → เห็น BalanceDue สุทธิทันทีหลัง await
+                await _documentService.ApplyDepositToInvoiceAsync(companyId, document.Id,
+                    new Models.DTOs.Document.ApplyDepositRequest(
+                        deposit.Id, request.DepositAppliedAmount,
+                        request.PaymentDate ?? document.DocumentDate),
+                    "integration-cashsale");
+                depApplied = request.DepositAppliedAmount;
+            }
+
+            // ── (ข) รับชำระ "ยอดคงเหลือสุทธิ" เป็นเงินสด (ไม่ออกใบเสร็จแยก) ──
+            var paidNow = false;
+            if (document.BalanceDue > 0.005m)
+            {
+                var pm = Enum.TryParse<Models.Enums.PaymentMethod>(request.PaymentMethod, true, out var parsedPm)
+                    ? parsedPm : Models.Enums.PaymentMethod.Cash;
+                await _documentService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
+                    DocumentId: document.Id,
+                    PaymentDate: request.PaymentDate ?? document.DocumentDate,
+                    Amount: document.BalanceDue,
+                    PaymentMethod: pm,
+                    Reference: request.ExternalRef,
+                    BankAccount: null,
+                    Notes: depApplied > 0m
+                        ? "ขายเงินสด — รับชำระสุทธิหลังหักมัดจำ (cash sale)"
+                        : "ขายเงินสด — รับชำระพร้อมออกใบกำกับ (cash sale)",
+                    OverridePaymentAccountId: request.PaymentAccountId,
+                    IssueReceiptDocument: false), createdBy: "integration-cashsale");
+                paidNow = true;
+            }
+
+            // ── (ค) ยอดปิด → mark "ใบเสร็จรับเงิน/ใบกำกับภาษี" (e-Tax T03 + หัวรวม)
+            // reload — doc ถูกแก้ในขั้นบน/รอบก่อน (retry)
+            var settled = await _db.Documents.FirstOrDefaultAsync(d => d.Id == document.Id);
+            var flagHealed = false;
+            if (settled != null && settled.BalanceDue <= 0.005m && !settled.IssuedAsCashReceipt)
+            {
+                settled.IssuedAsCashReceipt = true;
+                await _db.SaveChangesAsync();
+                flagHealed = true;
+            }
+            if (depApplied > 0m)
+                return $" + หักมัดจำ {depApplied:N2} + รับชำระสุทธิ (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03)";
+            if (paidNow)
+                return " + รับชำระเต็มยอด (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03)";
+            return flagHealed
+                ? " + heal สถานะใบเดียว (ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03)"
+                : null;
+        }
+        catch (Exception exPay)
+        {
+            _logger.LogWarning(exPay,
+                "IsCashSale settle failed for {DocNum} — ใบกำกับค้างชำระ ให้บันทึกรับเงินเอง หรือยิง sync ซ้ำเพื่อ retry",
+                document.DocumentNumber);
+            return " (⚠ ออกใบกำกับแล้วแต่รับชำระ/หักมัดจำอัตโนมัติไม่สำเร็จ — บันทึกรับเงินในระบบ หรือยิง sync ซ้ำเพื่อ retry)";
+        }
+    }
+
     private async Task<InboundSyncResponse> ResyncUpdateInvoiceAsync(
         Guid companyId, Guid integrationId, Document existing,
         InboundInvoiceRequest request, IntegrationSyncLog log, Stopwatch sw)
@@ -2247,6 +2271,15 @@ public class IntegrationService : IIntegrationService
         existing.VatAmount = totalVat;
         existing.TotalAmount = request.IncludeVat ? subTotal : subTotal + totalVat;
         existing.BalanceDue = existing.TotalAmount;   // PaidAmount == 0 (guard ผ่านแล้ว)
+        // Deposit fields (spec deposit/checkout) — resync = source of truth ทับค่าเดิม.
+        // guard ด้านบนยืนยัน PaidAmount==0 → ยังไม่เคย apply มัดจำ re-stamp ได้ปลอดภัย.
+        // drives → ไม่ pre-stamp Amount (ApplyDeposit stamp เองตอน settle — กัน double-count)
+        existing.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal;
+        existing.DepositOutputVatDeferred = request.DepositOutputVatDeferred;
+        existing.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef)
+            ? null : request.DepositAppliedRef.Trim();
+        existing.DepositAppliedAmount = (request.DepositAppliedAmount > 0m && !request.DepositAppliedDrivesJournal)
+            ? request.DepositAppliedAmount : 0m;
         await _db.SaveChangesAsync();
 
         // ── เลือกวิธีปรับ JE (contract ระบบต้นทาง):
@@ -2273,6 +2306,10 @@ public class IntegrationService : IIntegrationService
             + (inPlace ? "แก้ JE เดิม (in-place, เลขคงเดิม)" : "กลับ JE เดิม + post ใหม่ (reversal)");
         await _db.SaveChangesAsync();
 
+        // ── ขายเงินสด: settle ต่อหลัง resync (ครอบเคส heal จาก fail-soft รอบก่อน —
+        // guard PaidAmount==0 ผ่านแล้ว จึงไม่มีการชำระเดิมค้างชนกับ settle รอบนี้) ──
+        var cashSaleNote = await TrySettleCashSaleAsync(companyId, existing, request);
+
         log.Status = "Updated";
         log.CreatedDocumentId = existing.Id;
         log.CreatedJournalEntryId = journalEntryId;
@@ -2281,8 +2318,9 @@ public class IntegrationService : IIntegrationService
         _logger.LogInformation("Resync-updated invoice {DocNo} (company {Cid}) — {Mode}",
             existing.DocumentNumber, companyId, inPlace ? "in-place" : "reversal");
         return new InboundSyncResponse(true,
-            inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
-                    : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่",
+            (inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
+                     : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่")
+            + (cashSaleNote ?? ""),
             existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
     }
 

@@ -3575,6 +3575,76 @@ public class DocumentService : IDocumentService
                         systemTriggered: true);
                 }
 
+                // 2b) กลับ "JV ตัดชำระด้วยมัดจำ" (ApplyDepositToInvoiceAsync) ที่ชี้มา
+                //     ใบนี้ — JV นั้น SourceDocumentId = ใบมัดจำ (ไม่ใช่ใบนี้) จึงหลุด
+                //     selection ของ step 2. ถ้าไม่กลับ: Cr 113 ของ JV ค้าง (AR ติดลบ)
+                //     + 217xx ถูกตัดทั้งที่มัดจำต้องกลับมาคงค้าง + subledger มัดจำ
+                //     (RealizedAmount/RecognizedAt/AppliedToDocumentId) ไม่คืน →
+                //     นำมัดจำไป apply ใบใหม่ไม่ได้. mirror ของ 7b (ฝั่ง void ใบมัดจำ):
+                //     อ่าน "ขาจริง" จาก JV แล้วคืนตามนั้น. เคส drives (ขา reversal ฝัง
+                //     ใน JE ใบเช็คเอาท์เอง ไม่มี JV) ข้าม loop นี้โดยธรรมชาติ (ไม่เจอ
+                //     JE ที่มีขา Cr 113 sourced จากใบมัดจำ) → 7c จัดการตามเดิม.
+                var appliedDeposits = await _db.Documents
+                    .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                        && d.DepositAppliedToDocumentId == documentId)
+                    .ToListAsync();
+                foreach (var dep in appliedDeposits)
+                {
+                    var applyJes = await _db.JournalEntries.Include(j => j.Lines)
+                        .Where(j => j.CompanyId == companyId && j.SourceDocumentId == dep.Id
+                            && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                            && j.Status == JournalEntryStatus.Posted && !j.IsDeleted
+                            && j.Reference == doc.DocumentNumber)
+                        .ToListAsync();
+                    if (applyJes.Count == 0) continue;   // drives-mode → 7c จัดการ
+
+                    var applyAcctIds = applyJes.SelectMany(j => j.Lines)
+                        .Select(l => l.AccountId).Distinct().ToList();
+                    var applyAcctCodes = await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.CompanyId == companyId && applyAcctIds.Contains(a.Id))
+                        .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
+                    string ApplyCodeOf(Guid id) =>
+                        applyAcctCodes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+
+                    decimal restoredBase = 0m, restoredGross = 0m;
+                    bool had21913 = false, reversedAny = false;
+                    foreach (var applyJe in applyJes)
+                    {
+                        // JV ตัดชำระ = ต้องมีขา Cr ลูกหนี้ (113) — กัน JE ประเภทอื่น
+                        // ของใบมัดจำ (เช่น realize รายได้) ที่ Reference เลขใบเดียวกัน
+                        var grossCr = applyJe.Lines.Where(l => !l.IsDeleted && l.CreditAmount > 0
+                            && ApplyCodeOf(l.AccountId).StartsWith("113")).Sum(l => l.CreditAmount);
+                        if (grossCr <= 0m) continue;
+                        restoredBase += applyJe.Lines.Where(l => !l.IsDeleted && l.DebitAmount > 0
+                                && (ApplyCodeOf(l.AccountId).StartsWith("217")
+                                    || ApplyCodeOf(l.AccountId).StartsWith("215")))
+                            .Sum(l => l.DebitAmount);
+                        had21913 |= applyJe.Lines.Any(l => !l.IsDeleted && l.DebitAmount > 0
+                            && ApplyCodeOf(l.AccountId) == "21913");
+                        restoredGross += grossCr;
+                        await _accountingService.ReverseJournalEntryAsync(companyId, applyJe.Id,
+                            reversalDate: DateTime.UtcNow.Date,
+                            description: $"ยกเลิกเอกสาร {doc.DocumentNumber} — คืนมัดจำ {dep.DocumentNumber}",
+                            systemTriggered: true);
+                        reversedAny = true;
+                    }
+                    if (!reversedAny) continue;
+
+                    dep.DepositRealizedAmount = Math.Max(0m, dep.DepositRealizedAmount - restoredBase);
+                    if (dep.SubTotal - dep.DepositRealizedAmount > 0.005m)
+                        dep.DepositRealizedAt = null;    // กลับเป็น "มัดจำคงค้าง"
+                    // เคลียร์ RecognizedAt เฉพาะเมื่อ JV นี้เป็นผู้ stamp จริง (มี Dr
+                    // 21913) — หลักเดียวกับ 7c/audit F3 กันล้าง stamp ของ Realize รอบก่อน
+                    if (had21913)
+                        dep.DepositOutputVatRecognizedAt = null;
+                    dep.DepositAppliedToDocumentId = null;
+                    dep.UpdatedAt = DateTime.UtcNow;
+                    // คืน PaidAmount ส่วนที่จ่ายด้วยมัดจำ (ใบนี้กำลัง Voided — เก็บ
+                    // ตัวเลขให้ตรงจริงเพื่อรายงาน/inspection ย้อนหลัง)
+                    doc.PaidAmount = Math.Max(0m, doc.PaidAmount - restoredGross);
+                    doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+                }
+
                 // 3) Void linked EtaxInvoice (keep XML/PDF for audit; only flag status).
                 // รวม Submitted ด้วย (ยังไม่ได้รับตอบรับ RD → ยกเลิกได้พร้อมเอกสาร);
                 // Accepted ถูกกันตั้งแต่ guard ด้านบนแล้ว (มาไม่ถึงตรงนี้).
