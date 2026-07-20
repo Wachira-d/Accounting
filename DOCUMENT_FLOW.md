@@ -1359,8 +1359,16 @@ IsCashSale settle สำเร็จ (BalanceDue→0) → ตั้ง flag → 
 คิดตอน render) ตรงที่ persist → คุม e-Tax type ได้ (ServedAsReceipt คุมแค่หัว).
 + InboundInvoiceRequest รับ deposit fields (DepositAppliedAmount/Ref/
 OutputVatDeferred/DrivesJournal) → persist ลง Document ตอนสร้าง (รองรับ resync
-+ deposit/checkout). settle จ่ายเต็ม BalanceDue ตามเดิม (DepositAppliedAmount
-display-only เว้น DrivesJournal ซึ่ง fire แค่ AutoPost path ไม่ใช่ mapping-JE นี้)._
++ deposit/checkout). **เคสมีมัดจำ (DrivesJournal=true):** ก่อน settle เรียก
+`ApplyDepositToInvoiceAsync` (เส้น verified — Dr 217xx + Dr [21913|21911] /
+Cr ลูกหนี้, กลับ deferred ของใบมัดจำ REC-xxx ที่อ้าง, ไม่รับรู้รายได้ซ้ำ) →
+BalanceDue เหลือสุทธิ → settle รับแค่ส่วนต่าง → GL: Dr เงินสด(สุทธิ) +
+Dr 217xx/VAT-reversal / Cr รายได้+VAT+ล้าง AR. drives ต้องมี "ใบมัดจำจริง"
+(IsDeposit) — resolve จาก depositAppliedRef; ไม่พบ → fail-soft (ใบกำกับค้างชำระ
+ไม่ล้ม sync). display-only mode (DrivesJournal=false): stamp DepositAppliedAmount
+ที่ create เพื่อ render "หักมัดจำ/รับสุทธิ" เท่านั้น ไม่แตะ GL, settle จ่ายเต็ม.
+⚠ ยัง gate ด้วย toggle ฝั่ง TakeTime (`Nexaacc_CashSale_Deposit`) จนกว่า
+test GL บน Windows ผ่าน._
 _รอบ 59 (audit จำลอง scenario — ชุดใหญ่ 15 แก้): **สมมาตร apply↔void สมบูรณ์** —_
 _void/purge un-realize คิดจาก "บรรทัด JE จริงของใบเช็คเอาท์" (helper Unrealize_
 _DrivesDepositAsync: depBase = ΣDr 215/217, เคลียร์ RecognizedAt เฉพาะเมื่อใบมี_
