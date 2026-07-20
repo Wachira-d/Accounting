@@ -141,6 +141,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Behavior พิเศษ**:
   - resolve external account/user IDs → company members (mapping table)
   - `AutoApprove` flag ตาม `IntegrationConfig` → ข้าม Draft state
+  - **`IsCashSale` (B2B ขายเงินสด)** บน `InboundInvoiceRequest`: หลังสร้าง
+    TaxInvoice + post JE (Dr ลูกหนี้/Cr รายได้+VAT) ระบบรับชำระเต็มยอดคงเหลือ
+    ทันทีผ่าน `CreatePaymentAsync(IssueReceiptDocument:false,
+    OverridePaymentAccountId)` → **ไม่ออกใบเสร็จแยก** → ใบกำกับ BalanceDue=0 →
+    `ServedAsReceipt` พิมพ์หัว "ใบกำกับภาษี/ใบเสร็จรับเงิน" + e-Tax TAX_INVOICE.
+    สุทธิ GL = Dr เงินสด(PaymentAccountId)/Cr รายได้+VAT. ยุบ 3 ใบ (TIV+REC×2)
+    เหลือใบเดียว (spec TakeTime). fail-soft: ชำระไม่สำเร็จ = ใบกำกับค้างชำระ ไม่ล้ม sync
   - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
     **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
     สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)

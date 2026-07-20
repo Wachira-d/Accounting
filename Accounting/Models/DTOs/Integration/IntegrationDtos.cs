@@ -115,7 +115,20 @@ public record InboundInvoiceRequest(
     /// เอกสารหลายใบเข้ากับ booking เดียวกัน (มัดจำ → ใบกำกับสุดท้าย → ใบเสร็จ)
     /// เพื่อ auto-suggest หักมัดจำ + กระทบยอด. เก็บลง `Document.BookingNumber`
     /// (JSON key = `bookingNumber`, string). null = ไม่ผูก. ป้อน RES-{reservationId}.</summary>
-    string? BookingNumber = null);
+    string? BookingNumber = null,
+    /// <summary>ขายเงินสด (B2B cash sale) — เมื่อ true ระบบจะ "รับชำระเต็มยอด
+    /// ในคำขอเดียว" ทันทีหลังสร้างใบกำกับ **โดยไม่ออกใบเสร็จแยก** → ได้เอกสาร
+    /// ใบเดียว หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน" (ServedAsReceipt) + export
+    /// e-Tax เป็น TAX_INVOICE ตามปกติ. GL: ใบกำกับลง Dr ลูกหนี้/Cr รายได้+VAT
+    /// แล้วการชำระลง Dr เงินสด(PaymentAccountId)/Cr ลูกหนี้ = สุทธิ Dr เงินสด/
+    /// Cr รายได้+VAT (ขายสด). แก้ปัญหา 3 ใบ (TIV + REC 2 ใบ) เหลือใบเดียว.
+    /// ใช้กับ DocumentType=TaxInvoice เท่านั้น. ถ้ามีหักมัดจำ ชำระเฉพาะยอดคงเหลือ.</summary>
+    bool IsCashSale = false,
+    /// <summary>บัญชีสินทรัพย์ที่รับเงิน(เงินสด/ธนาคาร) สำหรับ IsCashSale — cash
+    /// side ของ JE ชำระจะลงบัญชีนี้. null = ใช้บัญชีเงินสด default ของบริษัท.</summary>
+    Guid? PaymentAccountId = null,
+    /// <summary>วันที่รับเงินจริง สำหรับ IsCashSale. null = ใช้ DocumentDate.</summary>
+    DateTime? PaymentDate = null);
 
 /// <summary>
 /// Base64-encoded file attachment for external integrations. Server enforces:

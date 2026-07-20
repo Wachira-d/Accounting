@@ -702,6 +702,39 @@ public class IntegrationService : IIntegrationService
             // Auto-create journal entry from category mappings
             var journalEntryId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, "invoice");
 
+            // ── B2B cash sale (IsCashSale) — ยุบ 3 ใบเหลือใบเดียว (spec TakeTime) ──
+            // รับชำระเต็มยอดคงเหลือทันที **โดยไม่ออกใบเสร็จแยก** → ใบกำกับใบนี้
+            // BalanceDue=0/Status=Paid → ServedAsReceipt พิมพ์หัว "ใบกำกับภาษี/
+            // ใบเสร็จรับเงิน" + e-Tax TAX_INVOICE ตามเดิม. GL: Dr เงินสด/Cr ลูกหนี้
+            // (สุทธิกับใบกำกับ = Dr เงินสด/Cr รายได้+VAT). fail-soft: ถ้าชำระไม่สำเร็จ
+            // ใบกำกับยังอยู่ (ค้างชำระ) → ผู้ใช้บันทึกรับเงินเองได้ ไม่ล้ม sync.
+            string? cashSaleNote = null;
+            if (request.IsCashSale && _documentService != null
+                && document.DocumentType == DocumentType.TaxInvoice && document.BalanceDue > 0.005m)
+            {
+                try
+                {
+                    var pm = Enum.TryParse<Models.Enums.PaymentMethod>(request.PaymentMethod, true, out var parsedPm)
+                        ? parsedPm : Models.Enums.PaymentMethod.Cash;
+                    await _documentService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
+                        DocumentId: document.Id,
+                        PaymentDate: request.PaymentDate ?? document.DocumentDate,
+                        Amount: document.BalanceDue,
+                        PaymentMethod: pm,
+                        Reference: request.ExternalRef,
+                        BankAccount: null,
+                        Notes: "ขายเงินสด — รับชำระพร้อมออกใบกำกับ (cash sale)",
+                        OverridePaymentAccountId: request.PaymentAccountId,
+                        IssueReceiptDocument: false), createdBy: "integration-cashsale");
+                    cashSaleNote = " + รับชำระเต็มยอด (ใบเดียว: ใบกำกับภาษี/ใบเสร็จรับเงิน)";
+                }
+                catch (Exception exPay)
+                {
+                    _logger.LogWarning(exPay, "IsCashSale settle failed for {DocNum} — ใบกำกับค้างชำระ ให้บันทึกรับเงินเอง", document.DocumentNumber);
+                    cashSaleNote = " (⚠ ออกใบกำกับแล้วแต่รับชำระอัตโนมัติไม่สำเร็จ — บันทึกรับเงินในระบบ)";
+                }
+            }
+
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
             log.CreatedContactId = contact.Id;
@@ -717,7 +750,7 @@ public class IntegrationService : IIntegrationService
                 });
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Invoice created", document.Id, contact.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true, "Invoice created" + cashSaleNote, document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
