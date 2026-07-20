@@ -769,7 +769,12 @@ public partial class PdfGenerationService : IPdfGenerationService
             // (TakeTime: ช่อง "ผู้รับเงิน" = ชวนพิศ ที่ส่งมา ไม่ใช่ service account ที่สร้างเอกสาร;
             //  ช่อง "ผู้มีอำนาจลงนาม" = slot 1 = กรรมการ ไม่กระทบ)
             var name = !string.IsNullOrWhiteSpace(doc.PreparerName) ? doc.PreparerName!.Trim() : cur.Name;
-            signers[0] = new DocumentSigner(dataUri, bytes, name, cur.Title);
+            // ตำแหน่ง (Title) เป็นของ CreatedBy user — เมื่อชื่อถูก override เป็นคนภายนอก
+            // ห้ามลากตำแหน่งเดิมตามมา (เช่น "กรรมการ" ของ owner ไปโผล่ใต้ชื่อพนักงาน
+            // ที่ไม่ใช่กรรมการ). คง Title เฉพาะเมื่อชื่อยังเป็นคนเดิม.
+            var nameOverridden = !string.IsNullOrWhiteSpace(doc.PreparerName)
+                && !string.Equals(doc.PreparerName!.Trim(), cur.Name?.Trim(), StringComparison.OrdinalIgnoreCase);
+            signers[0] = new DocumentSigner(dataUri, bytes, name, nameOverridden ? null : cur.Title);
         }
 
         // slot 2 — external/customer signature captured via the approval flow.
@@ -1868,8 +1873,14 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             /* Signatures — evenly spaced, breathing room above. The image
                overlays the line via negative margin so a real signature
                appears to be written ON the line. */
-            .signatures {{ display: flex; justify-content: space-around; gap: 24px; margin-top: 48px; }}
-            .sig-box {{ text-align: center; flex: 1 1 0; max-width: 32%; position: relative; }}
+            /* page-break-inside:avoid — บล็อกลายเซ็นต้องไม่ถูกผ่ากลางข้ามหน้า
+               (เดิมป้ายตำแหน่งใต้ชื่อหลุดไปโผล่หน้าถัดไปโดด ๆ). margin-top ลดจาก
+               48→28px เพิ่มโอกาสอยู่หน้าเดียวจบ; ถ้าไม่พอดีจริง ทั้งบล็อก (เส้น+
+               ชื่อ+ตำแหน่งครบชุด) ยกไปหน้าใหม่ด้วยกัน */
+            .signatures {{ display: flex; justify-content: space-around; gap: 24px; margin-top: 28px;
+                           page-break-inside: avoid; break-inside: avoid; }}
+            .sig-box {{ text-align: center; flex: 1 1 0; max-width: 32%; position: relative;
+                        page-break-inside: avoid; break-inside: avoid; }}
             /* Fixed-height area reserved in EVERY box so the signature line
                aligns across columns whether or not the slot is signed. The
                image bottom-aligns to sit just above the line. */
