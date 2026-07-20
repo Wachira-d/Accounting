@@ -94,14 +94,16 @@ public partial class PdfGenerationService
                     var bodyFont = float.TryParse(template.BodyFontSize, out var bf) ? bf : 10f;
                     page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(bodyFont).FontColor(primary));
 
-                    // เอกสารที่ถูกยกเลิก (Voided) — ประทับลายน้ำ "ยกเลิก"
-                    // สีแดงเด่นชัด priority สูงสุด (ทับ watermark ปกติ).
-                    // ยังพิมพ์เนื้อหาได้เหมือนเดิม เก็บเป็นหลักฐาน/audit.
+                    // เอกสารที่ถูกยกเลิก (Voided) — ประทับตรา "ยกเลิก" สีแดง
+                    // **Foreground = ทับบนเนื้อหา** เหมือนตราประทับจริง (เดิมใช้
+                    // Background → ตราไปอยู่หลังสุด ข้อมูลทับตรา = ดูเหมือนไม่ถูก
+                    // ประทับ). สีโปร่ง 20% (#33) → เนื้อหายังอ่านทะลุได้ เก็บเป็น
+                    // หลักฐาน/audit ตามเดิม. priority เหนือ watermark ปกติ.
                     if (doc.Status == Models.Enums.DocumentStatus.Voided)
                     {
                         try
                         {
-                            page.Background().AlignCenter().AlignMiddle()
+                            page.Foreground().AlignCenter().AlignMiddle()
                                 .Text("ยกเลิก").FontSize(96).FontColor("#33DC2626").Bold();
                         }
                         catch { }
