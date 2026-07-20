@@ -205,8 +205,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   cash-settle / PV auto-approve ใช้ field นี้แยก "PV ตั้งต้น" กับ "PV settle
   ใบแจ้งหนี้ซื้อ" (บั๊กเดิม: PV แปลงจาก PI โดน auto-approve เป็น standalone
   cash ก่อนมีลิงก์ → PI ค้างชำระตลอด + JE ลงค่าใช้จ่ายซ้ำ)
-- **กันสร้างซ้ำ**: `ComputeConsumptionAsync` (`:3104`) — ตรวจ axis
+- **กันสร้างซ้ำ**: `ComputeConsumptionAsync` — ตรวจ axis
   (`Delivery` / `Billing` / `None`) ที่ source line ถูกใช้ไปเท่าไหร่แล้ว
+- **ข้อยกเว้น Invoice→TaxInvoice (ทั้งฉบับ)**: ถือเป็น "อัปเกรดชนิดเอกสารรับรู้
+  รายได้ใบเดียวกัน" → **คัดลอกทุกบรรทัดเต็ม ข้าม consumption gate**
+  (`wholeDocRevenueUpgrade` ใน `ConvertDocumentAsync`) — เดิม Invoice/TaxInvoice
+  อยู่ Billing axis เดียวกัน gate ตัดบรรทัดที่มี child เก่าอ้าง → ใบกำกับ/ใบเสร็จ
+  ยอดขาดไม่ตรงใบแจ้งหนี้. การแปลงซ้ำยังถูกกันด้วย ValidateConversionAsync
+  (double revenue guard). partial ตั้งใจ → ConvertDocumentPartialAsync ตามเดิม
 - **คู่ที่แปลงได้** (`DocumentService.ValidConversions :2808`) — exact:
   ```
   Quotation        → Invoice / TaxInvoice / BillingNote / DeliveryNote / Receipt
@@ -524,7 +530,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   1. Reverse linked **Payments** → `ReversePaymentInternalAsync`
   2. Reverse posted JEs → `ReverseJournalEntryAsync` (สร้าง JE ใหม่ Dr↔Cr กลับ
      + link `OriginalEntryId/ReversedByEntryId`, ไม่ลบ JE เดิม)
-  3. Void linked **e-Tax invoices** (soft — ส่ง void ให้ RD)
+  3. Void linked **e-Tax invoices** (soft — เก็บ XML ไว้ audit; รวมสถานะ
+     `Submitted` ด้วย). **Guard ก่อน void**: block เฉพาะ e-Tax ที่
+     `Accepted` (RD ตอบรับแล้ว = จุด no-return, ต้องยื่นขอยกเลิกที่ RD);
+     `Submitted` (เซ็น/คิว ยังไม่ได้ตอบรับ) ยกเลิกได้ก่อนนำส่ง ภ.พ.30 —
+     งวดที่ Filed แล้วถูกกันด้วย filing-lock guard แยกอยู่แล้ว
   4. Unlink **BankTransactions** (clear matched reference)
   5. Revert source-doc adjustments (ลูกของ CN/DN กลับ AR/AP ของต้นทาง)
   6. Reverse stock (`ApplyStockMovementsAsync(−1)`) + project cost entries

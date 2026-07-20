@@ -4501,8 +4501,20 @@
         // "ใบแจ้งหนี้/ใบกำกับภาษี" ใบเดียว — ติ๊ก checkbox บนฟอร์ม (ฝั่งขาย
         // Invoice/TaxInvoice) → บังคับ type=TaxInvoice ให้ทำงานเป็นใบกำกับ
         // เต็มรูป (VAT/ภพ.30/§86/4/e-Tax) แล้วส่ง flag ให้ PDF พิมพ์หัวรวม.
-        const _combineTax = (_docType === 'Invoice' || _docType === 'TaxInvoice')
+        let _combineTax = (_docType === 'Invoice' || _docType === 'TaxInvoice')
           && (document.getElementById('fCombinedTaxInvoice')?.checked || false);
+        // §86/4 + tax point (§78/§78-1): "ใบแจ้งหนี้ที่รับเงินเลย" + มี VAT +
+        // ผู้ซื้อไม่ได้ปฏิเสธใบกำกับ = จุดความรับผิด VAT เกิดแล้ว → ต้องออก
+        // "ใบกำกับภาษี" ไม่ใช่ใบแจ้งหนี้เปล่า (ลูกค้าเคลมภาษีซื้อไม่ได้ + ผู้ขาย
+        // ไม่ได้ออกใบกำกับตามกฎหมาย). auto-upgrade เป็น "ใบแจ้งหนี้/ใบกำกับภาษี"
+        // ให้เอง (เฉพาะตอนติ๊กรับเงินเลย — ใบแจ้งหนี้ปกติที่ยังไม่รับเงินไม่กระทบ).
+        const _paidOnIssueNow = document.getElementById('fPaidOnIssue')?.checked || false;
+        const _buyerDeclinedTax = document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false;
+        const _hasVatLine = lines.some(l => (l.vatRate || 0) > 0);
+        if (_docType === 'Invoice' && _paidOnIssueNow && _hasVatLine && !_buyerDeclinedTax && !_combineTax) {
+          _combineTax = true;
+          Layout.toast('ขายรับเงินสด + มี VAT → ออกเป็น "ใบแจ้งหนี้/ใบกำกับภาษี" ให้อัตโนมัติตาม §86/4 (ถ้าผู้ซื้อไม่ต้องการใบกำกับ ให้ติ๊ก "ไม่ประสงค์รับใบกำกับภาษี")', 'info', 7000);
+        }
         const _effectiveDocType = _combineTax ? 'TaxInvoice' : _docType;
         const payload = {
           documentType: _effectiveDocType,
@@ -5096,7 +5108,7 @@
           if (payableStatuses.includes(d.status) && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
             // can trace the guidance "→ ปุ่มไหน" without hunting.
-            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
+            actions += ` <button class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
           }
           // Bad debt write-off: only for AR docs that are still outstanding
           const arTypes = ['Invoice', 'TaxInvoice', 'DebitNote'];
@@ -5720,7 +5732,28 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
-      async recordPayment(docId, balanceDue, sourceWht = 0, sourceTotal = 0, currency = 'THB', docRate = 1) {
+      async recordPayment(docId, balanceDue, sourceWht = 0, sourceTotal = 0, currency = 'THB', docRate = 1, docType = '', docVat = 0) {
+        // §86/4 + tax point: รับเงิน "ใบแจ้งหนี้ (Invoice)" ที่มี VAT = จุดความ
+        // รับผิด VAT เกิด → ตามกฎหมายต้องออกใบกำกับภาษี. ระบบแปลง INV→TIV
+        // "หลังรับเงิน" ไม่ได้ (supersede block เมื่อ PaidAmount>0) → ต้องเตือน
+        // "ก่อน" รับเงิน + เสนอแปลงเป็นใบกำกับให้เลย (ทางที่ถูก: แปลงก่อน แล้ว
+        // ค่อยรับเงินที่ใบกำกับ → ได้ใบกำกับ+ใบเสร็จครบ)
+        if (docType === 'Invoice' && docVat > 0) {
+          const goConvert = confirm(
+            'ใบแจ้งหนี้นี้มี VAT และยังไม่ได้ออกใบกำกับภาษี\n\n' +
+            'ตามกฎหมาย (§78/§78-1) เมื่อรับเงินต้องออกใบกำกับภาษี — และจะแปลงเป็นใบกำกับ "หลังรับเงิน" ไม่ได้\n\n' +
+            'กด OK = แปลงเป็นใบกำกับภาษีก่อน (แนะนำ — แล้วค่อยบันทึกรับเงินที่ใบกำกับ)\n' +
+            'กด Cancel = รับเงินต่อโดยไม่ออกใบกำกับ (ลูกค้าเคลมภาษีซื้อไม่ได้)');
+          if (goConvert) {
+            const api = Layout.api(); if (!api) return;
+            try {
+              const r = await api.convertDocument(docId, 'TaxInvoice');
+              Layout.toast(`แปลงเป็นใบกำกับภาษี ${r.data?.documentNumber || ''} แล้ว — อนุมัติใบกำกับ แล้วกดบันทึกชำระเงินที่ใบกำกับใบใหม่`, 'success', 8000);
+              await this.load();
+            } catch (e) { Layout.toast('แปลงไม่สำเร็จ: ' + e.message, 'error', 8000); }
+            return;
+          }
+        }
         // Inline payment-recording modal. The previous prompt-based flow
         // hardcoded paymentMethod='Transfer' which didn't match the
         // PaymentMethod enum (BankTransfer / Cash / PromptPay / Cheque /
