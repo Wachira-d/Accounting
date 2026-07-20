@@ -993,7 +993,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         doc.ServedAsReceipt = false;
         if (doc.DocumentType != DocumentType.TaxInvoice) return;
         if (doc.CombinedInvoiceTaxInvoice) return;   // มีหัวรวมของตัวเองแล้ว
-        if (doc.Status != DocumentStatus.Paid || doc.BalanceDue > 0.01m) return;
+        // ชำระครบวันเดียวกัน (same-day settlement) → ใบกำกับทำหน้าที่ใบเสร็จในตัว.
+        // เดิมบังคับ Status == Paid เป๊ะ → พลาดเคสที่ balance = 0 แต่ label ยัง
+        // Approved/PartiallyPaid (เช่น หักมัดจำผ่าน flow อื่น / rounding) — คำขอ
+        // TakeTime key ที่ "BalanceDue = 0". ใช้ BalanceDue≈0 + เคยรับเงินจริง
+        // (PaidAmount/มัดจำ > 0) บนใบที่ลงบัญชีแล้ว (ไม่ใช่ Draft/Voided/Rejected).
+        if (doc.BalanceDue > 0.01m || doc.PaidAmount <= 0.005m) return;
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
+            or DocumentStatus.Rejected or DocumentStatus.WaitingApproval) return;
         // ชำระผ่านการออกใบเสร็จแยก (Receipt/RV อ้างใบนี้) → ใบเสร็จคือคนละใบ
         var hasSeparateReceipt = await _db.Documents.AsNoTracking().AnyAsync(r =>
             r.CompanyId == companyId && r.RelatedDocumentId == doc.Id
