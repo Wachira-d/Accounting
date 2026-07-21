@@ -1292,6 +1292,38 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 73 (มัดจำหลายใบ/ใบกำกับ — blocker โรงแรม): `driveDeposit` เดิม resolve
+`depositAppliedRef` เป็นเลขเดียว (exact match) → comma-separated หาไม่เจอ →
+degrade เป็น AR. เพิ่ม: split `depositAppliedRef` ด้วยจุลภาค — ถ้า >1 เลข →
+loop **reverse ทุกใบเต็มยอดคงเหลือ** (GL-driven ต่อใบ: Dr 215xx/217xx + 21913/
+21911 ที่แต่ละใบ Cr ไว้จริง, mark ใบมัดจำ realized เต็ม + one-shot guard ต่อใบ +
+row-lock). ผลรวม Dr = `depositAppliedAmount` (ยอดรวมที่ส่งมา) → cashAmt (Total −
+รวม) สมดุลพอดี; ไม่ตรง → AutoPost balance check throw → degrade (ปลอดภัย).
+**เลขเดียว → else = logic เดิมไม่แตะ (zero regression)**. contract TakeTime: คง
+comma-separated `depositAppliedRef` + `depositAppliedAmount`=ผลรวม, แต่ละใบถูก
+consume เต็ม (semantic checkout โรงแรม). ⚠️ GL-critical — Windows GL test เคส
+2+ ใบก่อนเปิด._
+_รอบ 72 (ลบ+resync ให้สะอาด — ใบเสร็จ REC ลอยค้าง): ผู้ใช้ลบใบกำกับเก่าที่มี
+ปัญหาเพื่อ resync ใหม่ แต่ **PurgeDocumentAsync เดิม step 7 แค่ NULL
+RelatedDocumentId ไม่ได้ลบใบเสร็จ settlement (REC)** → REC ลอยค้างใน list. แก้:
+(1) purge เพิ่ม step 6c — cascade ลบ settlement receipt (IsSettlementReceipt +
+RelatedDocumentId==ใบนี้) พร้อม e-Tax/line ก่อน NULL ref; (2)
+`BulkCleanupController`: `GET /cleanup/orphaned-settlement-receipts` (diagnostic,
+API key อ่านได้) + `POST .../purge` (Owner soft-delete) — ล้าง REC ที่ orphan
+อยู่แล้วจากการลบก่อนหน้า (RelatedDocumentId NULL หรือต้นทาง Voided). settlement
+receipt ไม่มี JE ของตัวเอง (payment ถือ JE, ถูกลบไปกับใบกำกับ) → ลบปลอดภัย
+ไม่กระทบ GL. วิธี resync สะอาด: ลบทั้ง group (มัดจำ+ใบกำกับ+REC) → resync มัดจำ
+fresh + ใบกำกับ isCashSale อ้าง depositAppliedRef ใหม่._
+_รอบ 71 (กันยอดเบิ้ลจากชำระซ้ำ — root cause ที่ผู้ใช้เจอ): `ProcessPaymentAsync`
+(integration payment endpoint) เดิมมีแค่ idempotency-by-reference — **ไม่มี**
+status guard/over-pay cap → ยิง payment ส่วนมัดจำแยก = Dr เงินสด/Cr ลูกหนี้ ซ้ำ
+กับที่มัดจำ+ใบกำกับลงไปแล้ว → เงินสด/มัดจำนับซ้ำ + สร้าง REC settlement เยอะ.
+เพิ่ม guard: เอกสาร `IssuedAsCashReceipt` (ขายเงินสด settle ในตัวแล้ว) หรือ
+`Status=Paid`/`BalanceDue≤0` → skip ไม่รับชำระภายนอก; over-pay (Amount>คงค้าง)
+→ throw พร้อมชี้ให้ใช้ `depositAppliedRef` (drives) แทนการยิง payment แยก.
+(`DocumentService.CreatePaymentAsync` มี guard นี้อยู่แล้ว — เติมให้ครบฝั่ง
+integration). วิธีถูก: ออกใบกำกับ isCashSale + depositAppliedRef → driveDeposit
+**ดึงใบมัดจำเดิม** (กลับ 21510/21913) ใบเดียวจบ ไม่สร้าง receipt ใหม่/ไม่นับซ้ำ._
 _รอบ 70 (TakeTime cash-sale — GL สะอาด ไม่มีลูกหนี้): แก้ตามที่ผู้ใช้ทัก — ขายเงินสด
 B2B ต้องไม่มีลูกหนี้การค้าในการลงบัญชี. เดิม integration `isCashSale` ลงผ่าน
 mapping-JE (Dr ลูกหนี้) + ApplyDeposit + settle → **AR-transit** (สุทธิ 0 แต่ footer

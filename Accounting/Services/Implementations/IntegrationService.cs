@@ -791,6 +791,32 @@ public class IntegrationService : IIntegrationService
             if (document == null)
                 throw new KeyNotFoundException($"ไม่พบเอกสารอ้างอิง: {request.InvoiceExternalRef ?? request.DocumentId?.ToString()}");
 
+            // ── กันยอดเบิ้ล (root cause ที่ผู้ใช้เจอ: มัดจำถูกนับซ้ำ) ──
+            // (1) เอกสารขายเงินสด (isCashSale) — settle ในตัวใบแล้ว (Dr เงินสด + กลับ
+            //     มัดจำ 21510/21913, BalanceDue=0). ห้ามรับชำระภายนอกซ้ำ มิฉะนั้นจะ
+            //     Dr เงินสด/Cr ลูกหนี้(ที่ไม่มี) → เงินสดเกิน + AR ติดลบ + มัดจำนับซ้ำ.
+            // (2) เอกสารปิดยอดแล้ว (Paid/BalanceDue≤0) — ห้ามชำระเพิ่ม (over-pay).
+            //     TakeTime ต้อง "ดึงใบมัดจำเดิม" ผ่าน depositAppliedRef ตอนออกใบกำกับ
+            //     ไม่ใช่ยิง payment แยกสำหรับส่วนมัดจำ.
+            if (document.IssuedAsCashReceipt || document.Status == DocumentStatus.Paid
+                || document.BalanceDue <= 0.005m)
+            {
+                var reason = document.IssuedAsCashReceipt
+                    ? $"เอกสาร {document.DocumentNumber} เป็นขายเงินสด (settle ในตัวใบแล้ว) — ไม่รับชำระภายนอกซ้ำ (กันนับมัดจำ/เงินสดเบิ้ล)"
+                    : $"เอกสาร {document.DocumentNumber} ชำระครบแล้ว (คงค้าง {document.BalanceDue:N2}) — ไม่รับชำระเพิ่ม";
+                log.Status = "Skipped";
+                log.CreatedDocumentId = document.Id;
+                log.ErrorMessage = reason;
+                log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                await SaveSyncLog(log, integrationId);
+                return new InboundSyncResponse(true, reason, document.Id, null, null, null, document.DocumentNumber);
+            }
+            // over-payment cap: ยอดชำระต้องไม่เกินคงค้าง (กัน PaidAmount>Total, AR ติดลบ)
+            if (request.Amount > document.BalanceDue + 0.005m)
+                throw new InvalidOperationException(
+                    $"ยอดชำระ ({request.Amount:N2}) เกินยอดคงค้าง ({document.BalanceDue:N2}) ของ {document.DocumentNumber} — " +
+                    "ถ้าหักมัดจำ ให้ส่ง depositAppliedRef ตอนออกใบกำกับ (drives) ไม่ใช่ยิง payment แยก");
+
             // idempotency: webhook ชำระเงินอาจถูกยิงซ้ำ (retry) → ถ้ามี Payment ของ
             // เอกสารนี้ด้วย Reference เดียวกันแล้ว คืนผลเดิม (ไม่สร้างซ้ำ) กันเอกสาร
             // ถูกชำระ 2 เท่า (PaidAmount เกิน, BalanceDue ติดลบ, Dr Cash/Cr AR ซ้ำ).
