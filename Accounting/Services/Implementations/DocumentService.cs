@@ -8289,6 +8289,84 @@ public class DocumentService : IDocumentService
 
                 if (driveDeposit)
                 {
+                    // ── มัดจำหลายใบ (spec TakeTime hotel): depositAppliedRef คั่นจุลภาค ──
+                    // resolve + reverse **ทุกใบเต็มยอดคงเหลือ** (GL-driven ต่อใบ — Dr บัญชี
+                    // 215xx/217xx + 21913/21911 ที่แต่ละใบ Cr ไว้จริง). ผลรวม Dr ต้อง =
+                    // doc.DepositAppliedAmount (ยอดรวมที่ TakeTime ส่ง) → cashAmt (คิดไว้
+                    // ข้างบน = Total − DepositAppliedAmount) + ผลรวมนี้ = สมดุลพอดี;
+                    // ไม่ตรง → AutoPost balance check throw → degrade เป็นตั้งหนี้ (ปลอดภัย).
+                    // (เลขเดียว → else ด้านล่าง = logic เดิม ไม่แตะ เพื่อ zero regression)
+                    var _depRefs = (doc.DepositAppliedRef ?? "")
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (_depRefs.Length > 1)
+                    {
+                        foreach (var depRef in _depRefs)
+                        {
+                            var mDepId = await _db.Documents.AsNoTracking()
+                                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                                    && d.DocumentNumber == depRef)
+                                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
+                            if (!mDepId.HasValue)
+                                throw new InvalidOperationException(
+                                    $"หักมัดจำหลายใบ: ไม่พบใบมัดจำ {depRef} (IsDeposit) — ตรวจ depositAppliedRef");
+                            // row-lock กัน race เหมือนใบเดียว
+                            await _db.Database.ExecuteSqlRawAsync(
+                                @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} FOR UPDATE", mDepId.Value);
+                            var mDeposit = await _db.Documents.FirstOrDefaultAsync(d => d.Id == mDepId.Value);
+                            if (mDeposit == null) continue;
+                            // one-shot guard ต่อใบ (self-heal ถ้าใบที่หักถูก void/ลบ → มาร์คโมฆะ)
+                            if (mDeposit.DepositAppliedToDocumentId.HasValue
+                                && mDeposit.DepositAppliedToDocumentId.Value != doc.Id)
+                            {
+                                var mPrior = await _db.Documents.AsNoTracking().FirstOrDefaultAsync(d =>
+                                    d.Id == mDeposit.DepositAppliedToDocumentId.Value && d.CompanyId == companyId);
+                                if (mPrior != null && mPrior.Status != DocumentStatus.Voided)
+                                    throw new InvalidOperationException(
+                                        $"หักมัดจำหลายใบ: มัดจำ {mDeposit.DocumentNumber} ถูกนำไปหักกับ {mPrior.DocumentNumber} แล้ว");
+                            }
+                            // อ่านขา Cr จริงของใบมัดจำ → กลับ "เต็มยอดคงเหลือ" (net GL)
+                            var mGl = await _db.JournalEntryLines
+                                .Where(l => !l.IsDeleted && l.JournalEntry.CompanyId == companyId
+                                    && l.JournalEntry.SourceDocumentId == mDeposit.Id && !l.JournalEntry.IsDeleted
+                                    && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                                        || l.JournalEntry.Status == JournalEntryStatus.Reversed))
+                                .Select(l => new { l.AccountId, l.CreditAmount, l.DebitAmount })
+                                .ToListAsync();
+                            var mAcctIds = mGl.Select(l => l.AccountId).Distinct().ToList();
+                            var mCodes = await _db.ChartOfAccounts.AsNoTracking()
+                                .Where(a => a.CompanyId == companyId && mAcctIds.Contains(a.Id))
+                                .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
+                            string MCode(Guid id) => mCodes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+                            var mDef = mGl.Where(l => MCode(l.AccountId).StartsWith("217") || MCode(l.AccountId).StartsWith("215"))
+                                .GroupBy(l => l.AccountId)
+                                .Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+                                .Where(x => x.Net > 0.005m).OrderByDescending(x => x.Net).FirstOrDefault();
+                            var mV13 = mGl.Where(l => MCode(l.AccountId) == "21913")
+                                .GroupBy(l => l.AccountId).Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+                                .FirstOrDefault(x => x.Net > 0.005m);
+                            var mV11 = mGl.Where(l => MCode(l.AccountId) == "21911")
+                                .GroupBy(l => l.AccountId).Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+                                .FirstOrDefault(x => x.Net > 0.005m);
+                            var mVat = mV13 ?? mV11;
+                            if (mDef == null && mVat == null)
+                                throw new InvalidOperationException(
+                                    $"หักมัดจำหลายใบ: ใบมัดจำ {mDeposit.DocumentNumber} ไม่มียอดรับล่วงหน้าคงเหลือใน GL (ถูกรับรู้/หักไปแล้ว)");
+                            if (mDef != null && mDef.Net != 0m)
+                                AddLine(mDef.AccountId, mDef.Net, 0,
+                                    $"ตัดขายรอรับรู้ (นำมัดจำ {mDeposit.DocumentNumber} มาหักเต็มใบ)", doc.ProjectId);
+                            if (mVat != null && mVat.Net > 0)
+                                AddLine(mVat.AccountId, mVat.Net, 0,
+                                    mV13 != null ? $"ตัดภาษีขายรอเรียกเก็บ (มัดจำ {mDeposit.DocumentNumber} → ใบกำกับ)"
+                                                 : $"ล้าง VAT มัดจำ {mDeposit.DocumentNumber}", doc.ProjectId);
+                            // mark ใบมัดจำใช้เต็ม (กันรับรู้/หักซ้ำ)
+                            mDeposit.DepositRealizedAmount = mDeposit.SubTotal;
+                            mDeposit.DepositRealizedAt = doc.DocumentDate;
+                            if (mV13 != null) mDeposit.DepositOutputVatRecognizedAt = doc.DocumentDate;
+                            mDeposit.DepositAppliedToDocumentId = doc.Id;
+                        }
+                    }
+                    else
+                    {
                     // row-lock ใบมัดจำก่อนอ่าน (audit F9B): approve 2 ใบพร้อมกันที่หัก
                     // มัดจำใบเดียว = read-modify-write race บน DepositRealizedAmount/
                     // AppliedToDocumentId (Document ไม่มี concurrency token) → lost
@@ -8540,6 +8618,7 @@ public class DocumentService : IDocumentService
                         // mark journal ว่าถูกนำไปหักแล้ว (กัน double-reverse)
                         depJe.DepositAppliedToDocumentId = doc.Id;
                     }
+                    }   // ปิด else (มัดจำใบเดียว — logic เดิม)
                 }
 
                 if (doc.WithholdingTaxAmount > 0)

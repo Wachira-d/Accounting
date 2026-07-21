@@ -1292,6 +1292,17 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 73 (มัดจำหลายใบ/ใบกำกับ — blocker โรงแรม): `driveDeposit` เดิม resolve
+`depositAppliedRef` เป็นเลขเดียว (exact match) → comma-separated หาไม่เจอ →
+degrade เป็น AR. เพิ่ม: split `depositAppliedRef` ด้วยจุลภาค — ถ้า >1 เลข →
+loop **reverse ทุกใบเต็มยอดคงเหลือ** (GL-driven ต่อใบ: Dr 215xx/217xx + 21913/
+21911 ที่แต่ละใบ Cr ไว้จริง, mark ใบมัดจำ realized เต็ม + one-shot guard ต่อใบ +
+row-lock). ผลรวม Dr = `depositAppliedAmount` (ยอดรวมที่ส่งมา) → cashAmt (Total −
+รวม) สมดุลพอดี; ไม่ตรง → AutoPost balance check throw → degrade (ปลอดภัย).
+**เลขเดียว → else = logic เดิมไม่แตะ (zero regression)**. contract TakeTime: คง
+comma-separated `depositAppliedRef` + `depositAppliedAmount`=ผลรวม, แต่ละใบถูก
+consume เต็ม (semantic checkout โรงแรม). ⚠️ GL-critical — Windows GL test เคส
+2+ ใบก่อนเปิด._
 _รอบ 72 (ลบ+resync ให้สะอาด — ใบเสร็จ REC ลอยค้าง): ผู้ใช้ลบใบกำกับเก่าที่มี
 ปัญหาเพื่อ resync ใหม่ แต่ **PurgeDocumentAsync เดิม step 7 แค่ NULL
 RelatedDocumentId ไม่ได้ลบใบเสร็จ settlement (REC)** → REC ลอยค้างใน list. แก้:
