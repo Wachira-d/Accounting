@@ -1292,6 +1292,16 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 74 (purge สมมาตร void — กัน 21510 สะสมติดลบจาก recreate ทับ): TakeTime เจอ
+21510 ติดลบ −934.58 จากการ resync (ลบ+สร้างใหม่) ซ้ำหลายรอบ. VoidDocumentAsync
+มี step 2b (กลับ JV ตัดชำระด้วยมัดจำ + คืน subledger ใบมัดจำ) แต่ **PurgeDocumentAsync
+ไม่มี** → hard-delete ใบกำกับแล้ว JV ApplyDeposit (SourceDocumentId=ใบมัดจำ, หลุด
+step 1 ที่ลบเฉพาะ JE sourced จากใบนี้) ค้าง → มัดจำถูกตัด 217xx/21913 ถาวร +
+subledger ไม่คืน → recreate ทับ → Dr 21510 สะสม. เพิ่ม purge step 0c (mirror 2b
+แบบ delete): ลบ JV ApplyDeposit ที่ Reference=เลขใบนี้ (คัด Cr 113) + คืน subledger
+มัดจำ (RealizedAmount/RecognizedAt/AppliedTo). **หมายเหตุ: root cause ที่ TakeTime
+เจอคือ env ยังไม่ deploy branch นี้ — ทั้ง isCashSale + step 2b/0c ยังไม่ทำงานที่นั่น
+→ ทุก resync สะสม. deploy = หยุด churn + delete สมมาตร**._
 _รอบ 73 (มัดจำหลายใบ/ใบกำกับ — blocker โรงแรม): `driveDeposit` เดิม resolve
 `depositAppliedRef` เป็นเลขเดียว (exact match) → comma-separated หาไม่เจอ →
 degrade เป็น AR. เพิ่ม: split `depositAppliedRef` ด้วยจุลภาค — ถ้า >1 เลข →

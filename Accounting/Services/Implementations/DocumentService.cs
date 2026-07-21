@@ -4166,6 +4166,63 @@ public class DocumentService : IDocumentService
                 await _db.SaveChangesAsync();   // persist subledger ก่อนขั้น raw-SQL ลบ JE
             }
 
+            // 0c. คืนมัดจำที่ถูก "ตัดชำระด้วย JV" (ApplyDepositToInvoiceAsync — เส้น
+            //     non-drives) — mirror ของ VoidDocumentAsync step 2b. JV นั้น
+            //     SourceDocumentId = ใบมัดจำ (ไม่ใช่ใบนี้) จึงหลุด step 1 → ถ้าไม่คืน:
+            //     Dr 217xx/21913 ของ JV ค้าง (มัดจำถูกตัดถาวร) + subledger ไม่คืน →
+            //     recreate ทับ → 21510 สะสมติดลบ (root cause ที่ TakeTime เจอ −934.58).
+            //     purge = ลบ JV ทิ้ง (lines+entry) + คืน subledger (ก่อนลบ JE ของใบนี้).
+            var purgeAppliedDeposits = await _db.Documents
+                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                    && d.DepositAppliedToDocumentId == documentId)
+                .ToListAsync();
+            foreach (var dep in purgeAppliedDeposits)
+            {
+                var applyJes = await _db.JournalEntries.Include(j => j.Lines)
+                    .Where(j => j.CompanyId == companyId && j.SourceDocumentId == dep.Id
+                        && j.OriginalEntryId == null && !j.IsDeleted
+                        && j.Reference == doc.DocumentNumber)
+                    .ToListAsync();
+                if (applyJes.Count == 0) continue;   // drives-mode → 0b จัดการแล้ว
+
+                var acctIds = applyJes.SelectMany(j => j.Lines).Select(l => l.AccountId).Distinct().ToList();
+                var acctCodes = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && acctIds.Contains(a.Id))
+                    .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
+                string CodeOf(Guid id) => acctCodes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+
+                decimal restoredBase = 0m; bool had21913 = false, restoredAny = false;
+                foreach (var applyJe in applyJes)
+                {
+                    // JV ตัดชำระ = มีขา Cr ลูกหนี้ (113) — กัน JE อื่นของใบมัดจำที่ Reference ตรง
+                    var grossCr = applyJe.Lines.Where(l => !l.IsDeleted && l.CreditAmount > 0
+                        && CodeOf(l.AccountId).StartsWith("113")).Sum(l => l.CreditAmount);
+                    if (grossCr <= 0m) continue;
+                    restoredBase += applyJe.Lines.Where(l => !l.IsDeleted && l.DebitAmount > 0
+                            && (CodeOf(l.AccountId).StartsWith("217") || CodeOf(l.AccountId).StartsWith("215")))
+                        .Sum(l => l.DebitAmount);
+                    had21913 |= applyJe.Lines.Any(l => !l.IsDeleted && l.DebitAmount > 0
+                        && CodeOf(l.AccountId) == "21913");
+                    // ลบ JV ทิ้ง (lines + entry) — purge style
+                    await _db.Database.ExecuteSqlRawAsync(
+                        @"DELETE FROM ""JournalEntryLines"" WHERE ""JournalEntryId"" = {0}", applyJe.Id);
+                    await _db.Database.ExecuteSqlRawAsync(
+                        @"DELETE FROM ""JournalEntries"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1}",
+                        applyJe.Id, companyId);
+                    restoredAny = true;
+                }
+                if (!restoredAny) continue;
+                dep.DepositRealizedAmount = System.Math.Max(0m, dep.DepositRealizedAmount - restoredBase);
+                if (dep.SubTotal - dep.DepositRealizedAmount > 0.005m)
+                    dep.DepositRealizedAt = null;
+                if (had21913)
+                    dep.DepositOutputVatRecognizedAt = null;
+                dep.DepositAppliedToDocumentId = null;
+                dep.UpdatedAt = DateTime.UtcNow;
+            }
+            if (purgeAppliedDeposits.Count > 0)
+                await _db.SaveChangesAsync();
+
             // 1. Delete JournalLineDimensions → JournalEntryLines → JournalEntries
             var journalIds = await _db.JournalEntries
                 .IgnoreQueryFilters()
