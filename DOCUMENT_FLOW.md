@@ -1292,6 +1292,14 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 76 (display "อ้างอิง" = เลขจอง ไม่ใช่ dedup key): integration เก็บ externalRef
+(REC260718006 = dedup key ภายใน) ลง `Document.Reference` → PDF/หน้าเอกสารโชว์เป็น
+"อ้างอิง" ทำให้ลูกค้า/บัญชีเห็นเลขใบเสร็จ TakeTime แทนรหัสจอง. เพิ่ม
+`Document.DisplayReference` (NotMapped: `BookingNumber ?? Reference`) → PDF (5 จุด
+DocumentRenderer + HTML) + frontend detail (2 จุด, ใช้ `bookingNumber || reference`)
+render จากนี้. RES-id (BookingNumber) มีความหมายกับคน → โชว์แทน; company doc ไม่มี
+BookingNumber → คืน Reference เดิม. **display เท่านั้น — Reference field ยังเก็บ
+externalRef สำหรับ dedup/idempotency + resolve มัดจำ (รอบ 75) ไม่กระทบ**._
 _รอบ 75 (depositAppliedRef รับ external ref — root cause ที่ทำ degrade เสมอ):
 หลักฐานจากใบทดสอบจริง (TIV-20260718-0001): TakeTime ส่ง `depositAppliedRef` เป็น
 **เลขใบเสร็จของเขาเอง** (REC260713008) แต่ resolver จับคู่เฉพาะ `DocumentNumber`

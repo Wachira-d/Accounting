@@ -234,6 +234,17 @@ public class Document : TenantEntity
 
     // Reference
     public string? Reference { get; set; }
+
+    /// <summary>เลข "อ้างอิง" ที่ **แสดง** บนเอกสาร/PDF — ให้ความสำคัญเลขจอง
+    /// (BookingNumber = RES-id ที่มีความหมายกับคน) เหนือ Reference. ฝั่ง integration
+    /// เก็บ externalRef (dedup key ภายใน เช่น REC260718006) ลง Reference ซึ่งไม่ควร
+    /// โชว์ให้ลูกค้า/บัญชี → ใช้ property นี้ render แทน. company doc ที่ไม่มี
+    /// BookingNumber → คืน Reference ตามเดิม. **display เท่านั้น — dedup/idempotency
+    /// ยังใช้ Reference field ไม่กระทบ**.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? DisplayReference =>
+        !string.IsNullOrWhiteSpace(BookingNumber) ? BookingNumber : Reference;
+
     public Guid? RelatedDocumentId { get; set; }  // e.g. Quotation → Invoice
 
     /// <summary>Required when DocumentType = CreditNote — distinguishes the
