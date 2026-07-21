@@ -44,7 +44,7 @@ public class CashForecastService : ICashForecastService
         var apTypes = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense, DocumentType.CertificateInLieu };
 
         // ===== A/R expected in =====
-        var arQuery = _db.Documents
+        var arQuery = _db.Documents.AsNoTracking()
             .Include(d => d.Project)
             .Where(d => d.CompanyId == companyId
                 && arTypes.Contains(d.DocumentType)
@@ -57,7 +57,7 @@ public class CashForecastService : ICashForecastService
         await _db.HydrateContactsAsync(companyId, arDocs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
         // ===== A/P expected out =====
-        var apQuery = _db.Documents
+        var apQuery = _db.Documents.AsNoTracking()
             .Include(d => d.Project)
             .Where(d => d.CompanyId == companyId
                 && apTypes.Contains(d.DocumentType)

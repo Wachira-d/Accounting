@@ -179,7 +179,7 @@ public class ArApAnalysisService : IArApAnalysisService
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
 
-        var allDocs = await _db.Documents
+        var allDocs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && d.ContactId == contactId
                 && docTypes.Contains(d.DocumentType) && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                 // กันเอกสารตัดชำระ (ใบเสร็จ/ใบสำคัญรับ/ใบสำคัญจ่าย ที่อ้างต้นทาง) นับ
@@ -265,7 +265,7 @@ public class ArApAnalysisService : IArApAnalysisService
     public async Task<BadDebtAnalysisResponse> GetBadDebtAnalysisAsync(Guid companyId)
     {
         var now = DateTime.UtcNow.Date;
-        var arOpen = await _db.Documents
+        var arOpen = await _db.Documents.AsNoTracking()
             // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ
             // ทำ bad-debt allowance / TFRS NPAEs ch.9 คลาดเคลื่อน)
             .Where(d => d.CompanyId == companyId && ArOpenTypes.Contains(d.DocumentType)

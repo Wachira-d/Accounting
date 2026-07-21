@@ -9,7 +9,7 @@ public partial class ExecutiveReportService
     public async Task<BudgetVarianceResponse> GetBudgetVarianceAsync(Guid companyId, Guid? budgetId, DateTime? fromDate, DateTime? toDate)
     {
         var year = (fromDate ?? DateTime.UtcNow).Year;
-        var budgetQ = _db.Budgets
+        var budgetQ = _db.Budgets.AsNoTracking()
             .Include(b => b.Lines).ThenInclude(l => l.Account)
             .Where(b => b.CompanyId == companyId && !b.IsDeleted);
         if (budgetId.HasValue)

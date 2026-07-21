@@ -53,7 +53,7 @@ public class AgingReportService : IAgingReportService
         var negativeType = DocumentType.CreditNote;
 
         var allTypes = positiveTypes.Concat(new[] { negativeType }).ToArray();
-        var query = _db.Documents
+        var query = _db.Documents.AsNoTracking()
             // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดใบที่ contact ถูกลบ
             // ออกจากรายงานอายุ AR/AP = under-report + TFRS NPAEs ch.9 allowance ผิด)
             .Where(d => d.CompanyId == companyId
