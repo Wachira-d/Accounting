@@ -255,6 +255,93 @@ public class BulkCleanupController : ControllerBase
             $"ลบใบเสร็จหลักฐานรับเงินที่ไม่มีใบกำกับต้นทาง {target.Count} ใบ (soft-delete) — resync ใหม่ได้สะอาด"));
     }
 
+    // ── Deposit-GL debris diagnostic (read-only) — ตามรอย 21510 ติดลบ/21913 ค้าง ──
+    // จากการ resync (ลบ+สร้างใหม่) ซ้ำบน env เก่า: JV ที่ integration post ผ่าน
+    // /integration/journals **ไม่มี SourceDocumentId** และ JE ที่ source ถูกลบ/void
+    // ไปแล้ว จะไม่ถูกกวาดตอนลบเอกสาร → ค้างสะสมบนบัญชีมัดจำ (215xx/217xx) และ
+    // ภาษีขายรอเรียกเก็บ (21913). endpoint นี้แจกแจง "ทุก JE ที่แตะบัญชีกลุ่มนี้"
+    // พร้อมสถานะ source (live / ถูกลบ / ไม่มี) + net ต่อบัญชี → TakeTime reverse
+    // JV ของตัวเอง (รู้ EntryNumber) หรือนักบัญชีออก JV ปรับปรุงยอดเดียวได้ตรงจุด.
+    public record DepositDebrisLine(string EntryNumber, DateTime EntryDate, string? Description,
+        string AccountCode, decimal Debit, decimal Credit, string SourceStatus, string? SourceDocumentNumber);
+    public record DepositDebrisAccount(string AccountCode, string AccountName,
+        decimal NetBalance, decimal SuspectNet, List<DepositDebrisLine> SuspectLines);
+    public record DepositDebrisReport(int AccountCount, int SuspectLineCount, List<DepositDebrisAccount> Accounts);
+
+    [HttpGet("deposit-gl-debris")]
+    public async Task<ActionResult<ApiResponse<DepositDebrisReport>>> GetDepositGlDebris(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!IsCompanyScopedApiKey(companyId) && !await IsOwnerAsync(companyId, userId)) return Forbid();
+
+        // บัญชีเป้าหมาย: มัดจำ/รับล่วงหน้า (215xx/217xx) + ภาษีขายรอเรียกเก็บ 21913
+        var accts = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId
+                && (a.AccountCode.StartsWith("215") || a.AccountCode.StartsWith("217")
+                    || a.AccountCode == "21913"))
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .ToListAsync();
+        var acctIds = accts.Select(a => a.Id).ToList();
+
+        // ทุกบรรทัด GL บนบัญชีเป้าหมาย (Posted/Reversed = ยังอยู่ใน ledger)
+        var lines = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => !l.IsDeleted && acctIds.Contains(l.AccountId)
+                && l.JournalEntry.CompanyId == companyId && !l.JournalEntry.IsDeleted
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted
+                    || l.JournalEntry.Status == JournalEntryStatus.Reversed))
+            .Select(l => new
+            {
+                l.AccountId, l.DebitAmount, l.CreditAmount,
+                l.JournalEntry.EntryNumber, l.JournalEntry.EntryDate,
+                l.JournalEntry.Description, l.JournalEntry.SourceDocumentId,
+            })
+            .ToListAsync();
+
+        // สถานะ source ของแต่ละ JE: null = JV integration/manual (ไม่ผูกเอกสาร),
+        // มีแต่หาไม่เจอ/ลบ/void = ซากจากการลบเอกสาร — สองกลุ่มนี้คือ "suspect"
+        var srcIds = lines.Where(l => l.SourceDocumentId.HasValue)
+            .Select(l => l.SourceDocumentId!.Value).Distinct().ToList();
+        var srcDocs = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+            .Where(d => d.CompanyId == companyId && srcIds.Contains(d.Id))
+            .Select(d => new { d.Id, d.DocumentNumber, d.IsDeleted, d.Status })
+            .ToDictionaryAsync(d => d.Id);
+
+        var result = new List<DepositDebrisAccount>();
+        var suspectTotal = 0;
+        foreach (var a in accts)
+        {
+            var accLines = lines.Where(l => l.AccountId == a.Id).ToList();
+            if (accLines.Count == 0) continue;
+            var net = accLines.Sum(l => l.CreditAmount - l.DebitAmount);
+            var suspects = new List<DepositDebrisLine>();
+            foreach (var l in accLines)
+            {
+                string status; string? srcNum = null;
+                if (!l.SourceDocumentId.HasValue)
+                    status = "ไม่ผูกเอกสาร (JV integration/manual)";
+                else if (!srcDocs.TryGetValue(l.SourceDocumentId.Value, out var sd))
+                    status = "เอกสารต้นทางถูกลบถาวรแล้ว";
+                else if (sd.IsDeleted || sd.Status == DocumentStatus.Voided)
+                { status = sd.IsDeleted ? "เอกสารต้นทางถูกลบ (soft)" : "เอกสารต้นทางถูกยกเลิก"; srcNum = sd.DocumentNumber; }
+                else
+                    continue;   // source live → ปกติ ไม่ใช่ซาก
+                suspects.Add(new DepositDebrisLine(l.EntryNumber, l.EntryDate, l.Description,
+                    a.AccountCode, l.DebitAmount, l.CreditAmount, status, srcNum));
+            }
+            if (suspects.Count == 0 && net >= 0m) continue;   // บัญชีสะอาด + ยอดปกติ → ข้าม
+            suspectTotal += suspects.Count;
+            result.Add(new DepositDebrisAccount(a.AccountCode, a.AccountName, net,
+                suspects.Sum(s => s.Credit - s.Debit),
+                suspects.OrderBy(s => s.EntryDate).ToList()));
+        }
+
+        return Ok(new ApiResponse<DepositDebrisReport>(true,
+            new DepositDebrisReport(result.Count, suspectTotal, result),
+            result.Count == 0
+                ? "ไม่พบซาก GL บนบัญชีมัดจำ/ภาษีขายรอเรียกเก็บ"
+                : "พบรายการต้องตรวจ — reverse JV ของ integration (รู้ EntryNumber) หรือออก JV ปรับปรุงตาม SuspectNet ต่อบัญชี"));
+    }
+
     // ── Duplicate-contact diagnostic (read-only) — ตอบคำถามทีม integration
     // ว่า "ทั้งบริษัทมี contact ซ้ำกี่ราย" ก่อนตัดสินใจ merge มือ vs สร้าง endpoint.
     // จับซ้ำ 2 แบบ: (ก) เลขผู้เสียภาษี normalize ตัวเลขล้วนตรงกัน (ข) ชื่อ trim
