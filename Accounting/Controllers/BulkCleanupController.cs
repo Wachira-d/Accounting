@@ -335,11 +335,19 @@ public class BulkCleanupController : ControllerBase
                 suspects.OrderBy(s => s.EntryDate).ToList()));
         }
 
+        // ข้อความชี้ทางแยก 3 กรณี (ให้ TakeTime map เป็น 3-state UI ได้ตรง):
+        //  (ก) มี JV ซาก (suspectTotal>0) → reverse JV / JV ปรับปรุง ตาม EntryNumber
+        //  (ข) ไม่มี JV ซาก แต่บัญชียอดผิดปกติ (net<0, suspects=0) → ยอดเสียมาจาก
+        //      "เอกสารที่ยัง live" (churn TIV ที่ยัง Dr 21510 อยู่) → ลบ/ยกเลิกเอกสาร
+        //      นั้น (NextAcc purge/void step 0c/2b จะกวาด 21510 คืน) แล้ว resync
+        //  (ค) ไม่มีอะไรเลย → สะอาด
+        var msg = result.Count == 0
+            ? "ไม่พบซาก GL บนบัญชีมัดจำ/ภาษีขายรอเรียกเก็บ (บัญชีสมดุลปกติ)"
+            : suspectTotal > 0
+                ? $"พบ JV ซาก {suspectTotal} บรรทัด — reverse JV integration ตาม EntryNumber (idempotent) หรือออก JV ปรับปรุงตาม SuspectNet ต่อบัญชี"
+                : "ไม่มี JV ซากให้ reverse แต่บัญชีมียอดผิดปกติ (เช่น 21510 ติดลบ) — ยอดเสียมาจากเอกสารที่ยัง live ในระบบ (ลง GL เกินจาก churn) → ลบ/ยกเลิกเอกสารนั้น (NextAcc จะกวาดคืน 21510/21913 ตอนลบ) แล้ว resync";
         return Ok(new ApiResponse<DepositDebrisReport>(true,
-            new DepositDebrisReport(result.Count, suspectTotal, result),
-            result.Count == 0
-                ? "ไม่พบซาก GL บนบัญชีมัดจำ/ภาษีขายรอเรียกเก็บ"
-                : "พบรายการต้องตรวจ — reverse JV ของ integration (รู้ EntryNumber) หรือออก JV ปรับปรุงตาม SuspectNet ต่อบัญชี"));
+            new DepositDebrisReport(result.Count, suspectTotal, result), msg));
     }
 
     // ── Duplicate-contact diagnostic (read-only) — ตอบคำถามทีม integration
