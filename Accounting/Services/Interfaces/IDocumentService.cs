@@ -68,6 +68,11 @@ public interface IDocumentService
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
     Task VoidDocumentAsync(Guid companyId, Guid documentId);
 
+    /// <summary>โพสต์ JE "ขายเงินสด" (integration isCashSale) — TaxInvoice ที่
+    /// IssuedAsCashReceipt=true ลง Dr เงินสด + กลับมัดจำ 217xx/21913 / Cr รายได้ +
+    /// 21911 **ไม่มีลูกหนี้**. คืน JE id; ล้ม → rethrow (context สะอาดให้ fallback).</summary>
+    Task<Guid?> PostCashSaleJournalAsync(Guid companyId, Guid documentId);
+
     /// <summary>กู้คืนเอกสารที่ "ยกเลิกผิด" — คืนสถานะ Voided → Draft โดย
     /// **คงเลขเอกสารเดิม** (re-approve จะไม่ regenerate เพราะไม่ใช่ DRAFT-).
     /// ผู้ใช้กดอนุมัติใหม่เพื่อลงบัญชี/e-Tax ใหม่ผ่าน pipeline เดิม. gate เข้ม
