@@ -63,6 +63,13 @@ public interface IOcrService
     Task SetAllExtractedLineProjectsAsync(Guid companyId, Guid scanResultId,
         Guid? projectId, string? projectName, bool onlyEmpty);
 
+    /// <summary>แก้ description/จำนวน/ราคาต่อหน่วยของบรรทัด OCR ในหน้า review
+    /// (กฎเหล็ก #3 — แก้ inline ก่อนสร้างเอกสาร ไม่ต้องสร้างแล้วเข้าไปแก้ทีหลัง).
+    /// recompute Amount = qty×unitPrice, persist ลง ExtractedItemsJson, คืน amount
+    /// ใหม่. field ที่ส่ง null = คงค่าเดิม.</summary>
+    Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
+        int lineIndex, string? description, decimal? quantity, decimal? unitPrice);
+
     /// <summary>List the matched vendor's open Purchase Orders together with
     /// their line items so the review UI can render the "เลือก PO" picker.
     /// Returns empty when no contact is matched or no open POs exist.</summary>

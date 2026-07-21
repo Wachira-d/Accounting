@@ -112,6 +112,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
   ที่ description ตรงกัน + drop phantom remainder ≤ ฿1. รันก่อน serialize ลง
   `ExtractedItemsJson` → ทุก path (web UI + OCR API) ได้ไฟล์ items ที่สะอาด.
+- **Inline line editing ในหน้า review (กฎเหล็ก #3)**: review modal ให้แก้
+  `Description/Quantity/UnitPrice` ราย line ได้ในตัว (input ในตาราง, เดิม read-only
+  โชว์แค่ project picker) → `OcrService.SetExtractedLineFieldsAsync`
+  (`POST /ocr/{id}/line-fields`) recompute `Amount = round(qty×price,2)` + persist
+  ลง `ExtractedItemsJson`. คู่กับ qty-guard (`SanitizeVatSplitArtifacts` reconcile
+  จำนวน): guard แก้เคสที่ตรวจเจอ (Amount ถูก แต่ qty×price ระเบิด), inline edit
+  ครอบเคสที่เหลือ — ผู้ใช้ไม่ต้องสร้างเอกสารก่อนแล้วเข้าไปแก้ทีหลัง.
 - **Single create path (กฎ: ห้ามมี path คู่ขนาน)**: ทั้ง web UI ("สร้างเอกสาร")
   และ OCR API (`autoCreate=true`) สร้างเอกสารผ่าน **`CreateDocumentFromScanAsync`
   ตัวเดียวกัน**. `AutoCreateDocumentAsync` (เรียกตอน scan ผ่าน confidence gate)
@@ -848,7 +855,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | Import column match | `ImportColumnMatch = 26` | bespoke | ตอน user map |
 | Import data review | `ImportDataReview = 27` | – (essay) | – |
 | **Payment type** (Cash/Credit) | `PaymentTypeSuggestion = 28` | `PaymentTypeDistillationModel.cs` | ตอน user เปลี่ยน select |
-| OCR project match | `OcrProjectMatch = 29` | generic | – |
+| OCR project match | `OcrProjectMatch = 29` | generic | `SetExtractedLineProjectAsync` / `SetAllExtractedLineProjectsAsync` (ตอน user override project ราย line — ปิดลูปด้วย `ProjectAiFeedbackId` ฝังใน line) |
 | VAT type per line | `VatTypeInference = 30` | generic | ตอน user แก้ |
 | Payment terms / credit days | `PaymentTermsSuggestion = 31` | – (pure lookup, ทุกครั้งผ่าน orchestrator) | ตอน user แก้ |
 | Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | generic | ตอน user เปลี่ยน select |
@@ -1234,6 +1241,9 @@ perm:Document.Approve / .Revenue.Approve / .Purchase.Approve) → กล่อ�
 ขึ้นหมายเหตุล่วงหน้าว่าเอกสารจะเป็นร่างรออนุมัติ + ตอนบันทึกไม่ยิง approve
 (กัน 403) แจ้งแบบเป็นมิตร. Owner/Admin หรือ role ที่มี perm → ส่งได้ปกติ._
 
+_รอบ 80: OCR review inline line editing (Description/Quantity/UnitPrice แก้ในตาราง_
+_→ SetExtractedLineFieldsAsync recompute Amount + persist, คู่กับ qty-guard); ปิดลูป_
+_project-match feedback (SetExtractedLineProject → RecordUserChoiceAsync)._
 _Last verified against codebase: 2026-07-20 (รอบ 60) — รอบ 13-14: OCR API=web UI,_
 _DRAFT- placeholder, แหล่งเงิน 3-layer + Reclassify, ประกันสังคมครบวงจร,_
 _floor 1,650, กท.20ก, สปส.1-03/6-09._

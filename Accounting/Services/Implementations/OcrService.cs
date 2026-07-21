@@ -4540,6 +4540,58 @@ public class OcrService : IOcrService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>แก้ description / จำนวน / ราคาต่อหน่วย ของบรรทัด OCR ในหน้า review
+    /// (กฎเหล็ก #3: OCR เติมให้ครบ ผู้ใช้แค่ยืนยัน/แก้ inline — ไม่ต้องสร้างเอกสารก่อน
+    /// แล้วค่อยเข้าไปแก้ทีหลัง). recompute Amount = round(qty×unitPrice,2) เสมอ เพื่อ
+    /// ให้ qty-guard (SanitizeVatSplitArtifacts) ที่รันซ้ำตอน create ไม่ "แก้กลับ"
+    /// ค่าที่ผู้ใช้ตั้งเอง (qty×price == amount เป๊ะ → อยู่ในระยะ tolerance). persist
+    /// ลง ExtractedItemsJson → CreateDocumentFromScan อ่านไปใช้. คืน amount ใหม่ให้ UI
+    /// อัปเดตช่องยอดโดยไม่ต้อง refetch. null = ไม่แตะ field นั้น (คงค่าเดิม).</summary>
+    public async Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
+        int lineIndex, string? description, decimal? quantity, decimal? unitPrice)
+    {
+        var scan = await _db.Set<OcrScanResult>()
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
+            ?? throw new InvalidOperationException("OCR scan result not found.");
+        if (string.IsNullOrEmpty(scan.ExtractedItemsJson))
+            throw new InvalidOperationException("Scan ไม่มีรายการสินค้าใน OCR result.");
+        if (lineIndex < 0)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex));
+        if (quantity.HasValue && quantity.Value < 0m)
+            throw new InvalidOperationException("จำนวนต้องไม่ติดลบ");
+        if (unitPrice.HasValue && unitPrice.Value < 0m)
+            throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
+
+        List<OcrExtractedLineItem> items;
+        try
+        {
+            items = System.Text.Json.JsonSerializer
+                .Deserialize<List<OcrExtractedLineItem>>(scan.ExtractedItemsJson) ?? new();
+        }
+        catch
+        {
+            throw new InvalidOperationException("ExtractedItemsJson เสียหาย — ไม่สามารถ parse");
+        }
+        if (lineIndex >= items.Count)
+            throw new ArgumentOutOfRangeException(nameof(lineIndex), "lineIndex เกินจำนวนรายการที่สแกนได้");
+
+        var line = items[lineIndex];
+        if (description != null) line.Description = description.Trim();
+        if (quantity.HasValue) line.Quantity = quantity.Value;
+        if (unitPrice.HasValue) line.UnitPrice = unitPrice.Value;
+
+        // recompute amount จาก qty×price ที่ (แก้แล้ว) — ถ้าครบทั้งคู่
+        var qty = line.Quantity ?? 0m;
+        var up = line.UnitPrice ?? 0m;
+        if (qty > 0m && up > 0m)
+            line.Amount = System.Math.Round(qty * up, 2);
+
+        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return line.Amount ?? 0m;
+    }
+
     public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
     {
         var result = await _db.Set<OcrScanResult>()

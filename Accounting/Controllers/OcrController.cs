@@ -360,6 +360,24 @@ public class OcrController : ControllerBase
         }, req.ProjectId.HasValue ? "บันทึก project ของบรรทัดแล้ว" : "ยกเลิก project ของบรรทัดแล้ว"));
     }
 
+    public sealed record SetLineFieldsRequest(int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice);
+
+    /// <summary>แก้ description/จำนวน/ราคาต่อหน่วยของบรรทัด OCR inline ในหน้า review
+    /// (กฎเหล็ก #3). recompute amount = qty×price, persist ลง ExtractedItemsJson แล้ว
+    /// CreateDocument อ่านไปใช้. คืน amount ใหม่ให้ UI อัปเดตช่องยอดโดยไม่ refetch.</summary>
+    [HttpPost("{scanId:guid}/line-fields")]
+    public async Task<ActionResult<ApiResponse<object>>> SetLineFields(
+        Guid companyId, Guid scanId, [FromBody] SetLineFieldsRequest req)
+    {
+        var amount = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
+            req.LineIndex, req.Description, req.Quantity, req.UnitPrice);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            lineIndex = req.LineIndex,
+            amount,
+        }, "บันทึกบรรทัดแล้ว"));
+    }
+
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> MatchContact(Guid companyId, Guid scanId, Guid contactId)
         => Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchContactAsync(companyId, scanId, contactId)));
