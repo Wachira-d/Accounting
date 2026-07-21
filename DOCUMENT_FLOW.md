@@ -1292,6 +1292,16 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 71 (กันยอดเบิ้ลจากชำระซ้ำ — root cause ที่ผู้ใช้เจอ): `ProcessPaymentAsync`
+(integration payment endpoint) เดิมมีแค่ idempotency-by-reference — **ไม่มี**
+status guard/over-pay cap → ยิง payment ส่วนมัดจำแยก = Dr เงินสด/Cr ลูกหนี้ ซ้ำ
+กับที่มัดจำ+ใบกำกับลงไปแล้ว → เงินสด/มัดจำนับซ้ำ + สร้าง REC settlement เยอะ.
+เพิ่ม guard: เอกสาร `IssuedAsCashReceipt` (ขายเงินสด settle ในตัวแล้ว) หรือ
+`Status=Paid`/`BalanceDue≤0` → skip ไม่รับชำระภายนอก; over-pay (Amount>คงค้าง)
+→ throw พร้อมชี้ให้ใช้ `depositAppliedRef` (drives) แทนการยิง payment แยก.
+(`DocumentService.CreatePaymentAsync` มี guard นี้อยู่แล้ว — เติมให้ครบฝั่ง
+integration). วิธีถูก: ออกใบกำกับ isCashSale + depositAppliedRef → driveDeposit
+**ดึงใบมัดจำเดิม** (กลับ 21510/21913) ใบเดียวจบ ไม่สร้าง receipt ใหม่/ไม่นับซ้ำ._
 _รอบ 70 (TakeTime cash-sale — GL สะอาด ไม่มีลูกหนี้): แก้ตามที่ผู้ใช้ทัก — ขายเงินสด
 B2B ต้องไม่มีลูกหนี้การค้าในการลงบัญชี. เดิม integration `isCashSale` ลงผ่าน
 mapping-JE (Dr ลูกหนี้) + ApplyDeposit + settle → **AR-transit** (สุทธิ 0 แต่ footer
