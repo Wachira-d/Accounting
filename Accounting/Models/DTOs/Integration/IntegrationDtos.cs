@@ -128,7 +128,20 @@ public record InboundInvoiceRequest(
     /// side ของ JE ชำระจะลงบัญชีนี้. null = ใช้บัญชีเงินสด default ของบริษัท.</summary>
     Guid? PaymentAccountId = null,
     /// <summary>วันที่รับเงินจริง สำหรับ IsCashSale. null = ใช้ DocumentDate.</summary>
-    DateTime? PaymentDate = null);
+    DateTime? PaymentDate = null,
+    /// <summary>ยอดเงินมัดจำ (รวม VAT) ที่หักบนใบนี้ (checkout) — แสดงบรรทัด
+    /// "หักเงินมัดจำ" + ยอดชำระสุทธิ. → Document.DepositAppliedAmount.</summary>
+    decimal DepositAppliedAmount = 0m,
+    /// <summary>เลขใบมัดจำที่นำมาหัก → Document.DepositAppliedRef (ใช้กลับบัญชี
+    /// deferred 217xx/21913 ของใบมัดจำเมื่อ DepositAppliedDrivesJournal=true).</summary>
+    string? DepositAppliedRef = null,
+    /// <summary>VAT ของมัดจำถูก defer (21913) ไว้ตอนรับมัดจำหรือไม่ →
+    /// Document.DepositOutputVatDeferred (กำหนดว่าจะกลับ 21913 หรือ 21911).</summary>
+    bool DepositOutputVatDeferred = false,
+    /// <summary>true = ให้ DepositAppliedAmount ขับ JE self-contained (Dr เงินสด
+    /// สุทธิ + กลับ 217xx/21913 ของใบมัดจำ) ในใบเดียว ไม่ต้องมี JV แยก →
+    /// Document.DepositAppliedDrivesJournal (โหมด drives ที่ verified แล้ว).</summary>
+    bool DepositAppliedDrivesJournal = false);
 
 /// <summary>
 /// Base64-encoded file attachment for external integrations. Server enforces:

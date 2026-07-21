@@ -596,7 +596,38 @@ public partial class PdfGenerationService : IPdfGenerationService
         var gross = lineNet + doc.VatAmount;
         var contraAmt = gross - doc.WithholdingTaxAmount;
         (string Code, string Name) contra;
-        if (doc.BankAccountId.HasValue)
+
+        // ใบเสร็จ settlement: บัญชีเงินสด/ธนาคารจริงอยู่ที่ "การชำระเงิน" (Payment)
+        // ที่ผูก (OverridePaymentAccountId / Bank) — ไม่ใช่ที่ตัวใบเสร็จ. preview
+        // เดิม resolve จาก doc → ถ้า payment ใช้ override account (เช่น 11122-001)
+        // ใบเสร็จไม่ได้ carry มา → ตกไป default 11110 ผิดจาก JE จริง (bug TakeTime).
+        // resolve จาก Payment ที่ผูกให้ตรงกับที่ post จริง.
+        Guid? settleGlAcct = null, settleBank = null;
+        if (doc.IsSettlementReceipt && doc.SettlementPaymentId.HasValue)
+        {
+            var pay = await _db.Payments.AsNoTracking()
+                .Where(p => p.Id == doc.SettlementPaymentId.Value)
+                .Select(p => new { p.OverridePaymentAccountId, p.OverrideBankAccountId, p.BankAccountId })
+                .FirstOrDefaultAsync();
+            settleGlAcct = pay?.OverridePaymentAccountId;
+            settleBank = pay?.OverrideBankAccountId ?? pay?.BankAccountId;
+        }
+
+        if (settleGlAcct.HasValue)
+        {
+            var p = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.Id == settleGlAcct.Value)
+                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+            contra = p != null ? (p.AccountCode, p.AccountName) : ("", "เงินสด");
+        }
+        else if (settleBank.HasValue)
+        {
+            var b = await _db.BankAccounts.AsNoTracking()
+                .Where(x => x.Id == settleBank.Value)
+                .Select(x => new { x.AccountName }).FirstOrDefaultAsync();
+            contra = ("", b?.AccountName ?? "เงินฝากธนาคาร");
+        }
+        else if (doc.BankAccountId.HasValue)
         {
             var b = await _db.BankAccounts.AsNoTracking()
                 .Where(x => x.Id == doc.BankAccountId.Value)
@@ -948,7 +979,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             || Buyer864Incomplete(doc);
         if (!hasCustomTitle && !buyerDeclined)
         {
-            if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
+            // ขายเงินสด B2B (IssuedAsCashReceipt) → หัวตรงกับ e-Tax T03 pairing เป๊ะ
+            // "ใบเสร็จรับเงิน/ใบกำกับภาษี" (ก่อน combined/servedAsReceipt)
+            if (doc.DocumentType == DocumentType.TaxInvoice && doc.IssuedAsCashReceipt)
+                title = isEn ? "Receipt / Tax Invoice" : Ov("CashReceiptTaxInvoice", "ใบเสร็จรับเงิน/ใบกำกับภาษี");
+            else if (doc.DocumentType == DocumentType.TaxInvoice && doc.CombinedInvoiceTaxInvoice)
                 title = isEn ? "Invoice / Tax Invoice" : Ov("CombinedInvoice", "ใบแจ้งหนี้/ใบกำกับภาษี");
             else if (((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher)
                         && doc.VatAmount > 0 && !IsDeferredVatDeposit(doc))
