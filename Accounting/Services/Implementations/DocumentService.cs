@@ -2313,6 +2313,160 @@ public class DocumentService : IDocumentService
         return updated;
     }
 
+    /// <summary>ค้น "JV มัดจำที่ไม่มีเอกสาร" — สมุดรายวันที่ integration post ตรง
+    /// (/integration/journals) หรือลงมือ Cr บัญชีรับล่วงหน้า (215xx/217xx) โดยไม่มี
+    /// SourceDocumentId + ยังไม่ถูกนำไปตัดชำระ (DepositAppliedToDocumentId == null).
+    /// filter ด้วย query (ตรงกับ EntryNumber/Reference/Description แบบ contains) —
+    /// ถ้าใส่เลขอ้างอิง/booking จะหาที่เกี่ยวข้อง; ไม่ใส่ = list ทั้งหมดที่เปิดอยู่.</summary>
+    public async Task<List<JournalDepositCandidate>> SearchJournalDepositsAsync(
+        Guid companyId, string? query)
+    {
+        var q = (query ?? "").Trim();
+        // บัญชีมัดจำ/รับล่วงหน้า
+        var depAcctIds = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId
+                && (a.AccountCode.StartsWith("215") || a.AccountCode.StartsWith("217")))
+            .Select(a => a.Id).ToListAsync();
+        if (depAcctIds.Count == 0) return new();
+
+        // JE ที่ Posted, ไม่มี source doc, ยังไม่ถูก apply, มีขา Cr บนบัญชีมัดจำ
+        var jeQuery = _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && !j.IsDeleted
+                && j.Status == JournalEntryStatus.Posted
+                && j.SourceDocumentId == null
+                && j.DepositAppliedToDocumentId == null
+                && j.Lines.Any(l => !l.IsDeleted && l.CreditAmount > 0 && depAcctIds.Contains(l.AccountId)));
+        if (q.Length > 0)
+            jeQuery = jeQuery.Where(j => j.EntryNumber.Contains(q)
+                || (j.Reference != null && j.Reference.Contains(q))
+                || (j.Description != null && j.Description.Contains(q)));
+
+        var jes = await jeQuery
+            .OrderByDescending(j => j.EntryDate)
+            .Take(50)
+            .Select(j => new
+            {
+                j.Id, j.EntryNumber, j.EntryDate, j.Description, j.Reference,
+                DeferredNet = j.Lines.Where(l => !l.IsDeleted && depAcctIds.Contains(l.AccountId))
+                    .Sum(l => l.CreditAmount - l.DebitAmount),
+                Gross = j.Lines.Where(l => !l.IsDeleted
+                        && (depAcctIds.Contains(l.AccountId)
+                            || l.Account.AccountCode == "21913" || l.Account.AccountCode == "21911"))
+                    .Sum(l => l.CreditAmount - l.DebitAmount),
+            })
+            .ToListAsync();
+
+        return jes.Where(j => j.DeferredNet > 0.005m)
+            .Select(j => new JournalDepositCandidate(
+                j.EntryNumber, j.EntryDate, j.Description, j.Reference,
+                j.DeferredNet, System.Math.Max(0m, j.Gross)))
+            .ToList();
+    }
+
+    /// <summary>นำ "JV มัดจำที่ไม่มีเอกสาร" (case B) มาตัดชำระใบแจ้งหนี้/ใบกำกับ —
+    /// analogous กับ ApplyDepositToInvoiceAsync แต่ต้นทางเป็นสมุดรายวัน ไม่ใช่เอกสาร.
+    /// อ่านขา Cr จริงของ JV (บัญชี 215/217 + VAT 21913/21911) → post JV ตัดชำระ:
+    /// Dr บัญชีเดิม (base) + Dr VAT / Cr ลูกหนี้ (gross) + ลด BalanceDue. **one-shot
+    /// เต็ม JV** (v1 ไม่รองรับ partial — มัดจำมากกว่ายอดใบ = block). mark
+    /// JV.DepositAppliedToDocumentId กัน apply ซ้ำ. GL-critical — verify Windows.</summary>
+    public async Task<DocumentResponse> ApplyJournalDepositToInvoiceAsync(
+        Guid companyId, Guid invoiceId, string journalEntryNumber, string actor)
+    {
+        var invoice = await _db.Documents.FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้");
+        await _db.HydrateContactAsync(companyId, invoice);
+        if (invoice.Status != DocumentStatus.Approved && invoice.Status != DocumentStatus.PartiallyPaid
+            && invoice.Status != DocumentStatus.Sent && invoice.Status != DocumentStatus.Overdue)
+            throw new InvalidOperationException("นำมัดจำมาตัดชำระได้เฉพาะใบที่อนุมัติแล้ว/ชำระบางส่วน/เกินกำหนด");
+
+        var jv = await _db.JournalEntries.Include(j => j.Lines)
+            .FirstOrDefaultAsync(j => j.CompanyId == companyId && j.EntryNumber == journalEntryNumber
+                && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
+            ?? throw new KeyNotFoundException($"ไม่พบสมุดรายวัน {journalEntryNumber} (Posted)");
+        // row-lock กัน apply ซ้อน + re-read mark
+        await _db.Database.ExecuteSqlRawAsync(
+            @"SELECT ""Id"" FROM ""JournalEntries"" WHERE ""Id"" = {0} FOR UPDATE", jv.Id);
+        await _db.Entry(jv).ReloadAsync();
+        if (jv.DepositAppliedToDocumentId.HasValue && jv.DepositAppliedToDocumentId.Value != invoiceId)
+            throw new InvalidOperationException($"JV {journalEntryNumber} ถูกนำไปตัดชำระเอกสารอื่นแล้ว");
+
+        var acctIds = jv.Lines.Where(l => !l.IsDeleted).Select(l => l.AccountId).Distinct().ToList();
+        var codes = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && acctIds.Contains(a.Id))
+            .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
+        string CodeOf(Guid id) => codes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+
+        var defLine = jv.Lines.Where(l => !l.IsDeleted
+                && (CodeOf(l.AccountId).StartsWith("217") || CodeOf(l.AccountId).StartsWith("215")))
+            .GroupBy(l => l.AccountId)
+            .Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+            .Where(x => x.Net > 0.005m).OrderByDescending(x => x.Net).FirstOrDefault();
+        if (defLine == null)
+            throw new InvalidOperationException(
+                $"JV {journalEntryNumber} ไม่มีขาเครดิตบัญชีมัดจำ/รับล่วงหน้า (215xx/217xx) — ไม่ใช่ JV มัดจำ");
+        var vat13Line = jv.Lines.Where(l => !l.IsDeleted && CodeOf(l.AccountId) == "21913")
+            .GroupBy(l => l.AccountId).Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+            .FirstOrDefault(x => x.Net > 0.005m);
+        var vat11Line = jv.Lines.Where(l => !l.IsDeleted && CodeOf(l.AccountId) == "21911")
+            .GroupBy(l => l.AccountId).Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+            .FirstOrDefault(x => x.Net > 0.005m);
+        var vatLine = vat13Line ?? vat11Line;
+
+        var deferredNet = defLine.Net;
+        var vatNet = vatLine?.Net ?? 0m;
+        var gross = deferredNet + vatNet;
+        if (gross <= 0.005m)
+            throw new InvalidOperationException($"JV {journalEntryNumber} ไม่มียอดมัดจำคงเหลือ");
+        if (gross > invoice.BalanceDue + 0.01m)
+            throw new InvalidOperationException(
+                $"ยอดมัดจำใน JV ({gross:N2}) มากกว่ายอดคงค้างของใบ ({invoice.BalanceDue:N2}) — " +
+                "รุ่นแรกรองรับหักเต็ม JV เท่านั้น เลือกใบที่ยอดมากพอ หรือหักบางส่วนผ่านมัดจำเอกสาร");
+
+        var arAcc = await FindAccountAsync(companyId, "113", invoice.Contact)
+            ?? throw new InvalidOperationException("ไม่พบบัญชีลูกหนี้การค้า (113)");
+
+        var when = DateTime.UtcNow;
+        var apply = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV"),
+            EntryDate = when, JournalType = JournalType.General,
+            Description = $"นำมัดจำ (JV {jv.EntryNumber}) ตัดชำระ {invoice.DocumentNumber}",
+            Reference = invoice.DocumentNumber, Status = JournalEntryStatus.Posted,
+            TotalDebit = gross, TotalCredit = gross, CreatedBy = actor, IsAutoGenerated = true,
+            FiscalPeriodId = (await ResolveFiscalPeriodAsync(companyId, when))?.Id, ProjectId = invoice.ProjectId,
+        };
+        _db.JournalEntries.Add(apply);
+        var ln = 1;
+        _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = apply.Id, AccountId = defLine.AccountId,
+            DebitAmount = deferredNet, CreditAmount = 0, Description = $"ตัดขายรอรับรู้ (JV {jv.EntryNumber})", LineOrder = ln++ });
+        if (vatNet > 0 && vatLine != null)
+            _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = apply.Id, AccountId = vatLine.AccountId,
+                DebitAmount = vatNet, CreditAmount = 0,
+                Description = vat13Line != null ? "ตัดภาษีขายรอเรียกเก็บ (มัดจำ→ใบกำกับ)" : "ล้าง VAT มัดจำ", LineOrder = ln++ });
+        _db.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = apply.Id, AccountId = arAcc.Id,
+            DebitAmount = 0, CreditAmount = gross, Description = $"ตัดลูกหนี้ด้วยมัดจำ (JV {jv.EntryNumber})", LineOrder = ln++ });
+
+        jv.DepositAppliedToDocumentId = invoiceId;   // one-shot
+
+        invoice.PaidAmount += gross;
+        invoice.BalanceDue = Math.Max(0m, invoice.TotalAmount - invoice.PaidAmount);
+        if (invoice.BalanceDue <= 0.005m
+            && (invoice.Status == DocumentStatus.Approved || invoice.Status == DocumentStatus.PartiallyPaid
+                || invoice.Status == DocumentStatus.Sent || invoice.Status == DocumentStatus.Overdue))
+            invoice.Status = DocumentStatus.Paid;
+        else if (invoice.BalanceDue > 0.005m && invoice.Status == DocumentStatus.Approved)
+            invoice.Status = DocumentStatus.PartiallyPaid;
+        invoice.DepositAppliedAmount += gross;
+        if (string.IsNullOrWhiteSpace(invoice.DepositAppliedRef))
+            invoice.DepositAppliedRef = jv.EntryNumber;
+
+        await _db.SaveChangesAsync();
+        var updated = await GetDocumentAsync(companyId, invoiceId);
+        await FireWebhookAsync(companyId, "deposit.applied", updated);
+        return updated;
+    }
+
     public async Task<SuggestPvAccountingResponse> SuggestPaymentVoucherAccountingAsync(
         Guid companyId, SuggestPvAccountingRequest request, CancellationToken ct = default)
     {

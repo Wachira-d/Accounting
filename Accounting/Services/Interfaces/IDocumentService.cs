@@ -43,6 +43,13 @@ public interface IDocumentService
     /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย — รับรู้รายได้มัดจำ +
     /// ลด BalanceDue ของใบ (treat มัดจำเป็น prepayment).</summary>
     Task<DocumentResponse> ApplyDepositToInvoiceAsync(Guid companyId, Guid invoiceId, ApplyDepositRequest request, string actor);
+
+    /// <summary>ค้น JV มัดจำที่ไม่มีเอกสาร (case B) ที่ยังเปิดให้ตัดชำระได้ —
+    /// filter ด้วย query (EntryNumber/Reference/Description contains).</summary>
+    Task<List<JournalDepositCandidate>> SearchJournalDepositsAsync(Guid companyId, string? query);
+
+    /// <summary>นำ JV มัดจำ (ไม่มีเอกสาร) มาตัดชำระใบแจ้งหนี้/ใบกำกับ (หักเต็ม JV, v1).</summary>
+    Task<DocumentResponse> ApplyJournalDepositToInvoiceAsync(Guid companyId, Guid invoiceId, string journalEntryNumber, string actor);
     /// <summary>เอกสารทั้งหมดที่ผูก booking เดียวกัน (มัดจำ → ใบสุดท้าย → ใบเสร็จ).</summary>
     Task<List<DocumentResponse>> GetDocumentsByBookingAsync(Guid companyId, string bookingNumber);
     /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ

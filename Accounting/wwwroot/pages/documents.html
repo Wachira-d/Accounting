@@ -290,6 +290,16 @@
                → เรียก applyDeposit (Realize 217xx + ลด BalanceDue + ย้าย VAT
                21913→21911 ถ้า deferred). -->
           <div id="contactDepositBanner" style="display:none;background:#ecfdf5;border:1px solid #6ee7b7;border-left:4px solid #10b981;border-radius:10px;padding:12px 14px;margin-bottom:14px"></div>
+          <!-- JV มัดจำที่ไม่มีเอกสาร (post ตรงผ่าน integration/journals หรือลงมือ) —
+               ค้นด้วยเลขอ้างอิง/booking/เลข JV แล้วนำมาหักเข้าใบนี้ (หักเต็ม JV). -->
+          <div id="jvDepositBox" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:10px;padding:10px 14px;margin-bottom:14px">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span style="font-size:13px;font-weight:600;color:#1e40af">🔎 หา JV มัดจำ (ไม่มีเอกสาร)</span>
+              <input type="text" id="jvDepQuery" class="form-input" style="max-width:260px;font-size:13px" placeholder="เลขอ้างอิง / booking / เลข JV" onkeydown="if(event.key==='Enter'){event.preventDefault();Page.searchJvDeposits()}">
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.searchJvDeposits()">ค้นหา</button>
+            </div>
+            <div id="jvDepResults" style="margin-top:8px;font-size:13px"></div>
+          </div>
           <!-- §82/5 — เตือนเมื่อเอกสารต้นทางเคลม VAT ไม่ได้ (ใบกำกับอย่างย่อ/
                ใบเสร็จ ที่ไม่ใช่ใบกำกับเต็มรูป §86/4). มาจาก OCR handoff. -->
           <div id="vatClaimWarnBanner" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#991b1b;line-height:1.7"></div>
@@ -2116,6 +2126,54 @@
           : null;
       },
 
+      /** ค้น JV มัดจำที่ไม่มีเอกสาร — ใส่ query (เลขอ้างอิง/booking/เลข JV)
+       *  → list JV ที่เปิดให้หัก. ถ้าไม่ใส่ query จะดึงเลข booking ในฟอร์มมาช่วย
+       *  (ถ้ามี) แล้วค่อย fallback list ทั้งหมด. */
+      async searchJvDeposits() {
+        const box = document.getElementById('jvDepResults');
+        if (!box) return;
+        const api = Layout.api(); if (!api) return;
+        let q = (document.getElementById('jvDepQuery')?.value || '').trim();
+        if (!q) q = (document.getElementById('fBookingNumber')?.value || '').trim();
+        box.innerHTML = '<span style="color:#64748b">กำลังค้นหา…</span>';
+        try {
+          const r = await api.searchJournalDeposits(q);
+          const rows = r?.data || [];
+          if (!rows.length) { box.innerHTML = `<span style="color:#64748b">ไม่พบ JV มัดจำที่เปิดอยู่${q ? ' สำหรับ "' + Layout.esc(q) + '"' : ''} — ลองคำค้นอื่น หรือเว้นว่างเพื่อดูทั้งหมด</span>`; return; }
+          box.innerHTML = rows.map(j => `
+            <div style="display:flex;gap:10px;align-items:center;padding:6px 8px;border:1px solid #dbeafe;border-radius:8px;margin-bottom:6px;background:#fff">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600;color:#1e3a8a">${Layout.esc(j.entryNumber)} · ${Layout.money(j.gross)}</div>
+                <div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${new Date(j.entryDate).toLocaleDateString('th-TH')}${j.reference ? ' · อ้างอิง ' + Layout.esc(j.reference) : ''}${j.description ? ' · ' + Layout.esc(j.description) : ''}</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-primary" onclick="Page.pickJvDeposit('${Layout.esc(j.entryNumber)}', ${j.gross})">หัก</button>
+            </div>`).join('');
+        } catch (e) { box.innerHTML = `<span style="color:#dc2626">ค้นไม่สำเร็จ: ${Layout.esc(e.message || '')}</span>`; }
+      },
+
+      /** เลือก JV มัดจำมาหัก — editing (ใบ approved แล้ว) หักทันที;
+       *  creating → เก็บ pending แล้วหักหลัง "บันทึกและอนุมัติ". */
+      async pickJvDeposit(entryNumber, gross) {
+        const api = Layout.api(); if (!api) return;
+        if (this.editingId) {
+          if (!confirm(`หัก JV มัดจำ ${entryNumber} (${Layout.money(gross)}) เข้าใบนี้?`)) return;
+          try {
+            await api.applyJournalDeposit(this.editingId, entryNumber);
+            Layout.toast('หัก JV มัดจำเข้าใบนี้แล้ว', 'success');
+            if (typeof this.viewDetail === 'function') await this.viewDetail(this.editingId);
+            await this.searchJvDeposits();
+          } catch (e) { Layout.toast(e.message || 'หัก JV ไม่สำเร็จ', 'error'); }
+        } else {
+          // สร้างใหม่: ตั้ง pending (kind=journal) → save() หักหลัง approve.
+          // ปิดตัวเลือกมัดจำเอกสาร (checkbox) กันหัก 2 ทาง
+          const chk = document.getElementById('fApplyDepOnSave'); if (chk) chk.checked = false;
+          this._pendingDepositApply = { kind: 'journal', journalEntryNumber: entryNumber, amount: gross };
+          Layout.toast(`เลือก JV ${entryNumber} แล้ว — จะหักตอนกด "บันทึกและอนุมัติ"`, 'info', 7000);
+          const box = document.getElementById('jvDepResults');
+          if (box) box.innerHTML = `<span style="color:#065f46">✓ เลือก JV ${Layout.esc(entryNumber)} (${Layout.money(gross)}) — จะหักตอนบันทึกและอนุมัติ · <a href="#" onclick="Page._pendingDepositApply=null;Page.searchJvDeposits();return false" style="color:#dc2626">ยกเลิก</a></span>`;
+        }
+      },
+
       /** 1-click apply เมื่อมัดจำ booking match เป๊ะ 1 ใบ — ข้าม picker
        *  (กฎเหล็ก #3 spirit). ใช้ outstandingAmount ของใบนั้นทันที. */
       async quickApplyDeposit(depositId, outstanding) {
@@ -2818,6 +2876,9 @@
           hint.style.display = opt.title ? '' : 'none';
         }
         const docType = sel?.value;
+        // JV มัดจำ (ไม่มีเอกสาร) — โชว์เฉพาะฝั่งขายที่ตั้งลูกหนี้ (หักมัดจำได้)
+        const jvBox = document.getElementById('jvDepositBox');
+        if (jvBox) jvBox.style.display = ['Invoice', 'TaxInvoice'].includes(docType) ? '' : 'none';
         // Show/hide expense category based on document type
         const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder', 'PurchaseRequisition', 'CertificateInLieu'];
         const ecField = document.getElementById('fExpenseCategory')?.closest('.form-group');
@@ -4808,12 +4869,17 @@
               // (ไม่ต้องบันทึกก่อนแล้วเปิดแก้). fail-soft: หักไม่ผ่าน → ใบยังอยู่ ให้หักเองได้
               if (this._pendingDepositApply) {
                 try {
-                  await api.applyDeposit(savedDocId, {
-                    depositDocumentId: this._pendingDepositApply.depositDocumentId,
-                    amount: this._pendingDepositApply.amount,
-                    applyDate: new Date().toISOString()
-                  });
-                  Layout.toast(`บันทึก+อนุมัติ + หักมัดจำ ${Layout.money(this._pendingDepositApply.amount)} เข้าใบนี้แล้ว`, 'success');
+                  if (this._pendingDepositApply.kind === 'journal') {
+                    await api.applyJournalDeposit(savedDocId, this._pendingDepositApply.journalEntryNumber);
+                    Layout.toast(`บันทึก+อนุมัติ + หัก JV มัดจำ ${this._pendingDepositApply.journalEntryNumber} เข้าใบนี้แล้ว`, 'success');
+                  } else {
+                    await api.applyDeposit(savedDocId, {
+                      depositDocumentId: this._pendingDepositApply.depositDocumentId,
+                      amount: this._pendingDepositApply.amount,
+                      applyDate: new Date().toISOString()
+                    });
+                    Layout.toast(`บันทึก+อนุมัติ + หักมัดจำ ${Layout.money(this._pendingDepositApply.amount)} เข้าใบนี้แล้ว`, 'success');
+                  }
                 } catch (de) {
                   Layout.toast('บันทึก+อนุมัติแล้ว แต่หักมัดจำไม่ผ่าน: '
                     + (de.message || '') + ' — เปิดใบแล้วกด "หักมัดจำ" เองได้', 'warning', 9000);

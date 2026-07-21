@@ -1292,6 +1292,17 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 78 (หัก "JV มัดจำที่ไม่มีเอกสาร" ได้): มัดจำที่ integration post ตรงผ่าน
+`/integration/journals` (ไม่มี SourceDocumentId) เดิมหักเข้าใบแจ้งหนี้ไม่ได้ผ่าน UI
+(ApplyDepositToInvoiceAsync ต้องมีใบมัดจำ Document). เพิ่ม:
+(1) `SearchJournalDepositsAsync` — ค้น JE Posted, ไม่มี source doc, ยังไม่ apply,
+มีขา Cr 215/217, filter ด้วย query (EntryNumber/Reference/Description contains) →
+`GET /document/journal-deposits?q=`. (2) `ApplyJournalDepositToInvoiceAsync` —
+อ่านขา Cr จริงของ JV (215/217 + 21913/21911) → post JV ตัดชำระ: Dr บัญชีเดิม +
+Dr VAT / Cr ลูกหนี้ (gross) + ลด BalanceDue + mark `JV.DepositAppliedToDocumentId`
+(one-shot, หักเต็ม JV; gross>ยอดใบ → block) → `POST /document/{id}/apply-journal-deposit`.
+(3) frontend: กล่องค้น JV ในฟอร์ม (booking auto-fill) → editing หักทันที / creating
+หักหลัง approve. GL-critical v1 — verify Windows._
 _รอบ 77 (หักมัดจำได้ในฟอร์มสร้างเอกสารเลย): เดิมตอนสร้างใหม่ banner มัดจำคงค้าง
 บอกแค่ "บันทึกใบก่อน แล้วเปิดแก้เพื่อหักมัดจำ" (2 ขั้น). เพิ่ม selector ในฟอร์ม
 (checkbox + เลือกใบมัดจำ + ยอด, auto-select ใบ booking ตรงกัน) → เก็บ
