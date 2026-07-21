@@ -417,6 +417,12 @@ internal sealed class OcrMetadataProjectMatcher
                     var c = candidates.First(x => string.Equals(x.ProjectId, res.Answer, StringComparison.OrdinalIgnoreCase));
                     it.ProjectId = pid;
                     it.ProjectName = c.ProjectName;
+                    // ปิดลูปการสอน (กฎเหล็ก #1) — เก็บ feedback row + คำตอบ AI ฝังบรรทัด
+                    // ไว้ ให้ตอนผู้ใช้ override project (SetExtractedLineProjectAsync)
+                    // เรียก RecordUserChoiceAsync ปิดลูปได้ (ก่อนหน้านี้ CAPTURE ผ่าน
+                    // orchestrator แล้วแต่ไม่มีใคร record คำตอบจริง → student ไม่เคยเรียน)
+                    it.ProjectAiFeedbackId = res.FeedbackId;
+                    it.AiSuggestedProjectId = pid;
                     trace.Add($"บรรทัด {i + 1} \"{Short(it.Description)}\" → \"{c.ProjectName}\" (AI)");
                 }
             }

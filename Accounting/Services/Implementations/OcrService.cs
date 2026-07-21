@@ -4458,6 +4458,24 @@ public class OcrService : IOcrService
         if (lineIndex >= items.Count)
             throw new ArgumentOutOfRangeException(nameof(lineIndex), "lineIndex เกินจำนวนรายการที่สแกนได้");
 
+        // ปิดลูปการสอน MatchLineProject (กฎเหล็ก #1) — ผู้ใช้ override project ราย
+        // บรรทัด = ground-truth. ถ้าบรรทัดนี้เคยถูก AI เดา (มี ProjectAiFeedbackId)
+        // → record คำตอบจริง. acceptedAi = ผู้ใช้เลือกตรงกับที่ AI แนะนำ.
+        var lineBefore = items[lineIndex];
+        if (_feedbackRecorder != null && lineBefore.ProjectAiFeedbackId.HasValue && projectId.HasValue)
+        {
+            try
+            {
+                var acceptedAi = lineBefore.AiSuggestedProjectId == projectId;
+                await _feedbackRecorder.RecordUserChoiceAsync(
+                    lineBefore.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to record project-match feedback choice (non-fatal)");
+            }
+        }
+
         items[lineIndex].ProjectId = projectId;
         items[lineIndex].ProjectName = projectName;
         scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
@@ -4499,6 +4517,21 @@ public class OcrService : IOcrService
         foreach (var item in items)
         {
             if (onlyEmpty && item.ProjectId.HasValue) continue;
+            // ปิดลูป (กฎเหล็ก #1) เช่นเดียวกับ single-line — บรรทัดที่ AI เคยเดาแล้ว
+            // ผู้ใช้ "apply main" ทับ = user override. record ก่อนเขียนทับ.
+            if (_feedbackRecorder != null && item.ProjectAiFeedbackId.HasValue && projectId.HasValue)
+            {
+                try
+                {
+                    var acceptedAi = item.AiSuggestedProjectId == projectId;
+                    await _feedbackRecorder.RecordUserChoiceAsync(
+                        item.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to record project-match feedback (bulk, non-fatal)");
+                }
+            }
             item.ProjectId = projectId;
             item.ProjectName = projectName;
         }
@@ -5664,4 +5697,10 @@ internal class OcrExtractedLineItem
     /// <summary>Unit (ถุง/เส้น/กล่อง…) detected from the description —
     /// flows to DocumentLine.Unit instead of the blanket "ชิ้น" default.</summary>
     public string? Unit { get; set; }
+    /// <summary>ปิดลูปการสอน MatchLineProject (กฎเหล็ก #1) — feedback row ที่
+    /// orchestrator คืนตอน AI เดา project ให้บรรทัดนี้. เก็บฝังใน ExtractedItemsJson
+    /// เพื่อให้ตอนผู้ใช้ override project (SetExtractedLineProjectAsync) รู้ว่าจะปิด
+    /// ลูปไหน + AiSuggestedProjectId ใช้เทียบว่าผู้ใช้รับคำตอบ AI หรือแก้.</summary>
+    public Guid? ProjectAiFeedbackId { get; set; }
+    public Guid? AiSuggestedProjectId { get; set; }
 }
