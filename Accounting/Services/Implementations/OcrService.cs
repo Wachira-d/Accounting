@@ -4517,6 +4517,25 @@ public class OcrService : IOcrService
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contactId)
             ?? throw new InvalidOperationException("Contact not found.");
 
+        // ปิดลูปการสอน local model (กฎเหล็ก #1) — ตอน AI เดา vendor canon แล้ว
+        // ผู้ใช้มา "ยืนยัน/แก้" คู่ค้าเอง คือ ground-truth ของ VendorCanon feature.
+        // ถ้าไม่บันทึก AiFeedbackTrainingJob จะ mine ไม่ได้ (มัน mine row ที่
+        // UserChosenAt != null) → student ไม่เคยเรียนคำตอบจริง. acceptedAi =
+        // ผู้ใช้เลือกตรงกับที่ AI แนะนำพอดี. ห่อ try กัน record ล้มไม่ให้ล้ม match.
+        if (_feedbackRecorder != null && result.AiSuggestionFeedbackId.HasValue)
+        {
+            try
+            {
+                var acceptedAi = result.AiSuggestedContactId == contactId;
+                await _feedbackRecorder.RecordUserChoiceAsync(
+                    result.AiSuggestionFeedbackId.Value, contactId.ToString(), acceptedAi, default);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to record VendorCanon feedback choice (non-fatal)");
+            }
+        }
+
         result.MatchedContactId = contactId;
         await _db.SaveChangesAsync();
 
