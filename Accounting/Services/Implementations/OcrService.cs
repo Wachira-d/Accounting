@@ -2450,6 +2450,27 @@ public class OcrService : IOcrService
         foreach (var item in data.Items)
             item.Description = TrimSplitSuffix(item.Description, splitMarkers);
 
+        // 1b) ⭐ กัน "จำนวนระเบิด": OCR อ่านยอดบรรทัด (Amount) ถูก แต่อ่าน "จำนวน"
+        //     ผิด (มักอ่านตัวเลขในคอลัมน์ยอด/ราคา มาใส่เป็นจำนวน) → line-building
+        //     คิด qty×unitPrice → ยอดพุ่งไกลจาก Amount จริง. ถ้าเจอ Amount ที่เชื่อได้
+        //     + UnitPrice + Quantity ครบ แล้ว qty×price เพี้ยนจาก Amount เกิน tol
+        //     (±2% หรือ ฿1) → **เชื่อ Amount เป็นหลัก** แก้ Quantity = Amount/UnitPrice
+        //     (รักษายอดบรรทัด = Amount ที่ OCR แสดงถูก → ยอดรวมไม่ระเบิด).
+        //     ทำก่อน fold/merge เพื่อให้ EffAmt/ยอดรวมถัดไปใช้ค่าที่ reconcile แล้ว.
+        foreach (var item in data.Items)
+        {
+            var amt = item.Amount ?? 0m;
+            var up = item.UnitPrice ?? 0m;
+            var qty = item.Quantity ?? 0m;
+            if (amt <= 0m || up <= 0m || qty <= 0m) continue;
+            var computed = System.Math.Round(up * qty, 2);
+            var tol = System.Math.Max(1m, System.Math.Abs(amt) * 0.02m);
+            if (System.Math.Abs(computed - amt) <= tol) continue;   // ตรงอยู่แล้ว
+            // เพี้ยน → qty น่าจะอ่านผิด. เชื่อ Amount+UnitPrice → แก้ qty ให้ line = Amount
+            var fixedQty = System.Math.Round(amt / up, 3, System.MidpointRounding.AwayFromZero);
+            item.Quantity = fixedQty > 0m ? fixedQty : 1m;
+        }
+
         // EffAmt = ยอดบรรทัดที่เชื่อถือได้ — Amount ถ้ามี, ไม่งั้น UnitPrice×Quantity.
         // กันเคส external OCR ส่งแต่ UnitPrice+Quantity ไม่ได้ส่ง Amount.
         static decimal EffAmt(OcrExtractedLineItem it)
