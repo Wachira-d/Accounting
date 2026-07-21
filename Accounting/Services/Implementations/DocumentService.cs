@@ -7698,8 +7698,9 @@ public class DocumentService : IDocumentService
         // ============================================================
         // SALES SIDE: Invoice / TaxInvoice (full sale on credit)
         // ============================================================
-        if (doc.DocumentType == DocumentType.Invoice
-            || doc.DocumentType == DocumentType.TaxInvoice)
+        if ((doc.DocumentType == DocumentType.Invoice
+             || doc.DocumentType == DocumentType.TaxInvoice)
+            && !doc.IssuedAsCashReceipt)   // cash-sale TaxInvoice ลงแบบเงินสด (branch ล่าง) ไม่ตั้งลูกหนี้
         {
             journalType = JournalType.Sales;
 
@@ -8150,7 +8151,11 @@ public class DocumentService : IDocumentService
         // - Standalone (no link): direct cash sale
         // ============================================================
         else if (doc.DocumentType == DocumentType.Receipt
-                 || doc.DocumentType == DocumentType.ReceiptVoucher)
+                 || doc.DocumentType == DocumentType.ReceiptVoucher
+                 // ขายเงินสด B2B (integration isCashSale): TaxInvoice ที่รับเงินจบในตัว
+                 // ลงเป็น "ขายเงินสด" (Dr เงินสด/Cr รายได้+VAT + กลับมัดจำ) ไม่ตั้งลูกหนี้
+                 // → JE สะอาดใบเดียว, e-Tax T03. reuse เส้น driveDeposit ที่ verified
+                 || (doc.DocumentType == DocumentType.TaxInvoice && doc.IssuedAsCashReceipt))
         {
             journalType = JournalType.CashReceipts;
 
@@ -8171,6 +8176,9 @@ public class DocumentService : IDocumentService
                     or DocumentType.TaxInvoice or DocumentType.DebitNote;
                 if (recSrc != null) srcFx = recSrc.ExchangeRate;
             }
+            // ขายเงินสด (isCashSale) ไม่เคยตั้งลูกหนี้มาก่อน — บังคับ standalone
+            // เสมอ (กันเคสมี RelatedDocumentId หลุดมาแล้วไป settle AR ที่ไม่มีจริง)
+            if (doc.IssuedAsCashReceipt) receiptSettlesAr = false;
 
             if (receiptSettlesAr)
             {
@@ -8904,6 +8912,52 @@ public class DocumentService : IDocumentService
                 ProjectId = lineProjects[i]
             });
         }
+    }
+
+    /// <summary>โพสต์ JE "ขายเงินสด" (integration isCashSale) ผ่าน AutoPostToJournalAsync
+    /// — TaxInvoice ที่ IssuedAsCashReceipt=true ลงแบบเงินสด: Dr เงินสด(paymentAccountId)
+    /// + กลับมัดจำ 217xx/21913 (ถ้า DepositAppliedDrivesJournal) / Cr รายได้(ราย line)
+    /// + Cr 21911 — **ไม่มีลูกหนี้การค้า** ใบเดียวจบ (reuse เส้น driveDeposit ที่ verified).
+    /// AutoPost ไม่ SaveChanges เอง → wrapper นี้ save + คืน JE id. ถ้าล้ม → detach
+    /// JE/line ที่ค้างใน context + rethrow (กัน pollution ให้ผู้เรียก fallback สะอาด).</summary>
+    public async Task<Guid?> PostCashSaleJournalAsync(Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents.Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);   // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
+        try
+        {
+            await AutoPostToJournalAsync(companyId, doc, "integration-cashsale");
+            await _db.SaveChangesAsync();
+        }
+        catch
+        {
+            // ล้าง in-memory changes ทั้งหมดที่ AutoPost ทำค้างไว้ (save ไม่สำเร็จ) เพื่อ
+            // ไม่ให้ SaveChanges รอบถัดไปของผู้เรียก (degrade path) flush ค้าง/ซ้ำ:
+            //  • JE/line ที่ Added → detach
+            //  • Document/JE ที่ Modified (เช่น driveDeposit แก้ subledger ใบมัดจำ
+            //    DepositRealizedAmount / case B แก้ depJe) → Reload คืนค่า DB
+            //    (กัน "มัดจำถูกมาร์ค realized แต่ไม่มี JE reversal")
+            foreach (var e in _db.ChangeTracker.Entries().ToList())
+            {
+                if (e.State == EntityState.Added
+                    && (e.Entity is JournalEntry || e.Entity is JournalEntryLine))
+                    e.State = EntityState.Detached;
+                else if (e.State == EntityState.Modified
+                    && (e.Entity is Document || e.Entity is JournalEntry))
+                {
+                    try { await e.ReloadAsync(); }
+                    catch { e.State = EntityState.Unchanged; }
+                }
+            }
+            throw;
+        }
+        return await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                && j.OriginalEntryId == null && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
+            .OrderByDescending(j => j.CreatedAt)
+            .Select(j => (Guid?)j.Id).FirstOrDefaultAsync();
     }
 
     /// <summary>Generate next journal entry number for a given prefix (SV/UV/RV/PV/JV) per month.

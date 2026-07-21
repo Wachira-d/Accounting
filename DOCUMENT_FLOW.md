@@ -145,20 +145,27 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Behavior พิเศษ**:
   - resolve external account/user IDs → company members (mapping table)
   - `AutoApprove` flag ตาม `IntegrationConfig` → ข้าม Draft state
-  - **`IsCashSale` (B2B ขายเงินสด)** บน `InboundInvoiceRequest`: หลังสร้าง
-    TaxInvoice + post JE (Dr ลูกหนี้/Cr รายได้+VAT) ระบบรับชำระเต็มยอดคงเหลือ
-    ทันทีผ่าน `CreatePaymentAsync(IssueReceiptDocument:false,
-    OverridePaymentAccountId)` → **ไม่ออกใบเสร็จแยก** → ใบกำกับ BalanceDue=0 →
-    ตั้ง `IssuedAsCashReceipt=true` (persist) → พิมพ์หัว "ใบเสร็จรับเงิน/
-    ใบกำกับภาษี" + e-Tax **T03** (ใบเสร็จรับเงิน/ใบกำกับภาษี, ผ่าน TaxInvoice schema).
-    สุทธิ GL = Dr เงินสด(PaymentAccountId)/Cr รายได้+VAT. ยุบ 3 ใบ (TIV+REC×2)
-    เหลือใบเดียว (spec TakeTime). fail-soft: ชำระไม่สำเร็จ = ใบกำกับค้างชำระ ไม่ล้ม sync
+  - **`IsCashSale` (B2B ขายเงินสด)** บน `InboundInvoiceRequest`: สร้าง TaxInvoice
+    ที่ตั้ง `IssuedAsCashReceipt=true` + `PaymentAccountId` แล้ว **post JE แบบ
+    "ขายเงินสด" ผ่าน `IDocumentService.PostCashSaleJournalAsync` (→ AutoPost
+    branch cash-receipt ที่ขยายให้รับ TaxInvoice+IssuedAsCashReceipt)** — ไม่ใช่
+    mapping-JE (Dr ลูกหนี้) เดิม. **GL: `Dr เงินสด(PaymentAccountId) + [Dr 217xx +
+    Dr 21913 ถ้ามัดจำ drives] / Cr รายได้(ราย line) + Cr 21911` — ไม่มีลูกหนี้การค้า
+    เลย** (reuse เส้น `driveDeposit` ที่ verified). สำเร็จ → `PaidAmount=Total,
+    BalanceDue=0` → e-Tax **T03** + หัว "ใบเสร็จรับเงิน/ใบกำกับภาษี". ยุบ 3 ใบ
+    (TIV+REC×2) เหลือใบเดียว (spec TakeTime).
+    **fail-soft:** ลง JE เงินสดไม่สำเร็จ → degrade เป็นตั้งหนี้ (mapping JE Dr ลูกหนี้)
+    + คง `BalanceDue=Total` + `IssuedAsCashReceipt=false` → TakeTime capability-
+    detection (`balanceDue>0`) จะ fallback settle เอง (ไม่ settle ซ้ำ). PostCashSale
+    detach JE ที่ค้างใน context ก่อน rethrow (กัน pollution).
   - **Deposit fields บน `InboundInvoiceRequest`** (`DepositAppliedAmount`,
     `DepositAppliedRef`, `DepositOutputVatDeferred`, `DepositAppliedDrivesJournal`)
-    → persist ลง `Document` ตรง ๆ ตอนสร้าง (deposit/checkout spec). ค่า default
-    = display-only; `DepositAppliedDrivesJournal=true` เท่านั้นที่ drive JE
-    self-contained (กลับ 217xx/21913) — ทำงานผ่าน `AutoPostToJournalAsync` เท่านั้น
-    ไม่ใช่ mapping-JE path นี้ ดังนั้น IsCashSale settle จ่ายเต็ม BalanceDue ตามเดิม
+    → persist ลง `Document` ตอนสร้าง (stamp `DepositAppliedAmount` ทุกกรณี).
+    `DepositAppliedDrivesJournal=true` → `driveDeposit` ใน AutoPost อ่านยอดนี้กลับ
+    217xx/21913 + Dr เงินสด "สุทธิ" (Total − ยอด). resolve `depositAppliedRef` เป็น
+    ใบมัดจำจริง (IsDeposit) — เคส A doc / เคส B journal-ref. `DrivesJournal=false`
+    = display-only (Dr เงินสดเต็ม, TakeTime กลับมัดจำเอง). void สมมาตรผ่าน 7c
+    (`UnrealizeDrivesDepositAsync`).
   - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
     **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
     สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)
@@ -1285,6 +1292,20 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 70 (TakeTime cash-sale — GL สะอาด ไม่มีลูกหนี้): แก้ตามที่ผู้ใช้ทัก — ขายเงินสด
+B2B ต้องไม่มีลูกหนี้การค้าในการลงบัญชี. เดิม integration `isCashSale` ลงผ่าน
+mapping-JE (Dr ลูกหนี้) + ApplyDeposit + settle → **AR-transit** (สุทธิ 0 แต่ footer
+JE โชว์ Dr ลูกหนี้). เปลี่ยนเป็น: **(1)** ขยาย branch cash-receipt ใน
+`AutoPostToJournalAsync` ให้รับ `TaxInvoice && IssuedAsCashReceipt` (sales branch
+เพิ่ม `&& !IssuedAsCashReceipt` เพื่อ exclude; บังคับ `receiptSettlesAr=false`) →
+reuse เส้น `driveDeposit` ที่ verified. **(2)** `IDocumentService.PostCashSaleJournalAsync`
+(public wrapper: AutoPost + SaveChanges + detach-on-error + คืน JE id). **(3)**
+integration isCashSale ตั้ง `IssuedAsCashReceipt=true` + `PaymentAccountId` + stamp
+`DepositAppliedAmount` ทุกกรณี → post ผ่าน PostCashSale (ไม่ใช่ mapping+settle).
+ผล GL: `Dr เงินสด(+217xx+21913 ถ้ามัดจำ) / Cr รายได้+21911` **ไม่มี 113 เลย** ใบเดียว.
+fail-soft → degrade เป็นตั้งหนี้ (mapping JE) ให้ TakeTime fallback. ลบ
+`TrySettleCashSaleAsync`/ApplyDeposit-transit path ทิ้ง. void สมมาตรผ่าน 7c เดิม.
+⚠️ GL-critical + env นี้ test ไม่ได้ → **ต้อง verify GL บน Windows ก่อนเปิด**._
 _รอบ 69 (ทุกเอกสาร): OWNER fallback ไม่ทับผู้อนุมัติตัวจริงอีกต่อไป. เดิม fallback_
 _ทำงานทุกครั้งที่ slot 1 ไม่มี "รูปลายเซ็น" → ผู้อนุมัติจริงที่ยังไม่อัปโหลดลายเซ็น_
 _ถูกแทนด้วยลายเซ็น+ชื่อ "เจ้าของ" ทุกประเภทเอกสาร (โชว์ผิดคน + แก้ชื่อผู้อนุมัติ_
