@@ -8299,6 +8299,9 @@ public class DocumentService : IDocumentService
                     var _depRefs = DepositReversalMath.ParseDepositRefs(doc.DepositAppliedRef);
                     if (_depRefs.Length > 1)
                     {
+                        // กันเลขมัดจำซ้ำในลิสต์ ("REC-9, REC-9") → reverse ใบเดียวกันเบิ้ล
+                        // (one-shot guard ผ่านเพราะ AppliedTo==doc.Id ตัวเอง) — dedup ตาม id
+                        var _seenDeps = new HashSet<Guid>();
                         foreach (var depRef in _depRefs)
                         {
                             var mDepId = await _db.Documents.AsNoTracking()
@@ -8308,6 +8311,7 @@ public class DocumentService : IDocumentService
                             if (!mDepId.HasValue)
                                 throw new InvalidOperationException(
                                     $"หักมัดจำหลายใบ: ไม่พบใบมัดจำ {depRef} (IsDeposit) — ตรวจ depositAppliedRef");
+                            if (!_seenDeps.Add(mDepId.Value)) continue;   // ใบนี้หักไปแล้วในรอบนี้ → ข้าม
                             // row-lock กัน race เหมือนใบเดียว
                             await _db.Database.ExecuteSqlRawAsync(
                                 @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} FOR UPDATE", mDepId.Value);
