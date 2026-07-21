@@ -4254,7 +4254,31 @@ public class DocumentService : IDocumentService
                 @"DELETE FROM ""DocumentSignatures"" WHERE ""DocumentId"" = {0}",
                 documentId);
 
-            // 7. Null out references from other documents (RelatedDocumentId)
+            // 6c. ลบ "ใบเสร็จหลักฐานรับเงิน" (settlement receipt) ที่ผูกกับเอกสารนี้
+            //     ทิ้งพร้อมกัน — ใบพวกนี้เป็น artifact ของการชำระ (payment ถูกลบใน
+            //     step 2, JE ถูกลบ step 1) ไม่มี JE ของตัวเอง. เดิม step 7 แค่ NULL
+            //     RelatedDocumentId → ใบเสร็จลอยค้างใน list (ผู้ใช้เห็น "ใบเสร็จงอก
+            //     เยอะ" หลังลบใบกำกับ). ลบ recursive (เผื่อมี e-Tax/line) ผ่าน purge
+            //     ตัวเอง เพื่อข้อมูลสะอาดพร้อม resync ใหม่.
+            var settlementChildIds = await _db.Documents.IgnoreQueryFilters()
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == documentId
+                    && d.IsSettlementReceipt)
+                .Select(d => d.Id)
+                .ToListAsync();
+            foreach (var recId in settlementChildIds)
+            {
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""EtaxInvoices"" WHERE ""DocumentId"" = {0} AND ""CompanyId"" = {1}",
+                    recId, companyId);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""DocumentLines"" WHERE ""DocumentId"" = {0}", recId);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1}",
+                    recId, companyId);
+            }
+
+            // 7. Null out references from other documents (RelatedDocumentId) —
+            //    settlement receipts ถูกลบใน 6c แล้ว เหลือ ref อื่น (convert chain ฯลฯ)
             await _db.Database.ExecuteSqlRawAsync(
                 @"UPDATE ""Documents"" SET ""RelatedDocumentId"" = NULL WHERE ""RelatedDocumentId"" = {0}",
                 documentId);

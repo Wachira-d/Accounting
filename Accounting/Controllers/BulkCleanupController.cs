@@ -147,6 +147,78 @@ public class BulkCleanupController : ControllerBase
             new PaidVatInvoiceReport(items.Count, items.Sum(i => i.VatAmount), items)));
     }
 
+    // ── Orphaned settlement receipts (ใบเสร็จหลักฐานรับเงินที่ต้นทางหายแล้ว) ──
+    // เกิดจากลบใบกำกับก่อนหน้า: purge เดิมแค่ NULL RelatedDocumentId ไม่ได้ลบใบเสร็จ
+    // → REC ลอยค้างใน list ("ใบเสร็จงอกเยอะ"). GET = diagnostic (read-only, เปิดให้
+    // API key ดูได้), POST purge = Owner soft-delete (ใบ settlement ไม่มี JE ของ
+    // ตัวเอง — payment ถือ JE ซึ่งถูกลบไปกับใบกำกับแล้ว จึงลบทิ้งปลอดภัย).
+    public record OrphanReceiptEntry(Guid Id, string DocumentNumber, DateTime DocumentDate,
+        string ContactName, decimal TotalAmount, string Reason);
+    public record OrphanReceiptReport(int Count, decimal TotalAmount, List<OrphanReceiptEntry> Items);
+
+    private async Task<List<Guid>> FindOrphanSettlementReceiptIdsAsync(Guid companyId)
+    {
+        var recs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.IsSettlementReceipt)
+            .Select(d => new { d.Id, d.RelatedDocumentId })
+            .ToListAsync();
+        var parentIds = recs.Where(r => r.RelatedDocumentId.HasValue)
+            .Select(r => r.RelatedDocumentId!.Value).Distinct().ToList();
+        var aliveSet = (await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && parentIds.Contains(d.Id) && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .Select(d => d.Id).ToListAsync()).ToHashSet();
+        // orphan = ไม่มีต้นทาง (ถูกลบ → RelatedDocumentId NULL) หรือต้นทางถูกยกเลิก/ลบ
+        return recs.Where(r => !r.RelatedDocumentId.HasValue
+            || !aliveSet.Contains(r.RelatedDocumentId.Value)).Select(r => r.Id).ToList();
+    }
+
+    [HttpGet("orphaned-settlement-receipts")]
+    public async Task<ActionResult<ApiResponse<OrphanReceiptReport>>> GetOrphanedSettlementReceipts(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!IsCompanyScopedApiKey(companyId) && !await IsOwnerAsync(companyId, userId)) return Forbid();
+
+        var orphanIds = await FindOrphanSettlementReceiptIdsAsync(companyId);
+        var rows = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && orphanIds.Contains(d.Id))
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.ContactId,
+                d.TotalAmount, d.RelatedDocumentId })
+            .OrderByDescending(d => d.DocumentDate)
+            .ToListAsync();
+
+        var cids = rows.Select(r => r.ContactId).Distinct().ToList();
+        var names = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && cids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name);
+
+        var items = rows.Select(r => new OrphanReceiptEntry(
+            r.Id, r.DocumentNumber, r.DocumentDate,
+            names.GetValueOrDefault(r.ContactId, "-"), r.TotalAmount,
+            r.RelatedDocumentId.HasValue ? "ใบกำกับต้นทางถูกยกเลิก/ลบ" : "ไม่มีใบกำกับต้นทาง (ถูกลบไปแล้ว)")).ToList();
+
+        return Ok(new ApiResponse<OrphanReceiptReport>(true,
+            new OrphanReceiptReport(items.Count, items.Sum(i => i.TotalAmount), items)));
+    }
+
+    [HttpPost("orphaned-settlement-receipts/purge")]
+    public async Task<ActionResult<ApiResponse<int>>> PurgeOrphanedSettlementReceipts(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await IsOwnerAsync(companyId, userId)) return Forbid();   // mutation → Owner เท่านั้น
+
+        var orphanIds = await FindOrphanSettlementReceiptIdsAsync(companyId);
+        if (orphanIds.Count == 0)
+            return Ok(new ApiResponse<int>(true, 0, "ไม่มีใบเสร็จหลักฐานรับเงินที่ต้นทางหาย"));
+
+        var n = await _db.Documents
+            .Where(d => d.CompanyId == companyId && orphanIds.Contains(d.Id) && d.IsSettlementReceipt)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsDeleted, true));
+
+        return Ok(new ApiResponse<int>(true, n,
+            $"ลบใบเสร็จหลักฐานรับเงินที่ไม่มีใบกำกับต้นทางแล้ว {n} ใบ (soft-delete) — resync ใหม่ได้สะอาด"));
+    }
+
     // ── Duplicate-contact diagnostic (read-only) — ตอบคำถามทีม integration
     // ว่า "ทั้งบริษัทมี contact ซ้ำกี่ราย" ก่อนตัดสินใจ merge มือ vs สร้าง endpoint.
     // จับซ้ำ 2 แบบ: (ก) เลขผู้เสียภาษี normalize ตัวเลขล้วนตรงกัน (ข) ชื่อ trim

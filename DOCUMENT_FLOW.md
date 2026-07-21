@@ -1292,6 +1292,17 @@ _ไม่แสดงรหัสสาขาเลย. เพิ่ม `Format
 _อื่น = "สาขาที่ {code}" (+ชื่อสาขา). แสดงต่อท้ายเลขผู้เสียภาษีทั้งบริษัท (ผู้ออก) +_
 _คู่ค้า ทั้ง HTML + native renderer. ตอบคำถามผู้ใช้: 00000 ต้องเป็น "สำนักงานใหญ่"_
 _(ถูกต้องตามกฎหมาย) ไม่ใช่ "สาขา 00000"._
+_รอบ 72 (ลบ+resync ให้สะอาด — ใบเสร็จ REC ลอยค้าง): ผู้ใช้ลบใบกำกับเก่าที่มี
+ปัญหาเพื่อ resync ใหม่ แต่ **PurgeDocumentAsync เดิม step 7 แค่ NULL
+RelatedDocumentId ไม่ได้ลบใบเสร็จ settlement (REC)** → REC ลอยค้างใน list. แก้:
+(1) purge เพิ่ม step 6c — cascade ลบ settlement receipt (IsSettlementReceipt +
+RelatedDocumentId==ใบนี้) พร้อม e-Tax/line ก่อน NULL ref; (2)
+`BulkCleanupController`: `GET /cleanup/orphaned-settlement-receipts` (diagnostic,
+API key อ่านได้) + `POST .../purge` (Owner soft-delete) — ล้าง REC ที่ orphan
+อยู่แล้วจากการลบก่อนหน้า (RelatedDocumentId NULL หรือต้นทาง Voided). settlement
+receipt ไม่มี JE ของตัวเอง (payment ถือ JE, ถูกลบไปกับใบกำกับ) → ลบปลอดภัย
+ไม่กระทบ GL. วิธี resync สะอาด: ลบทั้ง group (มัดจำ+ใบกำกับ+REC) → resync มัดจำ
+fresh + ใบกำกับ isCashSale อ้าง depositAppliedRef ใหม่._
 _รอบ 71 (กันยอดเบิ้ลจากชำระซ้ำ — root cause ที่ผู้ใช้เจอ): `ProcessPaymentAsync`
 (integration payment endpoint) เดิมมีแค่ idempotency-by-reference — **ไม่มี**
 status guard/over-pay cap → ยิง payment ส่วนมัดจำแยก = Dr เงินสด/Cr ลูกหนี้ ซ้ำ
