@@ -250,20 +250,32 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         {
             string signedXml;
             string certSerialNumber;
+            bool usedRealCert;
 
             if (!string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath))
             {
                 // Production: Use real X.509 certificate
                 (signedXml, certSerialNumber) = SignXmlWithCertificate(etax.XmlContent, certPath, certPassword);
+                usedRealCert = true;
                 _logger.LogInformation("e-Tax {EtaxRef} signed with X.509 certificate {CertSerial}",
                     etax.EtaxRefNumber, certSerialNumber);
             }
             else
             {
-                // Development fallback: Sign with SHA256 + embedded key
-                _logger.LogWarning("No X.509 certificate configured. Using development signing for e-Tax {EtaxRef}",
+                // ── ไม่มี X.509 cert จริง ──
+                // Production **ห้าม** dev-sign: SignXmlDevelopment สร้าง RSA key
+                // ทิ้งขว้างต่อครั้ง (ไร้ความหมายทางกฎหมายต่อ RD) — ถ้าประทับ Signed
+                // + AutoSubmit จะส่งเอกสารเซ็นปลอมไปสรรพากร. บล็อกด้วย env.
+                if (_env.IsProduction())
+                    throw new InvalidOperationException(
+                        "ยังไม่ได้ตั้งค่าใบรับรองดิจิทัล X.509 (Etax:CertificatePath) — " +
+                        "ลงนาม e-Tax บน production ไม่ได้ (การเซ็นแบบ development ใช้กับสรรพากรไม่ได้). " +
+                        "กรุณาติดตั้ง cert ที่ ETDA/CA รับรอง ก่อนออก e-Tax จริง");
+                // non-production: dev-sign ได้เพื่อทดสอบ flow (แต่ห้าม auto-submit ไป RD)
+                _logger.LogWarning("No X.509 certificate configured. Using DEVELOPMENT signing for e-Tax {EtaxRef} (non-production only, will NOT auto-submit)",
                     etax.EtaxRefNumber);
                 (signedXml, certSerialNumber) = SignXmlDevelopment(etax.XmlContent, etax.EtaxRefNumber);
+                usedRealCert = false;
             }
 
             var signatureHash = Convert.ToBase64String(
@@ -279,11 +291,14 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
             await _db.SaveChangesAsync();
 
-            // Auto-submit if configured (per-company or global)
-            if (etaxConfig.AutoSubmit)
+            // Auto-submit if configured — **เฉพาะที่เซ็นด้วย cert จริง** เท่านั้น
+            // (กันส่งเอกสารเซ็นแบบ development ไปสรรพากร แม้ AutoSubmit เปิด)
+            if (etaxConfig.AutoSubmit && usedRealCert)
             {
                 return await SubmitToRevenueAsync(companyId, etax.Id);
             }
+            if (etaxConfig.AutoSubmit && !usedRealCert)
+                _logger.LogWarning("e-Tax {EtaxRef}: AutoSubmit ข้าม — เซ็นแบบ development ยังส่ง RD ไม่ได้", etax.EtaxRefNumber);
 
             return MapToResponse(etax);
         }

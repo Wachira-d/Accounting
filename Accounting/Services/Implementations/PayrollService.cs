@@ -1907,96 +1907,66 @@ public class PayrollService : IPayrollService
                     }
                 }
 
+                // helper: หาผังบัญชีที่ "จำเป็น" ของเงินเดือน — ไม่เจอ → throw ชี้ให้เพิ่ม
+                // (เดิม if(!=null) แล้วปล่อยผ่าน → บรรทัด GL หายเงียบ → JE ไม่ balance /
+                // หนี้สินหาย. ธงอยู่ที่ audit: unbalanced-JE risk ตอนผังไม่มาตรฐาน)
+                async Task<ChartOfAccount> ReqAcct(string exact, string prefix, string nameContains, string purpose)
+                {
+                    var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode == exact && a.Level >= 4)
+                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.Level >= 4
+                            && a.AccountName.Contains(nameContains));
+                    return acc ?? throw new InvalidOperationException(
+                        $"ลงบัญชีเงินเดือนไม่ได้ — ไม่พบผังบัญชี \"{purpose}\" " +
+                        $"(คาดหวังรหัส {exact} หรือ {prefix}xxx ที่ชื่อมี \"{nameContains}\") — " +
+                        "เพิ่ม/แก้ผังบัญชีก่อนโพสต์เงินเดือน");
+                }
+
                 // Dr: ประกันสังคมส่วนนายจ้าง (54120)
                 if (run.TotalSocialSecurityEmployer > 0)
-                {
-                    var ssoExpAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == "54120" && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4
-                        && a.AccountName.Contains("ประกันสังคม"));
-                    if (ssoExpAccount != null)
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            ssoExpAccount.Id, run.TotalSocialSecurityEmployer, 0, "ประกันสังคมส่วนนายจ้าง"));
-                }
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        (await ReqAcct("54120", "541", "ประกันสังคม", "ประกันสังคมส่วนนายจ้าง (ค่าใช้จ่าย)")).Id,
+                        run.TotalSocialSecurityEmployer, 0, "ประกันสังคมส่วนนายจ้าง"));
 
                 // Cr: ภาษีเงินได้หัก ณ ที่จ่ายค้างจ่าย (21914 - ภ.ง.ด. 1)
                 if (run.TotalWithholdingTax > 0)
-                {
-                    var whtAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == "21914" && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4
-                        && a.AccountName.Contains("หัก ณ ที่จ่าย"));
-                    if (whtAccount != null)
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            whtAccount.Id, 0, run.TotalWithholdingTax, "ภาษีหัก ณ ที่จ่าย (เงินเดือน)"));
-                }
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        (await ReqAcct("21914", "219", "หัก ณ ที่จ่าย", "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.1)")).Id,
+                        0, run.TotalWithholdingTax, "ภาษีหัก ณ ที่จ่าย (เงินเดือน)"));
 
                 // Cr: ประกันสังคมค้างจ่าย (21815) — ทั้งส่วนลูกจ้างและนายจ้าง
                 var totalSso = run.TotalSocialSecurityEmployee + run.TotalSocialSecurityEmployer;
                 if (totalSso > 0)
-                {
-                    var ssoPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == "21815" && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode.StartsWith("218") && a.Level >= 4
-                        && a.AccountName.Contains("ประกันสังคม"));
-                    if (ssoPayableAccount != null)
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            ssoPayableAccount.Id, 0, totalSso, "ประกันสังคมค้างจ่าย"));
-                }
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        (await ReqAcct("21815", "218", "ประกันสังคม", "ประกันสังคมค้างจ่าย")).Id,
+                        0, totalSso, "ประกันสังคมค้างจ่าย"));
 
                 // ── กองทุนเงินทดแทน (กท.20ก) — Dr ค่าใช้จ่าย + Cr ค้างจ่าย ──
                 // นายจ้างฝ่ายเดียว 0.2–1.0% เปิดเมื่อ CompanySettings.
-                // WorkersCompensationEnabled = true. ใช้คนละผัง SSO เพราะ
-                // ยื่นแยกแบบ + รอบยื่นต่างกัน (สปส.1-10 รายเดือน, กท.20ก รายปี)
+                // WorkersCompensationEnabled = true. ใช้คนละผัง SSO เพราะยื่นแยกแบบ
                 if (run.TotalWorkersCompensation > 0)
                 {
-                    var wcExpAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == "54121" && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4
-                        && a.AccountName.Contains("เงินทดแทน"));
-                    if (wcExpAccount != null)
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            wcExpAccount.Id, run.TotalWorkersCompensation, 0, "กองทุนเงินทดแทน (นายจ้าง)"));
-                    var wcPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == "21816" && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                            a.CompanyId == companyId && a.AccountCode.StartsWith("218") && a.Level >= 4
-                            && a.AccountName.Contains("เงินทดแทน"));
-                    if (wcPayableAccount != null)
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            wcPayableAccount.Id, 0, run.TotalWorkersCompensation, "กองทุนเงินทดแทนค้างจ่าย"));
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        (await ReqAcct("54121", "541", "เงินทดแทน", "กองทุนเงินทดแทน (ค่าใช้จ่าย)")).Id,
+                        run.TotalWorkersCompensation, 0, "กองทุนเงินทดแทน (นายจ้าง)"));
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        (await ReqAcct("21816", "218", "เงินทดแทน", "กองทุนเงินทดแทนค้างจ่าย")).Id,
+                        0, run.TotalWorkersCompensation, "กองทุนเงินทดแทนค้างจ่าย"));
                 }
 
                 // Cr: กองทุนสำรองเลี้ยงชีพค้างจ่าย (21818) — ส่วนลูกจ้าง+นายจ้าง
                 var totalPvd = run.TotalProvidentFundEmployee + run.TotalProvidentFundEmployer;
                 if (totalPvd > 0)
-                {
-                    var pvdPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == "21818" && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                            a.CompanyId == companyId && a.AccountCode.StartsWith("218") && a.Level >= 4
-                            && a.AccountName.Contains("สำรองเลี้ยงชีพ"));
-                    if (pvdPayableAccount != null)
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            pvdPayableAccount.Id, 0, totalPvd, "กองทุนสำรองเลี้ยงชีพค้างจ่าย"));
-                }
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        (await ReqAcct("21818", "218", "สำรองเลี้ยงชีพ", "กองทุนสำรองเลี้ยงชีพค้างจ่าย")).Id,
+                        0, totalPvd, "กองทุนสำรองเลี้ยงชีพค้างจ่าย"));
 
                 // Dr: กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง (54124)
                 if (run.TotalProvidentFundEmployer > 0)
-                {
-                    var pvdExpAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.AccountCode == "54124" && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                            a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4
-                            && a.AccountName.Contains("สำรองเลี้ยงชีพ"));
-                    if (pvdExpAccount != null)
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            pvdExpAccount.Id, run.TotalProvidentFundEmployer, 0, "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง"));
-                }
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                        (await ReqAcct("54124", "541", "สำรองเลี้ยงชีพ", "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง (ค่าใช้จ่าย)")).Id,
+                        run.TotalProvidentFundEmployer, 0, "กองทุนสำรองเลี้ยงชีพส่วนนายจ้าง"));
 
                 // ── Advance recovery: clear outstanding salary advances ──
                 // For each employee, recover MonthlyDeduction (or the full

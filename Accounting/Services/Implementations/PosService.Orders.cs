@@ -1115,8 +1115,15 @@ public partial class PosService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "POS journal creation failed for order {OrderNumber} in company {CompanyId}. GL entry missing.",
+            _logger.LogError(ex, "POS journal creation failed for order {OrderNumber} in company {CompanyId}.",
                 order.OrderNumber, companyId);
+            // เดิมกลืน error → order เสร็จสิ้นโดยไม่มี JE = รายได้/ภาษีขาย/COGS หายจาก
+            // บัญชี (silent GL hole). แก้: โยนต่อ → caller (CompleteOrderAsync /
+            // SyncOfflineOrderAsync ซึ่งเป็น transactional ทั้งคู่) rollback ทั้ง order
+            // → แคชเชียร์เห็น error + ลองใหม่ ไม่มีทางขายเสร็จแบบบัญชีหาย.
+            throw new InvalidOperationException(
+                $"ลงบัญชีการขาย POS #{order.OrderNumber} ไม่สำเร็จ ({ex.Message}) — ออเดอร์ยังไม่เสร็จสิ้น " +
+                "กรุณาตรวจผังบัญชี (รายได้ 41xx / ภาษีขาย 21911 / เงินสด 111) แล้วลองใหม่", ex);
         }
     }
 
