@@ -532,6 +532,24 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกเอกสารสำเร็จ"));
     }
 
+    /// <summary>กู้คืนเอกสารที่ "ยกเลิกผิด" → คืนเป็นฉบับร่าง (Draft) คงเลขเดิม
+    /// แล้วผู้ใช้กดอนุมัติใหม่. gate เข้ม: e-Tax Accepted / เดือนภาษียื่นแล้ว →
+    /// บล็อก. สิทธิ์เท่ากับการยกเลิก (Document.Void — เป็น operation คู่กัน).</summary>
+    [HttpPost("{documentId:guid}/restore")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> RestoreDocument(Guid companyId, Guid documentId)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์กู้คืนเอกสาร {docType} (ต้องการ Document.Void หรือ Document.{(DocumentPermissionHelper.IsRevenue(docType.Value) ? "Revenue" : "Purchase")}.Void)");
+        var actor = User.Identity?.Name ?? userIdGuid.ToString();
+        var restored = await _documentService.RestoreVoidedDocumentAsync(companyId, documentId, actor);
+        return Ok(new ApiResponse<DocumentResponse>(true, restored,
+            "กู้คืนเป็นฉบับร่างแล้ว (เลขเดิมคงไว้) — กรุณากดอนุมัติเพื่อลงบัญชีใหม่"));
+    }
+
     /// <summary>
     /// ลบเอกสารถาวร — เฉพาะ Draft ที่ยังไม่กระทบบัญชีและไม่มีการชำระเงิน
     /// เอกสารที่อนุมัติแล้วต้องใช้ POST /void แทน (รักษา audit trail)

@@ -3882,6 +3882,86 @@ public class DocumentService : IDocumentService
         });
     }
 
+    /// <summary>กู้คืนเอกสารที่ยกเลิกผิด (Voided → Draft, คงเลขเดิม). ดู interface
+    /// doc. ปลอดภัยเพราะ: (1) void เก็บ row ไว้ครบ (แค่ Status=Voided + reversal
+    /// JE) ไม่ได้ลบ line/ยอด → คืน Draft แล้ว re-approve ได้เลย; (2) เลขไม่ใช่
+    /// DRAFT- → ApproveDocumentAsync ไม่ regenerate = คงเลขเดิม; (3) reversal JE
+    /// ของ void คงไว้ (Reversed↔reversal คู่ net-zero) → re-approve post JE ใหม่
+    /// สุทธิถูกต้อง ไม่ double. gate ปิดเคสผิดกฎหมาย.</summary>
+    public async Task<DocumentResponse> RestoreVoidedDocumentAsync(Guid companyId, Guid documentId, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        if (doc.Status != DocumentStatus.Voided)
+            throw new InvalidOperationException(
+                $"กู้คืนได้เฉพาะเอกสารที่ 'ยกเลิก' แล้วเท่านั้น (สถานะปัจจุบัน: {doc.Status})");
+
+        // Gate 1 — e-Tax ที่กรมสรรพากรตอบรับแล้ว (Accepted): ห้ามคืนชีพ เพราะ
+        // เอกสารถูกนำส่ง RD ไปแล้ว (ปกติ void ก็ถูก block ตั้งแต่แรก แต่ตรวจซ้ำ
+        // กันเคสประวัติศาสตร์/ข้อมูล inconsistent)
+        var acceptedEtax = await _db.EtaxInvoices.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.DocumentId == documentId && e.CompanyId == companyId
+                && e.Status == EtaxStatus.Accepted);
+        if (acceptedEtax != null)
+            throw new InvalidOperationException(
+                $"กู้คืนไม่ได้ — e-Tax เลขที่ {acceptedEtax.EtaxRefNumber} ได้รับตอบรับจากกรมสรรพากรแล้ว " +
+                "(Accepted). ต้องออกเอกสารใหม่แทน");
+
+        // Gate 2 — เดือนภาษีของเอกสารยื่น ภ.พ.30 / ล็อกแล้ว: คืนชีพ = ยัด
+        // เอกสารมี VAT กลับเข้าเดือนที่ยื่นไปแล้ว → ยอด ภ.พ.30 เพี้ยนย้อนหลัง.
+        // ตรวจแบบ period-based (ไม่ใช่ line-reference) เพราะ void มักถอด doc ออก
+        // จาก report line ไปแล้ว. เช็คทั้งเดือนของ TaxPoint/DocumentDate.
+        var taxDate = doc.TaxPointDate ?? doc.DocumentDate;
+        var vatFiled = await _db.TaxReports.AsNoTracking().AnyAsync(r =>
+            r.CompanyId == companyId && !r.IsDeleted && r.TaxType == TaxType.VAT
+            && r.Year == taxDate.Year && r.Month == taxDate.Month
+            && (r.Status != TaxReportStatus.Draft || r.FilingLockedAt != null));
+        if (vatFiled)
+            throw new InvalidOperationException(
+                $"กู้คืนไม่ได้ — เดือนภาษี {taxDate:MM/yyyy} ของเอกสาร {doc.DocumentNumber} ยื่น ภ.พ.30 แล้ว. " +
+                "ให้ออกเอกสารใหม่ในเดือนปัจจุบันแทน");
+
+        // Gate 3 — เลขเอกสารต้องยังว่าง (ไม่มีใบ active อื่นถือเลขนี้). ปกติ
+        // voided number ไม่ถูก reuse จึง unique อยู่แล้ว — ตรวจกันเคส edge
+        // (เช่นมีการ import/แก้มือ) ก่อนคืนชีพ กัน gap-free §86/4 พัง
+        var numberTaken = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.Id != documentId && !d.IsDeleted
+            && d.DocumentNumber == doc.DocumentNumber
+            && d.Status != DocumentStatus.Voided);
+        if (numberTaken)
+            throw new InvalidOperationException(
+                $"กู้คืนไม่ได้ — เลข {doc.DocumentNumber} ถูกใช้กับเอกสารอื่นแล้ว");
+
+        // คืนสถานะ Draft (คงเลขเดิม). void ได้ reset posting flags (7a) +
+        // deposit subledger (7b/7c) เป็น "พร้อม approve ใหม่" ไว้แล้ว → ไม่ต้อง
+        // แตะ GL ที่นี่. ผู้ใช้กด 'อนุมัติ' → post JE ใหม่ + ออก e-Tax ใหม่
+        // ผ่าน pipeline เดิม (verified). payment/ApplyDeposit เดิมถูก void ไป
+        // แล้ว ไม่คืนอัตโนมัติ — ต้องบันทึกใหม่หลังอนุมัติ.
+        doc.Status = DocumentStatus.Draft;
+        doc.AgingDays = null;
+        doc.AgingLastEvaluatedAt = DateTime.UtcNow;
+        doc.UpdatedAt = DateTime.UtcNow;
+        doc.Notes = (doc.Notes ?? "")
+            + $"\n[กู้คืนจากยกเลิก] {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC โดย {actor} — "
+            + "คืนเป็นฉบับร่าง เลขเดิมคงไว้; กรุณากดอนุมัติเพื่อลงบัญชี/e-Tax ใหม่";
+        await _db.SaveChangesAsync();
+
+        await FireWebhookAsync(companyId, "document.restored", new
+        {
+            documentId = doc.Id,
+            documentNumber = doc.DocumentNumber,
+            documentType = doc.DocumentType.ToString(),
+            restoredAt = DateTime.UtcNow,
+        });
+
+        _logger.LogInformation("Restored voided document {DocNum} (company {Cid}) by {Actor} → Draft",
+            doc.DocumentNumber, companyId, actor);
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
     /// <summary>
     /// ลบเอกสารถาวร — เฉพาะเอกสารฉบับร่าง (Draft) ที่ยังไม่กระทบบัญชีและไม่มีการชำระเงินเท่านั้น
     /// เอกสารที่อนุมัติแล้วต้องใช้ "ยกเลิก" (VoidDocumentAsync) เพื่อรักษา audit trail.

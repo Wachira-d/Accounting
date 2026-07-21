@@ -5122,6 +5122,10 @@
           if (d.status !== 'Voided' && d.status !== 'Draft') {
             actions += ` <button class="btn btn-danger" onclick="Page.voidDoc('${d.id}')" data-i18n="common.cancel">ยกเลิก</button>`;
           }
+          // เอกสารที่ยกเลิกผิด → กู้คืนเป็นฉบับร่าง (เลขเดิม) แล้วอนุมัติใหม่ได้
+          if (d.status === 'Voided') {
+            actions += ` <button class="btn btn-secondary" onclick="Page.restoreDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="กู้คืนเอกสารที่ยกเลิกผิด → คืนเป็นฉบับร่าง คงเลขเดิม แล้วกดอนุมัติใหม่ (บล็อกถ้าเดือนภาษียื่นแล้ว/มี e-Tax รับรอง)">↩️ กู้คืน</button>`;
+          }
           const myRole = await Layout.ensureMyRole();
           if (myRole === 'Owner' || myRole === 'SystemAdmin') {
             actions += ` <button class="btn btn-danger" onclick="Page.purgeDoc('${d.id}','${Layout.esc(d.documentNumber)}')" title="ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมด — ไม่สามารถกู้คืนได้" style="background:var(--red-700)">🗑 ลบทั้งหมด</button>`;
@@ -5620,6 +5624,19 @@
         }))) return;
         try { await api.voidDocument(id); Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load(); }
         catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async restoreDoc(id, docNumber) {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm(`กู้คืนเอกสาร ${docNumber || ''} ที่ยกเลิกผิด?\n\n` +
+                     '• คืนเป็นฉบับร่าง (Draft) คงเลขเดิม → กด "อนุมัติ" เพื่อลงบัญชี/e-Tax ใหม่\n' +
+                     '• การรับชำระ/หักมัดจำเดิมถูกยกเลิกไปแล้ว ต้องบันทึกใหม่หลังอนุมัติ\n' +
+                     '• ระบบจะบล็อกถ้าเดือนภาษียื่น ภ.พ.30 แล้ว หรือมี e-Tax ที่กรมสรรพากรรับรองแล้ว')) return;
+        try {
+          await api.restoreDocument(id);
+          Layout.closeModal('detailModal');
+          Layout.toast('กู้คืนเป็นฉบับร่างแล้ว — กรุณากดอนุมัติเพื่อลงบัญชีใหม่');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'กู้คืนไม่สำเร็จ', 'error'); }
       },
       async deleteDoc(id) {
         const api = Layout.api(); if (!api) return;

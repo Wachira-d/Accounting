@@ -218,6 +218,7 @@ const API = {
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
       suggestPvAccounting: (body) => API.post(`${base}/document/ai-suggest-pv-accounting`, body),
       voidDocument: (id) => API.post(`${base}/document/${id}/void`),
+      restoreDocument: (id) => API.post(`${base}/document/${id}/restore`),
       reclassifyLine: (id, body) => API.post(`${base}/document/${id}/reclassify-line`, body),
       reclassifyPaymentSource: (id, body) => API.post(`${base}/document/${id}/reclassify-payment-source`, body),
       listAdjustingLines: (id) => API.get(`${base}/document/${id}/adjusting-lines`),
